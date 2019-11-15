@@ -1,0 +1,19 @@
+{
+	"listen": [
+		"127.0.0.1:5202"
+	],
+	"udp_connect": "127.0.0.2:5555",
+	"kcp": {
+		"mtu": 1300,
+		"sndwnd": 1024,
+		"rcvwnd": 1024,
+		"nodelay": 1,
+		"interval": 10,
+		"resend": 2,
+		"nc": 1
+	},
+	"password": "",
+	"timeout": 3600,
+	"linger": 10,
+	"loglevel": 6
+}
