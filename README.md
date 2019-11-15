@@ -23,7 +23,7 @@ Read more about the [KCP](https://github.com/skywind3000/kcp/blob/master/README.
 The previous implementation [kcptun](https://github.com/xtaci/kcptun) is written in Go.
 Compared to that, kcptun-libev should be:
 - More lightweight and run faster
-- More secure: For just use the cryptography library.
+- More secure: For proper use of the cryptography library.
 - Simpler: No muxer, one TCP connection to one KCP connection
 - Without FEC craps
 - **NOT** production ready
@@ -54,7 +54,7 @@ See server.json/client.json in the source repo for more details.
 - log level 0-6 means: nothing, fatal, error, warning, info, debug, verbose
 
 ## Credits
-kcptun-libev basically just glued these projects together, thanks to:
+kcptun-libev is made by glue the following projects together. Thanks to:
 - [kcp](https://github.com/skywind3000/kcp)
 - [libev](http://software.schmorp.de/pkg/libev.html)
 - [libsodium](https://github.com/jedisct1/libsodium)
