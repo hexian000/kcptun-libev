@@ -4,13 +4,12 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 
-	struct sockaddr_in client_addr;
-	socklen_t client_len = sizeof(client_addr);
+	struct sockaddr sa;
+	socklen_t sa_len = sizeof(sa);
 	int client_fd;
 
 	// Accept client request
-	client_fd = accept(watcher->fd, (struct sockaddr *)&client_addr,
-			   &client_len);
+	client_fd = accept(watcher->fd, &sa, &sa_len);
 	if (client_fd < 0) {
 		LOG_PERROR("accept error");
 		return;
@@ -19,10 +18,8 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 	{
 		char addr_str[64];
-		inet_ntop(AF_INET, &client_addr.sin_addr, addr_str,
-			  INET_ADDRSTRLEN);
-		LOGF_I("new connection from: %s:%u", addr_str,
-		       ntohs(client_addr.sin_port));
+		format_sa(&sa, addr_str, sizeof(addr_str));
+		LOGF_I("new connection from: %s", addr_str);
 	}
 
 	// Initialize and start watcher to read client requests
@@ -97,12 +94,12 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	LOGF_V("session [%08" PRIX32 "] tcp recv: %zu bytes",
 	       (uint32_t)session->kcp->conv, len);
 #endif
-	tlv_header_write(session->rbuf.data, (struct tlv_header){
-						     .msg = SMSG_DATA,
-						     .len = (uint16_t)len,
-					     });
-	len = TLV_HEADER_SIZE + len;
 	buf = session->rbuf.data;
+	tlv_header_write(buf, (struct tlv_header){
+				      .msg = SMSG_DATA,
+				      .len = (uint16_t)len,
+			      });
+	len = TLV_HEADER_SIZE + len;
 	int n = ikcp_send(session->kcp, buf, len);
 	if (n < 0) {
 		LOGF_E("session [%08" PRIX32 "] ikcp_send error: %zu bytes",
@@ -115,7 +112,7 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	LOGF_V("session [%08" PRIX32 "] kcp send: %zu bytes",
 	       (uint32_t)session->kcp->conv, len);
 #endif
-	kcp_forceupdate(session, now);
+	kcp_flush(session, now);
 }
 
 void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)

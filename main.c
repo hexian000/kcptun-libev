@@ -1,5 +1,5 @@
 #include "util.h"
-#include "config.h"
+#include "conf.h"
 #include "server.h"
 
 #include "kcp/ikcp.h"
@@ -24,12 +24,15 @@ static void usage(char *argv0)
 
 static void init()
 {
-	//ikcp_allocator(util_malloc, util_free);
+	ikcp_allocator(util_malloc, util_free);
 	srand_uint32((uint32_t)time(NULL));
 }
 
 int main(int argc, char **argv)
 {
+	fprintf(stderr, "%s\n", PACKAGE_STRING);
+	fprintf(stderr, "  %s\n", PACKAGE_URL);
+	fprintf(stderr, "\n");
 	if (argc != 3) {
 		usage(argv[0]);
 		return EXIT_SUCCESS;

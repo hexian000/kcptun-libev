@@ -1,10 +1,11 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include "config.h"
+#include "conf.h"
 #include "conv.h"
 #include "session.h"
 #include "util.h"
+#include "queue.h"
 
 struct aead;
 struct ev_timer;
@@ -19,6 +20,7 @@ struct udp_conn {
 	slice_t rbuf, wbuf;
 	int fd;
 	double last_sent;
+	struct queue *udp_output;
 };
 
 struct server {

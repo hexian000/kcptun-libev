@@ -10,8 +10,7 @@
 		"resend": 2,
 		"nc": 1
 	},
-	"password": "",
+	"password": "k",
 	"timeout": 3600,
-	"linger": 10,
 	"loglevel": 6
 }

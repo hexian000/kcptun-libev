@@ -14,7 +14,7 @@
 
 static inline bool listener_start(struct server *restrict s,
 				  struct listener *restrict l,
-				  const struct sockaddr_in *restrict addr)
+				  const struct endpoint addr)
 {
 	// Create server socket
 	if ((l->fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
@@ -26,8 +26,7 @@ static inline bool listener_start(struct server *restrict s,
 	}
 
 	// Bind socket to address
-	if (bind(l->fd, (struct sockaddr *)addr, sizeof(struct sockaddr_in)) !=
-	    0) {
+	if (bind(l->fd, addr.sa, addr.len) != 0) {
 		LOG_PERROR("bind error");
 		if (close(l->fd) == -1) {
 			LOG_PERROR("close fd");
@@ -52,9 +51,11 @@ static inline bool listener_start(struct server *restrict s,
 	l->w_accept->data = s;
 	ev_io_start(s->loop, l->w_accept);
 
-	char addr_str[64];
-	inet_ntop(AF_INET, &addr->sin_addr, addr_str, INET_ADDRSTRLEN);
-	LOGF_I("listen at: %s:%u", addr_str, ntohs(addr->sin_port));
+	{
+		char addr_str[64];
+		format_sa(addr.sa, addr_str, sizeof(addr_str));
+		LOGF_I("listen at: %s", addr_str);
+	}
 	return true;
 }
 
@@ -103,36 +104,39 @@ static inline bool udp_start(struct server *restrict s,
 		return false;
 	}
 
+	conn->udp_output = queue_new(1500, 1024); /* TODO: configurable */
+	if (conn->udp_output == NULL) {
+		LOG_E("out of memory");
+		return false;
+	}
+
 	// Setup a udp socket.
 	if ((conn->fd = socket(PF_INET, SOCK_DGRAM, 0)) < 0) {
 		LOG_PERROR("udp socket");
 		return false;
 	}
-	if (conf->addr_udp_bind) {
+	if (conf->addr_udp_bind.sa) {
 		if (conf->reuseport) {
 			socket_set_reuseport(conn->fd);
 		}
-		const struct sockaddr_in *addr = conf->addr_udp_bind;
-		if (bind(conn->fd, (struct sockaddr *)addr,
-			 sizeof(struct sockaddr_in))) {
+		const struct endpoint addr = conf->addr_udp_bind;
+		if (bind(conn->fd, addr.sa, addr.len)) {
 			LOG_PERROR("udp bind");
 			return false;
 		}
 		char addr_str[64];
-		inet_ntop(AF_INET, &addr->sin_addr, addr_str, INET_ADDRSTRLEN);
-		LOGF_I("udp bind to: %s:%u", addr_str, ntohs(addr->sin_port));
+		format_sa(addr.sa, addr_str, sizeof(addr_str));
+		LOGF_I("udp bind to: %s", addr_str);
 	}
-	if (conf->addr_udp_connect) {
-		struct sockaddr_in *addr = conf->addr_udp_connect;
-		if (connect(conn->fd, (struct sockaddr *)addr,
-			    sizeof(struct sockaddr_in))) {
+	if (conf->addr_udp_connect.sa) {
+		struct endpoint addr = conf->addr_udp_connect;
+		if (connect(conn->fd, addr.sa, addr.len)) {
 			LOG_PERROR("udp connect");
 			return false;
 		}
 		char addr_str[64];
-		inet_ntop(AF_INET, &addr->sin_addr, addr_str, INET_ADDRSTRLEN);
-		LOGF_I("udp connect to: %s:%u", addr_str,
-		       ntohs(addr->sin_port));
+		format_sa(addr.sa, addr_str, sizeof(addr_str));
+		LOGF_I("udp connect to: %s", addr_str);
 	}
 	socket_set_nonblock(conn->fd);
 
@@ -152,7 +156,7 @@ static inline bool udp_start(struct server *restrict s,
 	}
 	ev_io_init(conn->w_write, udp_write_cb, conn->fd, EV_WRITE);
 	conn->w_write->data = s;
-	//ev_io_start(s->loop, conn->w_write);
+	ev_io_start(s->loop, conn->w_write);
 
 	conn->last_sent = ev_time();
 	return true;
@@ -250,6 +254,10 @@ static inline void udp_free(struct ev_loop *loop,
 	}
 	if (conn->wbuf.data != NULL) {
 		conn->wbuf = slice_free(conn->wbuf);
+	}
+	if (conn->udp_output != NULL) {
+		queue_free(conn->udp_output);
+		conn->udp_output = NULL;
 	}
 }
 

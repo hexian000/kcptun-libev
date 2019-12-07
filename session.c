@@ -31,8 +31,32 @@ static inline ikcpcb *kcp_new(struct session *restrict session,
 	return kcp;
 }
 
+static inline void clone_addr(struct endpoint *dst, const struct endpoint src)
+{
+	void *s = util_malloc(src.len);
+	*dst = (struct endpoint){ .sa = s, .len = src.len };
+	if (s != NULL) {
+		memcpy(s, src.sa, src.len);
+	}
+}
+
+struct session *session_new_dummy()
+{
+	struct session *restrict session =
+		(struct session *)util_malloc(sizeof(struct session));
+	if (session == NULL) {
+		return NULL;
+	}
+	*session = (struct session){
+		.state = STATE_TIME_WAIT,
+		.tcp_fd = -1,
+	};
+	LOGF_D("session new dummy: %p", (void *)session);
+	return session;
+}
+
 struct session *session_new(struct server *restrict s, int fd, uint32_t conv,
-			    struct sockaddr_in *udp_remote)
+			    struct endpoint udp_remote)
 {
 	struct session *restrict session =
 		(struct session *)util_malloc(sizeof(struct session));
@@ -72,13 +96,11 @@ struct session *session_new(struct server *restrict s, int fd, uint32_t conv,
 		session_free(session);
 		return NULL;
 	}
-	session->udp_remote =
-		(struct sockaddr_in *)util_malloc(sizeof(struct sockaddr_in));
-	if (session->udp_remote == NULL) {
+	clone_addr(&session->udp_remote, udp_remote);
+	if (session->udp_remote.sa == NULL) {
 		session_free(session);
 		return NULL;
 	}
-	*(session->udp_remote) = *udp_remote;
 	LOGF_D("session new: %p", (void *)session);
 	return session;
 }
@@ -112,9 +134,9 @@ void session_free(struct session *restrict s)
 	if (s->wbuf.data != NULL) {
 		s->rbuf = slice_free(s->wbuf);
 	}
-	if (s->udp_remote != NULL) {
-		util_free(s->udp_remote);
-		s->udp_remote = NULL;
+	if (s->udp_remote.sa != NULL) {
+		util_free(s->udp_remote.sa);
+		s->udp_remote.sa = NULL;
 	}
 	util_free(s);
 }
@@ -129,25 +151,6 @@ void session_start(struct session *restrict s)
 	ev_io_init(s->w_write, write_cb, s->tcp_fd, EV_WRITE);
 	s->w_write->data = s;
 	ev_io_start(s->server->loop, s->w_write);
-}
-
-void session_shutdown_input(struct session *restrict s)
-{
-	LOGF_V("session [%08" PRIX32 "] shutdown input",
-	       (uint32_t)s->kcp->conv);
-	if (s->w_read != NULL) {
-		ev_io_stop(s->server->loop, s->w_read);
-		util_free(s->w_read);
-		s->w_read = NULL;
-	}
-	if (s->tcp_fd != -1) {
-		if (shutdown(s->tcp_fd, SHUT_RD) == -1) {
-			LOG_PERROR("tcp shutdown");
-		}
-	}
-	if (s->w_write != NULL) {
-		ev_io_start(s->server->loop, s->w_write);
-	}
 }
 
 void session_shutdown(struct session *restrict s)

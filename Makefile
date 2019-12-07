@@ -18,14 +18,14 @@ native: CFLAGS += -march=native -mtune=native
 native: release
 
 .PHONY: release
-release: CFLAGS += -O2 -DNDEBUG
+release: CFLAGS += -O2 -g -DNDEBUG
 release: LDFLAGS += -lev -lsodium -lm -lpthread
 release: $(BINARY)
 
 .PHONY: sanitize
 sanitize: CFLAGS += -O1 -ggdb3 -gdwarf-2
 sanitize: CFLAGS += -fsanitize=address,leak,undefined
-sanitize: LDFLAGS += -fuse-ld=gold -fsanitize=address,leak,undefined
+sanitize: LDFLAGS += -fsanitize=address,leak,undefined
 sanitize: LDFLAGS += -lev -lsodium -lm -lpthread
 sanitize: $(BINARY)
 
@@ -39,6 +39,14 @@ debug: CFLAGS += -O0 -ggdb3 -gdwarf-2
 debug: LDFLAGS += -lev -lsodium -lm -lpthread
 debug: LDFLAGS += -static
 debug: $(BINARY)
+
+.PHONY: install
+install: $(BINARY)
+	install $(BINARY) /usr/local/bin
+
+.PHONY: uninstall
+uninstall:
+	rm -f /usr/local/bin/$(BINARY)
 
 .PHONY: clean
 clean:

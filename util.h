@@ -6,12 +6,13 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <time.h>
 
-#ifndef NDEBUG
+struct sockaddr;
 
-#include <inttypes.h>
+#ifndef NDEBUG
 
 static inline void print_bin(const char *b, const size_t n)
 {
@@ -46,8 +47,18 @@ static inline void util_free(void *p)
 	free(p);
 }
 
+#define UTIL_SAFE_FREE(x)                                                      \
+	do {                                                                   \
+		if ((x) != NULL) {                                             \
+			util_free(x);                                          \
+			(x) = NULL;                                            \
+		}                                                              \
+	} while (0)
+
 int socket_set_nonblock(int fd);
 int socket_set_reuseport(int fd);
+
+void format_sa(const struct sockaddr *sa, char *s, size_t buf_size);
 
 void srand_uint32(uint32_t /*seed*/);
 uint32_t rand_uint32();

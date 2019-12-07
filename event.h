@@ -1,7 +1,7 @@
 #ifndef EVENT_H
 #define EVENT_H
 
-#include "config.h"
+#include "conf.h"
 #include "util.h"
 
 #include <stdbool.h>

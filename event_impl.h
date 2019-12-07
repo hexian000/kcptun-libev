@@ -36,8 +36,8 @@
 		}                                                              \
 	} while (0)
 
-void session0(struct server * /*server*/, struct sockaddr * /*addr*/,
-	      socklen_t /*addr_len*/, const char * /*data*/, size_t n);
+void session0(struct server * /*server*/, struct endpoint /*addr*/,
+	      const char * /*data*/, size_t n);
 
 static inline bool is_server(struct server *restrict s)
 {
@@ -45,22 +45,33 @@ static inline bool is_server(struct server *restrict s)
 }
 
 char *get_udp_send_buf(struct server * /*s*/, size_t * /*n*/);
-size_t udp_send(struct server * /*s*/, struct sockaddr * /*addr*/,
-		socklen_t /*addr_len*/, const char * /*buf*/, size_t /*n*/);
-char *udp_recv(struct server * /*s*/, struct sockaddr * /*addr*/,
-	       socklen_t * /*addr_len*/, size_t * /*size*/);
+size_t udp_send(struct server * /*s*/, struct endpoint /*addr*/,
+		const char * /*buf*/, size_t /*n*/);
+char *udp_recv(struct server * /*s*/, struct endpoint * /*addr*/,
+	       size_t * /*size*/);
 
 void kcp_recv(struct session * /*session*/, ev_tstamp /*now*/);
 
 void kcp_close(struct session * /*session*/, ev_tstamp /*now*/);
 
-static inline void kcp_forceupdate(struct session *restrict s, ev_tstamp now)
+static inline uint32_t tstamp2ms(const ev_tstamp t)
 {
-	/*const uint32_t now_ms = tstamp2ms(now);
-	ikcp_update(s->kcp, now_ms);
+	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
+}
+
+static inline void kcp_flush(struct session *restrict s, ev_tstamp now)
+{
+	ikcp_flush(s->kcp);
+	const uint32_t now_ms = tstamp2ms(now);
 	s->kcp_next = ikcp_check(s->kcp, now_ms);
-	s->kcp_checked = true;*/
-	UNUSED(now);
+	s->kcp_checked = true;
+	if (!queue_empty(s->server->udp.udp_output)) {
+		ev_io_start(s->server->loop, s->server->udp.w_write);
+	}
+}
+
+static inline void kcp_forceupdate(struct session *restrict s)
+{
 	s->kcp_checked = false;
 }
 
@@ -78,11 +89,6 @@ static inline void tlv_header_write(char *d, struct tlv_header header)
 	write_uint16((uint8_t *)d + sizeof(uint16_t), header.len);
 }
 
-static inline uint32_t tstamp2ms(const ev_tstamp t)
-{
-	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
-}
-
 static inline int timecomp(const uint32_t t0, const uint32_t t1)
 {
 	if (t0 == t1) {
@@ -94,6 +100,7 @@ static inline int timecomp(const uint32_t t0, const uint32_t t1)
 /* session messages */
 #define SMSG_DATA ((uint16_t)0x0000)
 #define SMSG_CLOSE ((uint16_t)0x0001)
+#define SMSG_ECHO ((uint16_t)0x0002)
 
 /* session 0 messages */
 #define S0MSG_KEEPALIVE ((uint16_t)0x0000)

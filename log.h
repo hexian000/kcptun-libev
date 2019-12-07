@@ -1,9 +1,7 @@
 #ifndef LOG_H
 #define LOG_H
 
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 199309L
-#endif
+#include "config.h"
 
 #include <errno.h>
 #include <stddef.h>
@@ -11,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if defined(HAVE_SYS_TIME_H)
+#include <sys/time.h>
+#endif
 
 typedef enum {
 	LOG_LEVEL_SILENCE,
@@ -26,13 +27,35 @@ extern const char log_level_char[];
 
 static inline int log_timestamp(char *buf, size_t size)
 {
-	struct timespec t;
-	clock_gettime(CLOCK_REALTIME, &t);
+	time_t now;
+	long msec;
+#if defined(HAVE_CLOCK_GETTIME)
+	{
+		struct timespec t;
+		clock_gettime(CLOCK_REALTIME, &t);
+		now = t.tv_sec;
+		msec = t.tv_nsec / 1000000L;
+	}
+#elif defined(HAVE_GETTIMEOFDAY)
+	{
+		struct timeval t;
+		gettimeofday(&t, NULL);
+		now = t.tv_sec;
+		msec = t.tv_usec / 1000L;
+	}
+#else
+	now = time(NULL);
+	msec = 0;
+#endif
 	struct tm lt;
-	localtime_r(&t.tv_sec, &lt);
+#if defined(HAVE_LOCALTIME_R)
+	localtime_r(&now, &lt);
+#else
+	lt = *localtime(&now);
+#endif
 	char timestr[32];
 	strftime(timestr, sizeof(timestr), "%FT%T.%%03ld%z", &lt);
-	return snprintf(buf, size, timestr, t.tv_nsec / 1000000L);
+	return snprintf(buf, size, timestr, msec);
 }
 
 #define LOG(level, file, line, format, ...)                                    \

@@ -1,7 +1,7 @@
 #ifndef SESSION_H
 #define SESSION_H
 
-#include "config.h"
+#include "conf.h"
 #include "conv.h"
 #include "slice.h"
 #include "util.h"
@@ -11,8 +11,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-struct sockaddr;
 
 struct ev_io;
 struct ev_loop;
@@ -24,6 +22,7 @@ typedef enum {
 	STATE_CONNECT,
 	STATE_CONNECTED,
 	STATE_LINGER,
+	STATE_TIME_WAIT,
 
 	STATE_MAX,
 } state_t;
@@ -44,18 +43,17 @@ struct session {
 	struct server *server;
 	slice_t rbuf, wbuf;
 	size_t wbuf_flush;
-	struct sockaddr_in *udp_remote;
+	struct endpoint udp_remote;
 	double last_seen;
 	struct link_stats stats;
 };
 
 struct session *session_new(struct server * /*s*/, int /*fd*/,
-			    uint32_t /*conv*/,
-			    struct sockaddr_in * /*udp_remote*/);
+			    uint32_t /*conv*/, struct endpoint /*udp_remote*/);
+struct session *session_new_dummy();
 void session_free(struct session * /*s*/);
 
 void session_start(struct session * /*session*/);
-void session_shutdown_input(struct session * /*session*/);
 void session_shutdown(struct session * /*session*/);
 
 void session_close_all(struct conv_table * /*table*/);

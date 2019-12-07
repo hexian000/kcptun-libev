@@ -107,7 +107,7 @@ static inline bool table_find(struct conv_table *restrict table, uint32_t conv,
 	return false;
 }
 
-static inline void table_del(struct conv_table *restrict table, uint32_t conv)
+static inline bool table_del(struct conv_table *restrict table, uint32_t conv)
 {
 	int hash = get_hash(conv);
 	int bucket = hash % table->capacity;
@@ -125,10 +125,11 @@ static inline void table_del(struct conv_table *restrict table, uint32_t conv)
 			};
 			table->freelist = i;
 			table->size--;
-			return;
+			return true;
 		}
 		last_next = &(p->next);
 	}
+	return false;
 }
 
 static inline void table_init(struct conv_table *restrict table,
@@ -233,7 +234,7 @@ void conv_insert(struct conv_table *restrict table, uint32_t conv,
 
 void conv_free(struct conv_table *restrict table, uint32_t conv)
 {
-	table_del(table, conv);
+	UTIL_ASSERT(table_del(table, conv));
 }
 
 void *conv_find(struct conv_table *restrict table, uint32_t conv)

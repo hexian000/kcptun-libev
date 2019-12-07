@@ -8,32 +8,15 @@ bool kcp_update_iter(struct conv_table *restrict table, uint32_t conv,
 	UNUSED(delete);
 
 	struct session *restrict s = (struct session *)session;
-	const ev_tstamp now = *(const ev_tstamp *)user;
-	const double not_seen = now - s->last_seen;
-	switch (s->state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED: {
-		if (not_seen > s->server->timeout) {
-			LOGF_I("session [%08" PRIX32 "] timed out",
-			       (uint32_t)s->kcp->conv);
-			session_shutdown(s);
-			kcp_close(s, now);
-			return true;
-		}
-	} break;
-	case STATE_LINGER: {
-		if (not_seen > s->server->linger) {
-			LOGF_D("session [%08" PRIX32 "] linger timed out",
-			       (uint32_t)s->kcp->conv);
-			s->state = STATE_CLOSED; /* TIME_WAIT */
-			return true;
-		}
-	} break;
-	default: {
-		return true;
-	} break;
-	}
 
+	switch (s->state) {
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
+		return true;
+	}
+	const ev_tstamp now = *(const ev_tstamp *)user;
 	const uint32_t now_ms = tstamp2ms(now);
 	if (!s->kcp_checked || timecomp(s->kcp_next, now_ms) < 0) {
 		ikcp_update(s->kcp, now_ms);
@@ -59,13 +42,31 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	struct server *server = (struct server *)watcher->data;
 	ev_tstamp now = ev_now(loop);
 	conv_iterate(server->conv, kcp_update_iter, &now);
-	//ev_timer_stop(loop, watcher);
-	//ev_io_start(loop, server->udp.w_write);
+	if (!queue_empty(server->udp.udp_output)) {
+		ev_io_start(loop, server->udp.w_write);
+	}
 }
 
 struct session_stats {
 	size_t data[STATE_MAX];
+	ev_tstamp now;
 };
+
+static inline void print_session_info(uint32_t conv, struct session *restrict s,
+				      struct link_stats *restrict session_stats)
+{
+	LOGF_V("session [%08" PRIX32
+	       "] state: %d tcp_in: %zu kcp_out: %zu udp_out: %zu udp_in: %zu kcp_in: %zu tcp_out: %zu",
+	       conv, s->state, session_stats->tcp_in, session_stats->kcp_out,
+	       session_stats->udp_out, session_stats->udp_in,
+	       session_stats->kcp_in, session_stats->tcp_out);
+	char ep_str[64];
+	format_sa(s->udp_remote.sa, ep_str, sizeof(ep_str));
+	LOGF_V("      - [%08" PRIX32
+	       "] tcp_wbuf(%zu, %zu, %zu) kcp_peek=%d kcp_sndwnd=%d ep=%s",
+	       conv, s->wbuf.start, s->wbuf_flush, s->wbuf.end,
+	       ikcp_peeksize(s->kcp), ikcp_waitsnd(s->kcp), ep_str);
+}
 
 bool timeout_iter(struct conv_table *restrict table, uint32_t conv,
 		  void *session, void *user, bool *delete)
@@ -74,35 +75,44 @@ bool timeout_iter(struct conv_table *restrict table, uint32_t conv,
 
 	struct session *restrict s = session;
 	struct link_stats *restrict session_stats = &(s->stats);
-	LOGF_V("session [%08" PRIX32
-	       "] state: %d tcp_in: %zu kcp_out: %zu udp_out: %zu udp_in: %zu kcp_in: %zu tcp_out: %zu",
-	       conv, s->state, session_stats->tcp_in, session_stats->kcp_out,
-	       session_stats->udp_out, session_stats->udp_in,
-	       session_stats->kcp_in, session_stats->tcp_out);
 	struct session_stats *restrict stats = user;
 	assert(s->state < STATE_MAX);
 	stats->data[s->state]++;
+	const ev_tstamp now = stats->now;
+	const double not_seen = now - s->last_seen;
 
 	switch (s->state) {
 	case STATE_CONNECT:
-	case STATE_LINGER: {
-	} break;
 	case STATE_CONNECTED: {
-		if (slice_len(s->rbuf) != 0) {
-			LOGF_V("rbuf %zu %zu", s->rbuf.start, s->rbuf.end);
+		print_session_info(conv, s, session_stats);
+		if (not_seen > s->server->timeout) {
+			LOGF_I("session [%08" PRIX32 "] timed out",
+			       (uint32_t)s->kcp->conv);
+			session_shutdown(s);
+			kcp_close(s, now);
 		}
-		if (slice_len(s->wbuf) != 0 || s->wbuf.start != s->wbuf_flush) {
-			struct tlv_header header =
-				tlv_header_read(s->wbuf.data);
-			LOGF_V("wbuf %zu %zu %zu %04" PRIX16 " %" PRIu16
-			       " peek=%d",
-			       s->wbuf.start, s->wbuf_flush, s->wbuf.end,
-			       header.msg, header.len, ikcp_peeksize(s->kcp));
+	} break;
+	case STATE_LINGER: {
+		print_session_info(conv, s, session_stats);
+		if (not_seen > s->server->linger) {
+			LOGF_D("session [%08" PRIX32 "] linger timed out",
+			       (uint32_t)s->kcp->conv);
+			s->state = STATE_TIME_WAIT;
+			s->last_seen = now;
+		}
+	} break;
+	case STATE_TIME_WAIT: {
+		/* TODO: don't share timeout */
+		if (not_seen > s->server->linger * 3) {
+			LOGF_D("session [%08" PRIX32 "] wait timed out",
+			       (uint32_t)s->kcp->conv);
+			s->state = STATE_CLOSED;
+			*delete = true;
+			session_free(s);
 		}
 	} break;
 	case STATE_CLOSED: {
-		*delete = true;
-		session_free(s);
+		assert(0);
 	} break;
 	default: {
 		LOGF_W("unexpected session state: %d", s->state);
@@ -177,9 +187,36 @@ static void traffic_stats(struct server *restrict s, const ev_tstamp now)
 		tcp_down = (dstats.tcp_out >> 10u) / dt;
 		LOGF_D("traffic(KiB/s) udp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f",
 		       udp_up, udp_down, tcp_up, tcp_down);
+		LOGF_D("total udp up/down: %zu/%zu; tcp up/down: %zu/%zu",
+		       s->stats.udp_out, s->stats.udp_in, s->stats.tcp_in,
+		       s->stats.tcp_out);
 	}
 	last_time = now;
 	last_stats = s->stats;
+}
+
+static inline void timeout_check(struct server *restrict server,
+				 const ev_tstamp now)
+{
+	const double check_interval = 10.0;
+	static ev_tstamp last_check = 0.0;
+	if (now - last_check < check_interval) {
+		return;
+	}
+	last_check +=
+		floor((now - last_check) / check_interval) * check_interval;
+	const size_t n_sessions = conv_size(server->conv);
+	if (n_sessions > 0) {
+		struct session_stats stats = (struct session_stats){
+			.data = { 0 },
+			.now = now,
+		};
+		conv_iterate(server->conv, timeout_iter, &stats);
+		LOGF_D("=== %zu sessions: %zu connected, %zu linger",
+		       n_sessions, stats.data[STATE_CONNECTED],
+		       stats.data[STATE_LINGER]);
+		traffic_stats(server, now);
+	}
 }
 
 void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
@@ -188,16 +225,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 	struct server *restrict server = (struct server *)watcher->data;
 	const ev_tstamp now = ev_now(loop);
-
-	const size_t n_sessions = conv_size(server->conv);
-	if (n_sessions > 0) {
-		struct session_stats stats = (struct session_stats){ { 0 } };
-		conv_iterate(server->conv, timeout_iter, &stats);
-		LOGF_D("=== %zu sessions: %zu connected, %zu linger",
-		       n_sessions, stats.data[STATE_CONNECTED],
-		       stats.data[STATE_LINGER]);
-		traffic_stats(server, now);
-	}
+	timeout_check(server, now);
 
 	if (now - server->udp.last_sent > server->keepalive) {
 		if (is_server(server)) {
@@ -218,16 +246,14 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 					      .timestamp = now_ms,
 				      });
 
-		udp_send(server,
-			 (struct sockaddr *)server->conf->addr_udp_connect,
-			 sizeof(struct sockaddr_in), dst,
+		udp_send(server, server->conf->addr_udp_connect, dst,
 			 SESSION0_HEADER_SIZE + SESSION0_KEEPALIVE_SIZE);
 	}
 }
 
 static inline void session0_keepalive(struct server *restrict server,
-				      struct sockaddr *addr, socklen_t addr_len,
-				      const char *data, size_t n)
+				      struct endpoint addr, const char *data,
+				      size_t n)
 {
 	if (n < SESSION0_HEADER_SIZE + SESSION0_KEEPALIVE_SIZE) {
 		LOGF_W("short keepalive message: %zu", n);
@@ -245,11 +271,11 @@ static inline void session0_keepalive(struct server *restrict server,
 	}
 
 	/* server: send echo message */
-	udp_send(server, addr, addr_len, data, n);
+	udp_send(server, addr, data, n);
 }
 
-void session0(struct server *restrict server, struct sockaddr *addr,
-	      socklen_t addr_len, const char *data, size_t n)
+void session0(struct server *restrict server, struct endpoint addr,
+	      const char *data, size_t n)
 {
 	if (n < SESSION0_HEADER_SIZE) {
 		LOGF_W("short session 0 message: %zu", n);
@@ -258,7 +284,7 @@ void session0(struct server *restrict server, struct sockaddr *addr,
 	struct session0_header header = s0_header_read(data);
 	switch (header.what) {
 	case S0MSG_KEEPALIVE:
-		session0_keepalive(server, addr, addr_len, data, n);
+		session0_keepalive(server, addr, data, n);
 		break;
 	default:
 		LOGF_W("unknown session 0 message: %04" PRIX16, header.what);
