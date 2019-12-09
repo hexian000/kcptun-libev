@@ -40,7 +40,7 @@ static inline void clone_addr(struct endpoint *dst, const struct endpoint src)
 	}
 }
 
-struct session *session_new_dummy()
+struct session *session_new_dummy(struct server *s)
 {
 	struct session *restrict session =
 		(struct session *)util_malloc(sizeof(struct session));
@@ -48,6 +48,7 @@ struct session *session_new_dummy()
 		return NULL;
 	}
 	*session = (struct session){
+		.server = s,
 		.state = STATE_TIME_WAIT,
 		.tcp_fd = -1,
 	};

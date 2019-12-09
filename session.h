@@ -50,7 +50,7 @@ struct session {
 
 struct session *session_new(struct server * /*s*/, int /*fd*/,
 			    uint32_t /*conv*/, struct endpoint /*udp_remote*/);
-struct session *session_new_dummy();
+struct session *session_new_dummy(struct server * /*s*/);
 void session_free(struct session * /*s*/);
 
 void session_start(struct session * /*session*/);

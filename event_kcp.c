@@ -178,7 +178,7 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (session == NULL) {
 		if (!is_server(server)) {
 			LOGF_W("session not found [%08" PRIX32 "]", conv);
-			session = session_new_dummy();
+			session = session_new_dummy(server);
 			if (session != NULL) {
 				session->last_seen = ev_now(loop);
 				conv_insert(server->conv, conv, session);
