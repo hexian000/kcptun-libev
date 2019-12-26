@@ -11,37 +11,41 @@ void udp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct server *s = (struct server *)watcher->data;
 
 	struct queue *q = s->udp.udp_output;
-	size_t n;
-	struct sockaddr to;
-	char *buf = queue_pop_nocopy(q, &n, &to);
-	if (buf == NULL) {
-		ev_io_stop(loop, watcher);
-		return;
-	}
+	size_t count = 0;
+	while (true) {
+		size_t n;
+		struct sockaddr to;
+		char *buf = queue_peek(q, &n, &to);
+		if (buf == NULL) {
+			ev_io_stop(loop, watcher);
+			break;
+		}
 
-	const int fd = s->udp.fd;
-	ssize_t r = sendto(fd, buf, n, 0, &to, sizeof(to));
-	switch (r) {
-	case -1: {
-		LOG_PERROR("udp sendto");
-		return;
-	}
-	default:
-		assert(r >= 0);
-	}
-	if ((size_t)r < n) {
-		LOG_W("udp_output short send");
-	}
+		const int fd = s->udp.fd;
+		ssize_t r = sendto(fd, buf, n, 0, &to, sizeof(to));
+		if (r == -1) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				break;
+			}
+			LOG_PERROR("udp sendto");
+			queue_pop(q);
+			count++;
+			break;
+		}
+		queue_pop(q);
+		count++;
 #if UDP_PER_PACKET_LOG
-	{
-		char addr_str[64];
-		format_sa(&to, addr_str, sizeof(addr_str));
-		LOGF_V("udp sendto: %s %zd bytes", addr_str, r);
-	}
+		{
+			char addr_str[64];
+			format_sa(&to, addr_str, sizeof(addr_str));
+			LOGF_V("udp sendto: %s %zd bytes", addr_str, r);
+		}
 #endif
-	assert((size_t)r == n);
-	s->udp.last_sent = ev_now(loop);
-	s->stats.udp_out += n;
+		s->stats.udp_out += n;
+	}
+	if (count > 0) {
+		s->udp.last_sent = ev_now(loop);
+	}
 }
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)

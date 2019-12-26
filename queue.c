@@ -77,7 +77,6 @@ static inline struct node *new_node(struct queue *restrict q)
 		return NULL;
 	}
 	n->buf.data = buf;
-	q->size++;
 	return n;
 }
 
@@ -100,38 +99,37 @@ bool queue_push(struct queue *restrict q, const char *data, size_t len,
 		q->tail->next = n;
 		q->tail = n;
 	}
+	q->size++;
 	return true;
 }
 
-bool queue_pop(struct queue *restrict q, char *data, size_t *len,
-	       struct sockaddr *to)
+char *queue_peek(struct queue *restrict q, size_t *len, struct sockaddr *to)
+{
+	struct node *restrict p = q->head;
+	if (p == NULL) {
+		return NULL;
+	}
+	*len = p->buf.len;
+	*to = p->to;
+	return p->buf.data;
+}
+
+bool queue_pop(struct queue *restrict q)
 {
 	struct node *restrict p = q->head;
 	if (p == NULL) {
 		return false;
 	}
 	q->head = p->next;
-	memcpy(data, p->buf.data, p->buf.len);
-	*len = p->buf.len;
-	*to = p->to;
 	p->next = q->free;
 	q->free = p;
+	q->size--;
 	return true;
 }
 
-char *queue_pop_nocopy(struct queue *restrict q, size_t *len,
-		       struct sockaddr *to)
+bool queue_full(struct queue *q)
 {
-	struct node *restrict p = q->head;
-	if (p == NULL) {
-		return NULL;
-	}
-	q->head = p->next;
-	*len = p->buf.len;
-	*to = p->to;
-	p->next = q->free;
-	q->free = p;
-	return p->buf.data;
+	return q->size == q->capacity;
 }
 
 bool queue_empty(struct queue *q)

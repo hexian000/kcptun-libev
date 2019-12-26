@@ -335,7 +335,7 @@ static inline struct config conf_default()
 		.kcp_rcvwnd = 1024,
 		.kcp_nodelay = 1,
 		.kcp_interval = 50,
-		.kcp_resend = 2,
+		.kcp_resend = 0,
 		.kcp_nc = 1,
 		.password = NULL,
 		.timeout = -1,

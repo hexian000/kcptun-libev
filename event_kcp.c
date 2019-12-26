@@ -216,12 +216,13 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (ikcp_peeksize(session->kcp) > 0) {
 		if (session->state == STATE_LINGER) {
 			/* discard data */
-			int r = ikcp_recv(session->kcp, session->wbuf.data,
-					  session->wbuf.cap);
-			if (r > 0) {
-				LOGF_D("TCP connection is lost, %d bytes discarded",
-				       r);
+			kcp_recv(session, ev_now(loop));
+			size_t n = session->wbuf_flush - session->wbuf.start;
+			if (n > 0) {
+				LOGF_D("TCP connection is lost, %zu bytes discarded",
+				       n);
 			}
+			session->wbuf.start = session->wbuf_flush;
 			return;
 		}
 		assert(session->w_write != NULL);

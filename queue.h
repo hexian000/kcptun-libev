@@ -13,11 +13,11 @@ void queue_free(struct queue * /*q*/);
 
 bool queue_push(struct queue * /*q*/, const char * /*data*/, size_t /*len*/,
 		struct sockaddr /*to*/);
-bool queue_pop(struct queue * /*q*/, char * /*data*/, size_t * /*len*/,
-	       struct sockaddr * /*to*/);
-char *queue_pop_nocopy(struct queue * /*q*/, size_t * /*len*/,
-		       struct sockaddr * /*to*/);
+char *queue_peek(struct queue * /*q*/, size_t * /*len*/,
+		 struct sockaddr * /*to*/);
+bool queue_pop(struct queue * /*q*/);
 
+bool queue_full(struct queue * /*q*/);
 bool queue_empty(struct queue * /*q*/);
 
 #endif /* QUEUE_H */

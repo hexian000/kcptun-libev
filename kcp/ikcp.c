@@ -20,10 +20,9 @@
 //=====================================================================
 // KCP BASIC
 //=====================================================================
-const uint32_t IKCP_RTO_NDL = 30; // no delay min rto
 const uint32_t IKCP_RTO_MIN = 100; // normal min rto
 const uint32_t IKCP_RTO_DEF = 200;
-const uint32_t IKCP_RTO_MAX = 10000;
+const uint32_t IKCP_RTO_MAX = 4000;
 const uint32_t IKCP_CMD_PUSH = 81; // cmd: push data
 const uint32_t IKCP_CMD_ACK = 82; // cmd: ack
 const uint32_t IKCP_CMD_WASK = 83; // cmd: window probe (ask)
@@ -1234,11 +1233,6 @@ int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc)
 {
 	if (nodelay >= 0) {
 		kcp->nodelay = nodelay;
-		if (nodelay) {
-			kcp->rx_minrto = IKCP_RTO_NDL;
-		} else {
-			kcp->rx_minrto = IKCP_RTO_MIN;
-		}
 	}
 	if (interval >= 0) {
 		if (interval > 5000)

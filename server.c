@@ -139,6 +139,13 @@ static inline bool udp_start(struct server *restrict s,
 		LOGF_I("udp connect to: %s", addr_str);
 	}
 	socket_set_nonblock(conn->fd);
+	{
+		size_t bufsize = 4194304;
+		setsockopt(conn->fd, SOL_SOCKET, SO_SNDBUF, &bufsize,
+			   sizeof(bufsize));
+		setsockopt(conn->fd, SOL_SOCKET, SO_RCVBUF, &bufsize,
+			   sizeof(bufsize));
+	}
 
 	conn->w_read = util_malloc(sizeof(struct ev_io));
 	if (conn->w_read == NULL) {
@@ -173,6 +180,12 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		.conf = conf,
 	};
 	s->crypto = aead_create(conf->password);
+	if (s->crypto != NULL) {
+		s->conf->kcp_mtu -= aead_nonce_size(s->crypto);
+		s->conf->kcp_mtu -= aead_overhead(s->crypto);
+	} else {
+		LOG_W("data will not be encrypted");
+	}
 	s->conv = conv_table_create();
 	if (s->conv == NULL) {
 		server_shutdown(s);
@@ -208,8 +221,8 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	ev_tstamp interval = s->conf->kcp_interval * 1e-3;
-	ev_timer_init(s->w_kcp_update, kcp_update_cb, interval, interval);
+	/* always 10ms */
+	ev_timer_init(s->w_kcp_update, kcp_update_cb, 10e-3, 10e-3);
 	s->w_kcp_update->data = s;
 	ev_timer_start(s->loop, s->w_kcp_update);
 

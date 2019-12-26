@@ -40,6 +40,11 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	struct server *server = (struct server *)watcher->data;
+	if (queue_full(server->udp.udp_output)) {
+		LOG_W("udp queue full, update skipped");
+		ev_io_start(loop, server->udp.w_write);
+		return;
+	}
 	ev_tstamp now = ev_now(loop);
 	conv_iterate(server->conv, kcp_update_iter, &now);
 	if (!queue_empty(server->udp.udp_output)) {
@@ -86,8 +91,7 @@ bool timeout_iter(struct conv_table *restrict table, uint32_t conv,
 	case STATE_CONNECTED: {
 		print_session_info(conv, s, session_stats);
 		if (not_seen > s->server->timeout) {
-			LOGF_I("session [%08" PRIX32 "] timed out",
-			       (uint32_t)s->kcp->conv);
+			LOGF_I("session [%08" PRIX32 "] timed out", conv);
 			session_shutdown(s);
 			kcp_close(s, now);
 		}
@@ -96,7 +100,7 @@ bool timeout_iter(struct conv_table *restrict table, uint32_t conv,
 		print_session_info(conv, s, session_stats);
 		if (not_seen > s->server->linger) {
 			LOGF_D("session [%08" PRIX32 "] linger timed out",
-			       (uint32_t)s->kcp->conv);
+			       conv);
 			s->state = STATE_TIME_WAIT;
 			s->last_seen = now;
 		}
@@ -104,8 +108,7 @@ bool timeout_iter(struct conv_table *restrict table, uint32_t conv,
 	case STATE_TIME_WAIT: {
 		/* TODO: don't share timeout */
 		if (not_seen > s->server->linger * 3) {
-			LOGF_D("session [%08" PRIX32 "] wait timed out",
-			       (uint32_t)s->kcp->conv);
+			LOGF_D("session [%08" PRIX32 "] wait timed out", conv);
 			s->state = STATE_CLOSED;
 			*delete = true;
 			session_free(s);
