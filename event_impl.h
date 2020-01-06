@@ -98,13 +98,13 @@ static inline int timecomp(const uint32_t t0, const uint32_t t1)
 }
 
 /* session messages */
-#define SMSG_DATA ((uint16_t)0x0000)
-#define SMSG_CLOSE ((uint16_t)0x0001)
-#define SMSG_ECHO ((uint16_t)0x0002)
+#define SMSG_DATA UINT16_C(0x0000)
+#define SMSG_CLOSE UINT16_C(0x0001)
+#define SMSG_ECHO UINT16_C(0x0002)
 
 /* session 0 messages */
-#define S0MSG_KEEPALIVE ((uint16_t)0x0000)
-#define S0MSG_DIAL ((uint16_t)0x0001)
-#define S0MSG_CONV ((uint16_t)0x0002)
+#define S0MSG_KEEPALIVE UINT16_C(0x0000)
+#define S0MSG_DIAL UINT16_C(0x0001)
+#define S0MSG_CONV UINT16_C(0x0002)
 
 #endif /* EVENT_IMPL_H */
