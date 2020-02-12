@@ -26,7 +26,8 @@ Compared to that, kcptun-libev should be:
 - More secure: For proper use of the cryptography library.
 - Simpler: No muxer, one TCP connection to one KCP connection
 - Without FEC craps
-- **NOT** production ready
+
+kcptun-libev is **NOT** production ready yet.
 
 ## Build
 ### Dependencies
@@ -48,6 +49,8 @@ Create a config file and pass the file name. Just like:
 ./kcptun-libev -c server.json
 ```
 See server.json/client.json in the source repo for more details.
+
+Let's explain some fields in server.json/client.json:
 - The client side "listen" TCP ports and send data to "udp_connect".
 - The server side receive data from "udp_bind" and forward the connections to "connect".
 - Set a password is strongly suggested when using in public networks.
