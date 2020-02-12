@@ -10,8 +10,7 @@
 
 #include <signal.h>
 
-static void signal_cb(struct ev_loop *loop, struct ev_signal *watcher,
-		      int revents);
+void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents);
 
 static void usage(char *argv0)
 {
