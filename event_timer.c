@@ -106,8 +106,7 @@ bool timeout_iter(struct conv_table *restrict table, uint32_t conv,
 		}
 	} break;
 	case STATE_TIME_WAIT: {
-		/* TODO: don't share timeout */
-		if (not_seen > s->server->linger * 3) {
+		if (not_seen > s->server->time_wait) {
 			LOGF_D("session [%08" PRIX32 "] wait timed out", conv);
 			s->state = STATE_CLOSED;
 			*delete = true;

@@ -104,7 +104,17 @@ static inline bool udp_start(struct server *restrict s,
 		return false;
 	}
 
-	conn->udp_output = queue_new(1500, 1024); /* TODO: configurable */
+	size_t max_queue = 256;
+	if (conf->udp_queue > 0) {
+		max_queue = conf->udp_queue;
+	}
+	size_t mtu = conf->kcp_mtu;
+	if (s->crypto != NULL) {
+		mtu += aead_nonce_size(s->crypto);
+		mtu += aead_overhead(s->crypto);
+	}
+	LOGF_I("final MTU = %zu", mtu);
+	conn->udp_output = queue_new(mtu, max_queue);
 	if (conn->udp_output == NULL) {
 		LOG_E("out of memory");
 		return false;
@@ -180,10 +190,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		.conf = conf,
 	};
 	s->crypto = aead_create(conf->password);
-	if (s->crypto != NULL) {
-		s->conf->kcp_mtu -= aead_nonce_size(s->crypto);
-		s->conf->kcp_mtu -= aead_overhead(s->crypto);
-	} else {
+	if (s->crypto == NULL) {
 		LOG_W("data will not be encrypted");
 	}
 	s->conv = conv_table_create();
@@ -199,20 +206,25 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	if (conf->linger > 1 && conf->linger < 86400) {
-		s->linger = (ev_tstamp)conf->linger;
+	if (conf->linger > 5 && conf->linger < 3600) {
+		s->linger = (double)conf->linger;
 	} else {
 		s->linger = 60.0;
 	}
-	if (conf->timeout > 1 && conf->timeout < 86400) {
-		s->timeout = (ev_tstamp)conf->timeout;
+	if (conf->timeout > 5 && conf->timeout < 3600) {
+		s->timeout = (double)conf->timeout;
 	} else {
 		s->timeout = 600.0;
 	}
-	if (conf->keepalive >= 0 && conf->keepalive < 86400) {
-		s->keepalive = (ev_tstamp)conf->keepalive;
+	if (conf->keepalive >= 0 && conf->keepalive < 3600) {
+		s->keepalive = (double)conf->keepalive;
 	} else {
 		s->keepalive = 10.0;
+	}
+	if (conf->time_wait > 5 && (double)conf->time_wait > s->timeout) {
+		s->time_wait = (double)conf->time_wait;
+	} else {
+		s->time_wait = s->timeout * 3.0;
 	}
 
 	s->w_kcp_update = util_malloc(sizeof(struct ev_timer));

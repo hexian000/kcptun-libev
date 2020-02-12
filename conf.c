@@ -286,6 +286,9 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	if (strcmp(name, "udp_connect") == 0) {
 		return parse_endpoint_json(value, &(conf->addr_udp_connect));
 	}
+	if (strcmp(name, "udp_queue") == 0) {
+		return parse_int_json(&conf->udp_queue, value);
+	}
 	if (strcmp(name, "kcp") == 0) {
 		return walk_json_object(conf, value, kcp_scope_cb);
 	}
@@ -301,6 +304,9 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	}
 	if (strcmp(name, "keepalive") == 0) {
 		return parse_int_json(&conf->keepalive, value);
+	}
+	if (strcmp(name, "time_wait") == 0) {
+		return parse_int_json(&conf->time_wait, value);
 	}
 	if (strcmp(name, "loglevel") == 0) {
 		int l;
@@ -331,16 +337,17 @@ static inline struct config conf_default()
 		.addr_udp_bind = { 0 },
 		.addr_udp_connect = { 0 },
 		.kcp_mtu = 1300,
-		.kcp_sndwnd = 1024,
-		.kcp_rcvwnd = 1024,
+		.kcp_sndwnd = 2048,
+		.kcp_rcvwnd = 2048,
 		.kcp_nodelay = 1,
-		.kcp_interval = 50,
+		.kcp_interval = 10,
 		.kcp_resend = 0,
 		.kcp_nc = 1,
 		.password = NULL,
 		.timeout = -1,
 		.linger = -1,
 		.keepalive = -1,
+		.time_wait = -1,
 		.reuseport = false,
 	};
 }

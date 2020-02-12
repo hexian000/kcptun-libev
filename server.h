@@ -33,7 +33,7 @@ struct server {
 	struct ev_timer *w_kcp_update;
 	struct ev_timer *w_keepalive;
 	struct aead *crypto;
-	double timeout, linger, keepalive;
+	double timeout, linger, keepalive, time_wait;
 	struct link_stats stats;
 };
 

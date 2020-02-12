@@ -18,8 +18,9 @@ struct config {
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
 	char *password;
-	int timeout, linger, keepalive;
+	int timeout, linger, keepalive, time_wait;
 	bool reuseport;
+	int udp_queue;
 };
 
 struct config *conf_read(const char * /*file*/);
