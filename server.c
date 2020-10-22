@@ -1,6 +1,7 @@
 #include "server.h"
 #include "aead.h"
 #include "event.h"
+#include "log.h"
 
 #include <ev.h>
 
@@ -298,6 +299,7 @@ static inline void listeners_free(struct ev_loop *loop,
 			p->w_accept = NULL;
 		}
 		if (p->fd != -1) {
+			LOGF_I("closing listener #%zu", i);
 			if (close(p->fd) == -1) {
 				LOG_PERROR("close fd");
 			}
