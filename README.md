@@ -35,11 +35,15 @@ Proper version of libev & libsodium. Very old versions won't work, try it out. ^
 
 ### To build on UNIX-like systems
 ```
+sh autogen.sh
+./configure
 make
 ```
 
 ### To build on Windows with MSYS2
 ```
+sh autogen.sh
+./configure
 make mingw64
 ```
 
