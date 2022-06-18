@@ -61,11 +61,11 @@ static inline char *ikcp_encode8u(char *p, uint8_t c)
 static inline const char *ikcp_decode8u(const char *p, uint8_t *c)
 {
 	*c = read_uint8((unsigned char *)p);
-	p += sizeof(uint16_t);
+	p += sizeof(uint8_t);
 	return p;
 }
 
-/* encode 16 bits unsigned int (lsb) */
+/* encode 16 bits unsigned int */
 static inline char *ikcp_encode16u(char *p, uint16_t w)
 {
 	write_uint16((unsigned char *)p, w);
@@ -73,7 +73,7 @@ static inline char *ikcp_encode16u(char *p, uint16_t w)
 	return p;
 }
 
-/* decode 16 bits unsigned int (lsb) */
+/* decode 16 bits unsigned int */
 static inline const char *ikcp_decode16u(const char *p, uint16_t *w)
 {
 	*w = read_uint16((unsigned char *)p);
@@ -81,7 +81,7 @@ static inline const char *ikcp_decode16u(const char *p, uint16_t *w)
 	return p;
 }
 
-/* encode 32 bits unsigned int (lsb) */
+/* encode 32 bits unsigned int */
 static inline char *ikcp_encode32u(char *p, uint32_t l)
 {
 	write_uint32((unsigned char *)p, l);
@@ -89,7 +89,7 @@ static inline char *ikcp_encode32u(char *p, uint32_t l)
 	return p;
 }
 
-/* decode 32 bits unsigned int (lsb) */
+/* decode 32 bits unsigned int */
 static inline const char *ikcp_decode32u(const char *p, uint32_t *l)
 {
 	*l = read_uint32((unsigned char *)p);

@@ -115,7 +115,7 @@ resolve(const char *hostname, const char *service, const int socktype)
 		.ai_socktype = socktype,
 		.ai_flags = 0,
 	};
-	struct addrinfo *result;
+	struct addrinfo *result = NULL;
 	if (getaddrinfo(hostname, service, &hints, &result) != 0) {
 		LOG_PERROR("resolve");
 		return NULL;
@@ -128,7 +128,6 @@ resolve(const char *hostname, const char *service, const int socktype)
 			sa = clonesockaddr(it->ai_addr);
 			break;
 		}
-		it = it->ai_next;
 	}
 	freeaddrinfo(result);
 	return sa;

@@ -324,17 +324,27 @@ static struct config conf_default()
 
 static bool conf_check(struct config *restrict conf)
 {
-	if (conf->addr_udp_bind && conf->addr_udp_connect &&
-	    conf->addr_udp_bind->sa_family !=
-		    conf->addr_udp_connect->sa_family) {
-		LOGE("config: udp address should be in same network");
-		return false;
+	const struct sockaddr *sa = NULL;
+	if (conf->addr_udp_bind != NULL) {
+		sa = conf->addr_udp_bind;
 	}
-	if (!conf->addr_udp_bind && !conf->addr_udp_connect) {
+	if (conf->addr_udp_connect != NULL) {
+		if (sa != NULL) {
+			if (conf->addr_udp_connect->sa_family !=
+			    sa->sa_family) {
+				LOGE("config: udp address must be in same network");
+				return false;
+			}
+		} else {
+			sa = conf->addr_udp_connect;
+		}
+	}
+	if (sa == NULL) {
 		LOGF("config: udp address is missing");
 		return false;
 	}
-	conf->is_server = !conf->addr_connect;
+	conf->udp_af = sa->sa_family;
+	conf->is_server = !!conf->addr_connect;
 	return true;
 }
 

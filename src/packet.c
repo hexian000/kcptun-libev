@@ -195,7 +195,7 @@ ss0_keepalive(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
 
-	if (s->conf->is_server) {
+	if (!s->conf->is_server) {
 		/* client: print RTT */
 		const uint32_t now_ms = tstamp2ms(ev_time());
 		LOGI_F("roundtrip finished, RTT: %" PRIu32 " ms",

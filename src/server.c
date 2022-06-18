@@ -74,7 +74,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 	}
 
 	// Setup a udp socket.
-	if ((udp->fd = socket(conf->udp_domain, SOCK_DGRAM, 0)) < 0) {
+	if ((udp->fd = socket(conf->udp_af, SOCK_DGRAM, 0)) < 0) {
 		LOG_PERROR("udp socket");
 		return false;
 	}
@@ -155,9 +155,11 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	if (!listener_start(s, conf->addr_listen)) {
-		server_shutdown(s);
-		return NULL;
+	if (conf->addr_listen) {
+		if (!listener_start(s, conf->addr_listen)) {
+			server_shutdown(s);
+			return NULL;
+		}
 	}
 	if (!udp_start(s, conf)) {
 		server_shutdown(s);

@@ -26,11 +26,19 @@ void crypto_nonce_init(unsigned char *nonce)
 
 void crypto_nonce_next(unsigned char *nonce)
 {
-	const size_t nonce_size = crypto_nonce_size();
-	UTIL_ASSERT(nonce_size > sizeof(uint64_t));
-	write_uint64(nonce, read_uint64(nonce) + 53);
-	randombytes_buf(
-		nonce + sizeof(uint64_t), nonce_size - sizeof(uint64_t));
+	size_t size = crypto_nonce_size();
+	UTIL_ASSERT(size > sizeof(uint64_t));
+	const uint64_t magic = UINT64_C(53);
+	const uint64_t curr = read_uint64(nonce);
+	uint64_t next = curr + magic;
+	if (next < curr) { /* overflow */
+		const uint64_t r = curr % magic;
+		next += magic - next % magic + r;
+	}
+	write_uint64(nonce, next);
+	nonce += sizeof(uint64_t);
+	size -= sizeof(uint64_t);
+	randombytes_buf(nonce, size);
 }
 
 bool crypto_nonce_verify(const unsigned char *saved, const unsigned char *got)

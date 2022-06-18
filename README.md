@@ -15,12 +15,13 @@ Or typically, the people who using a lossy network may setup kcptun-libev with a
 network access -> proxy client -> kcptun-libev client -> lossy network(KCP) -> kcptun-libev server -> proxy server -> stable network
 ```
 
-kcptun-libev can optionally encrypt your traffic with a password/preshared key. With encryption enabled, the integrity and privacy of your traffic is guaranteed. It uses the libsodium implementation of chacha20poly1305-ietf, which is an [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method.
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the libsodium implementation of chacha20poly1305-ietf, which is an [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method.
 
-Read more about the [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
+Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
 
 ## Why another kcptun?
 The previous implementation [kcptun](https://github.com/xtaci/kcptun) is written in Go.
+
 Compared to that, kcptun-libev should be:
 - More lightweight and run faster, main executable < 100KiB on most platforms
 - More secure: For proper use of the cryptography library.
@@ -29,29 +30,66 @@ Compared to that, kcptun-libev should be:
 
 kcptun-libev is **NOT** production ready yet.
 
+## Compatibility
+### System
+
+Theoretically all systems that support ISO C11.
+
+| Name      | Type      | Notes |
+| -         | -         | -        |
+| Ubuntu    | developed | |
+| OpenWRT   | tested    | |
+| Unix-like | theoretical supported | |
+| Cygwin/MinGW | theoretical supported | |
+
+### Protocol
+
+We do NOT provide compatibility to any other KCP implements.
+
+The major version number is the protocol version.
+
 ## Build
 ### Dependencies
-libev: required
-libsodium: optional, if you want to encrypt the connection.
+
+| Name      | Type     | Related Feature |
+| -         | -        | -        |
+| libev     | required | |
+| libsodium | optional | Pakcet encrypt |
 
 ```sh
 # Debian & Ubuntu
 sudo apt install -y libev-dev libsodium-dev
 ```
 
-### To build on UNIX-like systems
+### Build on UNIX-like systems
+
 ```sh
 mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE="Release" ..
 make -j$(nproc --all)
 ```
 
-## Usage
+See [m.sh](m.sh) for more information about cross compiling support.
+
+## Runtime
+### Dependencies
+
+```sh
+# Debian & Ubuntu
+sudo apt install -y libev4 libsodium23
+# OpenWRT
+opkg install libev libsodium
+```
+
+### Usage
+
 Create a config file and pass the file name. Just like:
+
 ```
 ./kcptun-libev -c server.json
 ```
-See [server.json](server.json)/[client.json](client.json) in the source repo for more details.
+
+See [server.json](server.json)/[client.json](client.json) in the source repo for your reference.
 
 Let's explain some fields in server.json/client.json:
 - The client side "listen" TCP ports and send data to "udp_connect".
@@ -60,6 +98,7 @@ Let's explain some fields in server.json/client.json:
 - log level: 0-6
 
 ## Credits
+
 kcptun-libev is made by glue the following projects together. Thanks to:
 - [kcp](https://github.com/skywind3000/kcp)
 - [libev](http://software.schmorp.de/pkg/libev.html)
