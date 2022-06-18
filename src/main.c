@@ -114,11 +114,11 @@ int main(int argc, char **argv)
 	ev_signal_start(loop, w_sigterm);
 
 	// Start infinite loop
-	LOGI_F("%s start", s->n_listener > 0 ? "client" : "server");
+	LOGI_F("%s start", conf->is_server ? "server" : "client");
 	ev_run(loop, 0);
 
 	server_shutdown(s);
-	LOGI("server shutdown");
+	LOGI_F("%s shutdown", conf->is_server ? "server" : "client");
 
 	util_free(w_sigint);
 	util_free(w_sigterm);

@@ -5,7 +5,9 @@
 
 #include <stddef.h>
 #include <fcntl.h>
+#include <sys/types.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -41,6 +43,24 @@ int socket_set_reuseport(int fd)
 	return -1;
 }
 
+void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)
+{
+	memset(key, 0, sizeof(hashkey_t));
+	struct {
+		sockaddr_max_t sa;
+		uint32_t conv;
+	} *ep = (void *)key;
+	switch (sa->sa_family) {
+	case AF_INET: {
+		memcpy(&ep->sa, sa, sizeof(struct sockaddr_in));
+	} break;
+	case AF_INET6: {
+		memcpy(&ep->sa, sa, sizeof(struct sockaddr_in6));
+	} break;
+	}
+	ep->conv = conv;
+}
+
 socklen_t getsocklen(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
@@ -52,6 +72,16 @@ socklen_t getsocklen(const struct sockaddr *sa)
 		LOGF("only IPv4/IPv6 addresses are supported");
 		abort();
 	}
+}
+
+struct sockaddr *clonesockaddr(const struct sockaddr *src)
+{
+	const socklen_t len = getsocklen(src);
+	struct sockaddr *dst = util_malloc(len);
+	if (dst != NULL) {
+		memcpy(dst, src, len);
+	}
+	return dst;
 }
 
 void format_sa(const struct sockaddr *sa, char *s, size_t buf_size)
@@ -77,20 +107,29 @@ void format_sa(const struct sockaddr *sa, char *s, size_t buf_size)
 	}
 }
 
-void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)
+struct sockaddr *
+resolve(const char *hostname, const char *service, const int socktype)
 {
-	memset(key, 0, sizeof(hashkey_t));
-	struct {
-		sockaddr_max_t sa;
-		uint32_t conv;
-	} *ep = (void *)key;
-	switch (sa->sa_family) {
-	case AF_INET: {
-		memcpy(&ep->sa, sa, sizeof(struct sockaddr_in));
-	} break;
-	case AF_INET6: {
-		memcpy(&ep->sa, sa, sizeof(struct sockaddr_in6));
-	} break;
+	struct addrinfo hints = {
+		.ai_family = PF_UNSPEC,
+		.ai_socktype = socktype,
+		.ai_flags = 0,
+	};
+	struct addrinfo *result;
+	if (getaddrinfo(hostname, service, &hints, &result) != 0) {
+		LOG_PERROR("resolve");
+		return NULL;
 	}
-	ep->conv = conv;
+	struct sockaddr *sa = NULL;
+	for (const struct addrinfo *it = result; it; it = it->ai_next) {
+		switch (it->ai_family) {
+		case AF_INET:
+		case AF_INET6:
+			sa = clonesockaddr(it->ai_addr);
+			break;
+		}
+		it = it->ai_next;
+	}
+	freeaddrinfo(result);
+	return sa;
 }

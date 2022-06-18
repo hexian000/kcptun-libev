@@ -1,18 +1,16 @@
 {
-	"listen": [
-		"127.0.0.1:5202"
-	],
-	"udp_connect": "127.0.0.2:5555",
-	"kcp": {
-		"mtu": 1372,
-		"sndwnd": 2048,
-		"rcvwnd": 2048,
-		"nodelay": 1,
-		"interval": 10,
-		"resend": 3,
-		"nc": 1
-	},
-	"password": "k",
-	"timeout": 300,
-	"loglevel": 1
+    "listen": "127.0.0.1:5202",
+    "udp_connect": "127.0.0.2:5555",
+    "kcp": {
+        "mtu": 1372,
+        "sndwnd": 2048,
+        "rcvwnd": 2048,
+        "nodelay": 1,
+        "interval": 10,
+        "resend": 3,
+        "nc": 1
+    },
+    "password": "k",
+    "timeout": 300,
+    "loglevel": 1
 }

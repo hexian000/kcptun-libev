@@ -6,7 +6,6 @@
 #include "leakypool.h"
 #include "proxy.h"
 #include "aead.h"
-#include "queue.h"
 #include "serialize.h"
 #include "server.h"
 #include "session.h"
@@ -28,11 +27,6 @@ const char tag_client[] = "kcptun-libev-client";
 const size_t tag_client_size = sizeof(tag_client);
 const char tag_server[] = "kcptun-libev-server";
 const size_t tag_server_size = sizeof(tag_server);
-
-static inline bool is_server(struct server *restrict s)
-{
-	return s->n_listener == 0;
-}
 
 static inline const unsigned char *
 get_crypto_tag(const bool is_server, const bool is_seal, size_t *tag_size)
@@ -201,7 +195,7 @@ ss0_keepalive(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
 
-	if (!is_server(s)) {
+	if (s->conf->is_server) {
 		/* client: print RTT */
 		const uint32_t now_ms = tstamp2ms(ev_time());
 		LOGI_F("roundtrip finished, RTT: %" PRIu32 " ms",
@@ -252,7 +246,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
-		if (!is_server(s)) {
+		if (!s->conf->is_server) {
 			LOGW_F("session not found [%08" PRIX32 "]", conv);
 			ss = session_new_dummy(s);
 			if (ss != NULL) {
@@ -324,7 +318,7 @@ struct packet *packet_create(struct config *restrict cfg)
 	}
 	*p = (struct packet){
 		.msgpool = pool_create(100, sizeof(struct msgframe)),
-		.is_server = cfg->n_listen > 0,
+		.is_server = cfg->is_server,
 	};
 	if (p->msgpool.pool == NULL) {
 		packet_free(p);

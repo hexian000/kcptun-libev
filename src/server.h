@@ -5,7 +5,6 @@
 #include "hashtable.h"
 #include "session.h"
 #include "util.h"
-#include "queue.h"
 #include "kcp/ikcp.h"
 #include <stdint.h>
 
@@ -27,8 +26,7 @@ struct udp_conn {
 struct server {
 	struct config *conf;
 	struct ev_loop *loop;
-	size_t n_listener;
-	struct listener *listeners;
+	struct listener listener;
 	struct udp_conn udp;
 	struct hashtable *sessions;
 	struct ev_timer *w_kcp_update;

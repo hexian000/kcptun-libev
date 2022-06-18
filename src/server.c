@@ -19,10 +19,10 @@
 
 #define UDP_BUF_SIZE 65536
 
-static inline bool listener_start(
-	struct server *restrict s, struct listener *restrict l,
-	const struct sockaddr *addr)
+static bool
+listener_start(struct server *restrict s, const struct sockaddr *addr)
 {
+	struct listener *restrict l = &(s->listener);
 	// Create server socket
 	if ((l->fd = socket(addr->sa_family, SOCK_STREAM, 0)) < 0) {
 		LOG_PERROR("socket error");
@@ -64,39 +64,7 @@ static inline bool listener_start(
 	return true;
 }
 
-static inline bool
-listener_start_all(struct server *server, struct config *conf)
-{
-	size_t n = conf->n_listen;
-	if (n < 1 || conf->addr_listen == NULL) {
-		server->listeners = NULL;
-		server->n_listener = 0;
-		return true;
-	}
-	server->listeners = util_malloc(n * sizeof(struct listener));
-	if (server->listeners == NULL) {
-		LOGE("out of memory");
-		return false;
-	}
-	server->n_listener = n;
-	for (size_t i = 0; i < n; i++) {
-		server->listeners[i] = (struct listener){
-			.w_accept = NULL,
-			.fd = -1,
-		};
-	}
-	for (size_t i = 0; i < n; i++) {
-		if (!listener_start(
-			    server, &server->listeners[i],
-			    conf->addr_listen[i])) {
-			return false;
-		}
-	}
-	return true;
-}
-
-static inline bool
-udp_start(struct server *restrict s, struct config *restrict conf)
+static bool udp_start(struct server *restrict s, struct config *restrict conf)
 {
 	struct udp_conn *restrict udp = &s->udp;
 	udp->packets = packet_create(conf);
@@ -106,50 +74,43 @@ udp_start(struct server *restrict s, struct config *restrict conf)
 	}
 
 	// Setup a udp socket.
+	if ((udp->fd = socket(conf->udp_domain, SOCK_DGRAM, 0)) < 0) {
+		LOG_PERROR("udp socket");
+		return false;
+	}
+	socket_set_nonblock(udp->fd);
+	if (conf->reuseport) {
+		socket_set_reuseport(udp->fd);
+	}
 	if (conf->addr_udp_bind) {
 		const struct sockaddr *addr = conf->addr_udp_bind;
-		if ((udp->fd = socket(addr->sa_family, SOCK_DGRAM, 0)) < 0) {
-			LOG_PERROR("udp socket");
-			return false;
-		}
-		socket_set_nonblock(udp->fd);
-		if (conf->reuseport) {
-			socket_set_reuseport(udp->fd);
-		}
 		if (bind(udp->fd, addr, getsocklen(addr))) {
 			LOG_PERROR("udp bind");
 			return false;
 		}
 		char addr_str[64];
 		format_sa(addr, addr_str, sizeof(addr_str));
-		LOGI_F("udp bind to: %s", addr_str);
-	} else if (conf->addr_udp_connect) {
+		LOGI_F("udp bind: %s", addr_str);
+	}
+	if (conf->addr_udp_connect) {
 		const struct sockaddr *addr = conf->addr_udp_connect;
-		if ((udp->fd = socket(addr->sa_family, SOCK_DGRAM, 0)) < 0) {
-			LOG_PERROR("udp socket");
-			return false;
-		}
-		socket_set_nonblock(udp->fd);
 		if (connect(udp->fd, addr, getsocklen(addr))) {
 			LOG_PERROR("udp connect");
 			return false;
 		}
 		char addr_str[64];
 		format_sa(addr, addr_str, sizeof(addr_str));
-		LOGI_F("udp connect to: %s", addr_str);
-	} else {
-		LOGF("config: udp address missing");
-		return false;
+		LOGI_F("udp connect: %s", addr_str);
 	}
-	{
-		size_t bufsize = 4194304;
-		setsockopt(
-			udp->fd, SOL_SOCKET, SO_SNDBUF, &bufsize,
-			sizeof(bufsize));
-		setsockopt(
-			udp->fd, SOL_SOCKET, SO_RCVBUF, &bufsize,
-			sizeof(bufsize));
-	}
+	// {
+	// 	size_t bufsize = 4194304;
+	// 	setsockopt(
+	// 		udp->fd, SOL_SOCKET, SO_SNDBUF, &bufsize,
+	// 		sizeof(bufsize));
+	// 	setsockopt(
+	// 		udp->fd, SOL_SOCKET, SO_RCVBUF, &bufsize,
+	// 		sizeof(bufsize));
+	// }
 
 	udp->w_read = util_malloc(sizeof(struct ev_io));
 	if (udp->w_read == NULL) {
@@ -183,13 +144,18 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		.loop = loop,
 		.conf = conf,
 		.m_conv = 0,
+		.listener =
+			(struct listener){
+				.w_accept = NULL,
+				.fd = -1,
+			},
 	};
 	s->sessions = table_create();
 	if (s->sessions == NULL) {
 		server_shutdown(s);
 		return NULL;
 	}
-	if (!listener_start_all(s, conf)) {
+	if (!listener_start(s, conf->addr_listen)) {
 		server_shutdown(s);
 		return NULL;
 	}
@@ -245,8 +211,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 	return s;
 }
 
-static inline void
-udp_free(struct ev_loop *loop, struct udp_conn *restrict conn)
+static void udp_free(struct ev_loop *loop, struct udp_conn *restrict conn)
 {
 	if (conn->packets != NULL) {
 		packet_free(conn->packets);
@@ -268,23 +233,17 @@ udp_free(struct ev_loop *loop, struct udp_conn *restrict conn)
 	}
 }
 
-static inline void listeners_free(
-	struct ev_loop *loop, struct listener *restrict listeners,
-	const size_t n)
+static void listener_free(struct ev_loop *loop, struct listener *restrict l)
 {
-	for (size_t i = 0; i < n; i++) {
-		struct listener *restrict p = &(listeners[i]);
-		if (p->w_accept != NULL) {
-			ev_io_stop(loop, p->w_accept);
-			util_free(p->w_accept);
-			p->w_accept = NULL;
-		}
-		if (p->fd != -1) {
-			close(p->fd);
-			p->fd = -1;
-		}
+	if (l->w_accept != NULL) {
+		ev_io_stop(loop, l->w_accept);
+		util_free(l->w_accept);
+		l->w_accept = NULL;
 	}
-	util_free(listeners);
+	if (l->fd != -1) {
+		close(l->fd);
+		l->fd = -1;
+	}
 }
 
 void server_shutdown(struct server *restrict s)
@@ -300,11 +259,7 @@ void server_shutdown(struct server *restrict s)
 		s->w_keepalive = NULL;
 	}
 	udp_free(s->loop, &(s->udp));
-	if (s->listeners != NULL) {
-		listeners_free(s->loop, s->listeners, s->n_listener);
-		s->listeners = NULL;
-		s->n_listener = 0;
-	}
+	listener_free(s->loop, &(s->listener));
 	if (s->sessions != NULL) {
 		session_close_all(s->sessions);
 		table_free(s->sessions);

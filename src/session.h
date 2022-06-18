@@ -37,6 +37,7 @@ struct IKCPCB;
 #define SESSION_BUF_SIZE 16384
 
 struct session {
+	bool is_accepted;
 	state_t state;
 	int tcp_fd;
 	struct ev_io *w_read, *w_write;

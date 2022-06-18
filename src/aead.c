@@ -50,8 +50,7 @@ void crypto_gen_key(unsigned char *key)
 	crypto_aead_chacha20poly1305_keygen(key);
 }
 
-static inline int
-kdf(unsigned char *restrict key, const char *restrict password)
+static int kdf(unsigned char *restrict key, const char *restrict password)
 {
 	const char salt_str[] = "kcptun-libev";
 	unsigned char salt[crypto_pwhash_argon2id_SALTBYTES];

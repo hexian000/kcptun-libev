@@ -119,7 +119,7 @@ static void traffic_stats(struct server *restrict s, const ev_tstamp now)
 	last_stats = s->stats;
 }
 
-static inline void timeout_check(struct server *restrict s, const ev_tstamp now)
+static void timeout_check(struct server *restrict s, const ev_tstamp now)
 {
 	const double check_interval = 10.0;
 	static ev_tstamp last_check = 0.0;
@@ -155,8 +155,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (now - s->udp.last_send_time < s->keepalive) {
 		return;
 	}
-	if (s->n_listener == 0) {
-		/* is server */
+	if (s->conf->is_server) {
 		return;
 	}
 	const uint32_t tstamp = tstamp2ms(ev_time());

@@ -6,10 +6,11 @@
 #include <sys/socket.h>
 
 struct config {
-	size_t n_listen;
-	struct sockaddr **addr_listen;
+	struct sockaddr *addr_listen;
 	struct sockaddr *addr_connect;
 	struct sockaddr *addr_udp_bind, *addr_udp_connect;
+	bool is_server;
+	int udp_domain;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
 	char *password;

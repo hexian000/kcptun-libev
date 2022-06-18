@@ -16,7 +16,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 
-static inline ikcpcb *
+static ikcpcb *
 kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 {
 	ikcpcb *kcp = ikcp_create(conv, ss);

@@ -2,6 +2,7 @@
 #include "aead.h"
 #include "slog.h"
 #include "util.h"
+#include "sockutil.h"
 
 #include "json/json.h"
 #include "b64/b64.h"
@@ -34,21 +35,21 @@ static bool walk_json_object(
 	return true;
 }
 
-typedef bool (*walk_json_array_cb)(struct config *, const json_value *);
-static bool walk_json_array(
-	struct config *conf, const json_value *obj, walk_json_array_cb cb)
-{
-	if (obj == NULL || obj->type != json_array) {
-		return false;
-	}
+// typedef bool (*walk_json_array_cb)(struct config *, const json_value *);
+// static bool walk_json_array(
+// 	struct config *conf, const json_value *obj, walk_json_array_cb cb)
+// {
+// 	if (obj == NULL || obj->type != json_array) {
+// 		return false;
+// 	}
 
-	for (unsigned int i = 0; i < obj->u.array.length; i++) {
-		if (!cb(conf, obj->u.array.values[i])) {
-			return false;
-		}
-	}
-	return true;
-}
+// 	for (unsigned int i = 0; i < obj->u.array.length; i++) {
+// 		if (!cb(conf, obj->u.array.values[i])) {
+// 			return false;
+// 		}
+// 	}
+// 	return true;
+// }
 
 static json_value *parse_json(const char *file)
 {
@@ -141,67 +142,26 @@ static char *parse_string_json(const json_value *value)
 	return str;
 }
 
-static inline struct sockaddr_in *parse_ipv4(const char *str, uint16_t port)
+static struct sockaddr *parse_endpoint(char *str, const int socktype)
 {
-	struct sockaddr_in sa = { 0 };
-	if (inet_pton(AF_INET, str, &(sa.sin_addr)) == 1) {
-		sa.sin_family = AF_INET;
-		sa.sin_port = htons(port);
-		struct sockaddr_in *p = must_malloc(sizeof(sa));
-		*p = sa;
-		return p;
-	}
-	return NULL;
-}
-
-static inline struct sockaddr_in6 *parse_ipv6(const char *str, uint16_t port)
-{
-	size_t n = strlen(str);
-	if (n > 41) {
-		return NULL;
-	}
-	char s[40] = { 0 };
-	if (str[0] == '[' && str[n - 1] == ']') {
-		memcpy(s, str + 1, n - 2);
-		str = s;
-	}
-	struct sockaddr_in6 sa = { 0 };
-	if (inet_pton(AF_INET6, str, &(sa.sin6_addr)) == 1) {
-		sa.sin6_family = AF_INET6;
-		sa.sin6_port = htons(port);
-		struct sockaddr_in6 *p = must_malloc(sizeof(sa));
-		*p = sa;
-		return p;
-	}
-	return NULL;
-}
-
-static inline struct sockaddr *parse_endpoint(char *str)
-{
-	char *p = strrchr(str, ':');
-	if (p == NULL) {
+	char *service = strrchr(str, ':');
+	if (service == NULL) {
 		LOGE_F("\":\" is missing in address: %s", str);
 		return NULL;
 	}
-	*p = '\0';
-	p++;
-	/* parse port */
-	uint16_t port;
-	{
-		char *end = NULL;
-		unsigned n = strtoul(p, &end, 10);
-		if (p == end || n == 0 || n > UINT16_MAX) {
-			LOGE_F("invalid port: \"%s\"", p);
-			return NULL;
-		}
-		port = (uint16_t)n;
-	}
+	*service = '\0';
+	service++;
 
-	struct sockaddr *sa = (struct sockaddr *)parse_ipv4(str, port);
-	if (sa) {
-		return sa;
+	char *hostname = str;
+	if (hostname[0] == '\0') {
+		/* default address */
+		hostname = "::";
+	} else if (hostname[0] == '[' && service[-2] == ']') {
+		/* remove brackets */
+		hostname++;
+		service[-2] = '\0';
 	}
-	sa = (struct sockaddr *)parse_ipv6(str, port);
+	struct sockaddr *sa = resolve(hostname, service, socktype);
 	if (sa) {
 		return sa;
 	}
@@ -209,25 +169,16 @@ static inline struct sockaddr *parse_endpoint(char *str)
 	return NULL;
 }
 
-static struct sockaddr *parse_endpoint_json(const json_value *v)
+static struct sockaddr *
+parse_endpoint_json(const json_value *v, const int socktype)
 {
 	char *addr_str = parse_string_json(v);
 	if (addr_str == NULL) {
 		return false;
 	}
-	struct sockaddr *sa = parse_endpoint(addr_str);
+	struct sockaddr *sa = parse_endpoint(addr_str, socktype);
 	util_free(addr_str);
 	return sa;
-}
-
-static bool listen_list_cb(struct config *conf, const json_value *v)
-{
-	struct sockaddr *sa = parse_endpoint_json(v);
-	if (!sa) {
-		return false;
-	}
-	conf->addr_listen[conf->n_listen++] = sa;
-	return true;
 }
 
 static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
@@ -264,29 +215,19 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "listen") == 0) {
-		if (value->type != json_array) {
-			return false;
-		}
-		unsigned int n = value->u.array.length;
-		conf->n_listen = 0;
-		conf->addr_listen = util_malloc(n * sizeof(struct sockaddr *));
-		UTIL_ASSERT(conf->addr_listen);
-		bool ok = walk_json_array(conf, value, listen_list_cb);
-		if (!ok) {
-			util_free(conf->addr_listen);
-		}
-		return ok;
+		struct sockaddr *sa = parse_endpoint_json(value, SOCK_STREAM);
+		return (conf->addr_listen = sa) != NULL;
 	}
 	if (strcmp(name, "connect") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value);
+		struct sockaddr *sa = parse_endpoint_json(value, SOCK_STREAM);
 		return (conf->addr_connect = sa) != NULL;
 	}
 	if (strcmp(name, "udp_bind") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value);
+		struct sockaddr *sa = parse_endpoint_json(value, SOCK_DGRAM);
 		return (conf->addr_udp_bind = sa) != NULL;
 	}
 	if (strcmp(name, "udp_connect") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value);
+		struct sockaddr *sa = parse_endpoint_json(value, SOCK_DGRAM);
 		return (conf->addr_udp_connect = sa) != NULL;
 	}
 	if (strcmp(name, "kcp") == 0) {
@@ -356,10 +297,9 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	return false;
 }
 
-static inline struct config conf_default()
+static struct config conf_default()
 {
 	return (struct config){
-		.n_listen = 0,
 		.addr_listen = NULL,
 		.addr_connect = NULL,
 		.addr_udp_bind = NULL,
@@ -382,10 +322,19 @@ static inline struct config conf_default()
 	};
 }
 
-static inline bool conf_check(struct config *restrict conf)
+static bool conf_check(struct config *restrict conf)
 {
-	UNUSED(conf);
-	/* TODO: more check */
+	if (conf->addr_udp_bind && conf->addr_udp_connect &&
+	    conf->addr_udp_bind->sa_family !=
+		    conf->addr_udp_connect->sa_family) {
+		LOGE("config: udp address should be in same network");
+		return false;
+	}
+	if (!conf->addr_udp_bind && !conf->addr_udp_connect) {
+		LOGF("config: udp address is missing");
+		return false;
+	}
+	conf->is_server = !conf->addr_connect;
 	return true;
 }
 
@@ -415,13 +364,7 @@ struct config *conf_read(const char *file)
 
 void conf_free(struct config *conf)
 {
-	if (conf->addr_listen != NULL) {
-		for (size_t i = 0; i < conf->n_listen; i++) {
-			UTIL_SAFE_FREE(conf->addr_listen[i]);
-		}
-		conf->n_listen = 0;
-		util_free(conf->addr_listen);
-	}
+	UTIL_SAFE_FREE(conf->addr_listen);
 	UTIL_SAFE_FREE(conf->addr_connect);
 	UTIL_SAFE_FREE(conf->addr_udp_bind);
 	UTIL_SAFE_FREE(conf->addr_udp_connect);

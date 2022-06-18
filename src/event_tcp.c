@@ -21,6 +21,7 @@ static void accept_one(struct server *restrict s, const int fd)
 		close(fd);
 		return;
 	}
+	ss->is_accepted = true;
 	ss->state = STATE_CONNECTED;
 	ss->last_seen = ev_now(s->loop);
 	hashkey_t key;
