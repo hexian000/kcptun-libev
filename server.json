@@ -2,15 +2,15 @@
 	"connect": "127.0.0.1:5201",
 	"udp_bind": "127.0.0.2:5555",
 	"kcp": {
-		"mtu": 1300,
+		"mtu": 1372,
 		"sndwnd": 2048,
 		"rcvwnd": 2048,
 		"nodelay": 1,
-		"interval": 40,
-		"resend": 0,
+		"interval": 10,
+		"resend": 3,
 		"nc": 1
 	},
 	"password": "k",
-	"timeout": 3600,
-	"loglevel": 6
+	"timeout": 300,
+	"loglevel": 1
 }

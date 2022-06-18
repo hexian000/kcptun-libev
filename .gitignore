@@ -1,11 +1,4 @@
 /.vscode
-/autom4te.cache
-/kcptun-libev
-
-/config.h
-/config.h.in
-/config.status
-/configure
-
-*.o
-*.log
+/.clangd
+/build
+/compile_commands.json
