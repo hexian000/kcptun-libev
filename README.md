@@ -35,8 +35,8 @@ kcptun-libev is **NOT** production ready yet.
 
 Theoretically all systems that support ISO C11.
 
-| Name      | Type      | Notes |
-| -         | -         | -        |
+| Name      | Level     | Notes |
+| -         | -         | -     |
 | Ubuntu    | developed | |
 | OpenWRT   | tested    | |
 | Unix-like | theoretical supported | |
@@ -51,10 +51,10 @@ The major version number is the protocol version.
 ## Build
 ### Dependencies
 
-| Name      | Type     | Related Feature |
-| -         | -        | -        |
+| Name      | Kind     | Related Feature |
+| -         | -        | - |
 | libev     | required | |
-| libsodium | optional | Pakcet encrypt |
+| libsodium | optional | Connection encrypting |
 
 ```sh
 # Debian & Ubuntu
@@ -95,7 +95,7 @@ Let's explain some fields in server.json/client.json:
 - The client side "listen" TCP ports and send data to "udp_connect".
 - The server side receive data from "udp_bind" and forward the connections to "connect".
 - Set a password is strongly suggested when using in public networks.
-- log level: 0-6
+- Log level: 0-6
 
 ## Credits
 
