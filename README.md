@@ -104,3 +104,4 @@ kcptun-libev is made by glue the following projects together. Thanks to:
 - [libev](http://software.schmorp.de/pkg/libev.html)
 - [libsodium](https://github.com/jedisct1/libsodium)
 - [json-parser](https://github.com/udp/json-parser)
+- [b64.c](https://github.com/jwerle/b64.c)
