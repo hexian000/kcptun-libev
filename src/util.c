@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <time.h>
 
 void print_bin(const void *b, const size_t n)
 {
@@ -31,10 +32,8 @@ static uint32_t rand32_state = UINT32_C(0);
 
 uint32_t rand32()
 {
+	if (!rand32_state) {
+		rand32_state = time(NULL);
+	}
 	return rand32_state = xorshift32(rand32_state);
-}
-
-void srand32(uint32_t x)
-{
-	rand32_state = x;
 }

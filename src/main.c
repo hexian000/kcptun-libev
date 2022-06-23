@@ -30,7 +30,6 @@ static void print_usage(char *argv0)
 
 static void init()
 {
-	srand32(time(NULL));
 #if WITH_CRYPTO
 	aead_init();
 #endif

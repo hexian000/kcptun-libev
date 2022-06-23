@@ -24,28 +24,29 @@ void crypto_nonce_init(unsigned char *nonce)
 	randombytes_buf(nonce, crypto_nonce_size());
 }
 
+const uint64_t nonce_magic = UINT64_C(999999937);
+
 void crypto_nonce_next(unsigned char *nonce)
 {
-	size_t size = crypto_nonce_size();
-	UTIL_ASSERT(size > sizeof(uint64_t));
-	const uint64_t magic = UINT64_C(53);
+	UTIL_ASSERT(crypto_nonce_size() == sizeof(uint64_t) + sizeof(uint32_t));
 	const uint64_t curr = read_uint64(nonce);
-	uint64_t next = curr + magic;
+	uint64_t next = curr + nonce_magic;
 	if (next < curr) { /* overflow */
-		const uint64_t r = curr % magic;
-		next += magic - next % magic + r;
+		const uint64_t r0 = curr % nonce_magic;
+		const uint64_t r1 = next % nonce_magic;
+		next += nonce_magic - r1 + r0;
 	}
 	write_uint64(nonce, next);
 	nonce += sizeof(uint64_t);
-	size -= sizeof(uint64_t);
-	randombytes_buf(nonce, size);
+	write_uint32(nonce, rand32());
 }
 
 bool crypto_nonce_verify(const unsigned char *saved, const unsigned char *got)
 {
-	UTIL_ASSERT(crypto_nonce_size() >= sizeof(uint64_t));
-	int64_t diff = read_uint64(got) - read_uint64(saved);
-	return diff % 53 == 0;
+	UTIL_ASSERT(crypto_nonce_size() == sizeof(uint64_t) + sizeof(uint32_t));
+	const uint64_t r0 = read_uint64(saved) % nonce_magic;
+	const uint64_t r1 = read_uint64(got) % nonce_magic;
+	return r0 == r1;
 }
 
 size_t crypto_key_size()

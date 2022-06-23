@@ -145,7 +145,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 	*s = (struct server){
 		.loop = loop,
 		.conf = conf,
-		.m_conv = 0,
+		.m_conv = rand32(),
 		.listener =
 			(struct listener){
 				.w_accept = NULL,

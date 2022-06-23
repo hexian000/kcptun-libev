@@ -54,7 +54,6 @@ static inline void *must_malloc(size_t n)
 
 void print_bin(const void *b, const size_t n);
 
-void srand32(uint32_t x);
 uint32_t rand32();
 
 static inline uint32_t tstamp2ms(const ev_tstamp t)
