@@ -21,14 +21,15 @@ struct msgframe {
 	unsigned char buf[MAX_PACKET_SIZE];
 };
 
-#define MSG_QUEUE_SIZE 100
+#define MQ_SEND_SIZE 2048
+#define MQ_RECV_SIZE 256
 
 struct packet {
 	bool is_server;
 	struct leakypool msgpool;
-	struct msgframe *mq_send[MSG_QUEUE_SIZE];
+	struct msgframe *mq_send[MQ_SEND_SIZE];
 	size_t mq_send_len;
-	struct msgframe *mq_recv[MSG_QUEUE_SIZE];
+	struct msgframe *mq_recv[MQ_RECV_SIZE];
 	size_t mq_recv_len;
 #if WITH_CRYPTO
 	unsigned char *nonce_send;

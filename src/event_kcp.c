@@ -30,6 +30,7 @@ void kcp_close(struct session *restrict ss)
 	if (ss->kcp_closed) {
 		return;
 	}
+	(void)kcp_send(ss);
 	ss->state = STATE_LINGER;
 	unsigned char buf[TLV_HEADER_SIZE];
 	struct tlv_header header = (struct tlv_header){
@@ -50,17 +51,17 @@ void kcp_close(struct session *restrict ss)
 	ss->last_seen = ev_now(ss->server->loop);
 }
 
-bool kcp_send(struct session *restrict ss)
+size_t kcp_send(struct session *restrict ss)
 {
 	UTIL_ASSERT(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
 	if (ss->rbuf_len == 0) {
-		return true;
+		return 0;
 	}
 	struct server *restrict s = ss->server;
 	const int waitsnd = ikcp_waitsnd(ss->kcp);
 	const int window_size = s->conf->kcp_sndwnd;
 	if (waitsnd >= window_size) {
-		return false;
+		return 0;
 	}
 
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf_len;
@@ -71,7 +72,7 @@ bool kcp_send(struct session *restrict ss)
 	tlv_header_write(ss->rbuf, header);
 	int r = ikcp_send(ss->kcp, (char *)ss->rbuf, len);
 	if (r < 0) {
-		return false;
+		return 0;
 	}
 	ss->rbuf_len = 0;
 	/* invalidate last ikcp_check */
@@ -81,7 +82,7 @@ bool kcp_send(struct session *restrict ss)
 	s->stats.kcp_out += len;
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->kcp->conv,
 	       len);
-	return true;
+	return len;
 }
 
 size_t kcp_recv(struct session *restrict ss)
@@ -162,7 +163,7 @@ static void kcp_update(struct session *restrict ss)
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
 		const int window_size = s->conf->kcp_sndwnd;
 		if (waitsnd < window_size) {
-			tcp_recv(ss);
+			ev_io_start(s->loop, ss->w_read);
 		}
 	}
 	if (ss->state == STATE_LINGER && !ss->kcp_closed) {
@@ -172,10 +173,26 @@ static void kcp_update(struct session *restrict ss)
 
 void kcp_notify(struct session *restrict ss)
 {
+	ss->kcp_checked = false;
 	kcp_update(ss);
 }
 
-bool kcp_update_iter(
+static bool kcp_notify_iter(
+	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	kcp_notify((struct session *)value);
+	return true;
+}
+
+void kcp_notify_all(struct server *s)
+{
+	table_iterate(s->sessions, kcp_notify_iter, NULL);
+}
+
+static bool kcp_update_iter(
 	struct hashtable *t, const hashkey_t *key, void *value, void *user)
 {
 	UNUSED(t);
@@ -185,14 +202,10 @@ bool kcp_update_iter(
 	return true;
 }
 
-void kcp_notify_all(struct server *restrict s)
-{
-	table_iterate(s->sessions, kcp_update_iter, NULL);
-}
-
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	kcp_notify_all((struct server *)watcher->data);
+	struct server *restrict s = (struct server *)watcher->data;
+	table_iterate(s->sessions, kcp_update_iter, NULL);
 }

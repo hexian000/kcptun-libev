@@ -7,6 +7,7 @@
 #include "sockutil.h"
 
 #include "util.h"
+
 #include <string.h>
 #include <sys/socket.h>
 
@@ -66,19 +67,17 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 #define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
 
-void tcp_recv(struct session *restrict ss)
+size_t tcp_recv(struct session *restrict ss)
 {
 	struct server *restrict s = ss->server;
 
-	(void)kcp_send(ss);
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
 	if (cap == 0) {
 		/* KCP EAGAIN */
 		ev_io_stop(s->loop, ss->w_read);
-		return;
+		return 0;
 	}
-	ev_io_start(s->loop, ss->w_read);
 
 	unsigned char *buf = ss->rbuf + TLV_HEADER_SIZE + ss->rbuf_len;
 	size_t len = 0;
@@ -96,7 +95,7 @@ void tcp_recv(struct session *restrict ss)
 			LOG_PERROR("recv");
 			kcp_close(ss);
 			session_shutdown(ss);
-			return;
+			return 0;
 		}
 		if (nread == 0) {
 			tcp_eof = true;
@@ -114,9 +113,6 @@ void tcp_recv(struct session *restrict ss)
 		       ss->kcp->conv, len, cap);
 
 		ss->last_seen = ev_now(s->loop);
-		if (kcp_send(ss)) {
-			kcp_notify(ss);
-		}
 	}
 
 	if (tcp_eof) {
@@ -126,6 +122,7 @@ void tcp_recv(struct session *restrict ss)
 		session_shutdown(ss);
 		ss->state = STATE_LINGER;
 	}
+	return len;
 }
 
 void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -133,7 +130,13 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 
-	tcp_recv((struct session *)watcher->data);
+	struct session *restrict ss = (struct session *)watcher->data;
+	if (ss->rbuf_len == 0) {
+		(void)tcp_recv(ss);
+	}
+	if (kcp_send(ss) > 0) {
+		kcp_notify(ss);
+	}
 }
 
 static void tcp_send(struct session *restrict ss)

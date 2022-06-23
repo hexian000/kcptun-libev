@@ -24,8 +24,15 @@ case "$1" in
     cmake --build . --parallel
     ls -lh src/kcptun-libev
     ;;
-"c")
-    rm -rf build xbuild
+"p")
+    rm -rf build
+    mkdir -p build && cd build
+    cmake -G "Ninja" \
+        -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        ..
+    cmake --build . --parallel
+    # cd src/tests && ctest
     ;;
 *)
     # ln -sf build/compile_commands.json compile_commands.json
@@ -36,5 +43,8 @@ case "$1" in
         ..
     cmake --build . --parallel
     # cd src/tests && ctest
+    ;;
+"c")
+    rm -rf build xbuild
     ;;
 esac

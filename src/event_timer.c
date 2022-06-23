@@ -111,11 +111,13 @@ static void traffic_stats(struct server *restrict s, const ev_tstamp now)
 	udp_down = (dstats.udp_in >> 10u) / dt;
 	tcp_up = (dstats.tcp_in >> 10u) / dt;
 	tcp_down = (dstats.tcp_out >> 10u) / dt;
-	LOGD_F("traffic(KiB/s) udp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f",
-	       udp_up, udp_down, tcp_up, tcp_down);
-	LOGD_F("total udp up/down: %zu/%zu; tcp up/down: %zu/%zu",
+	LOGD_F("traffic(KiB/s) udp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
+	       udp_up, udp_down, tcp_up, tcp_down, tcp_up / udp_up * 100.0,
+	       tcp_down / udp_down * 100.0);
+	LOGD_F("total udp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
 	       s->stats.udp_out, s->stats.udp_in, s->stats.tcp_in,
-	       s->stats.tcp_out);
+	       s->stats.tcp_out, s->stats.tcp_in * 100.0 / s->stats.udp_out,
+	       s->stats.tcp_out * 100.0 / s->stats.udp_in);
 	last_stats = s->stats;
 }
 

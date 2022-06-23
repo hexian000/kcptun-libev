@@ -3,6 +3,7 @@
 #include "slog.h"
 #include "util.h"
 
+#include <asm-generic/socket.h>
 #include <stddef.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -41,6 +42,14 @@ int socket_set_reuseport(int fd)
 	LOGE("reuseport not supported on this platform");
 #endif
 	return -1;
+}
+
+void socket_set_buffer(int fd, size_t send, size_t recv)
+{
+	(void)setsockopt(
+		fd, SOL_SOCKET, SO_SNDBUF, &(int){ send }, sizeof(int));
+	(void)setsockopt(
+		fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv }, sizeof(int));
 }
 
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)

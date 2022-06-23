@@ -7,6 +7,7 @@
 #include "session.h"
 
 #include <ev.h>
+#include <sys/socket.h>
 
 struct session *
 proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
@@ -19,6 +20,7 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 		return NULL;
 	}
 	socket_set_nonblock(fd);
+	socket_set_buffer(fd, 16384, 16384);
 	struct session *ss = session_new(s, fd, addr, conv);
 	if (ss == NULL) {
 		LOGE("proxy_dial: out of memory");

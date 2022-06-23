@@ -3,6 +3,7 @@ project(kcptun-libev
 	LANGUAGES C
 	HOMEPAGE_URL "http://github.com/hexian000/kcptun-libev")
 set(PROJECT_VERSION_STRING "2.0-dev")
+enable_testing()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=address,undefined")

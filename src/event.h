@@ -25,9 +25,9 @@ void udp_output_cb(struct ev_loop *loop, struct ev_async *watcher, int revents);
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 
-void tcp_recv(struct session *ss);
+size_t tcp_recv(struct session *ss);
 int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
-bool kcp_send(struct session *ss);
+size_t kcp_send(struct session *ss);
 size_t kcp_recv(struct session *ss);
 void kcp_close(struct session *ss);
 

@@ -166,10 +166,6 @@ bool send_ss0(
 	const unsigned char *b, const size_t n)
 {
 	struct packet *restrict p = s->udp.packets;
-	if (p->mq_send_len >= MSG_QUEUE_SIZE) {
-		LOGE("mq_send is full");
-		return false;
-	}
 	struct msgframe *restrict msg = msgframe_new(p, sa);
 	if (msg == NULL) {
 		LOGE("out of memory");
@@ -182,7 +178,6 @@ bool send_ss0(
 			  });
 	memcpy(msg->buf + SESSION0_HEADER_SIZE, b, n);
 	msg->len = SESSION0_HEADER_SIZE + n;
-
 	return packet_send(p, s, msg);
 }
 
@@ -284,7 +279,6 @@ void packet_recv(struct packet *restrict p, struct server *s)
 		msgframe_delete(p, msg);
 	}
 	p->mq_recv_len = 0;
-	kcp_notify_all(s);
 }
 
 bool packet_send(
@@ -298,7 +292,7 @@ bool packet_send(
 	}
 #endif
 
-	if (p->mq_send_len >= MSG_QUEUE_SIZE) {
+	if (p->mq_send_len >= MQ_SEND_SIZE) {
 		LOGW_F("mq_send is full, %zu bytes discarded", msg->len);
 		msgframe_delete(p, msg);
 		return false;

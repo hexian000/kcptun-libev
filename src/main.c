@@ -101,9 +101,11 @@ int main(int argc, char **argv)
 	slog_level = conf->log_level;
 	struct server *restrict s = server_start(loop, conf);
 	if (s == NULL) {
-		LOGE("failed to start server");
+		LOGE_F("failed to start %s",
+		       conf->is_server ? "server" : "client");
 		util_free(w_sigint);
 		util_free(w_sigterm);
+		util_free(conf);
 		return EXIT_FAILURE;
 	}
 
@@ -122,6 +124,7 @@ int main(int argc, char **argv)
 
 	util_free(w_sigint);
 	util_free(w_sigterm);
+	util_free(conf);
 
 	LOGI("program terminated normally.");
 	return EXIT_SUCCESS;
