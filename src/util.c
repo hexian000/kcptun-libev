@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <string.h>
 #include <time.h>
 
 void print_bin(const void *b, const size_t n)
@@ -17,6 +18,21 @@ void print_bin(const void *b, const size_t n)
 	fprintf(stderr, "\n");
 	fflush(stderr);
 #endif /* NDEBUG */
+}
+
+char *clonestr(const char *str)
+{
+	if (str == NULL) {
+		return NULL;
+	}
+	size_t len = strlen(str);
+	char *s = util_malloc(len + 1);
+	if (s == NULL) {
+		return NULL;
+	}
+	memcpy(s, str, len);
+	s[len] = 0;
+	return s;
 }
 
 /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */

@@ -53,6 +53,8 @@ static size_t udp_recv(struct server *restrict s)
 	} else if (nrecv == 0) {
 		return 0;
 	}
+	s->udp.last_seen_time = ev_now(s->loop);
+
 	size_t nbrecv = 0;
 	for (int i = 0; i < nrecv; i++) {
 		struct msgframe *restrict msg = frames[i];
@@ -92,6 +94,8 @@ static size_t udp_recv(struct server *restrict s)
 		LOG_PERROR("recvmsg");
 		break;
 	}
+	s->udp.last_seen_time = ev_now(s->loop);
+
 	msg->len = (size_t)nbrecv;
 	p->mq_recv[p->mq_recv_len++] = msg;
 

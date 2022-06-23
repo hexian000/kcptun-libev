@@ -142,45 +142,6 @@ static char *parse_string_json(const json_value *value)
 	return str;
 }
 
-static struct sockaddr *parse_endpoint(char *str, const int socktype)
-{
-	char *service = strrchr(str, ':');
-	if (service == NULL) {
-		LOGE_F("\":\" is missing in address: %s", str);
-		return NULL;
-	}
-	*service = '\0';
-	service++;
-
-	char *hostname = str;
-	if (hostname[0] == '\0') {
-		/* default address */
-		hostname = "::";
-	} else if (hostname[0] == '[' && service[-2] == ']') {
-		/* remove brackets */
-		hostname++;
-		service[-2] = '\0';
-	}
-	struct sockaddr *sa = resolve(hostname, service, socktype);
-	if (sa) {
-		return sa;
-	}
-	LOGE_F("failed to parse address: \"%s\"", str);
-	return NULL;
-}
-
-static struct sockaddr *
-parse_endpoint_json(const json_value *v, const int socktype)
-{
-	char *addr_str = parse_string_json(v);
-	if (addr_str == NULL) {
-		return false;
-	}
-	struct sockaddr *sa = parse_endpoint(addr_str, socktype);
-	util_free(addr_str);
-	return sa;
-}
-
 static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
 {
 	const char *name = entry->name;
@@ -215,20 +176,20 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "listen") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value, SOCK_STREAM);
-		return (conf->addr_listen = sa) != NULL;
+		char *str = parse_string_json(value);
+		return (conf->listen.str = str) != NULL;
 	}
 	if (strcmp(name, "connect") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value, SOCK_STREAM);
-		return (conf->addr_connect = sa) != NULL;
+		char *str = parse_string_json(value);
+		return (conf->connect.str = str) != NULL;
 	}
 	if (strcmp(name, "udp_bind") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value, SOCK_DGRAM);
-		return (conf->addr_udp_bind = sa) != NULL;
+		char *str = parse_string_json(value);
+		return (conf->udp_bind.str = str) != NULL;
 	}
 	if (strcmp(name, "udp_connect") == 0) {
-		struct sockaddr *sa = parse_endpoint_json(value, SOCK_DGRAM);
-		return (conf->addr_udp_connect = sa) != NULL;
+		char *str = parse_string_json(value);
+		return (conf->udp_connect.str = str) != NULL;
 	}
 	if (strcmp(name, "kcp") == 0) {
 		return walk_json_object(conf, value, kcp_scope_cb);
@@ -297,19 +258,78 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	return false;
 }
 
+static bool splithostport(char *str, char **hostname, char **service)
+{
+	char *port = strrchr(str, ':');
+	if (service == NULL) {
+		return false;
+	}
+	*port = '\0';
+	port++;
+
+	char *host = str;
+	if (host[0] == '\0') {
+		/* default address */
+		host = "::";
+	} else if (host[0] == '[' && port[-2] == ']') {
+		/* remove brackets */
+		host++;
+		port[-2] = '\0';
+	}
+
+	*hostname = host;
+	*service = port;
+	return true;
+}
+
+static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
+{
+	char *hostname = NULL;
+	char *service = NULL;
+	char *str = clonestr(addr->str);
+	if (str == NULL) {
+		return false;
+	}
+	if (!splithostport(str, &hostname, &service)) {
+		LOGE_F("\":\" is missing in address: %s", str);
+		util_free(str);
+		return false;
+	}
+	struct sockaddr *sa = resolve(hostname, service, socktype);
+	if (sa == NULL) {
+		util_free(str);
+		return false;
+	}
+	util_free(str);
+	UTIL_SAFE_FREE(addr->sa);
+	addr->sa = sa;
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		if (strcmp(addr->str, addr_str) != 0) {
+			LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
+		}
+	}
+	return true;
+}
+
+void conf_resolve(struct config *conf)
+{
+	resolve_netaddr(&conf->listen, SOCK_STREAM);
+	resolve_netaddr(&conf->connect, SOCK_STREAM);
+	resolve_netaddr(&conf->udp_bind, SOCK_DGRAM);
+	resolve_netaddr(&conf->udp_connect, SOCK_DGRAM);
+}
+
 static struct config conf_default()
 {
 	return (struct config){
-		.addr_listen = NULL,
-		.addr_connect = NULL,
-		.addr_udp_bind = NULL,
-		.addr_udp_connect = NULL,
-		.kcp_mtu = 1372,
-		.kcp_sndwnd = 2048,
-		.kcp_rcvwnd = 2048,
+		.kcp_mtu = 1400,
+		.kcp_sndwnd = 1024,
+		.kcp_rcvwnd = 1024,
 		.kcp_nodelay = 1,
-		.kcp_interval = 10,
-		.kcp_resend = 0,
+		.kcp_interval = 100,
+		.kcp_resend = 2,
 		.kcp_nc = 1,
 		.password = NULL,
 		.psk = NULL,
@@ -324,19 +344,19 @@ static struct config conf_default()
 
 static bool conf_check(struct config *restrict conf)
 {
+	conf_resolve(conf);
 	const struct sockaddr *sa = NULL;
-	if (conf->addr_udp_bind != NULL) {
-		sa = conf->addr_udp_bind;
+	if (conf->udp_bind.sa != NULL) {
+		sa = conf->udp_bind.sa;
 	}
-	if (conf->addr_udp_connect != NULL) {
+	if (conf->udp_connect.sa != NULL) {
 		if (sa != NULL) {
-			if (conf->addr_udp_connect->sa_family !=
-			    sa->sa_family) {
+			if (conf->udp_connect.sa->sa_family != sa->sa_family) {
 				LOGE("config: udp address must be in same network");
 				return false;
 			}
 		} else {
-			sa = conf->addr_udp_connect;
+			sa = conf->udp_connect.sa;
 		}
 	}
 	if (sa == NULL) {
@@ -344,7 +364,7 @@ static bool conf_check(struct config *restrict conf)
 		return false;
 	}
 	conf->udp_af = sa->sa_family;
-	conf->is_server = !!conf->addr_connect;
+	conf->is_server = !!conf->connect.str;
 	return true;
 }
 
@@ -372,16 +392,22 @@ struct config *conf_read(const char *file)
 	return conf;
 }
 
+static void netaddr_safe_free(struct netaddr *restrict addr)
+{
+	if (addr == NULL) {
+		return;
+	}
+	UTIL_SAFE_FREE(addr->str);
+	UTIL_SAFE_FREE(addr->sa);
+}
+
 void conf_free(struct config *conf)
 {
-	UTIL_SAFE_FREE(conf->addr_listen);
-	UTIL_SAFE_FREE(conf->addr_connect);
-	UTIL_SAFE_FREE(conf->addr_udp_bind);
-	UTIL_SAFE_FREE(conf->addr_udp_connect);
+	netaddr_safe_free(&conf->listen);
+	netaddr_safe_free(&conf->connect);
+	netaddr_safe_free(&conf->udp_bind);
+	netaddr_safe_free(&conf->udp_connect);
 	UTIL_SAFE_FREE(conf->password);
-	if (conf->psk) {
-		/* allocated by library */
-		free(conf->psk);
-	}
+	UTIL_SAFE_FREE(conf->psk);
 	util_free(conf);
 }

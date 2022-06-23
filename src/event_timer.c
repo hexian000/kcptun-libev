@@ -1,9 +1,11 @@
+#include "conf.h"
 #include "event_impl.h"
 #include "hashtable.h"
 #include "packet.h"
 #include "serialize.h"
 #include "server.h"
 #include "session.h"
+#include "slog.h"
 #include "sockutil.h"
 #include "util.h"
 #include <ev.h>
@@ -154,14 +156,18 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	const ev_tstamp now = ev_now(loop);
 	timeout_check(s, now);
 
-	if (now - s->udp.last_send_time < s->keepalive) {
+	if (s->conf->is_server) {
 		return;
 	}
-	if (s->conf->is_server) {
+	if (now - s->udp.last_seen_time > 60.0) {
+		LOGD("remote not seen for long, try resolve addresses");
+		conf_resolve(s->conf);
+	}
+	if (now - s->udp.last_send_time < s->keepalive) {
 		return;
 	}
 	const uint32_t tstamp = tstamp2ms(ev_time());
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	send_ss0(s, s->conf->addr_udp_connect, S0MSG_KEEPALIVE, b, sizeof(b));
+	send_ss0(s, s->conf->udp_connect.sa, S0MSG_KEEPALIVE, b, sizeof(b));
 }

@@ -36,7 +36,7 @@ static inline void util_free(void *p)
 
 static inline void *must_malloc(size_t n)
 {
-	void *p = malloc(n);
+	void *p = util_malloc(n);
 	if (p == NULL) {
 		LOGF("fatal: out of memory");
 		exit(EXIT_FAILURE);
@@ -51,6 +51,8 @@ static inline void *must_malloc(size_t n)
 			(x) = NULL;                                            \
 		}                                                              \
 	} while (0)
+
+char *clonestr(const char *);
 
 void print_bin(const void *b, const size_t n);
 

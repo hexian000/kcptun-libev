@@ -12,7 +12,7 @@
 struct session *
 proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 {
-	const struct sockaddr *sa = s->conf->addr_connect;
+	const struct sockaddr *sa = s->conf->connect.sa;
 	int fd;
 	// Create socket
 	if ((fd = socket(sa->sa_family, SOCK_STREAM, 0)) < 0) {

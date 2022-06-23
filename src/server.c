@@ -84,8 +84,8 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 	if (conf->reuseport) {
 		socket_set_reuseport(udp->fd);
 	}
-	if (conf->addr_udp_bind) {
-		const struct sockaddr *addr = conf->addr_udp_bind;
+	if (conf->udp_bind.sa) {
+		const struct sockaddr *addr = conf->udp_bind.sa;
 		if (bind(udp->fd, addr, getsocklen(addr))) {
 			LOG_PERROR("udp bind");
 			return false;
@@ -94,8 +94,8 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		format_sa(addr, addr_str, sizeof(addr_str));
 		LOGI_F("udp bind: %s", addr_str);
 	}
-	if (conf->addr_udp_connect) {
-		const struct sockaddr *addr = conf->addr_udp_connect;
+	if (conf->udp_connect.sa) {
+		const struct sockaddr *addr = conf->udp_connect.sa;
 		if (connect(udp->fd, addr, getsocklen(addr))) {
 			LOG_PERROR("udp connect");
 			return false;
@@ -132,7 +132,9 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 	udp->w_write->data = s;
 	ev_io_start(s->loop, udp->w_write);
 
-	udp->last_send_time = ev_time();
+	const ev_tstamp now = ev_time();
+	udp->last_send_time = now;
+	udp->last_seen_time = now;
 	return true;
 }
 
@@ -157,8 +159,8 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	if (conf->addr_listen) {
-		if (!listener_start(s, conf->addr_listen)) {
+	if (conf->listen.sa) {
+		if (!listener_start(s, conf->listen.sa)) {
 			server_shutdown(s);
 			return NULL;
 		}

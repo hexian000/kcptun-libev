@@ -16,7 +16,7 @@ static void accept_one(struct server *restrict s, const int fd)
 	/* Initialize and start watcher to read client requests */
 	uint32_t conv = conv_new(s);
 	struct session *restrict ss;
-	ss = session_new(s, fd, s->conf->addr_udp_connect, conv);
+	ss = session_new(s, fd, s->conf->udp_connect.sa, conv);
 	if (ss == NULL) {
 		LOGE("accept: out of memory");
 		close(fd);
@@ -26,7 +26,7 @@ static void accept_one(struct server *restrict s, const int fd)
 	ss->state = STATE_CONNECTED;
 	ss->last_seen = ev_now(s->loop);
 	hashkey_t key;
-	conv_make_key(&key, s->conf->addr_udp_connect, conv);
+	conv_make_key(&key, s->conf->udp_connect.sa, conv);
 	table_set(s->sessions, &key, ss);
 	session_start(ss);
 }

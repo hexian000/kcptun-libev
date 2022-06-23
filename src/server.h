@@ -20,6 +20,7 @@ struct udp_conn {
 	struct ev_io *w_read, *w_write;
 	int fd;
 	double last_send_time;
+	double last_seen_time;
 	struct packet *packets;
 };
 
