@@ -25,7 +25,6 @@ struct msgframe {
 #define MQ_RECV_SIZE 256
 
 struct packet {
-	bool is_server;
 	struct leakypool msgpool;
 	struct msgframe *mq_send[MQ_SEND_SIZE];
 	size_t mq_send_len;
@@ -47,9 +46,8 @@ void msgframe_delete(struct packet *p, struct msgframe *msg);
 struct server;
 
 /* session 0 messages */
-#define S0MSG_KEEPALIVE UINT16_C(0x0000)
-#define S0MSG_DIAL UINT16_C(0x0001)
-#define S0MSG_CONV UINT16_C(0x0002)
+#define S0MSG_PING UINT16_C(0x0000)
+#define S0MSG_PONG UINT16_C(0x0001)
 
 struct session0_header {
 	uint32_t zero;

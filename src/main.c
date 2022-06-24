@@ -101,7 +101,7 @@ int main(int argc, char **argv)
 	struct server *restrict s = server_start(loop, conf);
 	if (s == NULL) {
 		LOGE_F("failed to start %s",
-		       conf->is_server ? "server" : "client");
+		       conf->mode == MODE_SERVER ? "server" : "client");
 		util_free(w_sigint);
 		util_free(w_sigterm);
 		util_free(conf);
@@ -115,11 +115,11 @@ int main(int argc, char **argv)
 	ev_signal_start(loop, w_sigterm);
 
 	// Start infinite loop
-	LOGI_F("%s start", conf->is_server ? "server" : "client");
+	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
 	server_shutdown(s);
-	LOGI_F("%s shutdown", conf->is_server ? "server" : "client");
+	LOGI_F("%s shutdown", runmode_str(conf->mode));
 
 	util_free(w_sigint);
 	util_free(w_sigterm);

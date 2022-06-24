@@ -23,22 +23,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-const char tag_client[] = "kcptun-libev-client";
-const size_t tag_client_size = sizeof(tag_client);
-const char tag_server[] = "kcptun-libev-server";
-const size_t tag_server_size = sizeof(tag_server);
-
-static inline const unsigned char *
-get_crypto_tag(const bool is_server, const bool is_seal, size_t *tag_size)
-{
-	const bool use_client_tag = is_server ^ is_seal;
-	if (use_client_tag) {
-		*tag_size = tag_client_size;
-		return (unsigned char *)tag_client;
-	}
-	*tag_size = tag_server_size;
-	return (unsigned char *)tag_server;
-}
+const char crypto_tag[] = "kcptun-libev";
+const size_t crypto_tag_size = sizeof(crypto_tag);
 
 #if WITH_CRYPTO
 static bool packet_open_inplace(
@@ -69,11 +55,9 @@ static bool packet_open_inplace(
 	}
 	memcpy(saved_nonce, nonce, nonce_size);
 	const size_t cipher_len = src_len - nonce_size;
-	size_t tag_size;
-	const unsigned char *tag =
-		get_crypto_tag(p->is_server, false, &tag_size);
 	const size_t dst_len = aead_open(
-		crypto, data, size, nonce, data, cipher_len, tag, tag_size);
+		crypto, data, size, nonce, data, cipher_len,
+		(const unsigned char *)crypto_tag, crypto_tag_size);
 	if (dst_len + overhead + nonce_size != src_len) {
 		LOGD("failed to open packet (wrong password?)");
 		return false;
@@ -95,11 +79,9 @@ static bool packet_seal_inplace(
 	unsigned char *nonce = p->nonce_send;
 	crypto_nonce_next(nonce);
 	const size_t dst_size = size - nonce_size;
-	size_t tag_size;
-	const unsigned char *tag =
-		get_crypto_tag(p->is_server, true, &tag_size);
 	size_t dst_len = aead_seal(
-		crypto, data, dst_size, nonce, data, src_len, tag, tag_size);
+		crypto, data, dst_size, nonce, data, src_len,
+		(const unsigned char *)crypto_tag, crypto_tag_size);
 	if (dst_len != src_len + overhead) {
 		LOGE("failed to seal packet");
 		return false;
@@ -181,27 +163,29 @@ bool send_ss0(
 	return packet_send(p, s, msg);
 }
 
-static void
-ss0_keepalive(struct server *restrict s, struct msgframe *restrict msg)
+static void ss0_ping(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
 		LOGW_F("short keepalive message: %zu bytes", msg->len);
 		return;
 	}
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
-
-	if (!s->conf->is_server) {
-		/* client: print RTT */
-		const uint32_t now_ms = tstamp2ms(ev_time());
-		LOGI_F("roundtrip finished, RTT: %" PRIu32 " ms",
-		       now_ms - tstamp);
-		return;
-	}
-
-	/* server: send echo message */
+	/* send echo message */
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	send_ss0(s, msg->hdr.msg_name, S0MSG_KEEPALIVE, b, sizeof(b));
+	send_ss0(s, msg->hdr.msg_name, S0MSG_PONG, b, sizeof(b));
+}
+
+static void ss0_pong(struct server *restrict s, struct msgframe *restrict msg)
+{
+	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
+		LOGW_F("short keepalive message: %zu bytes", msg->len);
+		return;
+	}
+	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
+	/*  print RTT */
+	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
+	LOGI_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
 }
 
 static void session0(struct server *restrict s, struct msgframe *restrict msg)
@@ -212,8 +196,11 @@ static void session0(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	struct session0_header header = ss0_header_read(msg->buf);
 	switch (header.what) {
-	case S0MSG_KEEPALIVE:
-		ss0_keepalive(s, msg);
+	case S0MSG_PING:
+		ss0_ping(s, msg);
+		break;
+	case S0MSG_PONG:
+		ss0_pong(s, msg);
 		break;
 	default:
 		LOGW_F("unknown session 0 message: %04" PRIX16, header.what);
@@ -241,7 +228,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
-		if (!s->conf->is_server) {
+		if (s->conf->connect.sa == NULL) {
 			LOGW_F("session not found [%08" PRIX32 "]", conv);
 			ss = session_new_dummy(s);
 			if (ss != NULL) {
@@ -312,7 +299,6 @@ struct packet *packet_create(struct config *restrict cfg)
 	}
 	*p = (struct packet){
 		.msgpool = pool_create(100, sizeof(struct msgframe)),
-		.is_server = cfg->is_server,
 	};
 	if (p->msgpool.pool == NULL) {
 		packet_free(p);

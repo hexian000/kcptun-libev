@@ -258,11 +258,27 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	return false;
 }
 
-static bool splithostport(char *str, char **hostname, char **service)
+const char *runmode_str(const int mode)
 {
+	static const char *str[] = {
+		[MODE_SERVER] = "server",
+		[MODE_PEER] = "peer",
+	};
+	UTIL_ASSERT(mode >= 0);
+	UTIL_ASSERT((size_t)mode < (sizeof(str) / sizeof(str[0])));
+	return str[mode];
+}
+
+static char *splithostport(const char *addr, char **hostname, char **service)
+{
+	char *str = clonestr(addr);
+	if (str == NULL) {
+		return NULL;
+	}
 	char *port = strrchr(str, ':');
-	if (service == NULL) {
-		return false;
+	if (port == NULL) {
+		util_free(str);
+		return NULL;
 	}
 	*port = '\0';
 	port++;
@@ -277,22 +293,22 @@ static bool splithostport(char *str, char **hostname, char **service)
 		port[-2] = '\0';
 	}
 
-	*hostname = host;
-	*service = port;
-	return true;
+	if (hostname != NULL) {
+		*hostname = host;
+	}
+	if (service != NULL) {
+		*service = port;
+	}
+	return str;
 }
 
 static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
 {
 	char *hostname = NULL;
 	char *service = NULL;
-	char *str = clonestr(addr->str);
+	char *str = splithostport(addr->str, &hostname, &service);
 	if (str == NULL) {
-		return false;
-	}
-	if (!splithostport(str, &hostname, &service)) {
-		LOGE_F("\":\" is missing in address: %s", str);
-		util_free(str);
+		LOGE_F("failed resolving address: %s", addr->str);
 		return false;
 	}
 	struct sockaddr *sa = resolve(hostname, service, socktype);
@@ -364,7 +380,14 @@ static bool conf_check(struct config *restrict conf)
 		return false;
 	}
 	conf->udp_af = sa->sa_family;
-	conf->is_server = !!conf->connect.str;
+	if (conf->udp_connect.str == NULL) {
+		conf->mode = MODE_SERVER;
+	} else if (conf->listen.str != NULL) {
+		conf->mode = MODE_PEER;
+	} else {
+		LOGF("config: no forward could be provided (are you missing some address field?)");
+		return false;
+	}
 	return true;
 }
 

@@ -1,6 +1,8 @@
 {
-    "connect": "127.0.0.1:5201",
-    "udp_bind": "127.0.0.2:5555",
+    "listen": "127.0.0.2:8022",
+    "connect": "127.0.0.1:22",
+    "udp_bind": ":5522",
+    "udp_connect": "peer2.local:5522",
     "kcp": {
         "mtu": 1400,
         "sndwnd": 256,

@@ -10,6 +10,13 @@ struct netaddr {
 	struct sockaddr *sa;
 };
 
+enum runmode {
+	MODE_SERVER,
+	MODE_PEER,
+};
+
+const char *runmode_str(int mode);
+
 struct config {
 	struct netaddr listen;
 	struct netaddr connect;
@@ -17,7 +24,7 @@ struct config {
 	struct netaddr udp_connect;
 	int udp_af;
 
-	bool is_server;
+	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
 

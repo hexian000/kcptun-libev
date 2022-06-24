@@ -156,7 +156,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	const ev_tstamp now = ev_now(loop);
 	timeout_check(s, now);
 
-	if (s->conf->is_server) {
+	if (s->conf->mode == MODE_SERVER) {
 		return;
 	}
 	if (now - s->udp.last_seen_time > 60.0) {
@@ -169,5 +169,5 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	const uint32_t tstamp = tstamp2ms(ev_time());
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	send_ss0(s, s->conf->udp_connect.sa, S0MSG_KEEPALIVE, b, sizeof(b));
+	send_ss0(s, s->conf->udp_connect.sa, S0MSG_PING, b, sizeof(b));
 }

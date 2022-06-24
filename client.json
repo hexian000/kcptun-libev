@@ -6,8 +6,8 @@
         "sndwnd": 256,
         "rcvwnd": 256,
         "nodelay": 1,
-        "interval": 10,
-        "resend": 2,
+        "interval": 50,
+        "resend": 3,
         "nc": 1
     },
     "password": "k",
