@@ -15,20 +15,29 @@ Or typically, the people who using a lossy network may setup kcptun-libev with a
 network access -> proxy client -> kcptun-libev client -> lossy network(KCP) -> kcptun-libev server -> proxy server -> stable network
 ```
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the libsodium implementation of chacha20poly1305-ietf, which is an [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method.
-
 Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
 
-## Why another kcptun?
-The previous implementation [kcptun](https://github.com/xtaci/kcptun) is written in Go.
+## Features
 
-Compared to that, kcptun-libev should be:
-- More lightweight and run faster, main executable < 100KiB on most platforms
-- More secure: For proper use of the cryptography library.
-- Simpler: No muxer, one TCP connection to one KCP connection
-- Without FEC craps
+- Secure: For proper use of the cryptography library.
+- Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
+- Proper: This implement will tick KCP on demand, so the "interval" option will no longer be a magic speed tuner. You can set it according to link RTT.
+- Simple: Without FEC craps
+- Morden: Full IPv6 support
+- Dynamic IP aware: dynamic IP address and UDP hole punching are supported
 
-kcptun-libev is **NOT** production ready yet.
+There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
+
+Compared to that, kcptun-libev should be much more lightweight. The main executable is less than 100KiB on most platforms and it also have a much lower cpu/mem usage.
+
+## Security
+
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the libsodium implementation of chacha20poly1305-ietf, which is an [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method.
+
+If the encryption is not enabled or not even compiled, no packet overhead is consumed.
+
+In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
+
 
 ## Compatibility
 ### System
@@ -44,9 +53,9 @@ Theoretically all systems that support ISO C11.
 
 ### Protocol
 
-We do NOT provide compatibility to any other KCP implements.
+kcptun-libev do NOT provide compatibility to any other KCP implements.
 
-The major version number is the protocol version.
+The major version number is the protocol version. Different protocol versions are not compatible.
 
 ## Build
 ### Dependencies
@@ -89,13 +98,13 @@ Create a config file and pass the file name. Just like:
 ./kcptun-libev -c server.json
 ```
 
-See [server.json](server.json)/[client.json](client.json) in the source repo for your reference.
+See [server.json](server.json)/[peer.json](peer.json) in the source repo for your reference.
 
-Let's explain some fields in server.json/client.json:
+Let's explain some fields in server.json/peer.json:
 - The client side "listen" TCP ports and send data to "udp_connect".
 - The server side receive data from "udp_bind" and forward the connections to "connect".
 - Set a password is strongly suggested when using in public networks.
-- Log level: 0-6
+- Log level: 0-6, the default is 2 (INFO)
 
 ## Credits
 

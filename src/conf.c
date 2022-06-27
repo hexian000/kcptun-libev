@@ -304,6 +304,10 @@ static char *splithostport(const char *addr, char **hostname, char **service)
 
 static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
 {
+	if (addr->str == NULL) {
+		/* there's nothing to do */
+		return true;
+	}
 	char *hostname = NULL;
 	char *service = NULL;
 	char *str = splithostport(addr->str, &hostname, &service);
