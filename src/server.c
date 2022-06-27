@@ -29,7 +29,7 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 		return false;
 	}
 	socket_set_nonblock(l->fd);
-	socket_set_buffer(l->fd, 16384, 16384);
+	socket_set_buffer(l->fd, 65536, 65536);
 	if (s->conf->reuseport) {
 		socket_set_reuseport(l->fd);
 	}
@@ -80,7 +80,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		return false;
 	}
 	socket_set_nonblock(udp->fd);
-	socket_set_buffer(udp->fd, 65536, 65536);
+	socket_set_buffer(udp->fd, 262144, 262144);
 	if (conf->reuseport) {
 		socket_set_reuseport(udp->fd);
 	}

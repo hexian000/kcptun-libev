@@ -137,53 +137,60 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 static size_t udp_send(struct server *restrict s)
 {
 	struct packet *restrict p = s->udp.packets;
-	const size_t count = p->mq_send_len > MMSG_BATCH_SIZE ?
-				     MMSG_BATCH_SIZE :
-				     p->mq_send_len;
+	const size_t count = p->mq_send_len;
 	if (count < 1) {
 		return 0;
 	}
-	static struct mmsghdr msgs[MMSG_BATCH_SIZE];
-	for (size_t i = 0; i < count; i++) {
-		struct msgframe *restrict msg = p->mq_send[i];
-		msgs[i] = (struct mmsghdr){
-			.msg_hdr = msg->hdr,
-		};
-	}
 
-	int nsend = sendmmsg(s->udp.fd, msgs, count, MSG_DONTWAIT);
-	if (nsend < 0) {
-		/* temporary errors */
-		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-		    (errno == EINTR)) {
-			ev_io_start(s->loop, s->udp.w_write);
-			return 0;
+	size_t nsend = 0;
+	size_t nbsend = 0;
+	do {
+		static struct mmsghdr msgs[MMSG_BATCH_SIZE];
+		const size_t remain = count - nsend;
+		const size_t nbatch =
+			remain < MMSG_BATCH_SIZE ? remain : MMSG_BATCH_SIZE;
+		for (size_t i = 0; i < nbatch; i++) {
+			struct msgframe *restrict msg = p->mq_send[nsend + i];
+			msgs[i] = (struct mmsghdr){
+				.msg_hdr = msg->hdr,
+			};
 		}
-		LOG_PERROR("sendmmsg");
-		return 0;
-	} else if (nsend == 0) {
+		const int ret = sendmmsg(s->udp.fd, msgs, nbatch, MSG_DONTWAIT);
+		if (ret < 0) {
+			/* temporary errors */
+			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
+			    (errno == EINTR)) {
+				ev_io_start(s->loop, s->udp.w_write);
+				return 0;
+			}
+			LOG_PERROR("sendmmsg");
+			break;
+		} else if (ret == 0) {
+			break;
+		}
+		for (int i = 0; i < ret; i++) {
+			nbsend += msgs[i].msg_len;
+		}
+		nsend += (size_t)ret;
+	} while (nsend < count);
+	if (nsend == 0) {
 		return 0;
 	}
 
 	/* move remaining messages */
-	size_t nbsend = 0;
-	for (int i = 0; i < nsend; i++) {
+	for (size_t i = 0; i < nsend; i++) {
 		struct msgframe *restrict msg = p->mq_send[i];
-		nbsend += msgs[i].msg_len;
 		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 			struct sockaddr *sa = (struct sockaddr *)&msg->addr;
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("udp send: %s %u bytes", addr_str,
-			       msgs[i].msg_len);
+			LOGV_F("udp send: %s %zu bytes", addr_str, msg->len);
 		}
 		msgframe_delete(p, msg);
 	}
 	const size_t remain = count - nsend;
-	if (remain > 0) {
-		memmove(p->mq_send, p->mq_send + nsend,
-			sizeof(struct msgframe *) * remain);
-		LOGV_F("udp send: remain %zu pkts", remain);
+	for (size_t i = 0; i < remain; i++) {
+		p->mq_send[i] = p->mq_send[nsend + i];
 	}
 	p->mq_send_len = remain;
 	s->stats.udp_out += nbsend;
@@ -216,9 +223,8 @@ static size_t udp_send(struct server *restrict s)
 		}
 		nsend++;
 	}
-	else if (nsend == 0)
-	{
-		return;
+	if (nsend == 0) {
+		return 0;
 	}
 	size_t nbsend = 0;
 	for (int i = 0; i < nsend; i++) {
@@ -234,9 +240,8 @@ static size_t udp_send(struct server *restrict s)
 		msgframe_delete(p, msg);
 	}
 	const size_t remain = count - nsend;
-	if (remain > 0) {
-		memmove(p->mq_send, p->mq_send + nsend,
-			sizeof(struct msgframe *) * remain);
+	for (size_t i = 0; i < remain; i++) {
+		p->mq_send[i] = p->mq_send[nsend + i];
 	}
 	p->mq_send_len = remain;
 	s->stats.udp_out += nbsend;
@@ -252,24 +257,24 @@ void udp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
 	struct packet *restrict p = s->udp.packets;
-	while (p->mq_send_len > 0) {
-		const size_t nbsend = udp_send(s);
-		if (nbsend == 0) {
-			break;
-		}
+	if (p->mq_send_len > 0) {
+		(void)udp_send(s);
 	}
 	if (p->mq_send_len == 0) {
 		ev_io_stop(s->loop, s->udp.w_write);
-		return;
 	}
 }
 
 void udp_notify_write(struct server *restrict s)
 {
+	if (s->udp.packets->mq_send_len == MQ_SEND_SIZE) {
+		(void)udp_send(s);
+	}
+	if (s->udp.packets->mq_send_len == 0) {
+		return;
+	}
 	if (ev_is_active(s->udp.w_write)) {
 		return;
 	}
-	if (udp_send(s) == 0) {
-		ev_io_start(s->loop, s->udp.w_write);
-	}
+	ev_io_start(s->loop, s->udp.w_write);
 }

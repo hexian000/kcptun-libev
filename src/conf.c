@@ -167,8 +167,8 @@ static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
 	if (strcmp(name, "nc") == 0) {
 		return parse_int_json(&conf->kcp_nc, value);
 	}
-	LOGE_F("unknown config key: \"kcp.%s\"", name);
-	return false;
+	LOGW_F("unknown config: \"kcp.%s\"", name);
+	return true;
 }
 
 static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
@@ -254,8 +254,8 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	if (strcmp(name, "reuseport") == 0) {
 		return parse_bool_json(&conf->reuseport, value);
 	}
-	LOGE_F("unknown config key: \"%s\"", name);
-	return false;
+	LOGW_F("unknown config: \"%s\"", name);
+	return true;
 }
 
 const char *runmode_str(const int mode)

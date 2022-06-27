@@ -104,7 +104,7 @@ int main(int argc, char **argv)
 		       conf->mode == MODE_SERVER ? "server" : "client");
 		util_free(w_sigint);
 		util_free(w_sigterm);
-		util_free(conf);
+		conf_free(conf);
 		return EXIT_FAILURE;
 	}
 
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
 
 	util_free(w_sigint);
 	util_free(w_sigterm);
-	util_free(conf);
+	conf_free(conf);
 
 	LOGI("program terminated normally.");
 	return EXIT_SUCCESS;

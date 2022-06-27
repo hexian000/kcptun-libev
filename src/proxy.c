@@ -20,7 +20,7 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 		return NULL;
 	}
 	socket_set_nonblock(fd);
-	socket_set_buffer(fd, 16384, 16384);
+	socket_set_buffer(fd, 65536, 65536);
 	struct session *ss = session_new(s, fd, addr, conv);
 	if (ss == NULL) {
 		LOGE("proxy_dial: out of memory");

@@ -298,7 +298,7 @@ struct packet *packet_create(struct config *restrict cfg)
 		return NULL;
 	}
 	*p = (struct packet){
-		.msgpool = pool_create(100, sizeof(struct msgframe)),
+		.msgpool = pool_create(128, sizeof(struct msgframe)),
 	};
 	if (p->msgpool.pool == NULL) {
 		packet_free(p);
