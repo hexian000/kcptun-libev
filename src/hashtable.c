@@ -1,4 +1,5 @@
 #include "hashtable.h"
+#include "murmur3/murmurhash3.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -53,21 +54,9 @@ key_equals(const hashkey_t *restrict a, const hashkey_t *restrict b)
 	return memcmp(a, b, sizeof(hashkey_t)) == 0;
 }
 
-/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
-static inline uint32_t xorshift32(uint32_t x)
-{
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	return x;
-}
-
 static inline int get_hash(const hashkey_t *restrict key)
 {
-	uint32_t h = 0;
-	for (size_t i = 0; i < sizeof(hashkey_t) / sizeof(uint32_t); i++) {
-		h = xorshift32(key->b[i] ^ h);
-	}
+	const uint32_t h = murmurhash3(key, sizeof(hashkey_t), 0);
 	return (int)(h & (uint32_t)INT_MAX);
 }
 

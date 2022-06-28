@@ -1,6 +1,8 @@
 add_subdirectory(kcp)
 add_subdirectory(json)
 add_subdirectory(b64)
+add_subdirectory(libbloom)
+add_subdirectory(murmur3)
 
 include(CheckSymbolExists)
 list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
@@ -21,6 +23,7 @@ add_executable(kcptun-libev main.c
     serialize.h leakypool.h
     slog.c slog.h
     hashtable.c hashtable.h
+    nonce.c nonce.h
     event.h event_impl.h event_tcp.c event_kcp.c event_udp.c event_timer.c)
 
 target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
@@ -28,7 +31,7 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
-target_link_libraries(kcptun-libev kcp json b64)
+target_link_libraries(kcptun-libev kcp json b64 bloom murmur3)
 
 # find libev
 find_path(LIBEV_INCLUDE_DIR NAMES ev.h)

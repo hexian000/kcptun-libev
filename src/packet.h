@@ -2,6 +2,7 @@
 #define PACKET_H
 
 #include "aead.h"
+#include "nonce.h"
 #include "conf.h"
 #include "leakypool.h"
 #include "slog.h"
@@ -31,9 +32,8 @@ struct packet {
 	struct msgframe *mq_recv[MQ_RECV_SIZE];
 	size_t mq_recv_len;
 #if WITH_CRYPTO
-	unsigned char *nonce_send;
-	unsigned char *nonce_recv;
 	struct aead *crypto;
+	struct noncegen *noncegen;
 #endif
 };
 

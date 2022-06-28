@@ -6,6 +6,7 @@
 #include "leakypool.h"
 #include "proxy.h"
 #include "aead.h"
+#include "nonce.h"
 #include "serialize.h"
 #include "server.h"
 #include "session.h"
@@ -41,19 +42,10 @@ static bool packet_open_inplace(
 		return false;
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
-	unsigned char *saved_nonce = p->nonce_recv;
-	if (saved_nonce == NULL) {
-		saved_nonce = util_malloc(nonce_size);
-		if (saved_nonce == NULL) {
-			LOGW("packet_open: out of memory");
-			return false;
-		}
-		p->nonce_recv = saved_nonce;
-	} else if (!crypto_nonce_verify(saved_nonce, nonce)) {
+	if (!noncegen_verify(p->noncegen, nonce)) {
 		LOGD("weird nonce (attack?)");
 		return false;
 	}
-	memcpy(saved_nonce, nonce, nonce_size);
 	const size_t cipher_len = src_len - nonce_size;
 	const size_t dst_len = aead_open(
 		crypto, data, size, nonce, data, cipher_len,
@@ -76,8 +68,7 @@ static bool packet_seal_inplace(
 	const size_t nonce_size = crypto_nonce_size();
 	const size_t overhead = crypto_overhead();
 	UTIL_ASSERT(size >= src_len + overhead + nonce_size);
-	unsigned char *nonce = p->nonce_send;
-	crypto_nonce_next(nonce);
+	const unsigned char *nonce = noncegen_next(p->noncegen);
 	const size_t dst_size = size - nonce_size;
 	size_t dst_len = aead_seal(
 		crypto, data, dst_size, nonce, data, src_len,
@@ -313,12 +304,11 @@ struct packet *packet_create(struct config *restrict cfg)
 		UTIL_SAFE_FREE(cfg->password);
 	}
 	if (p->crypto != NULL) {
-		p->nonce_send = util_malloc(crypto_nonce_size());
-		if (p->nonce_send == NULL) {
+		p->noncegen = noncegen_create(crypto_nonce_size());
+		if (p->noncegen == NULL) {
 			packet_free(p);
 			return NULL;
 		}
-		crypto_nonce_init(p->nonce_send);
 	} else {
 		LOGW("data will not be encrypted");
 	}
@@ -336,8 +326,10 @@ void packet_free(struct packet *restrict p)
 	if (p->crypto != NULL) {
 		aead_destroy(p->crypto);
 		p->crypto = NULL;
-		UTIL_SAFE_FREE(p->nonce_send);
-		UTIL_SAFE_FREE(p->nonce_recv);
+	}
+	if (p->noncegen != NULL) {
+		noncegen_free(p->noncegen);
+		p->noncegen = NULL;
 	}
 #endif
 	util_free(p);
