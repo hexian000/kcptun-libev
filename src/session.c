@@ -3,6 +3,7 @@
 #include "event.h"
 #include "hashtable.h"
 #include "server.h"
+#include "packet.h"
 #include "sockutil.h"
 #include "util.h"
 
@@ -24,7 +25,14 @@ kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 		return NULL;
 	}
 	ikcp_wndsize(kcp, cfg->kcp_sndwnd, cfg->kcp_rcvwnd);
-	ikcp_setmtu(kcp, cfg->kcp_mtu);
+	size_t mtu = cfg->kcp_mtu;
+#if WITH_CRYPTO
+	struct aead *crypto = ss->server->udp.packets->crypto;
+	if (crypto != NULL) {
+		mtu -= crypto_overhead() + crypto_nonce_size();
+	}
+#endif
+	ikcp_setmtu(kcp, mtu);
 	ikcp_nodelay(
 		kcp, cfg->kcp_nodelay, cfg->kcp_interval, cfg->kcp_resend,
 		cfg->kcp_nc);
@@ -59,7 +67,6 @@ struct session *session_new(
 		return NULL;
 	}
 	*ss = (struct session){
-		.wbuf_len = 0,
 		.state = STATE_CLOSED,
 		.server = s,
 		.tcp_fd = fd,
@@ -151,8 +158,6 @@ void session_shutdown(struct session *restrict ss)
 		util_free(ss->w_write);
 		ss->w_write = NULL;
 	}
-	UTIL_SAFE_FREE(ss->rbuf);
-	UTIL_SAFE_FREE(ss->wbuf);
 	if (ss->tcp_fd != -1) {
 		close(ss->tcp_fd);
 		ss->tcp_fd = -1;

@@ -20,36 +20,54 @@
 
 int socket_set_nonblock(int fd)
 {
-	int flags;
-	if (-1 == (flags = fcntl(fd, F_GETFL, 0))) {
-		flags = 0;
-	}
+	const int flags = fcntl(fd, F_GETFL, 0);
 	return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-int socket_set_nodelay(int fd)
-{
-	return setsockopt(
-		fd, IPPROTO_TCP, TCP_NODELAY, &(int){ 1 }, sizeof(int));
-}
-
-int socket_set_reuseport(int fd)
+void socket_set_reuseport(const int fd, const int reuseport)
 {
 #ifdef SO_REUSEPORT
-	return setsockopt(
-		fd, SOL_SOCKET, SO_REUSEPORT, &(int){ 1 }, sizeof(int));
+	if (setsockopt(
+		    fd, SOL_SOCKET, SO_REUSEPORT, &reuseport,
+		    sizeof(reuseport))) {
+		LOG_PERROR("SO_REUSEPORT");
+	}
 #else
 	LOGE("reuseport not supported on this platform");
 #endif
-	return -1;
+}
+
+void socket_set_tcp(
+	const int fd, const int nodelay, const int linger, const int keepalive)
+{
+	if (setsockopt(
+		    fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay))) {
+		LOG_PERROR("TCP_NODELAY");
+	}
+	if (setsockopt(
+		    fd, SOL_SOCKET, SO_LINGER,
+		    &(struct linger){
+			    .l_onoff = 0,
+			    .l_linger = linger,
+		    },
+		    sizeof(struct linger))) {
+		LOG_PERROR("SO_LINGER");
+	}
+	if (setsockopt(
+		    fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive,
+		    sizeof(keepalive))) {
+		LOG_PERROR("SO_KEEPALIVE");
+	}
 }
 
 void socket_set_buffer(int fd, size_t send, size_t recv)
 {
-	(void)setsockopt(
-		fd, SOL_SOCKET, SO_SNDBUF, &(int){ send }, sizeof(int));
-	(void)setsockopt(
-		fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv }, sizeof(int));
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &(int){ send }, sizeof(int))) {
+		LOG_PERROR("SO_SNDBUF");
+	}
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv }, sizeof(int))) {
+		LOG_PERROR("SO_RCVBUF");
+	}
 }
 
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)

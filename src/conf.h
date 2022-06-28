@@ -28,11 +28,17 @@ struct config {
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
 
+	/* socket options */
+	bool tcp_reuseport, tcp_keepalive, tcp_nodelay;
+	int tcp_lingertime;
+	int tcp_sndbuf, tcp_rcvbuf;
+	bool udp_reuseport;
+	int udp_sndbuf, udp_rcvbuf;
+
 	char *password;
 	unsigned char *psk;
 
 	int timeout, linger, keepalive, time_wait;
-	bool reuseport;
 	int log_level;
 };
 

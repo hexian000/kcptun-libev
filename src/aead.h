@@ -9,7 +9,7 @@ size_t crypto_nonce_size();
 void crypto_nonce_init(unsigned char *nonce);
 void crypto_nonce_next(unsigned char *nonce);
 bool crypto_nonce_verify(const unsigned char *saved, const unsigned char *got);
-
+size_t crypto_overhead();
 size_t crypto_key_size();
 void crypto_gen_key(unsigned char *key);
 
@@ -23,8 +23,6 @@ void aead_init();
 struct aead *aead_create_pw(char *password);
 struct aead *aead_create(unsigned char *psk);
 void aead_destroy(struct aead *);
-
-size_t aead_overhead(struct aead *);
 
 size_t aead_seal(
 	struct aead *, unsigned char *dst, size_t dst_size,

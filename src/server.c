@@ -1,5 +1,6 @@
 #include "server.h"
 #include "aead.h"
+#include "conf.h"
 #include "event.h"
 
 #include "hashtable.h"
@@ -28,10 +29,17 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 		LOG_PERROR("socket error");
 		return false;
 	}
-	socket_set_nonblock(l->fd);
-	socket_set_buffer(l->fd, 65536, 65536);
-	if (s->conf->reuseport) {
-		socket_set_reuseport(l->fd);
+	if (socket_set_nonblock(l->fd)) {
+		LOG_PERROR("fcntl");
+		return false;
+	}
+	{
+		struct config *restrict cfg = s->conf;
+		socket_set_reuseport(l->fd, cfg->tcp_reuseport);
+		socket_set_tcp(
+			l->fd, cfg->tcp_nodelay, cfg->tcp_lingertime,
+			cfg->tcp_keepalive);
+		socket_set_buffer(l->fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 	}
 
 	// Bind socket to address
@@ -79,11 +87,12 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		LOG_PERROR("udp socket");
 		return false;
 	}
-	socket_set_nonblock(udp->fd);
-	socket_set_buffer(udp->fd, 262144, 262144);
-	if (conf->reuseport) {
-		socket_set_reuseport(udp->fd);
+	if (socket_set_nonblock(udp->fd)) {
+		LOG_PERROR("fcntl");
+		return NULL;
 	}
+	socket_set_reuseport(udp->fd, conf->udp_reuseport);
+	socket_set_buffer(udp->fd, conf->udp_sndbuf, conf->udp_rcvbuf);
 	if (conf->udp_bind.sa) {
 		const struct sockaddr *addr = conf->udp_bind.sa;
 		if (bind(udp->fd, addr, getsocklen(addr))) {
@@ -104,15 +113,6 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		format_sa(addr, addr_str, sizeof(addr_str));
 		LOGI_F("udp connect: %s", addr_str);
 	}
-	// {
-	// 	size_t bufsize = 4194304;
-	// 	setsockopt(
-	// 		udp->fd, SOL_SOCKET, SO_SNDBUF, &bufsize,
-	// 		sizeof(bufsize));
-	// 	setsockopt(
-	// 		udp->fd, SOL_SOCKET, SO_RCVBUF, &bufsize,
-	// 		sizeof(bufsize));
-	// }
 
 	udp->w_read = util_malloc(sizeof(struct ev_io));
 	if (udp->w_read == NULL) {

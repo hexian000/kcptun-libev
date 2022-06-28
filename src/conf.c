@@ -147,7 +147,16 @@ static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "mtu") == 0) {
-		return parse_int_json(&conf->kcp_mtu, value);
+		int mtu;
+		if (!parse_int_json(&mtu, value)) {
+			return false;
+		}
+		if (mtu < 300 || mtu > 1500) {
+			LOGE_F("kcp.mtu out of range: %d - %d", 300, 1500);
+			return false;
+		}
+		conf->kcp_mtu = (size_t)mtu;
+		return true;
 	}
 	if (strcmp(name, "sndwnd") == 0) {
 		return parse_int_json(&conf->kcp_sndwnd, value);
@@ -171,10 +180,62 @@ static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
 	return true;
 }
 
+static bool tcp_scope_cb(struct config *conf, const json_object_entry *entry)
+{
+	const char *name = entry->name;
+	const json_value *value = entry->value;
+	if (strcmp(name, "reuseport") == 0) {
+		return parse_bool_json(&conf->tcp_reuseport, value);
+	}
+	if (strcmp(name, "keepalive") == 0) {
+		return parse_bool_json(&conf->tcp_keepalive, value);
+	}
+	if (strcmp(name, "nodelay") == 0) {
+		return parse_bool_json(&conf->tcp_nodelay, value);
+	}
+	if (strcmp(name, "lingertime") == 0) {
+		return parse_int_json(&conf->tcp_lingertime, value);
+	}
+	if (strcmp(name, "sndbuf") == 0) {
+		return parse_int_json(&conf->tcp_sndbuf, value);
+	}
+	if (strcmp(name, "rcvbuf") == 0) {
+		return parse_int_json(&conf->tcp_rcvbuf, value);
+	}
+	LOGW_F("unknown config: \"tcp.%s\"", name);
+	return true;
+}
+
+static bool udp_scope_cb(struct config *conf, const json_object_entry *entry)
+{
+	const char *name = entry->name;
+	const json_value *value = entry->value;
+	if (strcmp(name, "reuseport") == 0) {
+		return parse_bool_json(&conf->udp_reuseport, value);
+	}
+	if (strcmp(name, "sndbuf") == 0) {
+		return parse_int_json(&conf->udp_sndbuf, value);
+	}
+	if (strcmp(name, "rcvbuf") == 0) {
+		return parse_int_json(&conf->udp_rcvbuf, value);
+	}
+	LOGW_F("unknown config: \"udp.%s\"", name);
+	return true;
+}
+
 static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 {
 	const char *name = entry->name;
 	const json_value *value = entry->value;
+	if (strcmp(name, "kcp") == 0) {
+		return walk_json_object(conf, value, kcp_scope_cb);
+	}
+	if (strcmp(name, "udp") == 0) {
+		return walk_json_object(conf, value, udp_scope_cb);
+	}
+	if (strcmp(name, "tcp") == 0) {
+		return walk_json_object(conf, value, tcp_scope_cb);
+	}
 	if (strcmp(name, "listen") == 0) {
 		char *str = parse_string_json(value);
 		return (conf->listen.str = str) != NULL;
@@ -190,9 +251,6 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 	if (strcmp(name, "udp_connect") == 0) {
 		char *str = parse_string_json(value);
 		return (conf->udp_connect.str = str) != NULL;
-	}
-	if (strcmp(name, "kcp") == 0) {
-		return walk_json_object(conf, value, kcp_scope_cb);
 	}
 #if WITH_CRYPTO
 	if (strcmp(name, "password") == 0) {
@@ -251,8 +309,9 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 		conf->log_level = l;
 		return true;
 	}
-	if (strcmp(name, "reuseport") == 0) {
-		return parse_bool_json(&conf->reuseport, value);
+	if (strcmp(name, "udp_bind") == 0) {
+		char *str = parse_string_json(value);
+		return (conf->udp_bind.str = str) != NULL;
 	}
 	LOGW_F("unknown config: \"%s\"", name);
 	return true;
@@ -347,9 +406,9 @@ static struct config conf_default()
 		.kcp_mtu = 1400,
 		.kcp_sndwnd = 1024,
 		.kcp_rcvwnd = 1024,
-		.kcp_nodelay = 1,
-		.kcp_interval = 100,
-		.kcp_resend = 2,
+		.kcp_nodelay = 0,
+		.kcp_interval = 10,
+		.kcp_resend = 3,
 		.kcp_nc = 1,
 		.password = NULL,
 		.psk = NULL,
@@ -357,7 +416,15 @@ static struct config conf_default()
 		.linger = -1,
 		.keepalive = -1,
 		.time_wait = -1,
-		.reuseport = false,
+		.tcp_reuseport = false,
+		.tcp_keepalive = false,
+		.tcp_nodelay = true,
+		.tcp_lingertime = 30,
+		.tcp_sndbuf = 65536,
+		.tcp_rcvbuf = 65536,
+		.udp_reuseport = false,
+		.udp_sndbuf = 262144,
+		.udp_rcvbuf = 262144,
 		.log_level = LOG_LEVEL_INFO,
 	};
 }

@@ -160,7 +160,6 @@ static size_t udp_send(struct server *restrict s)
 			/* temporary errors */
 			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
 			    (errno == EINTR)) {
-				ev_io_start(s->loop, s->udp.w_write);
 				return 0;
 			}
 			LOG_PERROR("sendmmsg");

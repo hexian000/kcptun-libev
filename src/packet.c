@@ -35,7 +35,7 @@ static bool packet_open_inplace(
 	UTIL_ASSERT(size >= src_len);
 	struct aead *restrict crypto = p->crypto;
 	const size_t nonce_size = crypto_nonce_size();
-	const size_t overhead = aead_overhead(crypto);
+	const size_t overhead = crypto_overhead();
 	if (src_len <= nonce_size + overhead) {
 		LOGD_F("packet too short: %zu", src_len);
 		return false;
@@ -74,7 +74,7 @@ static bool packet_seal_inplace(
 	struct aead *restrict crypto = p->crypto;
 	const size_t src_len = *len;
 	const size_t nonce_size = crypto_nonce_size();
-	const size_t overhead = aead_overhead(crypto);
+	const size_t overhead = crypto_overhead();
 	UTIL_ASSERT(size >= src_len + overhead + nonce_size);
 	unsigned char *nonce = p->nonce_send;
 	crypto_nonce_next(nonce);

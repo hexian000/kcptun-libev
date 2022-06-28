@@ -19,8 +19,17 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 		LOG_PERROR("socket");
 		return NULL;
 	}
-	socket_set_nonblock(fd);
-	socket_set_buffer(fd, 65536, 65536);
+	if (socket_set_nonblock(fd)) {
+		LOG_PERROR("fcntl");
+		return NULL;
+	}
+	{
+		struct config *restrict cfg = s->conf;
+		socket_set_tcp(
+			fd, cfg->tcp_nodelay, cfg->tcp_lingertime,
+			cfg->tcp_keepalive);
+		socket_set_buffer(fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
+	}
 	struct session *ss = session_new(s, fd, addr, conv);
 	if (ss == NULL) {
 		LOGE("proxy_dial: out of memory");

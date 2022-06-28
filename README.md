@@ -21,7 +21,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 - Secure: For proper use of the cryptography library.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
-- Proper: This implement will tick KCP on demand, so the "interval" option will no longer be a magic speed tuner. You can set it according to link RTT.
+- Proper: This implement will tick KCP on demand, no unnecessary lag introduced.
 - Simple: Without FEC craps
 - Morden: Full IPv6 support
 - Dynamic IP aware: dynamic IP address and UDP hole punching are supported

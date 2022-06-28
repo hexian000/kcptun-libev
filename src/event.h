@@ -28,7 +28,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 size_t tcp_recv(struct session *ss);
 int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 size_t kcp_send(struct session *ss);
-size_t kcp_recv(struct session *ss);
+void kcp_recv(struct session *ss);
 void kcp_close(struct session *ss);
 
 void tcp_notify_write(struct session *ss);

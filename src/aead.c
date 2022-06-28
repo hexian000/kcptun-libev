@@ -49,6 +49,11 @@ bool crypto_nonce_verify(const unsigned char *saved, const unsigned char *got)
 	return r0 == r1;
 }
 
+size_t crypto_overhead()
+{
+	return crypto_aead_chacha20poly1305_ietf_abytes();
+}
+
 size_t crypto_key_size()
 {
 	return crypto_aead_chacha20poly1305_ietf_keybytes();
@@ -83,18 +88,12 @@ void aead_keygen(unsigned char *k)
 	crypto_aead_chacha20poly1305_ietf_keygen(k);
 }
 
-size_t aead_overhead(struct aead *restrict aead)
-{
-	UNUSED(aead);
-	return crypto_aead_chacha20poly1305_ietf_abytes();
-}
-
 size_t aead_seal(
 	struct aead *aead, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *plain,
 	size_t plain_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size >= plain_size + aead_overhead(aead));
+	UTIL_ASSERT(dst_size >= plain_size + crypto_overhead());
 	unsigned long long r_len = dst_size;
 	int r = crypto_aead_chacha20poly1305_ietf_encrypt(
 		dst, &r_len, plain, plain_size, tag, tag_size, NULL, nonce,
@@ -111,7 +110,7 @@ size_t aead_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size + aead_overhead(aead) >= cipher_size);
+	UTIL_ASSERT(dst_size + crypto_overhead() >= cipher_size);
 	unsigned long long r_len = dst_size;
 	int r = crypto_aead_chacha20poly1305_ietf_decrypt(
 		dst, &r_len, NULL, cipher, cipher_size, tag, tag_size, nonce,

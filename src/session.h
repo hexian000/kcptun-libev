@@ -44,7 +44,7 @@ struct session {
 	struct server *server;
 	unsigned char *rbuf, *wbuf;
 	size_t rbuf_len;
-	size_t wbuf_len, wbuf_flush;
+	size_t wbuf_len, wbuf_navail, wbuf_flush;
 	sockaddr_max_t udp_remote;
 	uint32_t conv;
 	double last_seen;

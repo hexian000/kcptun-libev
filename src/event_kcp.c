@@ -85,8 +85,15 @@ size_t kcp_send(struct session *restrict ss)
 	return len;
 }
 
-size_t kcp_recv(struct session *restrict ss)
+void kcp_recv(struct session *restrict ss)
 {
+	if (ss->kcp_closed) {
+		ikcp_recv(ss->kcp, (char *)ss->wbuf, SESSION_BUF_SIZE);
+		return;
+	}
+	if (ss->wbuf_navail > 0) {
+		return;
+	}
 	unsigned char *start = ss->wbuf + ss->wbuf_len;
 	size_t cap = SESSION_BUF_SIZE - ss->wbuf_len;
 	size_t nrecv = 0;
@@ -111,7 +118,7 @@ size_t kcp_recv(struct session *restrict ss)
 
 	if (ss->wbuf_len < TLV_HEADER_SIZE) {
 		/* no data available */
-		return 0;
+		return;
 	}
 	struct tlv_header header = tlv_header_read(ss->wbuf);
 	UTIL_ASSERT(
@@ -119,30 +126,32 @@ size_t kcp_recv(struct session *restrict ss)
 		header.len <= SESSION_BUF_SIZE);
 	if (ss->wbuf_len < header.len) {
 		/* incomplete data packet */
-		return 0;
+		return;
 	}
 	switch (header.msg) {
 	case SMSG_DATA: {
 		/* tcp connection is lost, discard packet */
 		if (ss->tcp_fd == -1) {
 			ss->wbuf_len = 0;
-			return 0;
+			return;
 		}
-		return (size_t)header.len - TLV_HEADER_SIZE;
+		ss->wbuf_navail = (size_t)header.len - TLV_HEADER_SIZE;
+		return;
 	} break;
 	case SMSG_CLOSE: {
 		UTIL_ASSERT(header.len == TLV_HEADER_SIZE);
 		LOGD_F("session [%08" PRIX32 "] kcp eof", ss->kcp->conv);
+		ss->wbuf_len = 0;
 		ss->kcp_closed = true;
 		session_shutdown(ss);
 		ss->state = STATE_LINGER;
-		return 0;
+		return;
 	} break;
 	}
 	LOGE_F("unknown msg: %04" PRIX16 ", %04" PRIX16, header.msg,
 	       header.len);
 	kcp_close(ss);
-	return 0;
+	return;
 }
 
 static void kcp_update(struct session *restrict ss)
@@ -154,6 +163,7 @@ static void kcp_update(struct session *restrict ss)
 	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	if (!ss->kcp_checked || (int32_t)(now_ms - ss->kcp_next) >= 0) {
 		ikcp_update(ss->kcp, now_ms);
+		kcp_recv(ss);
 		tcp_notify_write(ss);
 		ss->kcp_next = ikcp_check(ss->kcp, now_ms);
 		UTIL_ASSERT((int32_t)(ss->kcp_next - now_ms) < 5000);
