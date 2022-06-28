@@ -19,16 +19,20 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 ## Features
 
-- Secure: For proper use of the cryptography library.
+- Secure: For proper integration of the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
-- Proper: This implement will tick KCP on demand, no unnecessary lag introduced.
-- Simple: Without FEC craps
-- Morden: Full IPv6 support
-- Dynamic IP aware: dynamic IP address and UDP hole punching are supported
+- Proper: KCP will be updated on demand, no unnecessary lag introduced.
+- Simple: Without FEC craps.
+- Morden: Full IPv6 support.
+- Dynamic IP aware: Dynamic IP address and UDP hole punching are supported.
+- Configurable: Encryption can be completely disabled or even excluded from build
+- Compatible: Compliant with ISO C standard.
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
 
-Compared to that, kcptun-libev should be much more lightweight. The main executable is less than 100KiB on most platforms and it also have a much lower cpu/mem usage.
+Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100KiB on most platforms\* and it also have a much lower cpu/mem usage.
+
+*\* Some required libraries are dynamically linked, see runtime dependencies below.*
 
 ## Security
 
@@ -44,12 +48,12 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 
 Theoretically all systems that support ISO C11.
 
-| Name      | Level     | Notes |
-| -         | -         | -     |
-| Ubuntu    | developed | |
-| OpenWRT   | tested    | |
-| Unix-like | theoretical supported | |
-| Cygwin/MinGW | theoretical supported | |
+| Name         | Level                 | Notes |
+| ------------ | --------------------- | ----- |
+| Ubuntu       | developed             |       |
+| OpenWRT      | tested                |       |
+| Unix-like    | theoretical supported |       |
+| Cygwin/MinGW | theoretical supported |       |
 
 ### Protocol
 
@@ -60,9 +64,9 @@ The major version number is the protocol version. Different protocol versions ar
 ## Build
 ### Dependencies
 
-| Name      | Kind     | Related Feature |
-| -         | -        | - |
-| libev     | required | |
+| Name      | Kind     | Related Feature       |
+| --------- | -------- | --------------------- |
+| libev     | required |                       |
 | libsodium | optional | Connection encrypting |
 
 ```sh
