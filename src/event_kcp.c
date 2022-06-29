@@ -1,5 +1,6 @@
 #include "event.h"
 #include "event_impl.h"
+#include "packet.h"
 #include "server.h"
 #include "session.h"
 #include "util.h"
@@ -160,6 +161,9 @@ static void kcp_update(struct session *restrict ss)
 		return;
 	}
 	struct server *restrict s = ss->server;
+	if (s->udp.packets->mq_send_len == MQ_SEND_SIZE) {
+		return;
+	}
 	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	if (!ss->kcp_checked || (int32_t)(now_ms - ss->kcp_next) >= 0) {
 		ikcp_update(ss->kcp, now_ms);

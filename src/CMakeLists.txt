@@ -5,7 +5,12 @@ add_subdirectory(libbloom)
 add_subdirectory(murmur3)
 
 include(CheckSymbolExists)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
+else()
+message(STATUS "POSIX System: ${CMAKE_SYSTEM_NAME}")
+list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_POSIX_C_SOURCE=199309L")
+endif()
 check_symbol_exists(sendmmsg "sys/socket.h" HAVE_SENDMMSG)
 check_symbol_exists(recvmmsg "sys/socket.h" HAVE_RECVMMSG)
 check_symbol_exists(clock_gettime "time.h" HAVE_CLOCK_GETTIME)
@@ -26,6 +31,11 @@ add_executable(kcptun-libev main.c
     nonce.c nonce.h
     event.h event_impl.h event_tcp.c event_kcp.c event_udp.c event_timer.c)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
+else()
+target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=199309L)
+endif()
 target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
 target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR}/config.h")
 

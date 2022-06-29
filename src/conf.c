@@ -193,9 +193,6 @@ static bool tcp_scope_cb(struct config *conf, const json_object_entry *entry)
 	if (strcmp(name, "nodelay") == 0) {
 		return parse_bool_json(&conf->tcp_nodelay, value);
 	}
-	if (strcmp(name, "lingertime") == 0) {
-		return parse_int_json(&conf->tcp_lingertime, value);
-	}
 	if (strcmp(name, "sndbuf") == 0) {
 		return parse_int_json(&conf->tcp_sndbuf, value);
 	}
@@ -419,12 +416,7 @@ static struct config conf_default()
 		.tcp_reuseport = false,
 		.tcp_keepalive = false,
 		.tcp_nodelay = true,
-		.tcp_lingertime = 30,
-		.tcp_sndbuf = 65536,
-		.tcp_rcvbuf = 65536,
 		.udp_reuseport = false,
-		.udp_sndbuf = 262144,
-		.udp_rcvbuf = 262144,
 		.log_level = LOG_LEVEL_INFO,
 	};
 }

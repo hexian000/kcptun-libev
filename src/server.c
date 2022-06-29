@@ -29,16 +29,14 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 		LOGE_PERROR("socket error");
 		return false;
 	}
-	if (socket_set_nonblock(l->fd)) {
+	if (socket_setup(l->fd)) {
 		LOGE_PERROR("fcntl");
 		return false;
 	}
 	{
 		struct config *restrict cfg = s->conf;
 		socket_set_reuseport(l->fd, cfg->tcp_reuseport);
-		socket_set_tcp(
-			l->fd, cfg->tcp_nodelay, cfg->tcp_lingertime,
-			cfg->tcp_keepalive);
+		socket_set_tcp(l->fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
 		socket_set_buffer(l->fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 	}
 
@@ -87,7 +85,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		LOGE_PERROR("udp socket");
 		return false;
 	}
-	if (socket_set_nonblock(udp->fd)) {
+	if (socket_setup(udp->fd)) {
 		LOGE_PERROR("fcntl");
 		return NULL;
 	}

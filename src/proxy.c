@@ -13,21 +13,20 @@ struct session *
 proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 {
 	const struct sockaddr *sa = s->conf->connect.sa;
-	int fd;
+	int fd = socket(
+		sa->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 	// Create socket
-	if ((fd = socket(sa->sa_family, SOCK_STREAM, 0)) < 0) {
+	if (fd < 0) {
 		LOGE_PERROR("socket");
 		return NULL;
 	}
-	if (socket_set_nonblock(fd)) {
+	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
 		return NULL;
 	}
 	{
 		struct config *restrict cfg = s->conf;
-		socket_set_tcp(
-			fd, cfg->tcp_nodelay, cfg->tcp_lingertime,
-			cfg->tcp_keepalive);
+		socket_set_tcp(fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
 		socket_set_buffer(fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 	}
 	struct session *ss = session_new(s, fd, addr, conv);

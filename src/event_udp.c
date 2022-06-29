@@ -81,7 +81,7 @@ static size_t udp_recv(struct server *restrict s)
 
 	struct msgframe *restrict msg = msgframe_new(p, NULL);
 	if (msg == NULL) {
-		break;
+		return 0;
 	}
 	const ssize_t nbrecv = recvmsg(s->udp.fd, &msg->hdr, MSG_DONTWAIT);
 	if (nbrecv < 0) {
@@ -89,10 +89,10 @@ static size_t udp_recv(struct server *restrict s)
 		/* temporary errors */
 		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
 		    (errno == EINTR)) {
-			break;
+			return 0;
 		}
 		LOGE_PERROR("recvmsg");
-		break;
+		return 0;
 	}
 	s->udp.last_recv_time = ev_now(s->loop);
 

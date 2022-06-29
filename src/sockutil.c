@@ -18,10 +18,10 @@
 #include <string.h>
 #include <inttypes.h>
 
-int socket_set_nonblock(int fd)
+int socket_setup(int fd)
 {
 	const int flags = fcntl(fd, F_GETFL, 0);
-	return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+	return fcntl(fd, F_SETFL, flags | O_CLOEXEC | O_NONBLOCK);
 }
 
 void socket_set_reuseport(const int fd, const int reuseport)
@@ -37,36 +37,35 @@ void socket_set_reuseport(const int fd, const int reuseport)
 #endif
 }
 
-void socket_set_tcp(
-	const int fd, const int nodelay, const int linger, const int keepalive)
+void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 {
 	if (setsockopt(
-		    fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay))) {
+		    fd, IPPROTO_TCP, TCP_NODELAY, &(int){ nodelay ? 1 : 0 },
+		    sizeof(int))) {
 		LOGW_PERROR("TCP_NODELAY");
 	}
 	if (setsockopt(
-		    fd, SOL_SOCKET, SO_LINGER,
-		    &(struct linger){
-			    .l_onoff = 0,
-			    .l_linger = linger,
-		    },
-		    sizeof(struct linger))) {
-		LOGW_PERROR("SO_LINGER");
-	}
-	if (setsockopt(
-		    fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive,
-		    sizeof(keepalive))) {
+		    fd, SOL_SOCKET, SO_KEEPALIVE, &(int){ keepalive ? 1 : 0 },
+		    sizeof(int))) {
 		LOGW_PERROR("SO_KEEPALIVE");
 	}
 }
 
 void socket_set_buffer(int fd, size_t send, size_t recv)
 {
-	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &(int){ send }, sizeof(int))) {
-		LOGW_PERROR("SO_SNDBUF");
+	if (send > 0) {
+		if (setsockopt(
+			    fd, SOL_SOCKET, SO_SNDBUF, &(int){ send },
+			    sizeof(int))) {
+			LOGW_PERROR("SO_SNDBUF");
+		}
 	}
-	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv }, sizeof(int))) {
-		LOGW_PERROR("SO_RCVBUF");
+	if (recv > 0) {
+		if (setsockopt(
+			    fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv },
+			    sizeof(int))) {
+			LOGW_PERROR("SO_RCVBUF");
+		}
 	}
 }
 

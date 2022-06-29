@@ -55,7 +55,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			LOGE_PERROR("accept");
 			return;
 		}
-		if (socket_set_nonblock(client_fd)) {
+		if (socket_setup(client_fd)) {
 			LOGE_PERROR("fcntl");
 			close(client_fd);
 			return;
@@ -65,7 +65,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			struct config *restrict cfg = s->conf;
 			socket_set_tcp(
 				client_fd, cfg->tcp_nodelay,
-				cfg->tcp_lingertime, cfg->tcp_keepalive);
+				cfg->tcp_keepalive);
 			socket_set_buffer(
 				client_fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 		}
