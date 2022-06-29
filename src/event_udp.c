@@ -48,12 +48,12 @@ static size_t udp_recv(struct server *restrict s)
 		    (errno == EINTR)) {
 			return 0;
 		}
-		LOG_PERROR("recvmmsg");
+		LOGE_PERROR("recvmmsg");
 		return 0;
 	} else if (nrecv == 0) {
 		return 0;
 	}
-	s->udp.last_seen_time = ev_now(s->loop);
+	s->udp.last_recv_time = ev_now(s->loop);
 
 	size_t nbrecv = 0;
 	for (int i = 0; i < nrecv; i++) {
@@ -91,10 +91,10 @@ static size_t udp_recv(struct server *restrict s)
 		    (errno == EINTR)) {
 			break;
 		}
-		LOG_PERROR("recvmsg");
+		LOGE_PERROR("recvmsg");
 		break;
 	}
-	s->udp.last_seen_time = ev_now(s->loop);
+	s->udp.last_recv_time = ev_now(s->loop);
 
 	msg->len = (size_t)nbrecv;
 	p->mq_recv[p->mq_recv_len++] = msg;
@@ -162,7 +162,7 @@ static size_t udp_send(struct server *restrict s)
 			    (errno == EINTR)) {
 				return 0;
 			}
-			LOG_PERROR("sendmmsg");
+			LOGE_PERROR("sendmmsg");
 			break;
 		} else if (ret == 0) {
 			break;
@@ -217,7 +217,7 @@ static size_t udp_send(struct server *restrict s)
 			    (errno == EINTR)) {
 				break;
 			}
-			LOG_PERROR("sendmsg");
+			LOGE_PERROR("sendmsg");
 			break;
 		}
 		nsend++;

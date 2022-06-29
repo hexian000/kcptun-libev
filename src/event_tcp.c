@@ -52,11 +52,11 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			    (errno == EINTR)) {
 				break;
 			}
-			LOG_PERROR("accept");
+			LOGE_PERROR("accept");
 			return;
 		}
 		if (socket_set_nonblock(client_fd)) {
-			LOG_PERROR("fcntl");
+			LOGE_PERROR("fcntl");
 			close(client_fd);
 			return;
 		}
@@ -105,7 +105,7 @@ size_t tcp_recv(struct session *restrict ss)
 			    (errno == EINTR)) {
 				break;
 			}
-			LOG_PERROR("recv");
+			LOGE_PERROR("recv");
 			kcp_close(ss);
 			session_shutdown(ss);
 			return 0;

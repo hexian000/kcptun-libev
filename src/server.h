@@ -20,7 +20,7 @@ struct udp_conn {
 	struct ev_io *w_read, *w_write;
 	int fd;
 	double last_send_time;
-	double last_seen_time;
+	double last_recv_time;
 	struct packet *packets;
 };
 
@@ -35,6 +35,7 @@ struct server {
 	double timeout, linger, keepalive, time_wait;
 	struct link_stats stats;
 	uint32_t m_conv;
+	double last_resolve_time;
 };
 
 struct server *

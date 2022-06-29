@@ -24,6 +24,17 @@ case "$1" in
     cmake --build . --parallel
     ls -lh src/kcptun-libev
     ;;
+"s")
+    rm -rf build
+    mkdir -p build && cd build
+    cmake -G "Ninja" \
+        -DCMAKE_BUILD_TYPE="MinSizeRel" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        ..
+    cmake --build . --parallel
+    # cd src/tests && ctest
+    ls -lh src/kcptun-libev
+    ;;
 "p")
     rm -rf build
     mkdir -p build && cd build
@@ -34,6 +45,22 @@ case "$1" in
     cmake --build . --parallel
     # cd src/tests && ctest
     ;;
+"clang")
+    rm -rf build
+    mkdir -p build && cd build
+    cmake -G "Ninja" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_C_COMPILER="clang" \
+        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+        ..
+    cmake --build . --parallel
+    # cd src/tests && ctest
+    ls -lh src/kcptun-libev
+    ;;
+"c")
+    rm -rf build xbuild
+    ;;
 *)
     # ln -sf build/compile_commands.json compile_commands.json
     mkdir -p build && cd build
@@ -43,8 +70,5 @@ case "$1" in
         ..
     cmake --build . --parallel
     # cd src/tests && ctest
-    ;;
-"c")
-    rm -rf build xbuild
     ;;
 esac

@@ -35,15 +35,6 @@ char *clonestr(const char *str)
 	return s;
 }
 
-/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
-static inline uint32_t xorshift32(uint32_t x)
-{
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	return x;
-}
-
 static uint32_t rand32_state = UINT32_C(0);
 
 uint32_t rand32()

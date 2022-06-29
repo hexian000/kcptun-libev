@@ -24,6 +24,8 @@
 #define UTIL_ASSERT(cond) (void)(cond)
 #endif /* NDEBUG */
 
+#define countof(array) (sizeof(array) / sizeof((array)[0]))
+
 static inline void *util_malloc(size_t n)
 {
 	return malloc(n);
@@ -55,6 +57,15 @@ static inline void *must_malloc(size_t n)
 char *clonestr(const char *);
 
 void print_bin(const void *b, const size_t n);
+
+/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+static inline uint32_t xorshift32(uint32_t x)
+{
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	return x;
+}
 
 uint32_t rand32();
 

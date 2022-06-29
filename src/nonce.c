@@ -13,17 +13,15 @@
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 {
-	uint8_t current = b->current;
-	bool ret = !!bloom_add(&b->bloom[current], buffer, len);
-	if (!ret) {
-		ret |= !!bloom_check(
-			&b->bloom[current ^ UINT8_C(1)], buffer, len);
-	}
-	b->bloom_count[current]++;
-	if (b->bloom_count[current] >= b->entries) {
-		b->current = current ^= UINT8_C(1);
-		bloom_reset(&b->bloom[current]);
-		b->bloom_count[current] = 0;
+	const uint8_t i = b->current & UINT8_C(1);
+	const uint8_t j = i ^ UINT8_C(1);
+	const bool ret = bloom_add(&b->bloom[i], buffer, len) != 0 ||
+			 bloom_check(&b->bloom[j], buffer, len) != 0;
+	b->bloom_count[i]++;
+	if (b->bloom_count[i] >= b->entries) {
+		bloom_reset(&b->bloom[j]);
+		b->bloom_count[j] = 0;
+		b->current = j;
 	}
 	return ret;
 }
@@ -35,8 +33,8 @@ struct noncegen *noncegen_create(size_t nonce_len)
 		return NULL;
 	}
 
-	const size_t entries = 1e6;
-	const double error = 1e-15;
+	const size_t entries = (size_t)1 << 20u;
+	const double error = 1e-9;
 	const size_t n = entries / 2;
 	*g = (struct noncegen){
 		.ppbloom =
@@ -60,25 +58,24 @@ struct noncegen *noncegen_create(size_t nonce_len)
 		noncegen_free(g);
 		return NULL;
 	}
-	for (size_t i = 0; i < sizeof(g->src) / sizeof(g->src[0]); i++) {
+	for (size_t i = 0; i < countof(g->src); i++) {
 		g->src[i] = rand32();
 	}
 	return g;
 }
 
-const unsigned char *noncegen_next(struct noncegen *g)
+const unsigned char *noncegen_next(struct noncegen *restrict g)
 {
-	for (size_t i = 0; i < sizeof(g->src) / sizeof(g->src[0]); i++) {
-		const uint32_t v = g->src[i];
-		if ((g->src[i] = v + 1) != UINT32_C(0)) {
+	for (size_t i = 0; i < countof(g->src); i++) {
+		if (g->src[i] != UINT32_MAX) {
+			g->src[i]++;
 			break;
 		}
+		g->src[i] = 0;
 	}
 	const uint32_t n = g->nonce_len / sizeof(uint32_t);
 	for (uint32_t i = 0; i < n; i++) {
-		const uint32_t h =
-			murmurhash3((void *)g->src, sizeof(g->src), i);
-		write_uint32(g->nonce_buf + (i * sizeof(uint32_t)), h);
+		write_uint32(g->nonce_buf + (i * sizeof(uint32_t)), g->src[i]);
 	}
 	return g->nonce_buf;
 }

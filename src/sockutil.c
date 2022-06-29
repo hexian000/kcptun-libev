@@ -30,10 +30,10 @@ void socket_set_reuseport(const int fd, const int reuseport)
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_REUSEPORT, &reuseport,
 		    sizeof(reuseport))) {
-		LOG_PERROR("SO_REUSEPORT");
+		LOGW_PERROR("SO_REUSEPORT");
 	}
 #else
-	LOGE("reuseport not supported on this platform");
+	LOGW("reuseport not supported on this platform");
 #endif
 }
 
@@ -42,7 +42,7 @@ void socket_set_tcp(
 {
 	if (setsockopt(
 		    fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay))) {
-		LOG_PERROR("TCP_NODELAY");
+		LOGW_PERROR("TCP_NODELAY");
 	}
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_LINGER,
@@ -51,22 +51,22 @@ void socket_set_tcp(
 			    .l_linger = linger,
 		    },
 		    sizeof(struct linger))) {
-		LOG_PERROR("SO_LINGER");
+		LOGW_PERROR("SO_LINGER");
 	}
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive,
 		    sizeof(keepalive))) {
-		LOG_PERROR("SO_KEEPALIVE");
+		LOGW_PERROR("SO_KEEPALIVE");
 	}
 }
 
 void socket_set_buffer(int fd, size_t send, size_t recv)
 {
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &(int){ send }, sizeof(int))) {
-		LOG_PERROR("SO_SNDBUF");
+		LOGW_PERROR("SO_SNDBUF");
 	}
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv }, sizeof(int))) {
-		LOG_PERROR("SO_RCVBUF");
+		LOGW_PERROR("SO_RCVBUF");
 	}
 }
 
@@ -144,7 +144,7 @@ resolve(const char *hostname, const char *service, const int socktype)
 	};
 	struct addrinfo *result = NULL;
 	if (getaddrinfo(hostname, service, &hints, &result) != 0) {
-		LOG_PERROR("resolve");
+		LOGE_PERROR("resolve");
 		return NULL;
 	}
 	struct sockaddr *sa = NULL;

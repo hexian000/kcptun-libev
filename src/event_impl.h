@@ -29,7 +29,7 @@
 #define CHECK_EV_ERROR(revents)                                                \
 	do {                                                                   \
 		if ((unsigned)(revents) & (unsigned)EV_ERROR) {                \
-			LOG_PERROR("got error event");                         \
+			LOGE_PERROR("got error event");                         \
 			return;                                                \
 		}                                                              \
 	} while (0)

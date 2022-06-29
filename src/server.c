@@ -26,11 +26,11 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 	struct listener *restrict l = &(s->listener);
 	// Create server socket
 	if ((l->fd = socket(addr->sa_family, SOCK_STREAM, 0)) < 0) {
-		LOG_PERROR("socket error");
+		LOGE_PERROR("socket error");
 		return false;
 	}
 	if (socket_set_nonblock(l->fd)) {
-		LOG_PERROR("fcntl");
+		LOGE_PERROR("fcntl");
 		return false;
 	}
 	{
@@ -44,7 +44,7 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 
 	// Bind socket to address
 	if (bind(l->fd, addr, getsocklen(addr)) != 0) {
-		LOG_PERROR("bind error");
+		LOGE_PERROR("bind error");
 		close(l->fd);
 		l->fd = -1;
 		return false;
@@ -52,7 +52,7 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 
 	// Start listing on the socket
 	if (listen(l->fd, 2) < 0) {
-		LOG_PERROR("listen error");
+		LOGE_PERROR("listen error");
 		close(l->fd);
 		l->fd = -1;
 		return false;
@@ -84,11 +84,11 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 
 	// Setup a udp socket.
 	if ((udp->fd = socket(conf->udp_af, SOCK_DGRAM, 0)) < 0) {
-		LOG_PERROR("udp socket");
+		LOGE_PERROR("udp socket");
 		return false;
 	}
 	if (socket_set_nonblock(udp->fd)) {
-		LOG_PERROR("fcntl");
+		LOGE_PERROR("fcntl");
 		return NULL;
 	}
 	socket_set_reuseport(udp->fd, conf->udp_reuseport);
@@ -96,7 +96,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 	if (conf->udp_bind.sa) {
 		const struct sockaddr *addr = conf->udp_bind.sa;
 		if (bind(udp->fd, addr, getsocklen(addr))) {
-			LOG_PERROR("udp bind");
+			LOGE_PERROR("udp bind");
 			return false;
 		}
 		char addr_str[64];
@@ -106,7 +106,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 	if (conf->udp_connect.sa) {
 		const struct sockaddr *addr = conf->udp_connect.sa;
 		if (connect(udp->fd, addr, getsocklen(addr))) {
-			LOG_PERROR("udp connect");
+			LOGE_PERROR("udp connect");
 			return false;
 		}
 		char addr_str[64];
@@ -134,7 +134,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 
 	const ev_tstamp now = ev_time();
 	udp->last_send_time = now;
-	udp->last_seen_time = now;
+	udp->last_recv_time = now;
 	return true;
 }
 
@@ -153,6 +153,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 				.w_accept = NULL,
 				.fd = -1,
 			},
+		.last_resolve_time = ev_now(loop),
 	};
 	s->sessions = table_create();
 	if (s->sessions == NULL) {

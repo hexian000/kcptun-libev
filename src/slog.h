@@ -82,7 +82,12 @@ extern FILE *slog_file;
 #define LOGV(message) LOGV_F("%s", message)
 
 /* perror: Log an error message with last system error message. */
-#define LOG_PERROR(message)                                                    \
+#define LOGW_PERROR(message)                                                   \
+	LOG_INTERNAL(                                                          \
+		LOG_LEVEL_WARNING, __FILE__, __LINE__, "%s: [%d] %s", message, \
+		errno, strerror(errno))
+
+#define LOGE_PERROR(message)                                                   \
 	LOG_INTERNAL(                                                          \
 		LOG_LEVEL_ERROR, __FILE__, __LINE__, "%s: [%d] %s", message,   \
 		errno, strerror(errno))

@@ -58,7 +58,7 @@ static json_value *parse_json(const char *file)
 
 	FILE *f = fopen(file, "r");
 	if (f == NULL) {
-		LOG_PERROR("cannot open config file");
+		LOGE_PERROR("cannot open config file");
 		goto cleanup;
 	}
 
@@ -67,7 +67,7 @@ static json_value *parse_json(const char *file)
 	fseek(f, 0, SEEK_SET);
 
 	if (len < 0) {
-		LOG_PERROR("cannot seek config file");
+		LOGE_PERROR("cannot seek config file");
 		goto cleanup;
 	}
 

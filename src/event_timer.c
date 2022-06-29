@@ -159,9 +159,12 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (s->conf->mode == MODE_SERVER) {
 		return;
 	}
-	if (now - s->udp.last_seen_time > 60.0) {
-		LOGD("remote not seen for long, try resolve addresses");
+	if (now - s->udp.last_recv_time > 60.0 &&
+	    now - s->last_resolve_time > 60.0) {
+		LOGD_F("remote not seen for %.0fs, try resolve addresses",
+		       now - s->udp.last_recv_time);
 		conf_resolve(s->conf);
+		s->last_resolve_time = now;
 	}
 	if (now - s->udp.last_send_time < s->keepalive) {
 		return;

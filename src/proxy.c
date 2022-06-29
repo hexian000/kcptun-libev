@@ -16,11 +16,11 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 	int fd;
 	// Create socket
 	if ((fd = socket(sa->sa_family, SOCK_STREAM, 0)) < 0) {
-		LOG_PERROR("socket");
+		LOGE_PERROR("socket");
 		return NULL;
 	}
 	if (socket_set_nonblock(fd)) {
-		LOG_PERROR("fcntl");
+		LOGE_PERROR("fcntl");
 		return NULL;
 	}
 	{
@@ -40,7 +40,7 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 	// Connect to address
 	if (connect(ss->tcp_fd, sa, getsocklen(sa)) != 0) {
 		if (errno != EINPROGRESS) {
-			LOG_PERROR("connect");
+			LOGE_PERROR("connect");
 			return NULL;
 		}
 	}
