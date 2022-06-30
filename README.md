@@ -24,7 +24,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Proper: KCP will be updated on demand, no unnecessary lag introduced.
 - Simple: Without FEC craps.
 - Morden: Full IPv6 support.
-- Dynamic IP aware: Dynamic IP address and UDP hole punching are supported.
+- DDNS aware: Dynamic IP addresses are supported.
 - Configurable: Encryption can be completely disabled or even excluded from build
 - Compatible: Compliant with ISO C standard.
 
