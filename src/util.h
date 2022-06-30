@@ -49,7 +49,7 @@ static inline void *must_malloc(size_t n)
 #define UTIL_SAFE_FREE(x)                                                      \
 	do {                                                                   \
 		if ((x) != NULL) {                                             \
-			util_free(x);                                          \
+			util_free((void *)x);                                  \
 			(x) = NULL;                                            \
 		}                                                              \
 	} while (0)

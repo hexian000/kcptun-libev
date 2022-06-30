@@ -29,7 +29,7 @@ kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 #if WITH_CRYPTO
 	struct aead *crypto = ss->server->udp.packets->crypto;
 	if (crypto != NULL) {
-		mtu -= crypto_overhead() + crypto_nonce_size();
+		mtu -= crypto->overhead + crypto->nonce_size;
 	}
 #endif
 	ikcp_setmtu(kcp, mtu);
@@ -47,11 +47,13 @@ struct session *session_new_dummy(struct server *s)
 	if (ss == NULL) {
 		return NULL;
 	}
+	const ev_tstamp now = ev_now(s->loop);
 	*ss = (struct session){
 		.server = s,
 		.state = STATE_TIME_WAIT,
 		.tcp_fd = -1,
-		.last_seen = ev_now(s->loop),
+		.last_send = now,
+		.last_recv = now,
 	};
 	LOGD_F("session new dummy: %p", (void *)ss);
 	return ss;
@@ -66,6 +68,7 @@ struct session *session_new(
 	if (ss == NULL) {
 		return NULL;
 	}
+	const ev_tstamp now = ev_now(s->loop);
 	*ss = (struct session){
 		.state = STATE_CLOSED,
 		.server = s,
@@ -73,7 +76,8 @@ struct session *session_new(
 		.conv = conv,
 		.kcp_checked = false,
 		.kcp_closed = false,
-		.last_seen = ev_now(s->loop),
+		.last_send = now,
+		.last_recv = now,
 	};
 	ss->rbuf = util_malloc(SESSION_BUF_SIZE);
 	if (ss->rbuf == NULL) {

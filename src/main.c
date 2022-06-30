@@ -23,18 +23,33 @@ static void print_usage(char *argv0)
 	       "  -h, --help                 show usage\n"
 	       "  -c, --config <file>        specify json config\n"
 #if WITH_CRYPTO
-	       "  --genpsk                   generate a random preshared key\n"
+	       "  --genpsk <method>          generate random preshared key for specified method\n"
 #endif
 	       "\n");
 }
 
 static void init()
 {
-#if WITH_CRYPTO
-	aead_init();
-#endif
 	ikcp_allocator(util_malloc, util_free);
 }
+
+#if WITH_CRYPTO
+static void genpsk(const char *method)
+{
+	struct aead *crypto = aead_create(method);
+	if (crypto == NULL) {
+		fprintf(stderr, "unsupported method: %s", method);
+		exit(EXIT_FAILURE);
+	}
+	unsigned char *key = must_malloc(crypto->key_size);
+	aead_keygen(crypto, key);
+	char *keystr = b64_encode(key, crypto->key_size);
+	printf("%s\n", keystr);
+	util_free(key);
+	free(keystr);
+	aead_free(crypto);
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -52,7 +67,6 @@ int main(int argc, char **argv)
 			strcmp(argv[i], "-c") == 0 ||
 			strcmp(argv[i], "--config") == 0) {
 			if (i + 1 >= argc) {
-				printf("incomplete argument: %s", argv[i]);
 				print_usage(argv[0]);
 				return EXIT_FAILURE;
 			}
@@ -60,13 +74,11 @@ int main(int argc, char **argv)
 		}
 #if WITH_CRYPTO
 		else if (strcmp(argv[i], "--genpsk") == 0) {
-			const size_t key_size = crypto_key_size();
-			unsigned char *key = must_malloc(key_size);
-			crypto_gen_key(key);
-			char *keystr = b64_encode(key, key_size);
-			printf("%s\n", keystr);
-			util_free(key);
-			free(keystr);
+			if (i + 1 >= argc) {
+				print_usage(argv[0]);
+				return EXIT_FAILURE;
+			}
+			genpsk(argv[++i]);
 			return EXIT_SUCCESS;
 		}
 #endif
@@ -109,6 +121,8 @@ int main(int argc, char **argv)
 	}
 
 	signal(SIGPIPE, SIG_IGN);
+	ev_signal_init(w_sigint, signal_cb, SIGHUP);
+	ev_signal_start(loop, w_sigint);
 	ev_signal_init(w_sigint, signal_cb, SIGINT);
 	ev_signal_start(loop, w_sigint);
 	ev_signal_init(w_sigterm, signal_cb, SIGTERM);
@@ -131,8 +145,16 @@ int main(int argc, char **argv)
 
 void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 {
-	UNUSED(watcher);
 	UNUSED(revents);
-	LOGI("signal received, breaking");
-	ev_break(loop, EVBREAK_ALL);
+
+	switch (watcher->signum) {
+	case SIGHUP: {
+		LOGI("SIGHUP received, ignored");
+	} break;
+	case SIGINT:
+	case SIGTERM: {
+		LOGI_F("signal %d received, breaking", watcher->signum);
+		ev_break(loop, EVBREAK_ALL);
+	} break;
+	}
 }

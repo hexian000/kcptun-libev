@@ -23,9 +23,7 @@ static void accept_one(struct server *restrict s, const int fd)
 		close(fd);
 		return;
 	}
-	ss->is_accepted = true;
 	ss->state = STATE_CONNECTED;
-	ss->last_seen = ev_now(s->loop);
 	hashkey_t key;
 	conv_make_key(&key, s->conf->udp_connect.sa, conv);
 	table_set(s->sessions, &key, ss);
@@ -83,8 +81,6 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 size_t tcp_recv(struct session *restrict ss)
 {
-	struct server *restrict s = ss->server;
-
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
 	if (cap == 0) {
@@ -124,8 +120,6 @@ size_t tcp_recv(struct session *restrict ss)
 		LOGV_F("session [%08" PRIX32
 		       "] tcp recv: %zu bytes, cap: %zu bytes",
 		       ss->kcp->conv, len, cap);
-
-		ss->last_seen = ev_now(s->loop);
 	}
 
 	if (tcp_eof) {
@@ -230,7 +224,6 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 	if (ss->state == STATE_CONNECT) {
 		ss->state = STATE_CONNECTED;
-		ss->last_seen = ev_now(ss->server->loop);
 		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->kcp->conv);
 	}
 

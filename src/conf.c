@@ -142,6 +142,24 @@ static char *parse_string_json(const json_value *value)
 	return str;
 }
 
+static unsigned char *
+parse_b64_json(const json_value *value, size_t *restrict outlen)
+{
+	if (value->type != json_string) {
+		LOGE_F("unexpected json object type: %d", value->type);
+		return 0;
+	}
+	unsigned char *b = b64_decode_ex(
+		value->u.string.ptr, value->u.string.length, outlen);
+	if (b == NULL) {
+		return NULL;
+	}
+	unsigned char *data = util_malloc(*outlen);
+	memcpy(data, b, *outlen);
+	free(b);
+	return data;
+}
+
 static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
 {
 	const char *name = entry->name;
@@ -250,35 +268,17 @@ static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
 		return (conf->udp_connect.str = str) != NULL;
 	}
 #if WITH_CRYPTO
+	if (strcmp(name, "method") == 0) {
+		conf->method = parse_string_json(value);
+		return conf->method != NULL;
+	}
 	if (strcmp(name, "password") == 0) {
-		/* prefer psk */
-		if (conf->psk == NULL) {
-			conf->password = parse_string_json(value);
-		}
+		conf->password = parse_string_json(value);
 		return conf->password != NULL;
 	}
 	if (strcmp(name, "psk") == 0) {
-		char *pskstr = parse_string_json(value);
-		if (pskstr == NULL) {
-			return false;
-		}
-		const size_t len = strlen(pskstr);
-		const size_t key_size = crypto_key_size();
-		size_t outlen;
-		unsigned char *psk = b64_decode_ex(pskstr, len, &outlen);
-		memset(pskstr, 0, len);
-		util_free(pskstr);
-		if (outlen != key_size) {
-			LOGE("invalid psk");
-			free(psk);
-			return false;
-		}
-		conf->psk = must_malloc(key_size);
-		memcpy(conf->psk, psk, key_size);
-		memset(psk, 0, outlen);
-		free(psk);
-		UTIL_SAFE_FREE(conf->password);
-		return true;
+		conf->psk = parse_b64_json(value, &conf->psklen);
+		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
 	if (strcmp(name, "linger") == 0) {
@@ -423,6 +423,7 @@ static struct config conf_default()
 
 static bool conf_check(struct config *restrict conf)
 {
+	/* 1. network address check */
 	conf_resolve(conf);
 	const struct sockaddr *sa = NULL;
 	if (conf->udp_bind.sa != NULL) {
@@ -449,6 +450,12 @@ static bool conf_check(struct config *restrict conf)
 		conf->mode = MODE_PEER;
 	} else {
 		LOGF("config: no forward could be provided (are you missing some address field?)");
+		return false;
+	}
+
+	/* 2. crypto check */
+	if (conf->psk != NULL && conf->password != NULL) {
+		LOGF("config: psk and password cannot be specified at the same time");
 		return false;
 	}
 	return true;
@@ -493,6 +500,7 @@ void conf_free(struct config *conf)
 	netaddr_safe_free(&conf->connect);
 	netaddr_safe_free(&conf->udp_bind);
 	netaddr_safe_free(&conf->udp_connect);
+	UTIL_SAFE_FREE(conf->method);
 	UTIL_SAFE_FREE(conf->password);
 	UTIL_SAFE_FREE(conf->psk);
 	util_free(conf);

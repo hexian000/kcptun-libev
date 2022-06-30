@@ -8,8 +8,6 @@
 
 #if WITH_CRYPTO
 
-#include "murmur3/murmurhash3.h"
-
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 {

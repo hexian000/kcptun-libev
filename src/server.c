@@ -168,25 +168,25 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	if (conf->linger > 5 && conf->linger < 3600) {
+	if (conf->linger >= 5 && conf->linger <= 600) {
 		s->linger = (double)conf->linger;
 	} else {
 		s->linger = 60.0;
 	}
-	if (conf->timeout > 5 && conf->timeout < 3600) {
+	if (conf->timeout >= 5 && conf->timeout <= 86400) {
 		s->timeout = (double)conf->timeout;
 	} else {
-		s->timeout = 600.0;
+		s->timeout = 7200.0;
 	}
-	if (conf->keepalive >= 0 && conf->keepalive < 3600) {
+	if (conf->keepalive >= 1 && conf->keepalive <= 7200) {
 		s->keepalive = (double)conf->keepalive;
 	} else {
 		s->keepalive = 25.0;
 	}
-	if (conf->time_wait > 5 && (double)conf->time_wait > s->timeout) {
+	if (conf->time_wait >= 5 && (double)conf->time_wait > s->linger) {
 		s->time_wait = (double)conf->time_wait;
 	} else {
-		s->time_wait = s->timeout * 3.0;
+		s->time_wait = s->linger * 3.0;
 	}
 
 	s->w_kcp_update = util_malloc(sizeof(struct ev_timer));

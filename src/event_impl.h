@@ -29,28 +29,9 @@
 #define CHECK_EV_ERROR(revents)                                                \
 	do {                                                                   \
 		if ((unsigned)(revents) & (unsigned)EV_ERROR) {                \
-			LOGE_PERROR("got error event");                         \
+			LOGE_PERROR("got error event");                        \
 			return;                                                \
 		}                                                              \
 	} while (0)
-
-static inline struct tlv_header tlv_header_read(const unsigned char *restrict d)
-{
-	return (struct tlv_header){
-		.msg = read_uint16((const uint8_t *)d),
-		.len = read_uint16((const uint8_t *)d + sizeof(uint16_t)),
-	};
-}
-
-static inline void
-tlv_header_write(unsigned char *restrict d, struct tlv_header header)
-{
-	write_uint16((uint8_t *)d, header.msg);
-	write_uint16((uint8_t *)d + sizeof(uint16_t), header.len);
-}
-
-/* session messages */
-#define SMSG_DATA UINT16_C(0x0000)
-#define SMSG_CLOSE UINT16_C(0x0001)
 
 #endif /* EVENT_IMPL_H */

@@ -34,8 +34,10 @@ struct config {
 	bool udp_reuseport;
 	int udp_sndbuf, udp_rcvbuf;
 
+	char *method;
 	char *password;
 	unsigned char *psk;
+	size_t psklen;
 
 	int timeout, linger, keepalive, time_wait;
 	int log_level;

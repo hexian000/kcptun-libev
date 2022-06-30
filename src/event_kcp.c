@@ -7,6 +7,26 @@
 
 #include <ev.h>
 #include <stdint.h>
+#include <string.h>
+
+static inline struct tlv_header tlv_header_read(const unsigned char *d)
+{
+	return (struct tlv_header){
+		.msg = read_uint16(d),
+		.len = read_uint16(d + sizeof(uint16_t)),
+	};
+}
+
+static inline void tlv_header_write(unsigned char *d, struct tlv_header header)
+{
+	write_uint16(d, header.msg);
+	write_uint16(d + sizeof(uint16_t), header.len);
+}
+
+/* session messages */
+#define SMSG_DATA (UINT16_C(0x0000))
+#define SMSG_CLOSE (UINT16_C(0x0001))
+#define SMSG_KEEPALIVE (UINT16_C(0x0002))
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
@@ -49,7 +69,6 @@ void kcp_close(struct session *restrict ss)
 	ss->stats.kcp_out += TLV_HEADER_SIZE;
 	ss->server->stats.kcp_out += TLV_HEADER_SIZE;
 	ss->kcp_closed = true;
-	ss->last_seen = ev_now(ss->server->loop);
 }
 
 size_t kcp_send(struct session *restrict ss)
@@ -79,11 +98,20 @@ size_t kcp_send(struct session *restrict ss)
 	/* invalidate last ikcp_check */
 	ss->kcp_checked = false;
 
+	ss->last_send = ev_now(ss->server->loop);
 	ss->stats.kcp_out += len;
 	s->stats.kcp_out += len;
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->kcp->conv,
 	       len);
 	return len;
+}
+
+static void consume_wbuf(struct session *restrict ss, size_t len)
+{
+	ss->wbuf_len -= len;
+	if (ss->wbuf_len > 0) {
+		memmove(ss->wbuf, ss->wbuf + len, ss->wbuf_len);
+	}
 }
 
 void kcp_recv(struct session *restrict ss)
@@ -114,7 +142,7 @@ void kcp_recv(struct session *restrict ss)
 		LOGV_F("session [%08" PRIX32
 		       "] kcp recv: %zu bytes, cap: %zu bytes",
 		       ss->kcp->conv, nrecv, cap);
-		ss->last_seen = ev_now(ss->server->loop);
+		ss->last_recv = ev_now(ss->server->loop);
 	}
 
 	if (ss->wbuf_len < TLV_HEADER_SIZE) {
@@ -133,7 +161,7 @@ void kcp_recv(struct session *restrict ss)
 	case SMSG_DATA: {
 		/* tcp connection is lost, discard packet */
 		if (ss->tcp_fd == -1) {
-			ss->wbuf_len = 0;
+			consume_wbuf(ss, header.len);
 			return;
 		}
 		ss->wbuf_navail = (size_t)header.len - TLV_HEADER_SIZE;
@@ -146,6 +174,11 @@ void kcp_recv(struct session *restrict ss)
 		ss->kcp_closed = true;
 		session_shutdown(ss);
 		ss->state = STATE_LINGER;
+		return;
+	} break;
+	case SMSG_KEEPALIVE: {
+		UTIL_ASSERT(header.len == TLV_HEADER_SIZE);
+		consume_wbuf(ss, header.len);
 		return;
 	} break;
 	}

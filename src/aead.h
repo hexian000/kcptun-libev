@@ -5,21 +5,22 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-size_t crypto_nonce_size();
-size_t crypto_overhead();
-size_t crypto_key_size();
-void crypto_gen_key(unsigned char *key);
-
 /* AEAD interface */
-struct aead;
+struct aead_impl;
 
-void aead_keygen(unsigned char *k);
+struct aead {
+	const size_t nonce_size;
+	const size_t overhead;
+	const size_t key_size;
+	struct aead_impl *impl;
+};
 
-void aead_init();
+struct aead *aead_create(const char *method);
+void aead_password(struct aead *, char *password);
+void aead_psk(struct aead *, unsigned char *psk);
+void aead_free(struct aead *);
 
-struct aead *aead_create_pw(char *password);
-struct aead *aead_create(unsigned char *psk);
-void aead_destroy(struct aead *);
+void aead_keygen(struct aead *, unsigned char *key);
 
 size_t aead_seal(
 	struct aead *, unsigned char *dst, size_t dst_size,

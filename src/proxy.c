@@ -34,6 +34,7 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 		LOGE("proxy_dial: out of memory");
 		return NULL;
 	}
+	ss->is_accepted = true;
 	ss->state = STATE_CONNECT;
 
 	// Connect to address

@@ -47,7 +47,7 @@ struct session {
 	size_t wbuf_len, wbuf_navail, wbuf_flush;
 	sockaddr_max_t udp_remote;
 	uint32_t conv;
-	double last_seen;
+	double last_send, last_recv;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
 	bool kcp_checked, kcp_closed;

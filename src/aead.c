@@ -10,31 +10,25 @@
 
 #include <sodium.h>
 
-struct aead {
-	unsigned char *key;
-};
+static bool sodium_init_done = false;
 
-size_t crypto_nonce_size()
+static bool aead_init()
 {
-	return crypto_aead_chacha20poly1305_ietf_npubbytes();
+	if (sodium_init_done) {
+		return true;
+	}
+	const int ret = sodium_init();
+	if (ret != 0) {
+		LOGE_F("sodium_init failed: %d", ret);
+		return false;
+	};
+	sodium_init_done = true;
+	return true;
 }
 
-size_t crypto_overhead()
-{
-	return crypto_aead_chacha20poly1305_ietf_abytes();
-}
-
-size_t crypto_key_size()
-{
-	return crypto_aead_chacha20poly1305_ietf_keybytes();
-}
-
-void crypto_gen_key(unsigned char *key)
-{
-	crypto_aead_chacha20poly1305_keygen(key);
-}
-
-static int kdf(unsigned char *restrict key, const char *restrict password)
+static int
+kdf(const size_t key_size, unsigned char *restrict key,
+    const char *restrict password)
 {
 	const char salt_str[] = "kcptun-libev";
 	unsigned char salt[crypto_pwhash_argon2id_SALTBYTES];
@@ -44,7 +38,6 @@ static int kdf(unsigned char *restrict key, const char *restrict password)
 	if (r) {
 		return r;
 	}
-	const size_t key_size = crypto_key_size();
 	r = crypto_pwhash_argon2id(
 		(unsigned char *)key, key_size, password, strlen(password),
 		salt, crypto_pwhash_argon2id_OPSLIMIT_INTERACTIVE,
@@ -53,23 +46,38 @@ static int kdf(unsigned char *restrict key, const char *restrict password)
 	return r;
 }
 
-void aead_keygen(unsigned char *k)
-{
-	crypto_aead_chacha20poly1305_ietf_keygen(k);
-}
+struct aead_impl {
+	void (*keygen)(unsigned char *);
+
+	int (*seal)(
+		unsigned char *c, unsigned long long *clen_p,
+		const unsigned char *m, unsigned long long mlen,
+		const unsigned char *ad, unsigned long long adlen,
+		const unsigned char *nsec, const unsigned char *npub,
+		const unsigned char *k);
+
+	int (*open)(
+		unsigned char *m, unsigned long long *mlen_p,
+		unsigned char *nsec, const unsigned char *c,
+		unsigned long long clen, const unsigned char *ad,
+		unsigned long long adlen, const unsigned char *npub,
+		const unsigned char *k);
+
+	unsigned char *key;
+};
 
 size_t aead_seal(
 	struct aead *aead, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *plain,
 	size_t plain_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size >= plain_size + crypto_overhead());
+	UTIL_ASSERT(dst_size >= plain_size + aead->overhead);
 	unsigned long long r_len = dst_size;
-	int r = crypto_aead_chacha20poly1305_ietf_encrypt(
+	int r = aead->impl->seal(
 		dst, &r_len, plain, plain_size, tag, tag_size, NULL, nonce,
-		aead->key);
+		aead->impl->key);
 	if (r != 0) {
-		LOGE_F("chacha20poly1305_ietf_encrypt: %d", r);
+		LOGE_F("aead_seal: %d", r);
 		return 0;
 	}
 	return r_len;
@@ -80,89 +88,124 @@ size_t aead_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size + crypto_overhead() >= cipher_size);
+	UTIL_ASSERT(dst_size + aead->overhead >= cipher_size);
 	unsigned long long r_len = dst_size;
-	int r = crypto_aead_chacha20poly1305_ietf_decrypt(
+	int r = aead->impl->open(
 		dst, &r_len, NULL, cipher, cipher_size, tag, tag_size, nonce,
-		aead->key);
+		aead->impl->key);
 	if (r != 0) {
-		LOGE_F("chacha20poly1305_ietf_decrypt: %d", r);
+		LOGE_F("aead_open: %d", r);
 		return 0;
 	}
 	return r_len;
 }
 
-void aead_init()
-{
-	const int ret = sodium_init();
-	if (ret != 0) {
-		LOGF_F("sodium_init failed: %d", ret);
-		exit(EXIT_FAILURE);
-	};
-}
+enum aead_method {
+	method_chacha20poly1305_ietf,
+	method_aes256gcm,
+};
 
-struct aead *aead_create_pw(char *password)
+struct aead *aead_create(const char *method)
 {
-	if (password == NULL || strlen(password) == 0) {
-		LOGI("no encryption enabled");
+	if (!aead_init()) {
+		return NULL;
+	}
+	enum aead_method m;
+	size_t nonce_size, overhead, key_size;
+	if (strcmp(method, "chacha20poly1305_ietf") == 0) {
+		m = method_chacha20poly1305_ietf;
+		nonce_size = crypto_aead_chacha20poly1305_ietf_npubbytes();
+		overhead = crypto_aead_chacha20poly1305_ietf_abytes();
+		key_size = crypto_aead_chacha20poly1305_ietf_keybytes();
+	} else if (strcmp(method, "aes256gcm") == 0) {
+		m = method_aes256gcm;
+		nonce_size = crypto_aead_aes256gcm_npubbytes();
+		overhead = crypto_aead_aes256gcm_abytes();
+		key_size = crypto_aead_aes256gcm_keybytes();
+	} else {
+		LOGW_F("unsupported crypto method: %s", method);
 		return NULL;
 	}
 	struct aead *aead = util_malloc(sizeof(struct aead));
 	if (aead == NULL) {
 		return NULL;
 	}
-	const size_t key_size = crypto_key_size();
+	*(size_t *)&aead->nonce_size = nonce_size;
+	*(size_t *)&aead->overhead = overhead;
+	*(size_t *)&aead->key_size = key_size;
+	aead->impl = util_malloc(sizeof(struct aead_impl));
+	if (aead->impl == NULL) {
+		aead_free(aead);
+		return NULL;
+	}
 	unsigned char *key = sodium_malloc(key_size);
 	if (key == NULL) {
+		aead_free(aead);
 		return NULL;
 	}
 	sodium_mlock(key, key_size);
-	*aead = (struct aead){
-		.key = key,
-	};
-	LOGI("key derivation...");
-	int r = kdf(key, password);
-	if (r) {
-		LOGF_F("key derivation failed: %d", r);
+	switch (m) {
+	case method_chacha20poly1305_ietf: {
+		*aead->impl = (struct aead_impl){
+			.key = key,
+			.keygen = &crypto_aead_chacha20poly1305_ietf_keygen,
+			.seal = &crypto_aead_chacha20poly1305_ietf_encrypt,
+			.open = &crypto_aead_chacha20poly1305_ietf_decrypt,
+		};
+	} break;
+	case method_aes256gcm: {
+		*aead->impl = (struct aead_impl){
+			.key = key,
+			.keygen = &crypto_aead_aes256gcm_keygen,
+			.seal = &crypto_aead_aes256gcm_encrypt,
+			.open = &crypto_aead_aes256gcm_decrypt,
+		};
+	} break;
 	}
+	return aead;
+}
+
+static void aead_free_key(struct aead_impl *impl, const size_t key_size)
+{
+	if (impl == NULL) {
+		return;
+	}
+	if (impl->key != NULL) {
+		sodium_memzero(impl->key, key_size);
+		sodium_munlock(impl->key, key_size);
+		sodium_free(impl->key);
+		impl->key = NULL;
+	}
+}
+
+void aead_password(struct aead *restrict aead, char *password)
+{
+	kdf(aead->key_size, aead->impl->key, password);
 	memset(password, 0, strlen(password));
-	return aead;
 }
 
-struct aead *aead_create(unsigned char *psk)
+void aead_psk(struct aead *restrict aead, unsigned char *psk)
 {
-	if (psk == NULL) {
-		LOGI("no encryption enabled");
-		return NULL;
-	}
-	struct aead *aead = util_malloc(sizeof(struct aead));
-	if (aead == NULL) {
-		return NULL;
-	}
-	const size_t key_size = crypto_key_size();
-	unsigned char *key = sodium_malloc(key_size);
-	if (key == NULL) {
-		return NULL;
-	}
-	sodium_mlock(key, key_size);
-	*aead = (struct aead){
-		.key = key,
-	};
-	LOGI("load psk...");
-	memcpy(key, psk, key_size);
-	memset(psk, 0, key_size);
-	return aead;
+	memcpy(aead->impl->key, psk, aead->key_size);
+	memset(psk, 0, aead->key_size);
 }
 
-void aead_destroy(struct aead *restrict aead)
+void aead_keygen(struct aead *restrict aead, unsigned char *key)
 {
-	if (aead->key != NULL) {
-		const size_t key_size = crypto_key_size();
-		sodium_memzero(aead->key, key_size);
-		sodium_munlock(aead->key, key_size);
-		sodium_free(aead->key);
-		aead->key = NULL;
+	aead->impl->keygen(key);
+}
+
+void aead_free(struct aead *restrict aead)
+{
+	struct aead_impl *restrict impl = aead->impl;
+	if (impl != NULL && impl->key != NULL) {
+		sodium_memzero(impl->key, aead->key_size);
+		sodium_munlock(impl->key, aead->key_size);
+		sodium_free(impl->key);
+		impl->key = NULL;
 	}
+	aead_free_key(aead->impl, aead->key_size);
+	UTIL_SAFE_FREE(aead->impl);
 	util_free(aead);
 }
 

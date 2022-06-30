@@ -35,8 +35,8 @@ static bool packet_open_inplace(
 	const size_t src_len = *len;
 	UTIL_ASSERT(size >= src_len);
 	struct aead *restrict crypto = p->crypto;
-	const size_t nonce_size = crypto_nonce_size();
-	const size_t overhead = crypto_overhead();
+	const size_t nonce_size = crypto->nonce_size;
+	const size_t overhead = crypto->overhead;
 	if (src_len <= nonce_size + overhead) {
 		LOGD_F("packet too short: %zu", src_len);
 		return false;
@@ -65,8 +65,8 @@ static bool packet_seal_inplace(
 {
 	struct aead *restrict crypto = p->crypto;
 	const size_t src_len = *len;
-	const size_t nonce_size = crypto_nonce_size();
-	const size_t overhead = crypto_overhead();
+	const size_t nonce_size = crypto->nonce_size;
+	const size_t overhead = crypto->overhead;
 	UTIL_ASSERT(size >= src_len + overhead + nonce_size);
 	const unsigned char *nonce = noncegen_next(p->noncegen);
 	const size_t dst_size = size - nonce_size;
@@ -176,7 +176,7 @@ static void ss0_pong(struct server *restrict s, struct msgframe *restrict msg)
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
 	/*  print RTT */
 	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
-	LOGI_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
+	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
 }
 
 static void session0(struct server *restrict s, struct msgframe *restrict msg)
@@ -221,6 +221,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
 		if (s->conf->connect.sa == NULL) {
 			LOGW_F("session not found [%08" PRIX32 "]", conv);
+			/* dummy session to send kcp acks */
 			ss = session_new_dummy(s);
 			if (ss != NULL) {
 				table_set(s->sessions, &sskey, ss);
@@ -282,6 +283,39 @@ bool packet_send(
 	return true;
 }
 
+#if WITH_CRYPTO
+static bool
+packet_create_crypto(struct packet *restrict p, struct config *restrict cfg)
+{
+	if (cfg->method == NULL) {
+		return true;
+	}
+	p->crypto = aead_create(cfg->method);
+	if (p->crypto == NULL) {
+		return false;
+	}
+	if (cfg->psk) {
+		if (cfg->psklen != p->crypto->key_size) {
+			LOGE("wrong psk length");
+			aead_free(p->crypto);
+			p->crypto = NULL;
+			return false;
+		}
+		aead_psk(p->crypto, cfg->psk);
+		UTIL_SAFE_FREE(cfg->psk);
+	} else if (cfg->password) {
+		aead_password(p->crypto, cfg->password);
+		UTIL_SAFE_FREE(cfg->password);
+	}
+	p->noncegen = noncegen_create(p->crypto->nonce_size);
+	if (p->noncegen == NULL) {
+		aead_free(p->crypto);
+		return false;
+	}
+	return true;
+}
+#endif
+
 struct packet *packet_create(struct config *restrict cfg)
 {
 	struct packet *p = util_malloc(sizeof(struct packet));
@@ -296,25 +330,13 @@ struct packet *packet_create(struct config *restrict cfg)
 		return NULL;
 	}
 #if WITH_CRYPTO
-	if (cfg->psk) {
-		p->crypto = aead_create(cfg->psk);
-		UTIL_SAFE_FREE(cfg->psk);
-	} else if (cfg->password) {
-		p->crypto = aead_create_pw(cfg->password);
-		UTIL_SAFE_FREE(cfg->password);
+	if (!packet_create_crypto(p, cfg)) {
+		packet_free(p);
+		return NULL;
 	}
-	if (p->crypto != NULL) {
-		p->noncegen = noncegen_create(crypto_nonce_size());
-		if (p->noncegen == NULL) {
-			packet_free(p);
-			return NULL;
-		}
-	} else {
+	if (p->crypto == NULL) {
 		LOGW("data will not be encrypted");
 	}
-
-#else
-	LOGW("data will not be encrypted");
 #endif
 	return p;
 }
@@ -324,7 +346,7 @@ void packet_free(struct packet *restrict p)
 	pool_free(&p->msgpool);
 #if WITH_CRYPTO
 	if (p->crypto != NULL) {
-		aead_destroy(p->crypto);
+		aead_free(p->crypto);
 		p->crypto = NULL;
 	}
 	if (p->noncegen != NULL) {

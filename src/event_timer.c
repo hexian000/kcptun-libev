@@ -8,9 +8,12 @@
 #include "slog.h"
 #include "sockutil.h"
 #include "util.h"
+
 #include <ev.h>
 #include <stdint.h>
 #include <sys/socket.h>
+
+#include <math.h>
 
 struct session_stats {
 	size_t data[STATE_MAX];
@@ -47,30 +50,31 @@ bool timeout_filt(
 
 	struct session *restrict ss = value;
 	struct server *restrict s = ss->server;
-	struct link_stats *restrict session_stats = &(ss->stats);
 	struct session_stats *restrict stats = user;
 	UTIL_ASSERT(ss->state < STATE_MAX);
 	stats->data[ss->state]++;
-	const ev_tstamp now = stats->now;
-	const double not_seen = now - ss->last_seen;
+	const double last_seen =
+		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
+	const double not_seen = stats->now - last_seen;
 
 	switch (ss->state) {
 	case STATE_CONNECT:
 	case STATE_CONNECTED: {
-		print_session_info(ss, session_stats);
 		if (not_seen > s->timeout) {
 			LOGI_F("session [%08" PRIX32 "] timed out", ss->conv);
 			session_shutdown(ss);
 			kcp_close(ss);
+		} else if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+			print_session_info(ss, &(ss->stats));
 		}
 	} break;
 	case STATE_LINGER: {
-		print_session_info(ss, session_stats);
 		if (not_seen > s->linger) {
 			LOGD_F("session [%08" PRIX32 "] linger timed out",
 			       ss->conv);
 			ss->state = STATE_TIME_WAIT;
-			ss->last_seen = now;
+		} else if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+			print_session_info(ss, &(ss->stats));
 		}
 	} break;
 	case STATE_TIME_WAIT: {
@@ -97,9 +101,13 @@ bool timeout_filt(
 
 static void traffic_stats(struct server *restrict s, const ev_tstamp now)
 {
-	UNUSED(now);
 	static struct link_stats last_stats = { 0 };
-	const double dt = 10.0;
+	static double last_stat_time = NAN;
+	if (!isfinite(last_stat_time)) {
+		last_stat_time = now;
+		return;
+	}
+	const double dt = now - last_stat_time;
 	struct link_stats dstats = (struct link_stats){
 		.udp_in = s->stats.udp_in - last_stats.udp_in,
 		.udp_out = s->stats.udp_out - last_stats.udp_out,
@@ -144,7 +152,9 @@ static void timeout_check(struct server *restrict s, const ev_tstamp now)
 		       stats.data[STATE_LINGER],
 		       s->udp.w_read ? ev_is_active(s->udp.w_read) : -1,
 		       s->udp.w_write ? ev_is_active(s->udp.w_write) : -1);
-		traffic_stats(s, now);
+		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+			traffic_stats(s, now);
+		}
 	}
 }
 
