@@ -3,9 +3,7 @@
 #include "slog.h"
 #include "util.h"
 #include "sockutil.h"
-
-#include "json/json.h"
-#include "b64/b64.h"
+#include "jsonutil.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -18,38 +16,6 @@
 #include <string.h>
 
 #define MAX_CONF_SIZE 65536
-
-typedef bool (*walk_json_object_cb)(struct config *, const json_object_entry *);
-static bool walk_json_object(
-	struct config *conf, const json_value *obj, walk_json_object_cb cb)
-{
-	if (obj == NULL || obj->type != json_object) {
-		return false;
-	}
-
-	for (unsigned int i = 0; i < obj->u.object.length; i++) {
-		if (!cb(conf, &obj->u.object.values[i])) {
-			return false;
-		}
-	}
-	return true;
-}
-
-// typedef bool (*walk_json_array_cb)(struct config *, const json_value *);
-// static bool walk_json_array(
-// 	struct config *conf, const json_value *obj, walk_json_array_cb cb)
-// {
-// 	if (obj == NULL || obj->type != json_array) {
-// 		return false;
-// 	}
-
-// 	for (unsigned int i = 0; i < obj->u.array.length; i++) {
-// 		if (!cb(conf, obj->u.array.values[i])) {
-// 			return false;
-// 		}
-// 	}
-// 	return true;
-// }
 
 static json_value *parse_json(const char *file)
 {
@@ -112,56 +78,9 @@ cleanup:
 	return obj;
 }
 
-static bool parse_bool_json(bool *b, const json_value *v)
+static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 {
-	if (v->type != json_boolean) {
-		return false;
-	}
-	*b = v->u.boolean != 0;
-	return true;
-}
-
-static bool parse_int_json(int *i, const json_value *v)
-{
-	if (v->type != json_integer) {
-		return false;
-	}
-	*i = (int)v->u.integer;
-	return true;
-}
-
-static char *parse_string_json(const json_value *value)
-{
-	if (value->type != json_string) {
-		LOGE_F("unexpected json object type: %d", value->type);
-		return NULL;
-	}
-	size_t n = value->u.string.length + 1;
-	char *str = util_malloc(n);
-	strncpy(str, value->u.string.ptr, n);
-	return str;
-}
-
-static unsigned char *
-parse_b64_json(const json_value *value, size_t *restrict outlen)
-{
-	if (value->type != json_string) {
-		LOGE_F("unexpected json object type: %d", value->type);
-		return 0;
-	}
-	unsigned char *b = b64_decode_ex(
-		value->u.string.ptr, value->u.string.length, outlen);
-	if (b == NULL) {
-		return NULL;
-	}
-	unsigned char *data = util_malloc(*outlen);
-	memcpy(data, b, *outlen);
-	free(b);
-	return data;
-}
-
-static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
-{
+	struct config *restrict conf = ud;
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "mtu") == 0) {
@@ -198,8 +117,9 @@ static bool kcp_scope_cb(struct config *conf, const json_object_entry *entry)
 	return true;
 }
 
-static bool tcp_scope_cb(struct config *conf, const json_object_entry *entry)
+static bool tcp_scope_cb(void *ud, const json_object_entry *entry)
 {
+	struct config *restrict conf = ud;
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "reuseport") == 0) {
@@ -221,8 +141,9 @@ static bool tcp_scope_cb(struct config *conf, const json_object_entry *entry)
 	return true;
 }
 
-static bool udp_scope_cb(struct config *conf, const json_object_entry *entry)
+static bool udp_scope_cb(void *ud, const json_object_entry *entry)
 {
+	struct config *restrict conf = ud;
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "reuseport") == 0) {
@@ -238,8 +159,9 @@ static bool udp_scope_cb(struct config *conf, const json_object_entry *entry)
 	return true;
 }
 
-static bool main_scope_cb(struct config *conf, const json_object_entry *entry)
+static bool main_scope_cb(void *ud, const json_object_entry *entry)
 {
+	struct config *restrict conf = ud;
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "kcp") == 0) {

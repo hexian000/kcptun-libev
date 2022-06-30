@@ -337,6 +337,8 @@ struct packet *packet_create(struct config *restrict cfg)
 	if (p->crypto == NULL) {
 		LOGW("data will not be encrypted");
 	}
+#else
+	UNUSED(cfg);
 #endif
 	return p;
 }

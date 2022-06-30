@@ -21,6 +21,7 @@ add_executable(kcptun-libev main.c
     util.c util.h
     sockutil.c sockutil.h
     conf.c conf.h
+    jsonutil.c jsonutil.h
     packet.c packet.h
     session.c session.h
     proxy.c proxy.h
