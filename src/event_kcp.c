@@ -224,21 +224,6 @@ void kcp_notify(struct session *restrict ss)
 	kcp_update(ss);
 }
 
-static bool kcp_notify_iter(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
-{
-	UNUSED(t);
-	UNUSED(key);
-	UNUSED(user);
-	kcp_notify((struct session *)value);
-	return true;
-}
-
-void kcp_notify_all(struct server *s)
-{
-	table_iterate(s->sessions, kcp_notify_iter, NULL);
-}
-
 static bool kcp_update_iter(
 	struct hashtable *t, const hashkey_t *key, void *value, void *user)
 {
@@ -249,10 +234,15 @@ static bool kcp_update_iter(
 	return true;
 }
 
+void kcp_update_all(struct server *restrict s)
+{
+	table_iterate(s->sessions, kcp_update_iter, NULL);
+}
+
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct server *restrict s = (struct server *)watcher->data;
+	struct server *restrict s = watcher->data;
 	table_iterate(s->sessions, kcp_update_iter, NULL);
 }

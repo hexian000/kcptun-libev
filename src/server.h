@@ -32,6 +32,7 @@ struct server {
 	struct hashtable *sessions;
 	struct ev_timer *w_kcp_update;
 	struct ev_timer *w_keepalive;
+	double interval;
 	double timeout, linger, keepalive, time_wait;
 	struct link_stats stats;
 	uint32_t m_conv;

@@ -168,6 +168,11 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
+	if (conf->kcp_interval >= 1 && conf->kcp_interval <= 10000) {
+		s->interval = conf->kcp_interval * 1e-3;
+	} else {
+		s->interval = 50e-3;
+	}
 	if (conf->linger >= 5 && conf->linger <= 600) {
 		s->linger = (double)conf->linger;
 	} else {
@@ -195,8 +200,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	/* always 10ms */
-	ev_timer_init(s->w_kcp_update, kcp_update_cb, 10e-3, 10e-3);
+	ev_timer_init(s->w_kcp_update, kcp_update_cb, s->interval, s->interval);
 	s->w_kcp_update->data = s;
 	ev_timer_start(s->loop, s->w_kcp_update);
 

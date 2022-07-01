@@ -105,6 +105,7 @@ static void traffic_stats(struct server *restrict s, const ev_tstamp now)
 	static double last_stat_time = NAN;
 	if (!isfinite(last_stat_time)) {
 		last_stat_time = now;
+		last_stats = s->stats;
 		return;
 	}
 	const double dt = now - last_stat_time;
@@ -128,6 +129,7 @@ static void traffic_stats(struct server *restrict s, const ev_tstamp now)
 	       s->stats.udp_out, s->stats.udp_in, s->stats.tcp_in,
 	       s->stats.tcp_out, s->stats.tcp_in * 100.0 / s->stats.udp_out,
 	       s->stats.tcp_out * 100.0 / s->stats.udp_in);
+	last_stat_time = now;
 	last_stats = s->stats;
 }
 

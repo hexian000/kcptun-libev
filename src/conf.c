@@ -323,10 +323,10 @@ static struct config conf_default()
 {
 	return (struct config){
 		.kcp_mtu = 1400,
-		.kcp_sndwnd = 1024,
-		.kcp_rcvwnd = 1024,
-		.kcp_nodelay = 0,
-		.kcp_interval = 10,
+		.kcp_sndwnd = 2048,
+		.kcp_rcvwnd = 2048,
+		.kcp_nodelay = 2,
+		.kcp_interval = 50,
 		.kcp_resend = 3,
 		.kcp_nc = 1,
 		.password = NULL,

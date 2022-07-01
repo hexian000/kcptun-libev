@@ -34,6 +34,6 @@ void kcp_close(struct session *ss);
 void tcp_notify_write(struct session *ss);
 void udp_notify_write(struct server *s);
 void kcp_notify(struct session *ss);
-void kcp_notify_all(struct server *s);
+void kcp_update_all(struct server *s);
 
 #endif /* EVENT_H */
