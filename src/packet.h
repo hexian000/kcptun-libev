@@ -22,7 +22,7 @@ struct msgframe {
 	unsigned char buf[MAX_PACKET_SIZE];
 };
 
-#define MQ_SEND_SIZE 2048
+#define MQ_SEND_SIZE 256
 #define MQ_RECV_SIZE 256
 
 struct packet {

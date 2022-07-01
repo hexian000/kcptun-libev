@@ -43,7 +43,7 @@ static bool packet_open_inplace(
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
 	if (!noncegen_verify(p->noncegen, nonce)) {
-		LOGD("weird nonce (attack?)");
+		LOGD("nonce reuse detected");
 		return false;
 	}
 	const size_t cipher_len = src_len - nonce_size;

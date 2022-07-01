@@ -168,7 +168,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		server_shutdown(s);
 		return NULL;
 	}
-	if (conf->kcp_interval >= 1 && conf->kcp_interval <= 10000) {
+	if (conf->kcp_interval >= 10 && conf->kcp_interval <= 1000) {
 		s->interval = conf->kcp_interval * 1e-3;
 	} else {
 		s->interval = 50e-3;

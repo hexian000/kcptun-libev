@@ -3,10 +3,10 @@
     "udp_bind": ":5555",
     "kcp": {
         "mtu": 1400,
-        "sndwnd": 2048,
-        "rcvwnd": 2048,
-        "nodelay": 2,
-        "interval": 50,
+        "sndwnd": 512,
+        "rcvwnd": 512,
+        "nodelay": 0,
+        "interval": 10,
         "resend": 3,
         "nc": 1
     },
