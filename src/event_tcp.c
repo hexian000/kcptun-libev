@@ -17,17 +17,23 @@ static void accept_one(struct server *restrict s, const int fd)
 	/* Initialize and start watcher to read client requests */
 	uint32_t conv = conv_new(s);
 	struct session *restrict ss;
-	ss = session_new(s, fd, s->conf->udp_connect.sa, conv);
+	ss = session_new(s, s->conf->udp_connect.sa, conv);
 	if (ss == NULL) {
 		LOGE("accept: out of memory");
 		close(fd);
 		return;
 	}
-	ss->state = STATE_CONNECTED;
+	if (!kcp_dial(ss)) {
+		LOGE("kcp_dial: failure");
+		close(fd);
+		session_free(ss);
+		return;
+	}
 	hashkey_t key;
 	conv_make_key(&key, s->conf->udp_connect.sa, conv);
 	table_set(s->sessions, &key, ss);
-	session_start(ss);
+	ss->state = STATE_CONNECTED;
+	session_start(ss, fd);
 }
 
 void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -79,7 +85,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 #define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
 
-size_t tcp_recv(struct session *restrict ss)
+static size_t tcp_recv(struct session *restrict ss)
 {
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
@@ -102,8 +108,8 @@ size_t tcp_recv(struct session *restrict ss)
 				break;
 			}
 			LOGE_PERROR("recv");
-			kcp_close(ss);
 			session_shutdown(ss);
+			kcp_reset(ss);
 			return 0;
 		}
 		if (nread == 0) {
@@ -119,15 +125,14 @@ size_t tcp_recv(struct session *restrict ss)
 		ss->server->stats.tcp_in += len;
 		LOGV_F("session [%08" PRIX32
 		       "] tcp recv: %zu bytes, cap: %zu bytes",
-		       ss->kcp->conv, len, cap);
+		       ss->conv, len, cap);
 	}
 
 	if (tcp_eof) {
-		LOGI_F("session [%08" PRIX32 "] tcp closing", ss->kcp->conv);
+		LOGI_F("session [%08" PRIX32 "] tcp closing", ss->conv);
 		// Stop and free session if client socket is closing
-		kcp_close(ss);
 		session_shutdown(ss);
-		ss->state = STATE_LINGER;
+		kcp_close(ss);
 	}
 	return len;
 }
@@ -140,14 +145,10 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct session *restrict ss = (struct session *)watcher->data;
 	if (ss->rbuf_len == 0) {
 		if (tcp_recv(ss) == 0) {
-			if (ss->w_read != NULL) {
-				ev_io_stop(loop, ss->w_read);
-			}
+			ev_io_stop(loop, ss->w_read);
 		}
 	}
-	if (kcp_send(ss) > 0) {
-		kcp_notify(ss);
-	}
+	kcp_notify(ss);
 }
 
 static size_t tcp_send(struct session *restrict ss)
@@ -170,10 +171,9 @@ static size_t tcp_send(struct session *restrict ss)
 			return 0;
 		}
 		LOGE_F("session [%08" PRIu32 "] fd=%d tcp send error: [%d] %s",
-		       ss->kcp->conv, ss->tcp_fd, err, strerror(err));
+		       ss->conv, ss->tcp_fd, err, strerror(err));
 		session_shutdown(ss);
-		kcp_close(ss);
-		ss->state = STATE_LINGER;
+		kcp_reset(ss);
 		return 0;
 	}
 	if (nsend == 0) {
@@ -192,7 +192,7 @@ static size_t tcp_send(struct session *restrict ss)
 	ss->stats.tcp_out += nsend;
 	ss->server->stats.tcp_out += nsend;
 	LOGV_F("session [%08" PRIX32 "] tcp send: %zd bytes, remain: %zu bytes",
-	       ss->kcp->conv, nsend, len - (size_t)nsend + ss->wbuf_len);
+	       ss->conv, nsend, len - (size_t)nsend + ss->wbuf_len);
 	return (size_t)nsend;
 }
 
@@ -207,7 +207,7 @@ void tcp_notify_write(struct session *restrict ss)
 	if (ss->wbuf_navail == 0) {
 		return;
 	}
-	if (ss->w_write != NULL && !ev_is_active(ss->w_write)) {
+	if (ss->tcp_fd != -1 && !ev_is_active(ss->w_write)) {
 		ev_io_start(ss->server->loop, ss->w_write);
 	}
 }
@@ -224,7 +224,8 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 	if (ss->state == STATE_CONNECT) {
 		ss->state = STATE_CONNECTED;
-		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->kcp->conv);
+		ev_io_start(loop, ss->w_read);
+		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->conv);
 	}
 
 	if (ss->wbuf_navail == 0) {
@@ -234,7 +235,7 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		tcp_send(ss);
 	} else {
 		/* no more data */
-		if (ss->w_write != NULL && ev_is_active(ss->w_write)) {
+		if (ss->tcp_fd != -1 && ev_is_active(ss->w_write)) {
 			ev_io_stop(loop, ss->w_write);
 		}
 	}

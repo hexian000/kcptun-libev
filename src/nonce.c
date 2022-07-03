@@ -3,6 +3,7 @@
 #include "serialize.h"
 #include "util.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -32,14 +33,13 @@ struct noncegen *noncegen_create(size_t nonce_len)
 	}
 
 	const size_t entries = (size_t)1 << 20u;
-	const double error = 1e-9;
-	const size_t n = entries / 2;
+	const double error = 0x1p-20;
 	*g = (struct noncegen){
 		.ppbloom =
 			(struct ppbloom){
 				.bloom_count = { 0, 0 },
 				.current = 0,
-				.entries = n,
+				.entries = entries,
 			},
 		.nonce_buf = util_malloc(nonce_len),
 		.nonce_len = nonce_len,
@@ -48,11 +48,11 @@ struct noncegen *noncegen_create(size_t nonce_len)
 		noncegen_free(g);
 		return NULL;
 	}
-	if (bloom_init(&g->ppbloom.bloom[0], n, error)) {
+	if (bloom_init(&g->ppbloom.bloom[0], entries, error)) {
 		noncegen_free(g);
 		return NULL;
 	}
-	if (bloom_init(&g->ppbloom.bloom[1], n, error)) {
+	if (bloom_init(&g->ppbloom.bloom[1], entries, error)) {
 		noncegen_free(g);
 		return NULL;
 	}
@@ -71,9 +71,12 @@ const unsigned char *noncegen_next(struct noncegen *restrict g)
 		}
 		g->src[i] = 0;
 	}
-	const uint32_t n = g->nonce_len / sizeof(uint32_t);
-	for (uint32_t i = 0; i < n; i++) {
-		write_uint32(g->nonce_buf + (i * sizeof(uint32_t)), g->src[i]);
+	const size_t n = g->nonce_len / sizeof(uint32_t);
+	for (size_t i = 0; i < n; i++) {
+		write_uint32(g->nonce_buf + i * sizeof(uint32_t), g->src[i]);
+	}
+	for (size_t i = n * sizeof(uint32_t); i < g->nonce_len; i++) {
+		g->nonce_buf[i] = (unsigned char)rand32();
 	}
 	return g->nonce_buf;
 }

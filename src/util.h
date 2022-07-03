@@ -49,12 +49,13 @@ static inline void *must_malloc(size_t n)
 #define UTIL_SAFE_FREE(x)                                                      \
 	do {                                                                   \
 		if ((x) != NULL) {                                             \
-			util_free((void *)x);                                  \
+			util_free((void *)(x));                                \
 			(x) = NULL;                                            \
 		}                                                              \
 	} while (0)
 
-char *clonestr(const char *);
+char *util_strndup(const char *, size_t);
+char *util_strdup(const char *);
 
 void print_bin(const void *b, const size_t n);
 

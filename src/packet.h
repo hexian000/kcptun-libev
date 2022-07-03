@@ -46,8 +46,11 @@ void msgframe_delete(struct packet *p, struct msgframe *msg);
 struct server;
 
 /* session 0 messages */
-#define S0MSG_PING UINT16_C(0x0000)
-#define S0MSG_PONG UINT16_C(0x0001)
+enum session0_messages {
+	S0MSG_PING = 0x0000,
+	S0MSG_PONG = 0x0001,
+	S0MSG_RESET = 0x0002,
+};
 
 struct session0_header {
 	uint32_t zero;
@@ -56,9 +59,10 @@ struct session0_header {
 
 #define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
 
-bool send_ss0(
+bool ss0_send(
 	struct server *s, struct sockaddr *sa, uint16_t what,
 	const unsigned char *b, size_t n);
+void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv);
 
 /* process mq_recv */
 void packet_recv(struct packet *p, struct server *s);

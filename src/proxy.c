@@ -7,38 +7,32 @@
 #include "session.h"
 
 #include <ev.h>
+
+#include <unistd.h>
 #include <sys/socket.h>
 
-struct session *
-proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
+bool proxy_dial(struct session *restrict ss, struct sockaddr *sa)
 {
-	const struct sockaddr *sa = s->conf->connect.sa;
 	int fd = socket(
 		sa->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
 	// Create socket
 	if (fd < 0) {
 		LOGE_PERROR("socket");
-		return NULL;
+		return false;
 	}
 	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
-		return NULL;
+		close(fd);
+		return false;
 	}
 	{
-		struct config *restrict cfg = s->conf;
+		struct config *restrict cfg = ss->server->conf;
 		socket_set_tcp(fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
 		socket_set_buffer(fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 	}
-	struct session *ss = session_new(s, fd, addr, conv);
-	if (ss == NULL) {
-		LOGE("proxy_dial: out of memory");
-		return NULL;
-	}
-	ss->is_accepted = true;
-	ss->state = STATE_CONNECT;
 
 	// Connect to address
-	if (connect(ss->tcp_fd, sa, getsocklen(sa)) != 0) {
+	if (connect(fd, sa, getsocklen(sa)) != 0) {
 		if (errno != EINPROGRESS) {
 			LOGE_PERROR("connect");
 			return NULL;
@@ -49,9 +43,8 @@ proxy_dial(struct server *restrict s, struct sockaddr *addr, const int32_t conv)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGI_F("connect to: %s", addr_str);
 	}
-	hashkey_t sskey;
-	conv_make_key(&sskey, addr, conv);
-	table_set(s->sessions, &sskey, ss);
-	session_start(ss);
-	return ss;
+
+	ss->state = STATE_CONNECT;
+	session_start(ss, fd);
+	return true;
 }

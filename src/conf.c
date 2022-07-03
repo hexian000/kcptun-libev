@@ -228,10 +228,6 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		conf->log_level = l;
 		return true;
 	}
-	if (strcmp(name, "udp_bind") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->udp_bind.str = str) != NULL;
-	}
 	LOGW_F("unknown config: \"%s\"", name);
 	return true;
 }
@@ -249,7 +245,7 @@ const char *runmode_str(const int mode)
 
 static char *splithostport(const char *addr, char **hostname, char **service)
 {
-	char *str = clonestr(addr);
+	char *str = util_strdup(addr);
 	if (str == NULL) {
 		return NULL;
 	}
@@ -298,15 +294,13 @@ static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
 		util_free(str);
 		return false;
 	}
-	util_free(str);
+	UTIL_SAFE_FREE(str);
 	UTIL_SAFE_FREE(addr->sa);
 	addr->sa = sa;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		if (strcmp(addr->str, addr_str) != 0) {
-			LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
-		}
+		LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
 	}
 	return true;
 }
@@ -409,9 +403,6 @@ struct config *conf_read(const char *file)
 
 static void netaddr_safe_free(struct netaddr *restrict addr)
 {
-	if (addr == NULL) {
-		return;
-	}
 	UTIL_SAFE_FREE(addr->str);
 	UTIL_SAFE_FREE(addr->sa);
 }

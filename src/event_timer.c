@@ -1,4 +1,5 @@
 #include "conf.h"
+#include "event.h"
 #include "event_impl.h"
 #include "hashtable.h"
 #include "packet.h"
@@ -33,11 +34,9 @@ static void print_session_info(
 	format_sa(
 		(struct sockaddr *)&ss->udp_remote, addr_str, sizeof(addr_str));
 	LOGD_F("      - [%08" PRIX32
-	       "] buf(%zu, %zu, %zu) kcp_peek=%d kcp_waitsnd=%d addr=%s w_read=%d w_write=%d",
+	       "] buf(%zu, %zu, %zu) kcp_peek=%d kcp_waitsnd=%d addr=%s",
 	       ss->conv, ss->rbuf_len, ss->wbuf_len, ss->wbuf_flush,
-	       ikcp_peeksize(ss->kcp), ikcp_waitsnd(ss->kcp), addr_str,
-	       ss->w_read ? ev_is_active(ss->w_read) : -1,
-	       ss->w_write ? ev_is_active(ss->w_write) : -1);
+	       ikcp_peeksize(ss->kcp), ikcp_waitsnd(ss->kcp), addr_str);
 }
 
 bool timeout_filt(
@@ -45,9 +44,6 @@ bool timeout_filt(
 {
 	UNUSED(t);
 	UNUSED(key);
-
-	bool remove = false;
-
 	struct session *restrict ss = value;
 	struct server *restrict s = ss->server;
 	struct session_stats *restrict stats = user;
@@ -56,47 +52,58 @@ bool timeout_filt(
 	const double last_seen =
 		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
 	const double not_seen = stats->now - last_seen;
-
 	switch (ss->state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED: {
-		if (not_seen > s->timeout) {
-			LOGI_F("session [%08" PRIX32 "] timed out", ss->conv);
+	case STATE_HALFOPEN:
+		if (not_seen > s->dial_timeout) {
+			LOGW_F("session [%08" PRIX32 "] dial timed out",
+			       ss->conv);
 			session_shutdown(ss);
 			kcp_close(ss);
-		} else if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-			print_session_info(ss, &(ss->stats));
+			return true;
 		}
-	} break;
-	case STATE_LINGER: {
+		break;
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		if (not_seen > s->session_timeout) {
+			LOGW_F("session [%08" PRIX32 "] state %d timed out",
+			       ss->conv, ss->state);
+			session_shutdown(ss);
+			kcp_close(ss);
+			return true;
+		}
+		if (not_seen > s->session_keepalive) {
+			unsigned char buf[TLV_HEADER_SIZE];
+			struct tlv_header header = (struct tlv_header){
+				.msg = SMSG_EOF,
+				.len = TLV_HEADER_SIZE,
+			};
+			tlv_header_write(buf, header);
+			(void)kcp_send(ss, buf, TLV_HEADER_SIZE);
+		}
+		break;
+	case STATE_LINGER:
 		if (not_seen > s->linger) {
-			LOGD_F("session [%08" PRIX32 "] linger timed out",
+			LOGW_F("session [%08" PRIX32 "] linger timed out",
 			       ss->conv);
 			ss->state = STATE_TIME_WAIT;
-		} else if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-			print_session_info(ss, &(ss->stats));
 		}
-	} break;
-	case STATE_TIME_WAIT: {
+		return true;
+	case STATE_TIME_WAIT:
 		if (not_seen > s->time_wait) {
-			LOGD_F("session [%08" PRIX32 "] wait timed out",
-			       ss->conv);
-			ss->state = STATE_CLOSED;
-			remove = true;
 			session_free(ss);
+			return false;
 		}
-	} break;
-	case STATE_CLOSED: {
-		UTIL_ASSERT(0);
-	} break;
-	default: {
+		return true;
+	default:
 		LOGW_F("unexpected session state: %d", ss->state);
 		UTIL_ASSERT(0);
-		remove = true;
 		session_free(ss);
-	} break;
+		return false;
 	}
-	return !remove;
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		print_session_info(ss, &(ss->stats));
+	}
+	return true;
 }
 
 static void traffic_stats(struct server *restrict s, const ev_tstamp now)
@@ -160,7 +167,7 @@ static void timeout_check(struct server *restrict s, const ev_tstamp now)
 	}
 }
 
-void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 
@@ -178,11 +185,11 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		conf_resolve(s->conf);
 		s->last_resolve_time = now;
 	}
-	if (now - s->udp.last_send_time < s->keepalive) {
+	if (s->keepalive <= 0.0 || now - s->udp.last_send_time < s->keepalive) {
 		return;
 	}
 	const uint32_t tstamp = tstamp2ms(ev_time());
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	send_ss0(s, s->conf->udp_connect.sa, S0MSG_PING, b, sizeof(b));
+	ss0_send(s, s->conf->udp_connect.sa, S0MSG_PING, b, sizeof(b));
 }

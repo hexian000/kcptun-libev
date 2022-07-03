@@ -23,13 +23,14 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void udp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void udp_output_cb(struct ev_loop *loop, struct ev_async *watcher, int revents);
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
-void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
+void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 
-size_t tcp_recv(struct session *ss);
 int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
-size_t kcp_send(struct session *ss);
+bool kcp_send(struct session *ss, const unsigned char *buf, size_t len);
 void kcp_recv(struct session *ss);
+bool kcp_dial(struct session *ss);
 void kcp_close(struct session *ss);
+void kcp_reset(struct session *ss);
 
 void tcp_notify_write(struct session *ss);
 void udp_notify_write(struct server *s);

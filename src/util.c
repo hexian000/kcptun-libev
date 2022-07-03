@@ -20,19 +20,26 @@ void print_bin(const void *b, const size_t n)
 #endif /* NDEBUG */
 }
 
-char *clonestr(const char *str)
+char *util_strndup(const char *str, size_t n)
 {
 	if (str == NULL) {
 		return NULL;
 	}
-	size_t len = strlen(str);
-	char *s = util_malloc(len + 1);
+	char *s = util_malloc(n + 1);
 	if (s == NULL) {
 		return NULL;
 	}
-	memcpy(s, str, len);
-	s[len] = 0;
+	memcpy(s, str, n);
+	s[n] = 0;
 	return s;
+}
+
+char *util_strdup(const char *str)
+{
+	if (str == NULL) {
+		return NULL;
+	}
+	return util_strndup(str, strlen(str));
 }
 
 static uint32_t rand32_state = UINT32_C(0);

@@ -31,9 +31,12 @@ struct server {
 	struct udp_conn udp;
 	struct hashtable *sessions;
 	struct ev_timer *w_kcp_update;
-	struct ev_timer *w_keepalive;
+	struct ev_timer *w_timer;
 	double interval;
-	double timeout, linger, keepalive, time_wait;
+	double dial_timeout;
+	double session_timeout, session_keepalive;
+	double linger, time_wait;
+	double keepalive;
 	struct link_stats stats;
 	uint32_t m_conv;
 	double last_resolve_time;

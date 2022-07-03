@@ -1,6 +1,7 @@
 #include "event.h"
 #include "event_impl.h"
 #include "packet.h"
+#include "proxy.h"
 #include "server.h"
 #include "session.h"
 #include "util.h"
@@ -8,25 +9,7 @@
 #include <ev.h>
 #include <stdint.h>
 #include <string.h>
-
-static inline struct tlv_header tlv_header_read(const unsigned char *d)
-{
-	return (struct tlv_header){
-		.msg = read_uint16(d),
-		.len = read_uint16(d + sizeof(uint16_t)),
-	};
-}
-
-static inline void tlv_header_write(unsigned char *d, struct tlv_header header)
-{
-	write_uint16(d, header.msg);
-	write_uint16(d + sizeof(uint16_t), header.len);
-}
-
-/* session messages */
-#define SMSG_DATA (UINT16_C(0x0000))
-#define SMSG_CLOSE (UINT16_C(0x0001))
-#define SMSG_KEEPALIVE (UINT16_C(0x0002))
+#include <sys/socket.h>
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
@@ -46,79 +29,110 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	return packet_send(p, s, msg) ? len : -1;
 }
 
-void kcp_close(struct session *restrict ss)
+bool kcp_send(
+	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
-	if (ss->kcp_closed) {
-		return;
-	}
-	(void)kcp_send(ss);
-	ss->state = STATE_LINGER;
-	unsigned char buf[TLV_HEADER_SIZE];
-	struct tlv_header header = (struct tlv_header){
-		.msg = SMSG_CLOSE,
-		.len = TLV_HEADER_SIZE,
-	};
-	tlv_header_write(buf, header);
-	int r = ikcp_send(ss->kcp, (char *)buf, TLV_HEADER_SIZE);
-	LOGD_F("session [%08" PRIX32 "] kcp close: %d", ss->kcp->conv, r);
+	int r = ikcp_send(ss->kcp, (char *)buf, len);
 	if (r < 0) {
-		/* TODO */
-		UTIL_ASSERT(0);
-		return;
+		return false;
 	}
-	ss->stats.kcp_out += TLV_HEADER_SIZE;
-	ss->server->stats.kcp_out += TLV_HEADER_SIZE;
-	ss->kcp_closed = true;
+	ss->stats.kcp_out += len;
+	ss->server->stats.kcp_out += len;
+	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
+	ss->last_send = ev_now(ss->server->loop);
+	return true;
 }
 
-size_t kcp_send(struct session *restrict ss)
+static bool kcp_push(struct session *restrict ss)
 {
-	UTIL_ASSERT(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
-	if (ss->rbuf_len == 0) {
-		return 0;
-	}
 	struct server *restrict s = ss->server;
-	const int waitsnd = ikcp_waitsnd(ss->kcp);
-	const int window_size = s->conf->kcp_sndwnd;
-	if (waitsnd >= window_size) {
-		return 0;
-	}
-
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf_len;
 	struct tlv_header header = (struct tlv_header){
-		.msg = SMSG_DATA,
+		.msg = SMSG_PUSH,
 		.len = (uint16_t)len,
 	};
 	tlv_header_write(ss->rbuf, header);
-	int r = ikcp_send(ss->kcp, (char *)ss->rbuf, len);
-	if (r < 0) {
-		return 0;
+	if (!kcp_send(ss, ss->rbuf, len)) {
+		return false;
 	}
 	ss->rbuf_len = 0;
 	/* invalidate last ikcp_check */
 	ss->kcp_checked = false;
-
-	ss->last_send = ev_now(ss->server->loop);
-	ss->stats.kcp_out += len;
-	s->stats.kcp_out += len;
-	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->kcp->conv,
-	       len);
-	return len;
+	ss->last_send = ev_now(s->loop);
+	return true;
 }
 
-static void consume_wbuf(struct session *restrict ss, size_t len)
+bool kcp_dial(struct session *restrict ss)
 {
-	ss->wbuf_len -= len;
-	if (ss->wbuf_len > 0) {
-		memmove(ss->wbuf, ss->wbuf + len, ss->wbuf_len);
+	unsigned char buf[TLV_HEADER_SIZE];
+	struct tlv_header header = (struct tlv_header){
+		.msg = SMSG_DIAL,
+		.len = TLV_HEADER_SIZE,
+	};
+	tlv_header_write(buf, header);
+	LOGD_F("session [%08" PRIX32 "] send dial", ss->conv);
+	return kcp_send(ss, buf, TLV_HEADER_SIZE);
+}
+
+void kcp_close(struct session *restrict ss)
+{
+	switch (ss->state) {
+	case STATE_HALFOPEN:
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
+		return;
 	}
+	/* flush unsent push message */
+	if (ss->rbuf_len > 0) {
+		if (!kcp_push(ss)) {
+			return;
+		}
+	}
+	ss->state = STATE_LINGER;
+	unsigned char buf[TLV_HEADER_SIZE];
+	struct tlv_header header = (struct tlv_header){
+		.msg = SMSG_EOF,
+		.len = TLV_HEADER_SIZE,
+	};
+	tlv_header_write(buf, header);
+	if (!kcp_send(ss, buf, TLV_HEADER_SIZE)) {
+		return;
+	}
+	LOGD_F("session [%08" PRIX32 "] send: eof", ss->conv);
+	ss->state = STATE_LINGER;
+}
+
+void kcp_reset(struct session *ss)
+{
+	const ev_tstamp now = ev_now(ss->server->loop);
+	if (ss->state != STATE_CONNECT && ss->state != STATE_CONNECTED &&
+	    now - ss->last_send < 1.0) {
+		return;
+	}
+	struct sockaddr *sa = (struct sockaddr *)&ss->udp_remote;
+	ss0_reset(ss->server, sa, ss->conv);
+	ss->last_send = now;
+	LOGD_F("session [%08" PRIX32 "] send: reset", ss->conv);
+	ss->state = STATE_TIME_WAIT;
 }
 
 void kcp_recv(struct session *restrict ss)
 {
-	if (ss->kcp_closed) {
-		ikcp_recv(ss->kcp, (char *)ss->wbuf, SESSION_BUF_SIZE);
+	switch (ss->state) {
+	case STATE_HALFOPEN:
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default: {
+		const int r =
+			ikcp_recv(ss->kcp, (char *)ss->wbuf, SESSION_BUF_SIZE);
+		if (r > 0) {
+			kcp_reset(ss);
+		}
 		return;
+	}
 	}
 	if (ss->wbuf_navail > 0) {
 		return;
@@ -141,7 +155,7 @@ void kcp_recv(struct session *restrict ss)
 		ss->server->stats.kcp_in += nrecv;
 		LOGV_F("session [%08" PRIX32
 		       "] kcp recv: %zu bytes, cap: %zu bytes",
-		       ss->kcp->conv, nrecv, cap);
+		       ss->conv, nrecv, cap);
 		ss->last_recv = ev_now(ss->server->loop);
 	}
 
@@ -153,50 +167,25 @@ void kcp_recv(struct session *restrict ss)
 	UTIL_ASSERT(
 		header.len >= TLV_HEADER_SIZE &&
 		header.len <= SESSION_BUF_SIZE);
-	if (ss->wbuf_len < header.len) {
+	if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
 		/* incomplete data packet */
 		return;
 	}
-	switch (header.msg) {
-	case SMSG_DATA: {
-		/* tcp connection is lost, discard packet */
-		if (ss->tcp_fd == -1) {
-			consume_wbuf(ss, header.len);
-			return;
-		}
-		ss->wbuf_navail = (size_t)header.len - TLV_HEADER_SIZE;
-		return;
-	} break;
-	case SMSG_CLOSE: {
-		UTIL_ASSERT(header.len == TLV_HEADER_SIZE);
-		LOGD_F("session [%08" PRIX32 "] kcp eof", ss->kcp->conv);
-		ss->wbuf_len = 0;
-		ss->kcp_closed = true;
-		session_shutdown(ss);
-		ss->state = STATE_LINGER;
-		return;
-	} break;
-	case SMSG_KEEPALIVE: {
-		UTIL_ASSERT(header.len == TLV_HEADER_SIZE);
-		consume_wbuf(ss, header.len);
-		return;
-	} break;
-	}
-	LOGE_F("unknown msg: %04" PRIX16 ", %04" PRIX16, header.msg,
-	       header.len);
-	kcp_close(ss);
-	return;
+	session_on_msg(ss, &header);
 }
 
 static void kcp_update(struct session *restrict ss)
 {
-	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
+	switch (ss->state) {
+	case STATE_HALFOPEN:
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
 		return;
 	}
 	struct server *restrict s = ss->server;
-	if (s->udp.packets->mq_send_len == MQ_SEND_SIZE) {
-		return;
-	}
 	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	if (!ss->kcp_checked || (int32_t)(now_ms - ss->kcp_next) >= 0) {
 		ikcp_update(ss->kcp, now_ms);
@@ -206,21 +195,30 @@ static void kcp_update(struct session *restrict ss)
 		UTIL_ASSERT((int32_t)(ss->kcp_next - now_ms) < 5000);
 		ss->kcp_checked = true;
 	}
-	if (ss->w_read != NULL && !ev_is_active(ss->w_read)) {
-		const int waitsnd = ikcp_waitsnd(ss->kcp);
+	const int waitsnd = ikcp_waitsnd(ss->kcp);
+	if (ss->tcp_fd != -1 && !ev_is_active(ss->w_read)) {
 		const int window_size = s->conf->kcp_sndwnd;
 		if (waitsnd < window_size) {
 			ev_io_start(s->loop, ss->w_read);
 		}
 	}
-	if (ss->state == STATE_LINGER && !ss->kcp_closed) {
-		kcp_close(ss);
-	}
 }
 
 void kcp_notify(struct session *restrict ss)
 {
-	ss->kcp_checked = false;
+	UTIL_ASSERT(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
+	if (ss->rbuf_len == 0) {
+		return;
+	}
+	struct server *restrict s = ss->server;
+	const int waitsnd = ikcp_waitsnd(ss->kcp);
+	const int window_size = s->conf->kcp_sndwnd;
+	if (waitsnd >= window_size) {
+		return;
+	}
+	if (!kcp_push(ss)) {
+		return;
+	}
 	kcp_update(ss);
 }
 
@@ -229,14 +227,15 @@ static bool kcp_update_iter(
 {
 	UNUSED(t);
 	UNUSED(key);
-	UNUSED(user);
 	kcp_update((struct session *)value);
-	return true;
+	struct server *restrict s = user;
+	struct packet *restrict p = s->udp.packets;
+	return p->mq_send_len < MQ_SEND_SIZE;
 }
 
 void kcp_update_all(struct server *restrict s)
 {
-	table_iterate(s->sessions, kcp_update_iter, NULL);
+	table_iterate(s->sessions, kcp_update_iter, s);
 }
 
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
@@ -244,5 +243,8 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = watcher->data;
-	table_iterate(s->sessions, kcp_update_iter, NULL);
+	struct packet *restrict p = s->udp.packets;
+	if (p->mq_send_len < MQ_SEND_SIZE) {
+		table_iterate(s->sessions, kcp_update_iter, s);
+	}
 }

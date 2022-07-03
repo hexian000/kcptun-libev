@@ -178,15 +178,17 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 	} else {
 		s->linger = 60.0;
 	}
-	if (conf->timeout >= 5 && conf->timeout <= 86400) {
-		s->timeout = (double)conf->timeout;
+	s->dial_timeout = 30.0;
+	if (conf->timeout >= 60 && conf->timeout <= 86400) {
+		s->session_timeout = (double)conf->timeout;
 	} else {
-		s->timeout = 7200.0;
+		s->session_timeout = 7200.0;
 	}
+	s->session_keepalive = s->session_timeout / 2.0;
 	if (conf->keepalive >= 1 && conf->keepalive <= 7200) {
 		s->keepalive = (double)conf->keepalive;
 	} else {
-		s->keepalive = 25.0;
+		s->keepalive = -1.0;
 	}
 	if (conf->time_wait >= 5 && (double)conf->time_wait > s->linger) {
 		s->time_wait = (double)conf->time_wait;
@@ -204,19 +206,15 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 	s->w_kcp_update->data = s;
 	ev_timer_start(s->loop, s->w_kcp_update);
 
-	if (s->keepalive > 0.0) {
-		s->w_keepalive = util_malloc(sizeof(struct ev_timer));
-		if (s->w_keepalive == NULL) {
-			LOGE("out of memory");
-			server_shutdown(s);
-			return NULL;
-		}
-		ev_timer_init(s->w_keepalive, keepalive_cb, 1.0, 1.0);
-		s->w_keepalive->data = s;
-		ev_timer_start(s->loop, s->w_keepalive);
-	} else {
-		s->w_keepalive = NULL;
+	s->w_timer = util_malloc(sizeof(struct ev_timer));
+	if (s->w_timer == NULL) {
+		LOGE("out of memory");
+		server_shutdown(s);
+		return NULL;
 	}
+	ev_timer_init(s->w_timer, timer_cb, 1.0, 1.0);
+	s->w_timer->data = s;
+	ev_timer_start(s->loop, s->w_timer);
 	return s;
 }
 
@@ -262,10 +260,10 @@ void server_shutdown(struct server *restrict s)
 		util_free(s->w_kcp_update);
 		s->w_kcp_update = NULL;
 	}
-	if (s->w_keepalive != NULL) {
-		ev_timer_stop(s->loop, s->w_keepalive);
-		util_free(s->w_keepalive);
-		s->w_keepalive = NULL;
+	if (s->w_timer != NULL) {
+		ev_timer_stop(s->loop, s->w_timer);
+		util_free(s->w_timer);
+		s->w_timer = NULL;
 	}
 	udp_free(s->loop, &(s->udp));
 	listener_free(s->loop, &(s->listener));

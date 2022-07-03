@@ -10,6 +10,9 @@
         "resend": 3,
         "nc": 1
     },
+    "tcp": {
+        "reuseport": true
+    },
     "method": "chacha20poly1305_ietf",
     "password": "k",
     "loglevel": 1

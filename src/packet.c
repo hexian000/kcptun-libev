@@ -134,7 +134,14 @@ ss0_header_write(unsigned char *d, struct session0_header header)
 	write_uint16((uint8_t *)d + sizeof(uint32_t), header.what);
 }
 
-bool send_ss0(
+void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv)
+{
+	unsigned char b[sizeof(uint32_t)];
+	write_uint32(b, conv);
+	ss0_send(s, sa, S0MSG_RESET, b, sizeof(b));
+}
+
+bool ss0_send(
 	struct server *restrict s, struct sockaddr *sa, const uint16_t what,
 	const unsigned char *b, const size_t n)
 {
@@ -154,29 +161,53 @@ bool send_ss0(
 	return packet_send(p, s, msg);
 }
 
-static void ss0_ping(struct server *restrict s, struct msgframe *restrict msg)
+static void
+ss0_on_ping(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
-		LOGW_F("short keepalive message: %zu bytes", msg->len);
+		LOGW_F("short ping message: %zu bytes", msg->len);
 		return;
 	}
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
 	/* send echo message */
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	send_ss0(s, msg->hdr.msg_name, S0MSG_PONG, b, sizeof(b));
+	ss0_send(s, msg->hdr.msg_name, S0MSG_PONG, b, sizeof(b));
 }
 
-static void ss0_pong(struct server *restrict s, struct msgframe *restrict msg)
+static void
+ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
-		LOGW_F("short keepalive message: %zu bytes", msg->len);
+		LOGW_F("short pong message: %zu bytes", msg->len);
 		return;
 	}
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
 	/*  print RTT */
 	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
+}
+
+static void
+ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
+{
+	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
+		LOGW_F("short reset message: %zu bytes", msg->len);
+		return;
+	}
+	const uint32_t conv = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
+	hashkey_t key;
+	conv_make_key(&key, (struct sockaddr *)&msg->addr, conv);
+	struct session *restrict ss = NULL;
+	if (!table_find(s->sessions, &key, (void **)&ss)) {
+		return;
+	}
+	if (ss->state == STATE_TIME_WAIT) {
+		return;
+	}
+	LOGI_F("session [%08" PRIX32 "]: session reset by peer", conv);
+	session_shutdown(ss);
+	ss->state = STATE_TIME_WAIT;
 }
 
 static void session0(struct server *restrict s, struct msgframe *restrict msg)
@@ -188,10 +219,13 @@ static void session0(struct server *restrict s, struct msgframe *restrict msg)
 	struct session0_header header = ss0_header_read(msg->buf);
 	switch (header.what) {
 	case S0MSG_PING:
-		ss0_ping(s, msg);
+		ss0_on_ping(s, msg);
 		break;
 	case S0MSG_PONG:
-		ss0_pong(s, msg);
+		ss0_on_pong(s, msg);
+		break;
+	case S0MSG_RESET:
+		ss0_on_reset(s, msg);
 		break;
 	default:
 		LOGW_F("unknown session 0 message: %04" PRIX16, header.what);
@@ -209,30 +243,31 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	}
 #endif
 
-	struct sockaddr *sa = (struct sockaddr *)&msg->addr;
 	uint32_t conv = ikcp_getconv(msg->buf);
 	if (conv == 0) {
 		session0(s, msg);
 		return;
 	}
 	hashkey_t sskey;
+	struct sockaddr *sa = (struct sockaddr *)&msg->addr;
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
 		if (s->conf->connect.sa == NULL) {
 			LOGW_F("session not found [%08" PRIX32 "]", conv);
-			/* dummy session to send kcp acks */
-			ss = session_new_dummy(s);
-			if (ss != NULL) {
-				table_set(s->sessions, &sskey, ss);
-			}
+			ss0_reset(s, sa, conv);
 			return;
 		}
-		/* server mode */
-		ss = proxy_dial(s, sa, conv);
+		/* serve new kcp session */
+		ss = session_new(s, sa, conv);
 		if (ss == NULL) {
+			LOGE("session_new: out of memory");
 			return;
 		}
+		ss->is_accepted = true;
+		hashkey_t sskey;
+		conv_make_key(&sskey, sa, conv);
+		table_set(s->sessions, &sskey, ss);
 	}
 	if (ss->state == STATE_TIME_WAIT) {
 		return;

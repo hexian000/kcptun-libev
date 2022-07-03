@@ -2,6 +2,7 @@
 #define SESSION_H
 
 #include "conf.h"
+#include "serialize.h"
 #include "hashtable.h"
 #include "sockutil.h"
 #include "util.h"
@@ -16,15 +17,46 @@ struct ev_loop;
 
 struct server;
 
-typedef enum {
-	STATE_CLOSED,
+struct tlv_header {
+	uint16_t msg;
+	uint16_t len;
+};
+
+#define TLV_HEADER_SIZE (sizeof(struct tlv_header))
+
+static inline struct tlv_header tlv_header_read(const unsigned char *d)
+{
+	return (struct tlv_header){
+		.msg = read_uint16(d),
+		.len = read_uint16(d + sizeof(uint16_t)),
+	};
+}
+
+static inline void tlv_header_write(unsigned char *d, struct tlv_header header)
+{
+	write_uint16(d, header.msg);
+	write_uint16(d + sizeof(uint16_t), header.len);
+}
+
+/* session messages */
+enum session_messages {
+	SMSG_DIAL = 0x0000,
+	SMSG_PUSH = 0x0001,
+	SMSG_EOF = 0x0002,
+	SMSG_KEEPALIVE = 0x0003,
+
+	SMSG_MAX,
+};
+
+enum session_state {
+	STATE_HALFOPEN,
 	STATE_CONNECT,
 	STATE_CONNECTED,
 	STATE_LINGER,
 	STATE_TIME_WAIT,
 
 	STATE_MAX,
-} state_t;
+};
 
 struct link_stats {
 	size_t tcp_in, tcp_out;
@@ -38,7 +70,7 @@ struct IKCPCB;
 
 struct session {
 	bool is_accepted;
-	state_t state;
+	int state;
 	int tcp_fd;
 	struct ev_io *w_read, *w_write;
 	struct server *server;
@@ -48,27 +80,21 @@ struct session {
 	sockaddr_max_t udp_remote;
 	uint32_t conv;
 	double last_send, last_recv;
+	double last_reset;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
-	bool kcp_checked, kcp_closed;
+	bool kcp_checked;
 	uint32_t kcp_next;
 };
 
 struct session *
-session_new(struct server *s, int fd, struct sockaddr *addr, uint32_t conv);
-struct session *session_new_dummy(struct server * /*s*/);
-void session_free(struct session * /*s*/);
+session_new(struct server *s, struct sockaddr *addr, uint32_t conv);
+void session_free(struct session *ss);
 
-void session_start(struct session * /*session*/);
-void session_shutdown(struct session * /*session*/);
+void session_start(struct session *ss, int fd);
+void session_shutdown(struct session *ss);
+void session_on_msg(struct session *ss, struct tlv_header *hdr);
 
 void session_close_all(struct hashtable *t);
-
-struct tlv_header {
-	uint16_t msg;
-	uint16_t len;
-};
-
-#define TLV_HEADER_SIZE (sizeof(struct tlv_header))
 
 #endif /* SESSION_H */
