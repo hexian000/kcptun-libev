@@ -174,6 +174,20 @@ void kcp_recv(struct session *restrict ss)
 	session_on_msg(ss, &header);
 }
 
+static void kcp_keepalive(struct session *restrict ss)
+{
+	unsigned char buf[TLV_HEADER_SIZE];
+	struct tlv_header header = (struct tlv_header){
+		.msg = SMSG_KEEPALIVE,
+		.len = TLV_HEADER_SIZE,
+	};
+	tlv_header_write(buf, header);
+	if (!kcp_send(ss, buf, TLV_HEADER_SIZE)) {
+		return;
+	}
+	LOGD_F("session [%08" PRIX32 "] send: keepalive", ss->conv);
+}
+
 static void kcp_update(struct session *restrict ss)
 {
 	switch (ss->state) {
@@ -186,13 +200,13 @@ static void kcp_update(struct session *restrict ss)
 		return;
 	}
 	struct server *restrict s = ss->server;
-	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
+	const ev_tstamp now = ev_now(s->loop);
+	const uint32_t now_ms = tstamp2ms(now);
 	if (!ss->kcp_checked || (int32_t)(now_ms - ss->kcp_next) >= 0) {
 		ikcp_update(ss->kcp, now_ms);
 		kcp_recv(ss);
 		tcp_notify_write(ss);
 		ss->kcp_next = ikcp_check(ss->kcp, now_ms);
-		UTIL_ASSERT((int32_t)(ss->kcp_next - now_ms) < 5000);
 		ss->kcp_checked = true;
 	}
 	const int waitsnd = ikcp_waitsnd(ss->kcp);
@@ -200,6 +214,15 @@ static void kcp_update(struct session *restrict ss)
 		const int window_size = s->conf->kcp_sndwnd;
 		if (waitsnd < window_size) {
 			ev_io_start(s->loop, ss->w_read);
+		}
+	}
+	if (!ss->is_accepted) {
+		const double last_seen = ss->last_send > ss->last_recv ?
+						 ss->last_send :
+						 ss->last_recv;
+		const double not_seen = now - last_seen;
+		if (not_seen > s->session_keepalive) {
+			kcp_keepalive(ss);
 		}
 	}
 }
