@@ -25,8 +25,8 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Simple: Without FEC craps.
 - Morden: Full IPv6 support.
 - DDNS aware: Dynamic IP addresses are supported.
-- Configurable: Encryption can be completely disabled or even excluded from build
-- Compatible: Compliant with ISO C standard.
+- Configurable: If you want to be unecrypted or plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
+- Compatible: Compliant with ISO C standard. Support both GNU/Linux and POSIX APIs.
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
 
@@ -36,19 +36,24 @@ Compared to that, kcptun-libev should be much more lightweight. The main executa
 
 ## Security
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the libsodium implementation of chacha20poly1305-ietf, which is an [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method.
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by libsodium.
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed.
 
 In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 
+| Encryption Method      | Status    | Notes      |
+| ---------------------- | --------- | ---------- |
+| chacha20poly1305_ietf  | supported | since v2.0 |
+| xchacha20poly1305_ietf | supported |            |
+| aes256gcm              | supported | since v2.0 |
 
 ## Compatibility
 ### System
 
 Theoretically all systems that support ISO C11.
 
-| Name         | Level     | Notes |
+| System       | Level     | Notes |
 | ------------ | --------- | ----- |
 | Ubuntu       | developed |       |
 | OpenWRT      | tested    |       |
@@ -60,6 +65,8 @@ Theoretically all systems that support ISO C11.
 kcptun-libev do NOT provide compatibility to any other KCP implements.
 
 The major version number is the protocol version. Different protocol versions are not compatible.
+
+Note: Protocol Compatibility Guarantee does not apply to pre-release versions.
 
 ## Build
 ### Dependencies
@@ -107,7 +114,7 @@ See [server.json](server.json)/[client.json](client.json)/[peer.json](peer.json)
 Let's explain some fields in server.json/peer.json:
 - The client side "listen" TCP ports and send data to "udp_connect".
 - The server side receive data from "udp_bind" and forward the connections to "connect".
-- Set a password is strongly suggested when using in public networks.
+- Set a password or PSK is strongly suggested when using in public networks.
 - Log level: 0-6, the default is 2 (INFO)
 
 ## Credits

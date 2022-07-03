@@ -320,15 +320,15 @@ static struct config conf_default()
 		.kcp_sndwnd = 256,
 		.kcp_rcvwnd = 256,
 		.kcp_nodelay = 0,
-		.kcp_interval = 10,
+		.kcp_interval = 50,
 		.kcp_resend = 3,
 		.kcp_nc = 1,
 		.password = NULL,
 		.psk = NULL,
-		.timeout = -1,
-		.linger = -1,
+		.timeout = 600,
+		.linger = 30,
 		.keepalive = 25,
-		.time_wait = -1,
+		.time_wait = 120,
 		.tcp_reuseport = false,
 		.tcp_keepalive = false,
 		.tcp_nodelay = true,
@@ -373,6 +373,34 @@ static bool conf_check(struct config *restrict conf)
 	if (conf->psk != NULL && conf->password != NULL) {
 		LOGF("config: psk and password cannot be specified at the same time");
 		return false;
+	}
+
+	/* 3. range check */
+	if (conf->kcp_interval < 10 || conf->kcp_interval > 500) {
+		conf->kcp_interval = 50;
+		LOGW_F("config: invalid kcp.interval, using default: %d",
+		       conf->kcp_interval);
+	}
+	if (conf->linger < 5 || conf->linger > 600) {
+		conf->linger = 60;
+		LOGW_F("config: invalid kcp.interval, using default: %d",
+		       conf->linger);
+	}
+	if (conf->timeout < 60 || conf->timeout > 86400) {
+		conf->timeout = 600;
+		LOGW_F("config: invalid timeout, using default: %d",
+		       conf->timeout);
+	}
+	if (conf->keepalive < 0 || conf->keepalive > 7200) {
+		conf->keepalive = 25;
+		LOGW_F("config: invalid keepalive, using default: %d",
+		       conf->timeout);
+	}
+	if (conf->time_wait < 5 || conf->time_wait > 3600 ||
+	    conf->time_wait <= conf->linger) {
+		conf->time_wait = conf->linger * 4;
+		LOGW_F("config: invalid keepalive, using default: %d",
+		       conf->time_wait);
 	}
 	return true;
 }

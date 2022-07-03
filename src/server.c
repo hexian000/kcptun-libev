@@ -152,6 +152,13 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 				.fd = -1,
 			},
 		.last_resolve_time = ev_now(loop),
+		.interval = conf->kcp_interval * 1e-3,
+		.linger = conf->linger,
+		.dial_timeout = 30.0,
+		.session_timeout = conf->timeout,
+		.session_keepalive = conf->timeout / 2.0,
+		.keepalive = conf->keepalive,
+		.time_wait = conf->time_wait,
 	};
 	s->sessions = table_create();
 	if (s->sessions == NULL) {
@@ -167,33 +174,6 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 	if (!udp_start(s, conf)) {
 		server_shutdown(s);
 		return NULL;
-	}
-	if (conf->kcp_interval >= 10 && conf->kcp_interval <= 1000) {
-		s->interval = conf->kcp_interval * 1e-3;
-	} else {
-		s->interval = 50e-3;
-	}
-	if (conf->linger >= 5 && conf->linger <= 600) {
-		s->linger = (double)conf->linger;
-	} else {
-		s->linger = 60.0;
-	}
-	s->dial_timeout = 30.0;
-	if (conf->timeout >= 60 && conf->timeout <= 86400) {
-		s->session_timeout = (double)conf->timeout;
-	} else {
-		s->session_timeout = 7200.0;
-	}
-	s->session_keepalive = s->session_timeout / 2.0;
-	if (conf->keepalive >= 1 && conf->keepalive <= 7200) {
-		s->keepalive = (double)conf->keepalive;
-	} else {
-		s->keepalive = 25.0;
-	}
-	if (conf->time_wait >= 5 && (double)conf->time_wait > s->linger) {
-		s->time_wait = (double)conf->time_wait;
-	} else {
-		s->time_wait = s->linger * 3.0;
 	}
 
 	s->w_kcp_update = util_malloc(sizeof(struct ev_timer));

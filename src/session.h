@@ -80,7 +80,6 @@ struct session {
 	sockaddr_max_t udp_remote;
 	uint32_t conv;
 	double last_send, last_recv;
-	double last_reset;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
 	bool kcp_checked;
