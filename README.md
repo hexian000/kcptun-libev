@@ -21,7 +21,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 - Secure: For proper integration of the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
-- Proper: KCP will be updated on demand, no unnecessary lag introduced.
+- Proper: KCP will be updated on demand, no mechanistic lag introduced.
 - Simple: Without FEC craps.
 - Morden: Full IPv6 support.
 - DDNS aware: Dynamic IP addresses are supported.
@@ -48,12 +48,12 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 
 Theoretically all systems that support ISO C11.
 
-| Name         | Level                 | Notes |
-| ------------ | --------------------- | ----- |
-| Ubuntu       | developed             |       |
-| OpenWRT      | tested                |       |
-| Unix-like    | theoretical supported |       |
-| Cygwin/MinGW | theoretical supported |       |
+| Name         | Level     | Notes |
+| ------------ | --------- | ----- |
+| Ubuntu       | developed |       |
+| OpenWRT      | tested    |       |
+| Unix-like    | supported |       |
+| Cygwin/MinGW | supported |       |
 
 ### Protocol
 
@@ -102,7 +102,7 @@ Create a config file and pass the file name. Just like:
 ./kcptun-libev -c server.json
 ```
 
-See [server.json](server.json)/[peer.json](peer.json) in the source repo for your reference.
+See [server.json](server.json)/[client.json](client.json)/[peer.json](peer.json) in the source repo for your reference.
 
 Let's explain some fields in server.json/peer.json:
 - The client side "listen" TCP ports and send data to "udp_connect".

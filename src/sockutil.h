@@ -5,11 +5,18 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 typedef struct {
 	uint32_t b[7];
 } sockaddr_max_t;
+_Static_assert(
+	sizeof(sockaddr_max_t) >= sizeof(struct sockaddr_in),
+	"unexpected inet4 address size");
+_Static_assert(
+	sizeof(sockaddr_max_t) >= sizeof(struct sockaddr_in6),
+	"unexpected inet6 address size");
 
 int socket_setup(int fd);
 void socket_set_reuseport(int fd, int reuseport);

@@ -317,8 +317,8 @@ static struct config conf_default()
 {
 	return (struct config){
 		.kcp_mtu = 1400,
-		.kcp_sndwnd = 512,
-		.kcp_rcvwnd = 512,
+		.kcp_sndwnd = 256,
+		.kcp_rcvwnd = 256,
 		.kcp_nodelay = 0,
 		.kcp_interval = 10,
 		.kcp_resend = 3,

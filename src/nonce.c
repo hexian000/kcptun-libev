@@ -62,6 +62,7 @@ struct noncegen *noncegen_create(size_t nonce_len)
 
 void noncegen_init(struct noncegen *g)
 {
+	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
 	for (size_t i = 0; i < countof(g->src); i++) {
 		g->src[i] = rand32();
 	}
@@ -76,7 +77,10 @@ const unsigned char *noncegen_next(struct noncegen *restrict g)
 		}
 		g->src[i] = 0;
 	}
-	const size_t n = g->nonce_len / sizeof(uint32_t);
+	size_t n = g->nonce_len / sizeof(uint32_t);
+	if (n > countof(g->src)) {
+		n = countof(g->src);
+	}
 	for (size_t i = 0; i < n; i++) {
 		write_uint32(g->nonce_buf + i * sizeof(uint32_t), g->src[i]);
 	}

@@ -70,5 +70,6 @@ case "$1" in
         ..
     cmake --build . --parallel
     # cd src/tests && ctest
+    ls -lh src/kcptun-libev
     ;;
 esac

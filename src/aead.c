@@ -102,6 +102,7 @@ size_t aead_open(
 
 enum aead_method {
 	method_chacha20poly1305_ietf,
+	method_xchacha20poly1305_ietf,
 	method_aes256gcm,
 };
 
@@ -117,6 +118,11 @@ struct aead *aead_create(const char *method)
 		nonce_size = crypto_aead_chacha20poly1305_ietf_npubbytes();
 		overhead = crypto_aead_chacha20poly1305_ietf_abytes();
 		key_size = crypto_aead_chacha20poly1305_ietf_keybytes();
+	} else if (strcmp(method, "xchacha20poly1305_ietf") == 0) {
+		m = method_xchacha20poly1305_ietf;
+		nonce_size = crypto_aead_xchacha20poly1305_ietf_npubbytes();
+		overhead = crypto_aead_xchacha20poly1305_ietf_abytes();
+		key_size = crypto_aead_xchacha20poly1305_ietf_keybytes();
 	} else if (strcmp(method, "aes256gcm") == 0) {
 		m = method_aes256gcm;
 		nonce_size = crypto_aead_aes256gcm_npubbytes();
@@ -151,6 +157,14 @@ struct aead *aead_create(const char *method)
 			.keygen = &crypto_aead_chacha20poly1305_ietf_keygen,
 			.seal = &crypto_aead_chacha20poly1305_ietf_encrypt,
 			.open = &crypto_aead_chacha20poly1305_ietf_decrypt,
+		};
+	} break;
+	case method_xchacha20poly1305_ietf: {
+		*aead->impl = (struct aead_impl){
+			.key = key,
+			.keygen = &crypto_aead_xchacha20poly1305_ietf_keygen,
+			.seal = &crypto_aead_xchacha20poly1305_ietf_encrypt,
+			.open = &crypto_aead_xchacha20poly1305_ietf_decrypt,
 		};
 	} break;
 	case method_aes256gcm: {
