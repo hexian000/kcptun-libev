@@ -178,14 +178,21 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (s->conf->mode == MODE_SERVER) {
 		return;
 	}
-	if (now - s->udp.last_recv_time > 60.0 &&
-	    now - s->last_resolve_time > 60.0) {
+	if (!(s->keepalive > 0.0)) {
+		return;
+	}
+	const double timeout = s->keepalive * 3.0;
+	if (now - s->udp.last_recv_time > timeout &&
+	    now - s->last_resolve_time > timeout) {
 		LOGD_F("remote not seen for %.0fs, try resolve addresses",
 		       now - s->udp.last_recv_time);
 		conf_resolve(s->conf);
+#if WITH_CRYPTO
+		noncegen_init(s->udp.packets->noncegen);
+#endif
 		s->last_resolve_time = now;
 	}
-	if (s->keepalive <= 0.0 || now - s->udp.last_send_time < s->keepalive) {
+	if (now - s->udp.last_send_time < s->keepalive) {
 		return;
 	}
 	const uint32_t tstamp = tstamp2ms(ev_time());

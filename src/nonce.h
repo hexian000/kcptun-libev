@@ -22,6 +22,7 @@ struct noncegen {
 };
 
 struct noncegen *noncegen_create(size_t nonce_len);
+void noncegen_init(struct noncegen *g);
 const unsigned char *noncegen_next(struct noncegen *g);
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce);
 void noncegen_free(struct noncegen *g);

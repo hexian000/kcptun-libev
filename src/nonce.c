@@ -56,10 +56,15 @@ struct noncegen *noncegen_create(size_t nonce_len)
 		noncegen_free(g);
 		return NULL;
 	}
+	noncegen_init(g);
+	return g;
+}
+
+void noncegen_init(struct noncegen *g)
+{
 	for (size_t i = 0; i < countof(g->src); i++) {
 		g->src[i] = rand32();
 	}
-	return g;
 }
 
 const unsigned char *noncegen_next(struct noncegen *restrict g)

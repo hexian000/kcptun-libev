@@ -188,7 +188,7 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 	if (conf->keepalive >= 1 && conf->keepalive <= 7200) {
 		s->keepalive = (double)conf->keepalive;
 	} else {
-		s->keepalive = -1.0;
+		s->keepalive = 25.0;
 	}
 	if (conf->time_wait >= 5 && (double)conf->time_wait > s->linger) {
 		s->time_wait = (double)conf->time_wait;

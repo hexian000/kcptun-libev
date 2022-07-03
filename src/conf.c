@@ -327,7 +327,7 @@ static struct config conf_default()
 		.psk = NULL,
 		.timeout = -1,
 		.linger = -1,
-		.keepalive = -1,
+		.keepalive = 25,
 		.time_wait = -1,
 		.tcp_reuseport = false,
 		.tcp_keepalive = false,
