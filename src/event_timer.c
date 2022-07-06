@@ -71,19 +71,21 @@ bool timeout_filt(
 			kcp_close(ss);
 			return true;
 		}
-		if (not_seen > s->session_keepalive) {
+		if (!ss->is_accepted && not_seen > s->session_keepalive) {
 			unsigned char buf[TLV_HEADER_SIZE];
 			struct tlv_header header = (struct tlv_header){
-				.msg = SMSG_EOF,
+				.msg = SMSG_KEEPALIVE,
 				.len = TLV_HEADER_SIZE,
 			};
 			tlv_header_write(buf, header);
 			(void)kcp_send(ss, buf, TLV_HEADER_SIZE);
+			LOGD_F("session [%08" PRIX32 "] send: keepalive",
+			       ss->conv);
 		}
 		break;
 	case STATE_LINGER:
 		if (not_seen > s->linger) {
-			LOGW_F("session [%08" PRIX32 "] linger timed out",
+			LOGD_F("session [%08" PRIX32 "] linger timed out",
 			       ss->conv);
 			ss->state = STATE_TIME_WAIT;
 		}
@@ -95,7 +97,7 @@ bool timeout_filt(
 		}
 		return true;
 	default:
-		LOGW_F("unexpected session state: %d", ss->state);
+		LOGW_F("unexpected session state: %d (bug?)", ss->state);
 		UTIL_ASSERT(0);
 		session_free(ss);
 		return false;
@@ -175,7 +177,7 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	const ev_tstamp now = ev_now(loop);
 	timeout_check(s, now);
 
-	if (s->conf->mode == MODE_SERVER) {
+	if ((s->conf->mode & MODE_CLIENT) == 0) {
 		return;
 	}
 	if (!(s->keepalive > 0.0)) {
@@ -199,4 +201,5 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->udp_connect.sa, S0MSG_PING, b, sizeof(b));
+	udp_notify_write(s);
 }

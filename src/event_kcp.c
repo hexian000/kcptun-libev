@@ -39,13 +39,14 @@ bool kcp_send(
 	ss->stats.kcp_out += len;
 	ss->server->stats.kcp_out += len;
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
+	/* invalidate last ikcp_check */
+	ss->kcp_checked = false;
 	ss->last_send = ev_now(ss->server->loop);
 	return true;
 }
 
 static bool kcp_push(struct session *restrict ss)
 {
-	struct server *restrict s = ss->server;
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf_len;
 	struct tlv_header header = (struct tlv_header){
 		.msg = SMSG_PUSH,
@@ -56,9 +57,6 @@ static bool kcp_push(struct session *restrict ss)
 		return false;
 	}
 	ss->rbuf_len = 0;
-	/* invalidate last ikcp_check */
-	ss->kcp_checked = false;
-	ss->last_send = ev_now(s->loop);
 	return true;
 }
 
@@ -174,20 +172,6 @@ void kcp_recv(struct session *restrict ss)
 	session_on_msg(ss, &header);
 }
 
-static void kcp_keepalive(struct session *restrict ss)
-{
-	unsigned char buf[TLV_HEADER_SIZE];
-	struct tlv_header header = (struct tlv_header){
-		.msg = SMSG_KEEPALIVE,
-		.len = TLV_HEADER_SIZE,
-	};
-	tlv_header_write(buf, header);
-	if (!kcp_send(ss, buf, TLV_HEADER_SIZE)) {
-		return;
-	}
-	LOGD_F("session [%08" PRIX32 "] send: keepalive", ss->conv);
-}
-
 static void kcp_update(struct session *restrict ss)
 {
 	switch (ss->state) {
@@ -214,15 +198,6 @@ static void kcp_update(struct session *restrict ss)
 		const int window_size = s->conf->kcp_sndwnd;
 		if (waitsnd < window_size) {
 			ev_io_start(s->loop, ss->w_read);
-		}
-	}
-	if (!ss->is_accepted) {
-		const double last_seen = ss->last_send > ss->last_recv ?
-						 ss->last_send :
-						 ss->last_recv;
-		const double not_seen = now - last_seen;
-		if (not_seen > s->session_keepalive) {
-			kcp_keepalive(ss);
 		}
 	}
 }
@@ -256,18 +231,24 @@ static bool kcp_update_iter(
 	return p->mq_send_len < MQ_SEND_SIZE;
 }
 
-void kcp_update_all(struct server *restrict s)
+static void kcp_update_all(struct server *restrict s)
 {
+	struct packet *restrict p = s->udp.packets;
+	if (p->mq_send_len == MQ_SEND_SIZE) {
+		return;
+	}
 	table_iterate(s->sessions, kcp_update_iter, s);
+	udp_notify_write(s);
+}
+
+void kcp_notify_all(struct server *s)
+{
+	kcp_update_all(s);
 }
 
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct server *restrict s = watcher->data;
-	struct packet *restrict p = s->udp.packets;
-	if (p->mq_send_len < MQ_SEND_SIZE) {
-		table_iterate(s->sessions, kcp_update_iter, s);
-	}
+	kcp_update_all(watcher->data);
 }

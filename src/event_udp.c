@@ -128,7 +128,7 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 	if (nrecv > 0) {
 		packet_recv(p, s);
-		kcp_update_all(s);
+		kcp_notify_all(s);
 	}
 }
 
@@ -255,22 +255,20 @@ void udp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
-	kcp_update_all(s);
 	(void)udp_send(s);
 	struct packet *restrict p = s->udp.packets;
-	if (p->mq_send_len == 0) {
-		ev_io_stop(s->loop, s->udp.w_write);
+	if (p->mq_send_len > 0) {
+		return;
 	}
+	ev_io_stop(s->loop, s->udp.w_write);
 }
 
 void udp_notify_write(struct server *restrict s)
 {
-	if (s->udp.packets->mq_send_len == MQ_SEND_SIZE) {
-		(void)udp_send(s);
-	}
 	if (s->udp.packets->mq_send_len == 0) {
 		return;
 	}
+	(void)udp_send(s);
 	if (ev_is_active(s->udp.w_write)) {
 		return;
 	}

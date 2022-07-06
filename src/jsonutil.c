@@ -17,7 +17,6 @@ bool walk_json_object(void *ud, const json_value *obj, walk_json_object_cb cb)
 	return true;
 }
 
-typedef bool (*walk_json_array_cb)(void *, const json_value *);
 bool walk_json_array(void *ud, const json_value *obj, walk_json_array_cb cb)
 {
 	if (obj == NULL || obj->type != json_array) {

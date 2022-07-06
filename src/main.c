@@ -112,8 +112,7 @@ int main(int argc, char **argv)
 	slog_level = conf->log_level;
 	struct server *restrict s = server_start(loop, conf);
 	if (s == NULL) {
-		LOGE_F("failed to start %s",
-		       conf->mode == MODE_SERVER ? "server" : "client");
+		LOGE_F("failed to start %s", runmode_str(conf->mode));
 		util_free(w_sigint);
 		util_free(w_sigterm);
 		conf_free(conf);

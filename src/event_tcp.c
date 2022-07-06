@@ -198,6 +198,9 @@ static size_t tcp_send(struct session *restrict ss)
 
 void tcp_notify_write(struct session *restrict ss)
 {
+	if (ss->tcp_fd == -1) {
+		return;
+	}
 	if (ss->state != STATE_CONNECTED) {
 		return;
 	}
@@ -207,7 +210,7 @@ void tcp_notify_write(struct session *restrict ss)
 	if (ss->wbuf_navail == 0) {
 		return;
 	}
-	if (ss->tcp_fd != -1 && !ev_is_active(ss->w_write)) {
+	if (!ev_is_active(ss->w_write)) {
 		ev_io_start(ss->server->loop, ss->w_write);
 	}
 }

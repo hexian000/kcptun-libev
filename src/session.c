@@ -94,12 +94,18 @@ void session_free(struct session *restrict ss)
 {
 	LOGD_F("session free: %p", (void *)ss);
 	if (ss->tcp_fd != -1) {
-		ev_io_stop(ss->server->loop, ss->w_read);
-		UTIL_SAFE_FREE(ss->w_read);
-		ev_io_stop(ss->server->loop, ss->w_write);
-		UTIL_SAFE_FREE(ss->w_write);
 		close(ss->tcp_fd);
 		ss->tcp_fd = -1;
+	}
+	if (ss->w_read != NULL) {
+		ev_io_stop(ss->server->loop, ss->w_read);
+		util_free(ss->w_read);
+		ss->w_read = NULL;
+	}
+	if (ss->w_write != NULL) {
+		ev_io_stop(ss->server->loop, ss->w_write);
+		util_free(ss->w_write);
+		ss->w_write = NULL;
 	}
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
@@ -177,6 +183,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 	} break;
 	case SMSG_KEEPALIVE: {
 		UTIL_ASSERT(hdr->len == TLV_HEADER_SIZE);
+		LOGD_F("session [%08" PRIX32 "] msg: keepalive", ss->conv);
 		consume_wbuf(ss, hdr->len);
 		return;
 	} break;

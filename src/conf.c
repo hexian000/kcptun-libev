@@ -236,6 +236,7 @@ const char *runmode_str(const int mode)
 {
 	static const char *str[] = {
 		[MODE_SERVER] = "server",
+		[MODE_CLIENT] = "client",
 		[MODE_PEER] = "peer",
 	};
 	UTIL_ASSERT(mode >= 0);
@@ -360,14 +361,18 @@ static bool conf_check(struct config *restrict conf)
 		return false;
 	}
 	conf->udp_af = sa->sa_family;
-	if (conf->udp_connect.str == NULL) {
-		conf->mode = MODE_SERVER;
-	} else if (conf->listen.str != NULL) {
-		conf->mode = MODE_PEER;
-	} else {
+	int mode = 0;
+	if (conf->udp_bind.str != NULL) {
+		mode |= MODE_SERVER;
+	}
+	if (conf->udp_connect.str != NULL && conf->listen.str != NULL) {
+		mode |= MODE_CLIENT;
+	}
+	if (mode == 0) {
 		LOGF("config: no forward could be provided (are you missing some address field?)");
 		return false;
 	}
+	conf->mode = mode;
 
 	/* 2. crypto check */
 	if (conf->psk != NULL && conf->password != NULL) {

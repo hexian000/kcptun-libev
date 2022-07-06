@@ -178,13 +178,14 @@ ss0_on_ping(struct server *restrict s, struct msgframe *restrict msg)
 static void
 ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 {
+	UNUSED(s);
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
 		LOGW_F("short pong message: %zu bytes", msg->len);
 		return;
 	}
 	const uint32_t tstamp = read_uint32(msg->buf + SESSION0_HEADER_SIZE);
 	/*  print RTT */
-	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
+	const uint32_t now_ms = tstamp2ms(ev_time());
 	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
 }
 
@@ -314,7 +315,9 @@ bool packet_send(
 	msg->hdr.msg_namelen = getsocklen(msg->hdr.msg_name);
 	msg->iov.iov_len = msg->len;
 	p->mq_send[p->mq_send_len++] = msg;
-	udp_notify_write(s);
+	if (p->mq_send_len == MQ_SEND_SIZE) {
+		udp_notify_write(s);
+	}
 	return true;
 }
 

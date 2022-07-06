@@ -58,7 +58,12 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 
 	// Initialize and start a watcher to accepts client requests
 	l->w_accept = util_malloc(sizeof(struct ev_io));
-	UTIL_ASSERT(l->w_accept);
+	if (l->w_accept == NULL) {
+		LOGE("out of memory");
+		close(l->fd);
+		l->fd = -1;
+		return false;
+	}
 	ev_io_init(l->w_accept, accept_cb, l->fd, EV_READ);
 	l->w_accept->data = s;
 	ev_io_start(s->loop, l->w_accept);
