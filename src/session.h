@@ -7,13 +7,13 @@
 #include "sockutil.h"
 #include "util.h"
 
+#include <ev.h>
+
+#include <sys/socket.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/socket.h>
-
-struct ev_io;
-struct ev_loop;
 
 struct server;
 
@@ -72,9 +72,9 @@ struct session {
 	bool is_accepted;
 	int state;
 	int tcp_fd;
-	struct ev_io *w_read, *w_write;
+	struct ev_io w_read, w_write;
 	struct server *server;
-	unsigned char *rbuf, *wbuf;
+	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
 	size_t rbuf_len;
 	size_t wbuf_len, wbuf_navail, wbuf_flush;
 	sockaddr_max_t udp_remote;

@@ -158,11 +158,12 @@ static void timeout_check(struct server *restrict s, const ev_tstamp now)
 			.now = now,
 		};
 		table_filter(s->sessions, timeout_filt, &stats);
+		struct ev_io *restrict w_read = &s->udp.w_read;
+		struct ev_io *restrict w_write = &s->udp.w_write;
 		LOGD_F("=== %zu sessions: %zu connected, %zu linger, w_read=%d, w_write=%d",
 		       n_sessions, stats.data[STATE_CONNECTED],
-		       stats.data[STATE_LINGER],
-		       s->udp.w_read ? ev_is_active(s->udp.w_read) : -1,
-		       s->udp.w_write ? ev_is_active(s->udp.w_write) : -1);
+		       stats.data[STATE_LINGER], ev_is_active(w_read),
+		       ev_is_active(w_write));
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			traffic_stats(s, now);
 		}

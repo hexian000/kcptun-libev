@@ -148,7 +148,7 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct session *restrict ss = (struct session *)watcher->data;
 	if (ss->rbuf_len == 0) {
 		if (tcp_recv(ss) == 0) {
-			ev_io_stop(loop, ss->w_read);
+			ev_io_stop(loop, watcher);
 		}
 	}
 	kcp_notify(ss);
@@ -214,8 +214,9 @@ void tcp_notify_write(struct session *restrict ss)
 	if (ss->wbuf_navail == 0) {
 		return;
 	}
-	if (!ev_is_active(ss->w_write)) {
-		ev_io_start(ss->server->loop, ss->w_write);
+	struct ev_io *restrict w_write = &ss->w_write;
+	if (!ev_is_active(w_write)) {
+		ev_io_start(ss->server->loop, w_write);
 	}
 }
 
@@ -231,7 +232,8 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 	if (ss->state == STATE_CONNECT) {
 		ss->state = STATE_CONNECTED;
-		ev_io_start(loop, ss->w_read);
+		struct ev_io *restrict w_read = &ss->w_read;
+		ev_io_start(loop, w_read);
 		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->conv);
 	}
 
@@ -242,8 +244,8 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		tcp_send(ss);
 	} else {
 		/* no more data */
-		if (ss->tcp_fd != -1 && ev_is_active(ss->w_write)) {
-			ev_io_stop(loop, ss->w_write);
+		if (ss->tcp_fd != -1) {
+			ev_io_stop(loop, watcher);
 		}
 	}
 }

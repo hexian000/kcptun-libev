@@ -64,26 +64,6 @@ struct session *session_new(
 		session_free(ss);
 		return NULL;
 	}
-	ss->rbuf = util_malloc(SESSION_BUF_SIZE);
-	if (ss->rbuf == NULL) {
-		session_free(ss);
-		return NULL;
-	}
-	ss->wbuf = util_malloc(SESSION_BUF_SIZE);
-	if (ss->wbuf == NULL) {
-		session_free(ss);
-		return NULL;
-	}
-	ss->w_read = util_malloc(sizeof(struct ev_io));
-	if (ss->w_read == NULL) {
-		session_free(ss);
-		return NULL;
-	}
-	ss->w_write = util_malloc(sizeof(struct ev_io));
-	if (ss->w_write == NULL) {
-		session_free(ss);
-		return NULL;
-	}
 	memset(&ss->udp_remote, 0, sizeof(ss->udp_remote));
 	memcpy(&ss->udp_remote, addr, getsocklen(addr));
 	LOGD_F("session [%08" PRIX32 "] new: %p", conv, (void *)ss);
@@ -98,10 +78,6 @@ void session_free(struct session *restrict ss)
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
-	UTIL_SAFE_FREE(ss->w_read);
-	UTIL_SAFE_FREE(ss->w_write);
-	UTIL_SAFE_FREE(ss->rbuf);
-	UTIL_SAFE_FREE(ss->wbuf);
 	util_free(ss);
 }
 
@@ -110,14 +86,17 @@ void session_start(struct session *restrict ss, const int fd)
 	LOGD_F("session [%08" PRIX32 "] start, fd: %d", ss->conv, fd);
 	ss->tcp_fd = fd;
 	// Initialize and start watchers to transfer data
-	ev_io_init(ss->w_read, read_cb, fd, EV_READ);
-	ss->w_read->data = ss;
+	struct ev_loop *loop = ss->server->loop;
+	struct ev_io *restrict w_read = &ss->w_read;
+	struct ev_io *restrict w_write = &ss->w_write;
+	ev_io_init(w_read, read_cb, fd, EV_READ);
+	w_read->data = ss;
 	if (ss->state == STATE_CONNECTED) {
-		ev_io_start(ss->server->loop, ss->w_read);
+		ev_io_start(loop, w_read);
 	}
-	ev_io_init(ss->w_write, write_cb, fd, EV_WRITE);
-	ss->w_write->data = ss;
-	ev_io_start(ss->server->loop, ss->w_write);
+	ev_io_init(w_write, write_cb, fd, EV_WRITE);
+	w_write->data = ss;
+	ev_io_start(loop, w_write);
 }
 
 void session_shutdown(struct session *restrict ss)
@@ -125,8 +104,11 @@ void session_shutdown(struct session *restrict ss)
 	if (ss->tcp_fd != -1) {
 		LOGD_F("session [%08" PRIX32 "] shutdown, fd: %d", ss->conv,
 		       ss->tcp_fd);
-		ev_io_stop(ss->server->loop, ss->w_read);
-		ev_io_stop(ss->server->loop, ss->w_write);
+		struct ev_loop *loop = ss->server->loop;
+		struct ev_io *restrict w_read = &ss->w_read;
+		struct ev_io *restrict w_write = &ss->w_write;
+		ev_io_stop(loop, w_read);
+		ev_io_stop(loop, w_write);
 		close(ss->tcp_fd);
 		ss->tcp_fd = -1;
 	}

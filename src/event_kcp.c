@@ -193,11 +193,12 @@ static void kcp_update(struct session *restrict ss)
 		ss->kcp_next = ikcp_check(ss->kcp, now_ms);
 		ss->kcp_checked = true;
 	}
+	struct ev_io *restrict w_read = &ss->w_read;
 	const int waitsnd = ikcp_waitsnd(ss->kcp);
-	if (ss->tcp_fd != -1 && !ev_is_active(ss->w_read)) {
+	if (ss->tcp_fd != -1 && !ev_is_active(w_read)) {
 		const int window_size = s->conf->kcp_sndwnd;
 		if (waitsnd < window_size) {
-			ev_io_start(s->loop, ss->w_read);
+			ev_io_start(s->loop, w_read);
 		}
 	}
 }

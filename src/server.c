@@ -23,56 +23,49 @@
 static bool
 listener_start(struct server *restrict s, const struct sockaddr *addr)
 {
+	struct config *restrict cfg = s->conf;
 	struct listener *restrict l = &(s->listener);
 	// Create server socket
-	if ((l->fd = socket(addr->sa_family, SOCK_STREAM, 0)) < 0) {
+	const int fd = socket(addr->sa_family, SOCK_STREAM, 0);
+	if (fd < 0) {
 		LOGE_PERROR("socket error");
 		return false;
 	}
-	if (socket_setup(l->fd)) {
+	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
+		close(fd);
 		return false;
 	}
-	{
-		struct config *restrict cfg = s->conf;
-		socket_set_reuseport(l->fd, cfg->tcp_reuseport);
-		socket_set_tcp(l->fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
-		socket_set_buffer(l->fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
-	}
+	socket_set_reuseport(fd, cfg->tcp_reuseport);
+	socket_set_tcp(fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
+	socket_set_buffer(fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 
 	// Bind socket to address
-	if (bind(l->fd, addr, getsocklen(addr)) != 0) {
+	if (bind(fd, addr, getsocklen(addr)) != 0) {
 		LOGE_PERROR("bind error");
-		close(l->fd);
-		l->fd = -1;
+		close(fd);
 		return false;
 	}
 
 	// Start listing on the socket
-	if (listen(l->fd, 2) < 0) {
+	if (listen(fd, 2) < 0) {
 		LOGE_PERROR("listen error");
-		close(l->fd);
-		l->fd = -1;
+		close(fd);
 		return false;
 	}
 
 	// Initialize and start a watcher to accepts client requests
-	l->w_accept = util_malloc(sizeof(struct ev_io));
-	if (l->w_accept == NULL) {
-		LOGE("out of memory");
-		close(l->fd);
-		l->fd = -1;
-		return false;
-	}
-	ev_io_init(l->w_accept, accept_cb, l->fd, EV_READ);
-	l->w_accept->data = s;
-	ev_io_start(s->loop, l->w_accept);
+	struct ev_io *restrict w_accept = &l->w_accept;
+	ev_io_init(w_accept, accept_cb, fd, EV_READ);
+	w_accept->data = s;
+	ev_io_start(s->loop, w_accept);
 
 	{
 		char addr_str[64];
 		format_sa(addr, addr_str, sizeof(addr_str));
 		LOGI_F("listen at: %s", addr_str);
 	}
+	l->fd = fd;
 	return true;
 }
 
@@ -117,23 +110,15 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		LOGI_F("udp connect: %s", addr_str);
 	}
 
-	udp->w_read = util_malloc(sizeof(struct ev_io));
-	if (udp->w_read == NULL) {
-		LOGE("out of memory");
-		return false;
-	}
-	ev_io_init(udp->w_read, udp_read_cb, udp->fd, EV_READ);
-	udp->w_read->data = s;
-	ev_io_start(s->loop, udp->w_read);
+	struct ev_io *restrict w_read = &udp->w_read;
+	ev_io_init(w_read, udp_read_cb, udp->fd, EV_READ);
+	w_read->data = s;
+	ev_io_start(s->loop, w_read);
 
-	udp->w_write = util_malloc(sizeof(struct ev_io));
-	if (udp->w_write == NULL) {
-		LOGE("out of memory");
-		return false;
-	}
-	ev_io_init(udp->w_write, udp_write_cb, udp->fd, EV_WRITE);
-	udp->w_write->data = s;
-	ev_io_start(s->loop, udp->w_write);
+	struct ev_io *restrict w_write = &udp->w_write;
+	ev_io_init(w_write, udp_write_cb, udp->fd, EV_WRITE);
+	w_write->data = s;
+	ev_io_start(s->loop, w_write);
 
 	const ev_tstamp now = ev_time();
 	udp->last_send_time = now;
@@ -141,7 +126,7 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 	return true;
 }
 
-struct server *server_start(struct ev_loop *loop, struct config *conf)
+struct server *server_start(struct ev_loop *loop, struct config *restrict conf)
 {
 	struct server *s = util_malloc(sizeof(struct server));
 	if (s == NULL) {
@@ -151,11 +136,8 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		.loop = loop,
 		.conf = conf,
 		.m_conv = rand32(),
-		.listener =
-			(struct listener){
-				.w_accept = NULL,
-				.fd = -1,
-			},
+		.listener = (struct listener){ .fd = -1 },
+		.udp = (struct udp_conn){ .fd = -1 },
 		.last_resolve_time = ev_now(loop),
 		.interval = conf->kcp_interval * 1e-3,
 		.linger = conf->linger,
@@ -165,6 +147,14 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		.keepalive = conf->keepalive,
 		.time_wait = conf->time_wait,
 	};
+
+	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
+	ev_timer_init(w_kcp_update, kcp_update_cb, s->interval, s->interval);
+	w_kcp_update->data = s;
+	struct ev_timer *restrict w_timer = &s->w_timer;
+	ev_timer_init(w_timer, timer_cb, 1.0, 1.0);
+	w_timer->data = s;
+
 	s->sessions = table_create();
 	if (s->sessions == NULL) {
 		server_shutdown(s);
@@ -181,58 +171,32 @@ struct server *server_start(struct ev_loop *loop, struct config *conf)
 		return NULL;
 	}
 
-	s->w_kcp_update = util_malloc(sizeof(struct ev_timer));
-	if (s->w_kcp_update == NULL) {
-		LOGE("out of memory");
-		server_shutdown(s);
-		return NULL;
-	}
-	ev_timer_init(s->w_kcp_update, kcp_update_cb, s->interval, s->interval);
-	s->w_kcp_update->data = s;
-	ev_timer_start(s->loop, s->w_kcp_update);
-
-	s->w_timer = util_malloc(sizeof(struct ev_timer));
-	if (s->w_timer == NULL) {
-		LOGE("out of memory");
-		server_shutdown(s);
-		return NULL;
-	}
-	ev_timer_init(s->w_timer, timer_cb, 1.0, 1.0);
-	s->w_timer->data = s;
-	ev_timer_start(s->loop, s->w_timer);
+	ev_timer_start(loop, w_kcp_update);
+	ev_timer_start(loop, w_timer);
 	return s;
 }
 
 static void udp_free(struct ev_loop *loop, struct udp_conn *restrict conn)
 {
+	if (conn->fd != -1) {
+		struct ev_io *restrict w_read = &conn->w_read;
+		ev_io_stop(loop, w_read);
+		struct ev_io *restrict w_write = &conn->w_write;
+		ev_io_stop(loop, w_write);
+		close(conn->fd);
+		conn->fd = -1;
+	}
 	if (conn->packets != NULL) {
 		packet_free(conn->packets);
 		conn->packets = NULL;
-	}
-	if (conn->w_read != NULL) {
-		ev_io_stop(loop, conn->w_read);
-		util_free(conn->w_read);
-		conn->w_read = NULL;
-	}
-	if (conn->w_write != NULL) {
-		ev_io_stop(loop, conn->w_write);
-		util_free(conn->w_write);
-		conn->w_write = NULL;
-	}
-	if (conn->fd != -1) {
-		close(conn->fd);
-		conn->fd = -1;
 	}
 }
 
 static void listener_free(struct ev_loop *loop, struct listener *restrict l)
 {
-	if (l->w_accept != NULL) {
-		ev_io_stop(loop, l->w_accept);
-		util_free(l->w_accept);
-		l->w_accept = NULL;
-	}
 	if (l->fd != -1) {
+		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io_stop(loop, w_accept);
 		close(l->fd);
 		l->fd = -1;
 	}
@@ -240,16 +204,10 @@ static void listener_free(struct ev_loop *loop, struct listener *restrict l)
 
 void server_shutdown(struct server *restrict s)
 {
-	if (s->w_kcp_update != NULL) {
-		ev_timer_stop(s->loop, s->w_kcp_update);
-		util_free(s->w_kcp_update);
-		s->w_kcp_update = NULL;
-	}
-	if (s->w_timer != NULL) {
-		ev_timer_stop(s->loop, s->w_timer);
-		util_free(s->w_timer);
-		s->w_timer = NULL;
-	}
+	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
+	ev_timer_stop(s->loop, w_kcp_update);
+	struct ev_timer *restrict w_timer = &s->w_timer;
+	ev_timer_stop(s->loop, w_timer);
 	udp_free(s->loop, &(s->udp));
 	listener_free(s->loop, &(s->listener));
 	if (s->sessions != NULL) {

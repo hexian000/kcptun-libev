@@ -5,19 +5,22 @@
 #include "hashtable.h"
 #include "session.h"
 #include "util.h"
+
 #include "kcp/ikcp.h"
+
+#include <ev.h>
+
 #include <stdint.h>
 
 struct aead;
-struct ev_timer;
 
 struct listener {
-	struct ev_io *w_accept;
+	struct ev_io w_accept;
 	int fd;
 };
 
 struct udp_conn {
-	struct ev_io *w_read, *w_write;
+	struct ev_io w_read, w_write;
 	int fd;
 	double last_send_time;
 	double last_recv_time;
@@ -30,8 +33,8 @@ struct server {
 	struct listener listener;
 	struct udp_conn udp;
 	struct hashtable *sessions;
-	struct ev_timer *w_kcp_update;
-	struct ev_timer *w_timer;
+	struct ev_timer w_kcp_update;
+	struct ev_timer w_timer;
 	double interval;
 	double dial_timeout;
 	double session_timeout, session_keepalive;
@@ -42,9 +45,8 @@ struct server {
 	double last_resolve_time;
 };
 
-struct server *
-server_start(struct ev_loop * /*loop*/, struct config * /*conf*/);
-void server_shutdown(struct server * /*s*/);
+struct server *server_start(struct ev_loop *loop, struct config *conf);
+void server_shutdown(struct server *s);
 
 uint32_t conv_new(struct server *s);
 

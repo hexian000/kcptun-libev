@@ -283,7 +283,7 @@ void udp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (p->mq_send_len > 0) {
 		return;
 	}
-	ev_io_stop(s->loop, s->udp.w_write);
+	ev_io_stop(loop, watcher);
 }
 
 void udp_notify_write(struct server *restrict s)
@@ -292,8 +292,9 @@ void udp_notify_write(struct server *restrict s)
 		return;
 	}
 	(void)udp_send(s);
-	if (ev_is_active(s->udp.w_write)) {
+	struct ev_io *restrict w_write = &s->udp.w_write;
+	if (ev_is_active(w_write)) {
 		return;
 	}
-	ev_io_start(s->loop, s->udp.w_write);
+	ev_io_start(s->loop, w_write);
 }
