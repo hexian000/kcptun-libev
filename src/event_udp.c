@@ -58,10 +58,10 @@ static size_t udp_recv(struct server *restrict s)
 	if (nrecv < 0) {
 		/* temporary errors */
 		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-		    (errno == EINTR)) {
+		    (errno == EINTR) || (errno == ENOMEM)) {
 			return 0;
 		}
-		if (errno == ECONNREFUSED) {
+		if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
 			LOGW("udp connection refused, closing all sessions");
 			udp_reset(s);
 			return 0;
@@ -106,7 +106,12 @@ static size_t udp_recv(struct server *restrict s)
 		msgframe_delete(p, msg);
 		/* temporary errors */
 		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-		    (errno == EINTR)) {
+		    (errno == EINTR) || (errno == ENOMEM)) {
+			return 0;
+		}
+		if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
+			LOGW("udp connection refused, closing all sessions");
+			udp_reset(s);
 			return 0;
 		}
 		LOGE_PERROR("recvmsg");
@@ -177,7 +182,7 @@ static size_t udp_send(struct server *restrict s)
 		if (ret < 0) {
 			/* temporary errors */
 			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-			    (errno == EINTR)) {
+			    (errno == EINTR) || (errno == ENOMEM)) {
 				return 0;
 			}
 			LOGE_PERROR("sendmmsg");
@@ -232,7 +237,7 @@ static size_t udp_send(struct server *restrict s)
 		if (nbsend < 0) {
 			/* temporary errors */
 			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-			    (errno == EINTR)) {
+			    (errno == EINTR) || (errno == ENOMEM)) {
 				break;
 			}
 			LOGE_PERROR("sendmsg");

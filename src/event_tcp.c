@@ -53,7 +53,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		if (client_fd < 0) {
 			/* temporary errors */
 			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-			    (errno == EINTR)) {
+			    (errno == EINTR) || (errno == ENOMEM)) {
 				break;
 			}
 			LOGE_PERROR("accept");
@@ -102,12 +102,15 @@ static size_t tcp_recv(struct session *restrict ss)
 		const ssize_t nread =
 			recv(ss->tcp_fd, buf, cap, MSG_DONTWAIT | MSG_NOSIGNAL);
 		if (nread < 0) {
+			const int err = errno;
 			/* temporary errors */
-			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-			    (errno == EINTR)) {
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_PERROR("recv");
+			LOGE_F("session [%08" PRIu32
+			       "] fd=%d tcp recv error: [%d] %s",
+			       ss->conv, ss->tcp_fd, err, strerror(err));
 			session_shutdown(ss);
 			kcp_reset(ss);
 			return 0;
@@ -166,8 +169,9 @@ static size_t tcp_send(struct session *restrict ss)
 	ssize_t nsend = send(ss->tcp_fd, buf, len, MSG_DONTWAIT | MSG_NOSIGNAL);
 	if (nsend < 0) {
 		const int err = errno;
-		if (err == EAGAIN || err == EWOULDBLOCK || err == EINPROGRESS) {
-			/* ignore temporary errors */
+		/* temporary errors */
+		if (err == EAGAIN || err == EWOULDBLOCK || err == EINPROGRESS ||
+		    err == ENOMEM) {
 			return 0;
 		}
 		LOGE_F("session [%08" PRIu32 "] fd=%d tcp send error: [%d] %s",
