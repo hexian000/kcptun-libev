@@ -217,7 +217,7 @@ void kcp_notify(struct session *restrict ss)
 	if (!kcp_push(ss)) {
 		return;
 	}
-	kcp_update(ss);
+	ikcp_flush(ss->kcp);
 }
 
 static bool kcp_update_iter(

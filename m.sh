@@ -7,12 +7,26 @@ case "$1" in
     # cross compiling, environment vars need to be set
     rm -rf xbuild
     mkdir -p "xbuild" && cd "xbuild"
-    cmake \
+    cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_FIND_ROOT_PATH="${BUILDROOT}" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         ..
     cmake --build . --parallel
+    ls -lh src/kcptun-libev
+    ;;
+"xs")
+    # cross compiling, environment vars need to be set
+    rm -rf xbuild
+    mkdir -p "xbuild" && cd "xbuild"
+    cmake -G "Ninja" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_FIND_ROOT_PATH="${BUILDROOT}" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DLINK_STATIC_LIBS=TRUE \
+        ..
+    cmake --build . --parallel
+    ls -lh src/kcptun-libev
     ;;
 "r")
     rm -rf build
@@ -28,8 +42,9 @@ case "$1" in
     rm -rf build
     mkdir -p build && cd build
     cmake -G "Ninja" \
-        -DCMAKE_BUILD_TYPE="MinSizeRel" \
+        -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DLINK_STATIC_LIBS=TRUE \
         ..
     cmake --build . --parallel
     # cd src/tests && ctest
@@ -44,6 +59,7 @@ case "$1" in
         ..
     cmake --build . --parallel
     # cd src/tests && ctest
+    ls -lh src/kcptun-libev
     ;;
 "clang")
     rm -rf build

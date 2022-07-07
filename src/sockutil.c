@@ -32,6 +32,8 @@ void socket_set_reuseport(const int fd, const int reuseport)
 		LOGW_PERROR("SO_REUSEPORT");
 	}
 #else
+	UNUSED(fd);
+	UNUSED(reuseport);
 	LOGW("reuseport not supported on this platform");
 #endif
 }

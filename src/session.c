@@ -92,25 +92,14 @@ struct session *session_new(
 
 void session_free(struct session *restrict ss)
 {
-	LOGD_F("session free: %p", (void *)ss);
-	if (ss->tcp_fd != -1) {
-		close(ss->tcp_fd);
-		ss->tcp_fd = -1;
-	}
-	if (ss->w_read != NULL) {
-		ev_io_stop(ss->server->loop, ss->w_read);
-		util_free(ss->w_read);
-		ss->w_read = NULL;
-	}
-	if (ss->w_write != NULL) {
-		ev_io_stop(ss->server->loop, ss->w_write);
-		util_free(ss->w_write);
-		ss->w_write = NULL;
-	}
+	session_shutdown(ss);
+	LOGD_F("session [%08" PRIX32 "] free: %p", ss->conv, (void *)ss);
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
+	UTIL_SAFE_FREE(ss->w_read);
+	UTIL_SAFE_FREE(ss->w_write);
 	UTIL_SAFE_FREE(ss->rbuf);
 	UTIL_SAFE_FREE(ss->wbuf);
 	util_free(ss);
@@ -133,8 +122,9 @@ void session_start(struct session *restrict ss, const int fd)
 
 void session_shutdown(struct session *restrict ss)
 {
-	LOGD_F("session [%08" PRIX32 "] shutdown", ss->conv);
 	if (ss->tcp_fd != -1) {
+		LOGD_F("session [%08" PRIX32 "] shutdown, fd: %d", ss->conv,
+		       ss->tcp_fd);
 		ev_io_stop(ss->server->loop, ss->w_read);
 		ev_io_stop(ss->server->loop, ss->w_write);
 		close(ss->tcp_fd);

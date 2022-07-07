@@ -1,6 +1,8 @@
 #include "event.h"
 #include "event_impl.h"
 #include "packet.h"
+#include "session.h"
+#include "slog.h"
 #include "sockutil.h"
 #include "util.h"
 
@@ -8,6 +10,17 @@
 #include <stddef.h>
 #include <string.h>
 #include <sys/socket.h>
+
+static void udp_reset(struct server *restrict s)
+{
+	struct packet *restrict p = s->udp.packets;
+	session_close_all(s->sessions);
+	for (size_t i = 0; i < p->mq_send_len; i++) {
+		struct msgframe *restrict msg = p->mq_send[i];
+		msgframe_delete(p, msg);
+	}
+	p->mq_send_len = 0;
+}
 
 #if HAVE_RECVMMSG || HAVE_SENDMMSG
 #define MMSG_BATCH_SIZE 128
@@ -46,6 +59,11 @@ static size_t udp_recv(struct server *restrict s)
 		/* temporary errors */
 		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
 		    (errno == EINTR)) {
+			return 0;
+		}
+		if (errno == ECONNREFUSED) {
+			LOGW("udp connection refused, closing all sessions");
+			udp_reset(s);
 			return 0;
 		}
 		LOGE_PERROR("recvmmsg");
