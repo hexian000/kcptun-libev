@@ -51,13 +51,14 @@ static void genpsk(const char *method)
 }
 #endif
 
+static char *conf_path = NULL;
+
 int main(int argc, char **argv)
 {
 	fprintf(stderr, "%s %s\n", PROJECT_NAME, PROJECT_VER);
 	fprintf(stderr, "  %s\n", PROJECT_HOMEPAGE);
 	fprintf(stderr, "\n");
 
-	char *conf_path = NULL;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0 ||
 		    strcmp(argv[i], "--help") == 0) {
@@ -97,47 +98,49 @@ int main(int argc, char **argv)
 	LOGI("initializing...");
 	struct ev_loop *loop = ev_default_loop(0);
 	UTIL_ASSERT(loop);
-	struct ev_signal *w_sigint = util_malloc(sizeof(struct ev_signal));
-	UTIL_ASSERT(w_sigint);
-	struct ev_signal *w_sigterm = util_malloc(sizeof(struct ev_signal));
-	UTIL_ASSERT(w_sigterm);
 
 	struct config *conf = conf_read(conf_path);
 	if (conf == NULL) {
 		LOGE("failed to read config");
-		util_free(w_sigint);
-		util_free(w_sigterm);
 		return EXIT_FAILURE;
 	}
 	slog_level = conf->log_level;
 	struct server *restrict s = server_start(loop, conf);
 	if (s == NULL) {
 		LOGE_F("failed to start %s", runmode_str(conf->mode));
-		util_free(w_sigint);
-		util_free(w_sigterm);
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
 
+	/* signal watchers */
 	signal(SIGPIPE, SIG_IGN);
-	ev_signal_init(w_sigint, signal_cb, SIGHUP);
-	ev_signal_start(loop, w_sigint);
+	struct ev_signal *w_sighup = must_malloc(sizeof(struct ev_signal));
+	struct ev_signal *w_sigint = must_malloc(sizeof(struct ev_signal));
+	struct ev_signal *w_sigterm = must_malloc(sizeof(struct ev_signal));
+	ev_signal_init(w_sighup, signal_cb, SIGHUP);
+	w_sighup->data = s;
+	ev_signal_start(loop, w_sighup);
 	ev_signal_init(w_sigint, signal_cb, SIGINT);
+	w_sigint->data = s;
 	ev_signal_start(loop, w_sigint);
 	ev_signal_init(w_sigterm, signal_cb, SIGTERM);
+	w_sigterm->data = s;
 	ev_signal_start(loop, w_sigterm);
 
 	// Start infinite loop
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
+	ev_signal_stop(loop, w_sighup);
+	UTIL_SAFE_FREE(w_sighup);
+	ev_signal_stop(loop, w_sigint);
+	UTIL_SAFE_FREE(w_sigint);
+	ev_signal_stop(loop, w_sigterm);
+	UTIL_SAFE_FREE(w_sigterm);
+
 	server_shutdown(s);
 	LOGI_F("%s shutdown", runmode_str(conf->mode));
-
-	util_free(w_sigint);
-	util_free(w_sigterm);
 	conf_free(conf);
-
 	LOGI("program terminated normally.");
 	return EXIT_SUCCESS;
 }
@@ -146,9 +149,18 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 {
 	UNUSED(revents);
 
+	struct server *restrict s = watcher->data;
 	switch (watcher->signum) {
 	case SIGHUP: {
-		LOGI("SIGHUP received, ignored");
+		struct config *conf = conf_read(conf_path);
+		if (conf == NULL) {
+			LOGE_F("failed to read config: %s", conf_path);
+			return;
+		}
+		conf_free(s->conf);
+		s->conf = conf;
+		slog_level = conf->log_level;
+		LOGI("config successfully reloaded");
 	} break;
 	case SIGINT:
 	case SIGTERM: {

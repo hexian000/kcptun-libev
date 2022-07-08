@@ -1,4 +1,5 @@
 #include "packet.h"
+#include "conf.h"
 #include "event.h"
 #include "event_impl.h"
 #include "hashtable.h"
@@ -254,7 +255,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
-		if (s->conf->connect.sa == NULL) {
+		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOGW_F("session not found [%08" PRIX32 "]", conv);
 			ss0_reset(s, sa, conv);
 			return;
@@ -269,6 +270,11 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		hashkey_t sskey;
 		conv_make_key(&sskey, sa, conv);
 		table_set(s->sessions, &sskey, ss);
+		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+			char addr_str[64];
+			format_sa(sa, addr_str, sizeof(addr_str));
+			LOGI_F("kcp accept from: %s", addr_str);
+		}
 	}
 	if (ss->state == STATE_TIME_WAIT) {
 		return;

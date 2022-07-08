@@ -131,7 +131,11 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		if (ss->tcp_fd != -1) {
 			break;
 		}
-		if (!proxy_dial(ss, ss->server->conf->connect.sa)) {
+		struct sockaddr *sa = ss->server->conf->connect.sa;
+		if (sa == NULL) {
+			break;
+		}
+		if (!proxy_dial(ss, sa)) {
 			break;
 		}
 		consume_wbuf(ss, hdr->len);

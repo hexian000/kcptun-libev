@@ -362,10 +362,10 @@ static bool conf_check(struct config *restrict conf)
 	}
 	conf->udp_af = sa->sa_family;
 	int mode = 0;
-	if (conf->udp_bind.str != NULL) {
+	if (conf->udp_bind.str != NULL && conf->connect.str != NULL) {
 		mode |= MODE_SERVER;
 	}
-	if (conf->udp_connect.str != NULL && conf->listen.str != NULL) {
+	if (conf->listen.str != NULL && conf->udp_connect.str != NULL) {
 		mode |= MODE_CLIENT;
 	}
 	if (mode == 0) {
