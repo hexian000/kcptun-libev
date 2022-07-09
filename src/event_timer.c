@@ -33,7 +33,7 @@ static bool print_session_iter(
 	format_sa(
 		(struct sockaddr *)&ss->udp_remote, addr_str, sizeof(addr_str));
 	LOGD_F("session [%08" PRIX32
-	       "] peer=%s state: %d age=%.0fs tcp(I/O)=%zu/%zu",
+	       "] peer=%s state=%d age=%.0fs tcp(I/O)=%zu/%zu",
 	       ss->conv, addr_str, ss->state, stat->now - ss->created,
 	       ss->stats.tcp_in, ss->stats.tcp_out);
 	return true;
