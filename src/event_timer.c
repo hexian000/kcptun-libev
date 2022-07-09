@@ -21,37 +21,87 @@ struct session_stats {
 	ev_tstamp now;
 };
 
-static void print_session_info(
-	struct session *restrict ss, struct link_stats *restrict session_stats)
-{
-	LOGD_F("session [%08" PRIX32
-	       "] state: %d tcp_in: %zu kcp_out: %zu udp_out: %zu udp_in: %zu kcp_in: %zu tcp_out: %zu",
-	       ss->conv, ss->state, session_stats->tcp_in,
-	       session_stats->kcp_out, session_stats->udp_out,
-	       session_stats->udp_in, session_stats->kcp_in,
-	       session_stats->tcp_out);
-	char addr_str[64];
-	format_sa(
-		(struct sockaddr *)&ss->udp_remote, addr_str, sizeof(addr_str));
-	LOGD_F("      - [%08" PRIX32
-	       "] buf(%zu, %zu, %zu) kcp_peek=%d kcp_waitsnd=%d addr=%s",
-	       ss->conv, ss->rbuf_len, ss->wbuf_len, ss->wbuf_flush,
-	       ikcp_peeksize(ss->kcp), ikcp_waitsnd(ss->kcp), addr_str);
-}
-
-bool timeout_filt(
+static bool print_session_iter(
 	struct hashtable *t, const hashkey_t *key, void *value, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = value;
+	struct session_stats *restrict stat = user;
+	stat->data[ss->state]++;
+	char addr_str[64];
+	format_sa(
+		(struct sockaddr *)&ss->udp_remote, addr_str, sizeof(addr_str));
+	LOGD_F("session [%08" PRIX32
+	       "] peer=%s state: %d age=%.0fs tcp(I/O)=%zu/%zu",
+	       ss->conv, addr_str, ss->state, stat->now - ss->created,
+	       ss->stats.tcp_in, ss->stats.tcp_out);
+	return true;
+}
+
+static void print_debug_info(struct server *restrict s, const ev_tstamp now)
+{
+	static struct link_stats last_stats = { 0 };
+	static double last_print_time = NAN;
+	if (!isfinite(last_print_time)) {
+		last_print_time = now;
+		last_stats = s->stats;
+		return;
+	}
+	if (now - last_print_time < 30.0) {
+		return;
+	}
+	const size_t n_sessions = table_size(s->sessions);
+	if (n_sessions > 0) {
+		struct session_stats stats = (struct session_stats){
+			.data = { 0 },
+			.now = now,
+		};
+		table_iterate(s->sessions, &print_session_iter, &stats);
+		LOGD_F("=== %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait",
+		       n_sessions,
+		       stats.data[STATE_HALFOPEN] + stats.data[STATE_CONNECT],
+		       stats.data[STATE_CONNECTED], stats.data[STATE_LINGER],
+		       stats.data[STATE_TIME_WAIT]);
+	}
+
+	const double dt = now - last_print_time;
+	struct link_stats dstats = (struct link_stats){
+		.udp_in = s->stats.udp_in - last_stats.udp_in,
+		.udp_out = s->stats.udp_out - last_stats.udp_out,
+		.kcp_in = s->stats.kcp_in - last_stats.kcp_in,
+		.kcp_out = s->stats.kcp_out - last_stats.kcp_out,
+		.tcp_in = s->stats.tcp_in - last_stats.tcp_in,
+		.tcp_out = s->stats.tcp_out - last_stats.tcp_out,
+	};
+	double udp_up, udp_down, tcp_up, tcp_down;
+	udp_up = (dstats.udp_out >> 10u) / dt;
+	udp_down = (dstats.udp_in >> 10u) / dt;
+	tcp_up = (dstats.tcp_in >> 10u) / dt;
+	tcp_down = (dstats.tcp_out >> 10u) / dt;
+	LOGD_F("traffic(KiB/s) udp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
+	       udp_up, udp_down, tcp_up, tcp_down, tcp_up / udp_up * 100.0,
+	       tcp_down / udp_down * 100.0);
+	LOGD_F("total udp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
+	       s->stats.udp_out, s->stats.udp_in, s->stats.tcp_in,
+	       s->stats.tcp_out, s->stats.tcp_in * 100.0 / s->stats.udp_out,
+	       s->stats.tcp_out * 100.0 / s->stats.udp_in);
+	last_print_time = now;
+	last_stats = s->stats;
+}
+
+static bool
+timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	struct session *restrict ss = value;
 	struct server *restrict s = ss->server;
-	struct session_stats *restrict stats = user;
 	UTIL_ASSERT(ss->state < STATE_MAX);
-	stats->data[ss->state]++;
+	const ev_tstamp *restrict now = user;
 	const double last_seen =
 		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
-	const double not_seen = stats->now - last_seen;
+	const double not_seen = *now - last_seen;
 	switch (ss->state) {
 	case STATE_HALFOPEN:
 		if (not_seen > s->dial_timeout) {
@@ -102,71 +152,21 @@ bool timeout_filt(
 		session_free(ss);
 		return false;
 	}
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		print_session_info(ss, &(ss->stats));
-	}
 	return true;
-}
-
-static void traffic_stats(struct server *restrict s, const ev_tstamp now)
-{
-	static struct link_stats last_stats = { 0 };
-	static double last_stat_time = NAN;
-	if (!isfinite(last_stat_time)) {
-		last_stat_time = now;
-		last_stats = s->stats;
-		return;
-	}
-	const double dt = now - last_stat_time;
-	struct link_stats dstats = (struct link_stats){
-		.udp_in = s->stats.udp_in - last_stats.udp_in,
-		.udp_out = s->stats.udp_out - last_stats.udp_out,
-		.kcp_in = s->stats.kcp_in - last_stats.kcp_in,
-		.kcp_out = s->stats.kcp_out - last_stats.kcp_out,
-		.tcp_in = s->stats.tcp_in - last_stats.tcp_in,
-		.tcp_out = s->stats.tcp_out - last_stats.tcp_out,
-	};
-	double udp_up, udp_down, tcp_up, tcp_down;
-	udp_up = (dstats.udp_out >> 10u) / dt;
-	udp_down = (dstats.udp_in >> 10u) / dt;
-	tcp_up = (dstats.tcp_in >> 10u) / dt;
-	tcp_down = (dstats.tcp_out >> 10u) / dt;
-	LOGD_F("traffic(KiB/s) udp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
-	       udp_up, udp_down, tcp_up, tcp_down, tcp_up / udp_up * 100.0,
-	       tcp_down / udp_down * 100.0);
-	LOGD_F("total udp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
-	       s->stats.udp_out, s->stats.udp_in, s->stats.tcp_in,
-	       s->stats.tcp_out, s->stats.tcp_in * 100.0 / s->stats.udp_out,
-	       s->stats.tcp_out * 100.0 / s->stats.udp_in);
-	last_stat_time = now;
-	last_stats = s->stats;
 }
 
 static void timeout_check(struct server *restrict s, const ev_tstamp now)
 {
 	const double check_interval = 10.0;
-	static ev_tstamp last_check = 0.0;
-	if (now - last_check < check_interval) {
+	static ev_tstamp last_check = NAN;
+	if (isfinite(last_check) && now - last_check < check_interval) {
 		return;
 	}
 	last_check +=
 		floor((now - last_check) / check_interval) * check_interval;
 	const size_t n_sessions = table_size(s->sessions);
 	if (n_sessions > 0) {
-		struct session_stats stats = (struct session_stats){
-			.data = { 0 },
-			.now = now,
-		};
-		table_filter(s->sessions, timeout_filt, &stats);
-		struct ev_io *restrict w_read = &s->udp.w_read;
-		struct ev_io *restrict w_write = &s->udp.w_write;
-		LOGD_F("=== %zu sessions: %zu connected, %zu linger, w_read=%d, w_write=%d",
-		       n_sessions, stats.data[STATE_CONNECTED],
-		       stats.data[STATE_LINGER], ev_is_active(w_read),
-		       ev_is_active(w_write));
-		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-			traffic_stats(s, now);
-		}
+		table_filter(s->sessions, timeout_filt, (void *)&now);
 	}
 }
 
@@ -177,6 +177,10 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	struct server *restrict s = (struct server *)watcher->data;
 	const ev_tstamp now = ev_now(loop);
 	timeout_check(s, now);
+
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		print_debug_info(s, now);
+	}
 
 	if ((s->conf->mode & MODE_CLIENT) == 0) {
 		return;

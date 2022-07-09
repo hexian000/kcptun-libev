@@ -1,6 +1,7 @@
 #include "nonce.h"
 #include "aead.h"
 #include "serialize.h"
+#include "slog.h"
 #include "util.h"
 
 #include <stddef.h>

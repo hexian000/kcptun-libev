@@ -51,6 +51,7 @@ struct session *session_new(
 	}
 	const ev_tstamp now = ev_now(s->loop);
 	*ss = (struct session){
+		.created = now,
 		.state = STATE_HALFOPEN,
 		.server = s,
 		.tcp_fd = -1,

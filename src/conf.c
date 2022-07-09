@@ -321,7 +321,7 @@ static struct config conf_default()
 		.kcp_sndwnd = 256,
 		.kcp_rcvwnd = 256,
 		.kcp_nodelay = 0,
-		.kcp_interval = 50,
+		.kcp_interval = 10,
 		.kcp_resend = 3,
 		.kcp_nc = 1,
 		.password = NULL,

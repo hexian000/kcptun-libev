@@ -70,6 +70,7 @@ struct IKCPCB;
 
 struct session {
 	bool is_accepted;
+	ev_tstamp created;
 	int state;
 	int tcp_fd;
 	struct ev_io w_read, w_write;
