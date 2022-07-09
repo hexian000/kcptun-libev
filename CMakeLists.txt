@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(kcptun-libev
 	LANGUAGES C
 	HOMEPAGE_URL "http://github.com/hexian000/kcptun-libev")
-set(PROJECT_VERSION_STRING "2.0-rc2")
+set(PROJECT_VERSION_STRING "2.0-rc3")
 enable_testing()
 
 set(CMAKE_C_STANDARD 11)
