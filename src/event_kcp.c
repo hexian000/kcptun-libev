@@ -213,6 +213,10 @@ void kcp_notify(struct session *restrict ss)
 	const int waitsnd = ikcp_waitsnd(ss->kcp);
 	const int window_size = s->conf->kcp_sndwnd;
 	if (waitsnd >= window_size) {
+		struct ev_io *restrict w_read = &ss->w_read;
+		if (ev_is_active(w_read)) {
+			ev_io_stop(ss->server->loop, w_read);
+		}
 		return;
 	}
 	if (!kcp_push(ss)) {

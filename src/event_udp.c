@@ -160,47 +160,39 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 static size_t udp_send(struct server *restrict s)
 {
 	struct packet *restrict p = s->udp.packets;
-	const size_t count = p->mq_send_len;
+	size_t count = p->mq_send_len;
 	if (count < 1) {
 		return 0;
 	}
+	if (count > MMSG_BATCH_SIZE) {
+		count = MMSG_BATCH_SIZE;
+	}
 
-	size_t nsend = 0;
-	size_t nbsend = 0;
-	do {
-		static struct mmsghdr msgs[MMSG_BATCH_SIZE];
-		const size_t remain = count - nsend;
-		const size_t nbatch =
-			remain < MMSG_BATCH_SIZE ? remain : MMSG_BATCH_SIZE;
-		for (size_t i = 0; i < nbatch; i++) {
-			struct msgframe *restrict msg = p->mq_send[nsend + i];
-			msgs[i] = (struct mmsghdr){
-				.msg_hdr = msg->hdr,
-			};
+	static struct mmsghdr msgs[MMSG_BATCH_SIZE];
+	for (size_t i = 0; i < count; i++) {
+		struct msgframe *restrict msg = p->mq_send[i];
+		msgs[i] = (struct mmsghdr){
+			.msg_hdr = msg->hdr,
+		};
+	}
+	const int ret = sendmmsg(s->udp.fd, msgs, count, MSG_DONTWAIT);
+	if (ret < 0) {
+		/* temporary errors */
+		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
+		    (errno == EINTR) || (errno == ENOMEM)) {
+			return 0;
 		}
-		const int ret = sendmmsg(s->udp.fd, msgs, nbatch, MSG_DONTWAIT);
-		if (ret < 0) {
-			/* temporary errors */
-			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-			    (errno == EINTR) || (errno == ENOMEM)) {
-				return 0;
-			}
-			LOGE_PERROR("sendmmsg");
-			break;
-		} else if (ret == 0) {
-			break;
-		}
-		for (int i = 0; i < ret; i++) {
-			nbsend += msgs[i].msg_len;
-		}
-		nsend += (size_t)ret;
-	} while (nsend < count);
-	if (nsend == 0) {
+		LOGE_PERROR("sendmmsg");
+		return 0;
+	} else if (ret == 0) {
 		return 0;
 	}
 
 	/* move remaining messages */
+	const size_t nsend = (size_t)ret;
+	size_t nbsend = 0;
 	for (size_t i = 0; i < nsend; i++) {
+		nbsend += msgs[i].msg_len;
 		struct msgframe *restrict msg = p->mq_send[i];
 		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 			struct sockaddr *sa = (struct sockaddr *)&msg->addr;
