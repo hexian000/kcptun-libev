@@ -188,7 +188,7 @@ static size_t udp_send(struct server *restrict s)
 		return 0;
 	}
 
-	/* move remaining messages */
+	/* delete sent messages */
 	const size_t nsend = (size_t)ret;
 	size_t nbsend = 0;
 	for (size_t i = 0; i < nsend; i++) {
@@ -202,11 +202,11 @@ static size_t udp_send(struct server *restrict s)
 		}
 		msgframe_delete(p, msg);
 	}
-	const size_t remain = count - nsend;
-	for (size_t i = 0; i < remain; i++) {
+	/* move remaining messages */
+	p->mq_send_len -= nsend;
+	for (size_t i = 0; i < p->mq_send_len; i++) {
 		p->mq_send[i] = p->mq_send[nsend + i];
 	}
-	p->mq_send_len = remain;
 	s->stats.udp_out += nbsend;
 	s->udp.last_send_time = ev_now(s->loop);
 	return nbsend;
