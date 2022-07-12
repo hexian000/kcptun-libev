@@ -4,6 +4,10 @@
 #include "slog.h"
 #include "util.h"
 
+#if WITH_SODIUM
+#include <sodium.h>
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -26,7 +30,7 @@ ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 	return ret;
 }
 
-struct noncegen *noncegen_create(size_t nonce_len)
+struct noncegen *noncegen_create(enum noncegen_method method, size_t nonce_len)
 {
 	struct noncegen *restrict g = util_malloc(sizeof(struct noncegen));
 	if (g == NULL) {
@@ -36,6 +40,7 @@ struct noncegen *noncegen_create(size_t nonce_len)
 	const size_t entries = (size_t)1 << 20u;
 	const double error = 0x1p-20;
 	*g = (struct noncegen){
+		.method = method,
 		.ppbloom =
 			(struct ppbloom){
 				.bloom_count = { 0, 0 },
@@ -61,15 +66,18 @@ struct noncegen *noncegen_create(size_t nonce_len)
 	return g;
 }
 
-void noncegen_init(struct noncegen *g)
+void noncegen_init(struct noncegen *restrict g)
 {
+	if (g->method != noncegen_counter) {
+		return;
+	}
 	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
 	for (size_t i = 0; i < countof(g->src); i++) {
 		g->src[i] = rand32();
 	}
 }
 
-const unsigned char *noncegen_next(struct noncegen *restrict g)
+static void noncegen_fill_counter(struct noncegen *restrict g)
 {
 	for (size_t i = 0; i < countof(g->src); i++) {
 		if (g->src[i] != UINT32_MAX) {
@@ -87,6 +95,29 @@ const unsigned char *noncegen_next(struct noncegen *restrict g)
 	}
 	for (size_t i = n * sizeof(uint32_t); i < g->nonce_len; i++) {
 		g->nonce_buf[i] = (unsigned char)rand32();
+	}
+}
+
+/* higher packet entropy */
+static void noncegen_fill_random(struct noncegen *restrict g)
+{
+#if WITH_SODIUM
+	randombytes_buf(g->nonce_buf, g->nonce_len);
+#else
+	UTIL_ASSERT(0);
+	noncegen_fill_counter(g);
+#endif
+}
+
+const unsigned char *noncegen_next(struct noncegen *restrict g)
+{
+	switch (g->method) {
+	case noncegen_random:
+		noncegen_fill_random(g);
+		break;
+	case noncegen_counter:
+		noncegen_fill_counter(g);
+		break;
 	}
 	return g->nonce_buf;
 }

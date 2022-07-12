@@ -188,6 +188,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	/*  print RTT */
 	const uint32_t now_ms = tstamp2ms(ev_time());
 	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
+	s->udp.inflight_ping = NAN;
 }
 
 static void
@@ -351,7 +352,8 @@ packet_create_crypto(struct packet *restrict p, struct config *restrict cfg)
 		aead_password(p->crypto, cfg->password);
 		UTIL_SAFE_FREE(cfg->password);
 	}
-	p->noncegen = noncegen_create(p->crypto->nonce_size);
+	p->noncegen = noncegen_create(
+		p->crypto->noncegen_method, p->crypto->nonce_size);
 	if (p->noncegen == NULL) {
 		aead_free(p->crypto);
 		return false;

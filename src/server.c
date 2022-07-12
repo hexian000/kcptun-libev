@@ -7,6 +7,7 @@
 #include "packet.h"
 #include "util.h"
 #include "sockutil.h"
+
 #include <ev.h>
 
 #include <arpa/inet.h>
@@ -17,6 +18,7 @@
 #include <unistd.h>
 
 #include <stdbool.h>
+#include <math.h>
 
 #define UDP_BUF_SIZE 65536
 
@@ -72,6 +74,7 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 static bool udp_start(struct server *restrict s, struct config *restrict conf)
 {
 	struct udp_conn *restrict udp = &s->udp;
+	udp->inflight_ping = NAN;
 	udp->packets = packet_create(conf);
 	if (udp->packets == NULL) {
 		LOGE("out of memory");

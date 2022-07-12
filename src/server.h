@@ -22,9 +22,10 @@ struct listener {
 struct udp_conn {
 	struct ev_io w_read, w_write;
 	int fd;
-	double last_send_time;
-	double last_recv_time;
+	ev_tstamp last_send_time;
+	ev_tstamp last_recv_time;
 	struct packet *packets;
+	ev_tstamp inflight_ping;
 };
 
 struct server {

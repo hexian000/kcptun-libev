@@ -67,34 +67,36 @@ struct aead_impl {
 };
 
 size_t aead_seal(
-	struct aead *aead, unsigned char *dst, size_t dst_size,
+	struct aead *restrict aead, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *plain,
 	size_t plain_size, const unsigned char *tag, size_t tag_size)
 {
 	UTIL_ASSERT(dst_size >= plain_size + aead->overhead);
+	struct aead_impl *restrict impl = aead->impl;
 	unsigned long long r_len = dst_size;
-	int r = aead->impl->seal(
+	int r = impl->seal(
 		dst, &r_len, plain, plain_size, tag, tag_size, NULL, nonce,
-		aead->impl->key);
+		impl->key);
 	if (r != 0) {
-		LOGE_F("aead_seal: %d", r);
+		LOGV_F("aead_seal: %d", r);
 		return 0;
 	}
 	return r_len;
 }
 
 size_t aead_open(
-	struct aead *aead, unsigned char *dst, size_t dst_size,
+	struct aead *restrict aead, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size, const unsigned char *tag, size_t tag_size)
 {
 	UTIL_ASSERT(dst_size + aead->overhead >= cipher_size);
+	struct aead_impl *restrict impl = aead->impl;
 	unsigned long long r_len = dst_size;
-	int r = aead->impl->open(
+	int r = impl->open(
 		dst, &r_len, NULL, cipher, cipher_size, tag, tag_size, nonce,
-		aead->impl->key);
+		impl->key);
 	if (r != 0) {
-		LOGE_F("aead_open: %d", r);
+		LOGV_F("aead_open: %d", r);
 		return 0;
 	}
 	return r_len;
@@ -152,6 +154,8 @@ struct aead *aead_create(const char *method)
 	sodium_mlock(key, key_size);
 	switch (m) {
 	case method_chacha20poly1305_ietf: {
+		*(enum noncegen_method *)&aead->noncegen_method =
+			noncegen_counter;
 		*aead->impl = (struct aead_impl){
 			.key = key,
 			.keygen = &crypto_aead_chacha20poly1305_ietf_keygen,
@@ -160,6 +164,8 @@ struct aead *aead_create(const char *method)
 		};
 	} break;
 	case method_xchacha20poly1305_ietf: {
+		*(enum noncegen_method *)&aead->noncegen_method =
+			noncegen_random;
 		*aead->impl = (struct aead_impl){
 			.key = key,
 			.keygen = &crypto_aead_xchacha20poly1305_ietf_keygen,
@@ -168,6 +174,8 @@ struct aead *aead_create(const char *method)
 		};
 	} break;
 	case method_aes256gcm: {
+		*(enum noncegen_method *)&aead->noncegen_method =
+			noncegen_counter;
 		*aead->impl = (struct aead_impl){
 			.key = key,
 			.keygen = &crypto_aead_aes256gcm_keygen,

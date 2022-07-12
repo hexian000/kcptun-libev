@@ -8,7 +8,13 @@
 /* AEAD interface */
 struct aead_impl;
 
+enum noncegen_method {
+	noncegen_counter,
+	noncegen_random,
+};
+
 struct aead {
+	const enum noncegen_method noncegen_method;
 	const size_t nonce_size;
 	const size_t overhead;
 	const size_t key_size;

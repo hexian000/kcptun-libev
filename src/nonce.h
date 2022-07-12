@@ -1,6 +1,8 @@
 #ifndef NONCE_H
 #define NONCE_H
 
+#include "aead.h"
+
 #include "libbloom/bloom.h"
 
 #include <stdbool.h>
@@ -15,13 +17,14 @@ struct ppbloom {
 };
 
 struct noncegen {
+	enum noncegen_method method;
 	struct ppbloom ppbloom;
-	uint32_t src[4];
+	uint32_t src[8];
 	unsigned char *nonce_buf;
 	size_t nonce_len;
 };
 
-struct noncegen *noncegen_create(size_t nonce_len);
+struct noncegen *noncegen_create(enum noncegen_method method, size_t nonce_len);
 void noncegen_init(struct noncegen *g);
 const unsigned char *noncegen_next(struct noncegen *g);
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce);

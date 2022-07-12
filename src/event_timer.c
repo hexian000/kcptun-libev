@@ -2,6 +2,7 @@
 #include "event.h"
 #include "event_impl.h"
 #include "hashtable.h"
+#include "kcp/ikcp.h"
 #include "packet.h"
 #include "serialize.h"
 #include "server.h"
@@ -33,9 +34,11 @@ static bool print_session_iter(
 	format_sa(
 		(struct sockaddr *)&ss->udp_remote, addr_str, sizeof(addr_str));
 	LOGD_F("session [%08" PRIX32
-	       "] peer=%s state=%d age=%.0fs tcp(I/O)=%zu/%zu",
+	       "] peer=%s state=%d age=%.0fs tx=%zu rx=%zu rtt=%" PRId32
+	       " rto=%" PRId32 " waitsnd=%d",
 	       ss->conv, addr_str, ss->state, stat->now - ss->created,
-	       ss->stats.tcp_in, ss->stats.tcp_out);
+	       ss->stats.tcp_in, ss->stats.tcp_out, ss->kcp->rx_srtt,
+	       ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp));
 	return true;
 }
 
@@ -162,8 +165,7 @@ static void timeout_check(struct server *restrict s, const ev_tstamp now)
 	if (isfinite(last_check) && now - last_check < check_interval) {
 		return;
 	}
-	last_check +=
-		floor((now - last_check) / check_interval) * check_interval;
+	last_check = now;
 	const size_t n_sessions = table_size(s->sessions);
 	if (n_sessions > 0) {
 		table_filter(s->sessions, timeout_filt, (void *)&now);
@@ -188,6 +190,11 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (!(s->keepalive > 0.0)) {
 		return;
 	}
+	if (isfinite(s->udp.inflight_ping) &&
+	    now - s->udp.inflight_ping > 4.0) {
+		LOGD("ping timeout");
+		s->udp.inflight_ping = NAN;
+	}
 	const double timeout = s->keepalive * 3.0;
 	if (now - s->udp.last_recv_time > timeout &&
 	    now - s->last_resolve_time > timeout) {
@@ -202,9 +209,11 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (now - s->udp.last_send_time < s->keepalive) {
 		return;
 	}
-	const uint32_t tstamp = tstamp2ms(ev_time());
+	const ev_tstamp ping_ts = ev_time();
+	const uint32_t tstamp = tstamp2ms(ping_ts);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->udp_connect.sa, S0MSG_PING, b, sizeof(b));
 	udp_notify_write(s);
+	s->udp.inflight_ping = ping_ts;
 }

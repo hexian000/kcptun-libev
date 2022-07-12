@@ -10,7 +10,7 @@
         "resend": 3,
         "nc": 1
     },
-    "method": "chacha20poly1305_ietf",
+    "method": "xchacha20poly1305_ietf",
     "password": "k",
     "loglevel": 1
 }
