@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -19,7 +20,7 @@ _Static_assert(
 	"unexpected inet6 address size");
 
 int socket_setup(int fd);
-void socket_set_reuseport(int fd, int reuseport);
+void socket_set_reuseport(int fd, bool reuseport);
 void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
 

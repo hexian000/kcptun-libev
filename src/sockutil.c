@@ -3,9 +3,9 @@
 #include "slog.h"
 #include "util.h"
 
-#include <asm-generic/socket.h>
 #include <stddef.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -23,12 +23,12 @@ int socket_setup(int fd)
 	return fcntl(fd, F_SETFL, flags | O_CLOEXEC | O_NONBLOCK);
 }
 
-void socket_set_reuseport(const int fd, const int reuseport)
+void socket_set_reuseport(const int fd, const bool reuseport)
 {
 #ifdef SO_REUSEPORT
 	if (setsockopt(
-		    fd, SOL_SOCKET, SO_REUSEPORT, &reuseport,
-		    sizeof(reuseport))) {
+		    fd, SOL_SOCKET, SO_REUSEPORT, &(int){ reuseport ? 1 : 0 },
+		    sizeof(int))) {
 		LOGW_PERROR("SO_REUSEPORT");
 	}
 #else
@@ -111,25 +111,40 @@ struct sockaddr *clonesockaddr(const struct sockaddr *src)
 	return dst;
 }
 
-void format_sa(const struct sockaddr *sa, char *s, size_t buf_size)
+static int
+format_sa_inet(const struct sockaddr_in *addr, char *s, const size_t buf_size)
 {
+	char buf[INET_ADDRSTRLEN];
+	if (inet_ntop(AF_INET, &(addr->sin_addr), buf, sizeof(buf)) == NULL) {
+		return -1;
+	}
+	const uint16_t port = ntohs(addr->sin_port);
+	return snprintf(s, buf_size, "%s:%" PRIu16, buf, port);
+}
+
+static int
+format_sa_inet6(const struct sockaddr_in6 *addr, char *s, const size_t buf_size)
+{
+	char buf[INET6_ADDRSTRLEN];
+	if (inet_ntop(AF_INET, &(addr->sin6_addr), buf, sizeof(buf)) == NULL) {
+		return -1;
+	}
+	const uint16_t port = ntohs(addr->sin6_port);
+	return snprintf(s, buf_size, "%s:%" PRIu16, buf, port);
+}
+
+void format_sa(const struct sockaddr *sa, char *s, const size_t buf_size)
+{
+	int ret = -1;
 	switch (sa->sa_family) {
-	case AF_INET: {
-		char buf[INET_ADDRSTRLEN];
-		struct sockaddr_in *addr = (struct sockaddr_in *)sa;
-		inet_ntop(AF_INET, &(addr->sin_addr), buf, sizeof(buf));
-		snprintf(
-			s, buf_size, "%s:%" PRIu16, buf, ntohs(addr->sin_port));
-	} break;
-	case AF_INET6: {
-		char buf[INET6_ADDRSTRLEN];
-		struct sockaddr_in6 *addr = (struct sockaddr_in6 *)sa;
-		inet_ntop(AF_INET6, &(addr->sin6_addr), buf, sizeof(buf));
-		snprintf(
-			s, buf_size, "[%s]:%" PRIu16, buf,
-			ntohs(addr->sin6_port));
-	} break;
-	default:
+	case AF_INET:
+		ret = format_sa_inet((struct sockaddr_in *)sa, s, buf_size);
+		break;
+	case AF_INET6:
+		ret = format_sa_inet6((struct sockaddr_in6 *)sa, s, buf_size);
+		break;
+	}
+	if (ret < 0) {
 		strncpy(s, "???", buf_size);
 	}
 }

@@ -46,7 +46,7 @@ static uint32_t rand32_state = UINT32_C(0);
 
 uint32_t rand32()
 {
-	if (!rand32_state) {
+	if (rand32_state == UINT32_C(0)) {
 		rand32_state = time(NULL);
 	}
 	return rand32_state = xorshift32(rand32_state);
