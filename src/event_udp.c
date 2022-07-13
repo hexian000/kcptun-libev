@@ -88,7 +88,7 @@ static size_t udp_recv(struct server *restrict s)
 		}
 	}
 	s->stats.udp_in += nbrecv;
-	return nbrecv;
+	return nrecv;
 }
 
 #else /* HAVE_RECVMMSG */
@@ -97,40 +97,45 @@ static size_t udp_recv(struct server *restrict s)
 {
 	struct packet *restrict p = s->udp.packets;
 
-	struct msgframe *restrict msg = msgframe_new(p, NULL);
-	if (msg == NULL) {
-		return 0;
-	}
-	const ssize_t nbrecv = recvmsg(s->udp.fd, &msg->hdr, MSG_DONTWAIT);
-	if (nbrecv < 0) {
-		msgframe_delete(p, msg);
-		/* temporary errors */
-		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-		    (errno == EINTR) || (errno == ENOMEM)) {
+	size_t nrecv = 0;
+	do {
+		struct msgframe *restrict msg = msgframe_new(p, NULL);
+		if (msg == NULL) {
 			return 0;
 		}
-		if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
-			LOGW("udp connection refused, closing all sessions");
-			udp_reset(s);
-			return 0;
+		const ssize_t nbrecv =
+			recvmsg(s->udp.fd, &msg->hdr, MSG_DONTWAIT);
+		if (nbrecv < 0) {
+			msgframe_delete(p, msg);
+			/* temporary errors */
+			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
+			    (errno == EINTR) || (errno == ENOMEM)) {
+				break;
+			}
+			if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
+				LOGW("udp connection refused, closing all sessions");
+				udp_reset(s);
+				break;
+			}
+			LOGE_PERROR("recvmsg");
+			break;
 		}
-		LOGE_PERROR("recvmsg");
-		return 0;
+		msg->len = (size_t)nbrecv;
+		p->mq_recv[p->mq_recv_len++] = msg;
+		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+			char addr_str[64];
+			format_sa(
+				(struct sockaddr *)&msg->addr, addr_str,
+				sizeof(addr_str));
+			LOGV_F("udp recv: %s %zu bytes", addr_str, msg->len);
+		}
+		s->stats.udp_in += nbrecv;
+		nrecv++;
+	} while (true);
+	if (nrecv > 0) {
+		s->udp.last_recv_time = ev_now(s->loop);
 	}
-	s->udp.last_recv_time = ev_now(s->loop);
-
-	msg->len = (size_t)nbrecv;
-	p->mq_recv[p->mq_recv_len++] = msg;
-
-	if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-		char addr_str[64];
-		format_sa(
-			(struct sockaddr *)&msg->addr, addr_str,
-			sizeof(addr_str));
-		LOGV_F("udp recv: %s %zu bytes", addr_str, msg->len);
-	}
-	s->stats.udp_in += nbrecv;
-	return nbrecv;
+	return nrecv;
 }
 
 #endif /* HAVE_RECVMMSG */
@@ -141,14 +146,7 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
 	struct packet *restrict p = s->udp.packets;
-	size_t nrecv = 0;
-	while (p->mq_recv_len < MQ_RECV_SIZE) {
-		const size_t nbrecv = udp_recv(s);
-		if (nbrecv == 0) {
-			break;
-		}
-		nrecv++;
-	}
+	const size_t nrecv = udp_recv(s);
 	if (nrecv > 0) {
 		packet_recv(p, s);
 		kcp_notify_all(s);
