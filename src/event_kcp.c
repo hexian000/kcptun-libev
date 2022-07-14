@@ -6,9 +6,13 @@
 #include "session.h"
 #include "util.h"
 
+#include "kcp/ikcp.h"
+
 #include <ev.h>
+
 #include <stdint.h>
 #include <string.h>
+
 #include <sys/socket.h>
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
@@ -222,7 +226,10 @@ void kcp_notify(struct session *restrict ss)
 	if (!kcp_push(ss)) {
 		return;
 	}
-	ikcp_flush(ss->kcp);
+	if (s->conf->kcp_flush) {
+		ikcp_flush(ss->kcp);
+	}
+	ss->kcp_checked = false;
 }
 
 static bool kcp_update_iter(

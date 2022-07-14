@@ -59,7 +59,9 @@ case "$1" in
         ..
     cmake --build . --parallel
     # cd src/tests && ctest
-    ls -lh src/kcptun-libev
+    cd src
+    objdump -drwS kcptun-libev >kcptun-libev.S
+    ls -lh kcptun-libev
     ;;
 "clang")
     rm -rf build

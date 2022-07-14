@@ -113,6 +113,9 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 	if (strcmp(name, "nc") == 0) {
 		return parse_int_json(&conf->kcp_nc, value);
 	}
+	if (strcmp(name, "flush") == 0) {
+		return parse_bool_json(&conf->kcp_flush, value);
+	}
 	LOGW_F("unknown config: \"kcp.%s\"", name);
 	return true;
 }
@@ -324,6 +327,7 @@ static struct config conf_default()
 		.kcp_interval = 10,
 		.kcp_resend = 3,
 		.kcp_nc = 1,
+		.kcp_flush = false,
 		.password = NULL,
 		.psk = NULL,
 		.timeout = 600,

@@ -1,3 +1,4 @@
+#include "conf.h"
 #include "event.h"
 #include "event_impl.h"
 #include "packet.h"
@@ -13,7 +14,11 @@
 
 static void udp_reset(struct server *restrict s)
 {
+	if ((s->conf->mode & MODE_SERVER) != 0) {
+		return;
+	}
 	struct packet *restrict p = s->udp.packets;
+	LOGW("udp connection refused, closing all sessions");
 	session_close_all(s->sessions);
 	for (size_t i = 0; i < p->mq_send_len; i++) {
 		struct msgframe *restrict msg = p->mq_send[i];
@@ -31,63 +36,69 @@ static void udp_reset(struct server *restrict s)
 static size_t udp_recv(struct server *restrict s)
 {
 	struct packet *restrict p = s->udp.packets;
-	const size_t navail = MQ_RECV_SIZE - p->mq_recv_len;
-	size_t count = navail > MMSG_BATCH_SIZE ? MMSG_BATCH_SIZE : navail;
+	size_t navail = MQ_RECV_SIZE - p->mq_recv_len;
+	if (navail == 0) {
+		return 0;
+	}
+	size_t nrecv = 0, nbrecv = 0;
+	size_t nbatch;
+	do {
+		nbatch = navail > MMSG_BATCH_SIZE ? MMSG_BATCH_SIZE : navail;
+		static struct mmsghdr msgs[MMSG_BATCH_SIZE];
+		static struct msgframe *frames[MMSG_BATCH_SIZE] = { NULL };
+		for (size_t i = 0; i < nbatch; i++) {
+			if (frames[i] == NULL) {
+				struct msgframe *msg = msgframe_new(p, NULL);
+				if (msg == NULL) {
+					nbatch = i;
+					break;
+				}
+				frames[i] = msg;
+			}
+			msgs[i] = (struct mmsghdr){
+				.msg_hdr = frames[i]->hdr,
+				.msg_len = MAX_PACKET_SIZE,
+			};
+		}
 
-	static struct mmsghdr msgs[MMSG_BATCH_SIZE];
-	static struct msgframe *frames[MMSG_BATCH_SIZE] = { NULL };
-	for (size_t i = 0; i < count; i++) {
-		if (frames[i] == NULL) {
-			struct msgframe *msg = msgframe_new(p, NULL);
-			if (msg == NULL) {
-				count = i;
+		const int ret =
+			recvmmsg(s->udp.fd, msgs, nbatch, MSG_DONTWAIT, NULL);
+		if (ret < 0) {
+			/* temporary errors */
+			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
+			    (errno == EINTR) || (errno == ENOMEM)) {
 				break;
 			}
-			frames[i] = msg;
+			if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
+				udp_reset(s);
+				break;
+			}
+			LOGE_PERROR("recvmmsg");
+			break;
+		} else if (ret == 0) {
+			break;
 		}
-		msgs[i] = (struct mmsghdr){
-			.msg_hdr = frames[i]->hdr,
-			.msg_len = MAX_PACKET_SIZE,
-		};
-	}
-	if (count == 0) {
-		return 0;
-	}
-
-	const int nrecv = recvmmsg(s->udp.fd, msgs, count, MSG_DONTWAIT, NULL);
-	if (nrecv < 0) {
-		/* temporary errors */
-		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-		    (errno == EINTR) || (errno == ENOMEM)) {
-			return 0;
+		for (int i = 0; i < ret; i++) {
+			struct msgframe *restrict msg = frames[i];
+			msg->len = (size_t)msgs[i].msg_len;
+			p->mq_recv[p->mq_recv_len++] = msg;
+			nbrecv += msg->len;
+			frames[i] = NULL;
+			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+				struct sockaddr *sa = msg->hdr.msg_name;
+				char addr_str[64];
+				format_sa(sa, addr_str, sizeof(addr_str));
+				LOGV_F("udp recv: %s %zu bytes", addr_str,
+				       msg->len);
+			}
 		}
-		if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
-			LOGW("udp connection refused, closing all sessions");
-			udp_reset(s);
-			return 0;
-		}
-		LOGE_PERROR("recvmmsg");
-		return 0;
-	} else if (nrecv == 0) {
-		return 0;
+		nrecv += (size_t)ret;
+		navail -= (size_t)ret;
+	} while (nbatch == MMSG_BATCH_SIZE && navail > 0);
+	if (nrecv > 0) {
+		s->stats.udp_in += nbrecv;
+		s->udp.last_recv_time = ev_now(s->loop);
 	}
-	s->udp.last_recv_time = ev_now(s->loop);
-
-	size_t nbrecv = 0;
-	for (int i = 0; i < nrecv; i++) {
-		struct msgframe *restrict msg = frames[i];
-		msg->len = (size_t)msgs[i].msg_len;
-		p->mq_recv[p->mq_recv_len++] = msg;
-		nbrecv += msg->len;
-		frames[i] = NULL;
-		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-			struct sockaddr *sa = msg->hdr.msg_name;
-			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("udp recv: %s %zu bytes", addr_str, msg->len);
-		}
-	}
-	s->stats.udp_in += nbrecv;
 	return nrecv;
 }
 
@@ -158,56 +169,60 @@ void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 static size_t udp_send(struct server *restrict s)
 {
 	struct packet *restrict p = s->udp.packets;
-	size_t count = p->mq_send_len;
-	if (count < 1) {
+	size_t navail = p->mq_send_len;
+	if (navail == 0) {
 		return 0;
 	}
-	if (count > MMSG_BATCH_SIZE) {
-		count = MMSG_BATCH_SIZE;
-	}
+	size_t nsend = 0, nbsend = 0;
+	size_t nbatch;
 
-	static struct mmsghdr msgs[MMSG_BATCH_SIZE];
-	for (size_t i = 0; i < count; i++) {
-		struct msgframe *restrict msg = p->mq_send[i];
-		msgs[i] = (struct mmsghdr){
-			.msg_hdr = msg->hdr,
-		};
-	}
-	const int ret = sendmmsg(s->udp.fd, msgs, count, MSG_DONTWAIT);
-	if (ret < 0) {
-		/* temporary errors */
-		if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-		    (errno == EINTR) || (errno == ENOMEM)) {
-			return 0;
+	do {
+		nbatch = navail > MMSG_BATCH_SIZE ? MMSG_BATCH_SIZE : navail;
+		static struct mmsghdr msgs[MMSG_BATCH_SIZE];
+		for (size_t i = 0; i < nbatch; i++) {
+			struct msgframe *restrict msg = p->mq_send[nsend + i];
+			msgs[i] = (struct mmsghdr){
+				.msg_hdr = msg->hdr,
+			};
 		}
-		LOGE_PERROR("sendmmsg");
-		return 0;
-	} else if (ret == 0) {
-		return 0;
-	}
+		const int ret = sendmmsg(s->udp.fd, msgs, nbatch, MSG_DONTWAIT);
+		if (ret < 0) {
+			/* temporary errors */
+			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
+			    (errno == EINTR) || (errno == ENOMEM)) {
+				break;
+			}
+			LOGE_PERROR("sendmmsg");
+			break;
+		} else if (ret == 0) {
+			break;
+		}
+		/* delete sent messages */
+		for (int i = 0; i < ret; i++) {
+			nbsend += msgs[i].msg_len;
+			struct msgframe *restrict msg = p->mq_send[nsend + i];
+			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+				struct sockaddr *sa =
+					(struct sockaddr *)&msg->addr;
+				char addr_str[64];
+				format_sa(sa, addr_str, sizeof(addr_str));
+				LOGV_F("udp send: %s %zu bytes", addr_str,
+				       msg->len);
+			}
+			msgframe_delete(p, msg);
+		}
+		nsend += (size_t)ret;
+		navail -= (size_t)ret;
+	} while (nbatch == MMSG_BATCH_SIZE && navail > 0);
 
-	/* delete sent messages */
-	const size_t nsend = (size_t)ret;
-	size_t nbsend = 0;
-	for (size_t i = 0; i < nsend; i++) {
-		nbsend += msgs[i].msg_len;
-		struct msgframe *restrict msg = p->mq_send[i];
-		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-			struct sockaddr *sa = (struct sockaddr *)&msg->addr;
-			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("udp send: %s %zu bytes", addr_str, msg->len);
-		}
-		msgframe_delete(p, msg);
-	}
 	/* move remaining messages */
-	p->mq_send_len -= nsend;
-	for (size_t i = 0; i < p->mq_send_len; i++) {
+	for (size_t i = 0; i < navail; i++) {
 		p->mq_send[i] = p->mq_send[nsend + i];
 	}
+	p->mq_send_len = navail;
 	s->stats.udp_out += nbsend;
 	s->udp.last_send_time = ev_now(s->loop);
-	return nbsend;
+	return nsend;
 }
 
 #else /* HAVE_SENDMMSG */
@@ -216,10 +231,10 @@ static size_t udp_send(struct server *restrict s)
 {
 	struct packet *restrict p = s->udp.packets;
 	const size_t count = p->mq_send_len;
-	if (count < 1) {
+	if (count == 0) {
 		return 0;
 	}
-	int nsend = 0;
+	size_t nsend = 0, nbsend = 0;
 	for (size_t i = 0; i < count; i++) {
 		struct msgframe *msg = p->mq_send[i];
 		const ssize_t nbsend =
@@ -238,8 +253,7 @@ static size_t udp_send(struct server *restrict s)
 	if (nsend == 0) {
 		return 0;
 	}
-	size_t nbsend = 0;
-	for (int i = 0; i < nsend; i++) {
+	for (size_t i = 0; i < nsend; i++) {
 		struct msgframe *restrict msg = p->mq_send[i];
 		nbsend += msg->len;
 		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
@@ -258,7 +272,7 @@ static size_t udp_send(struct server *restrict s)
 	p->mq_send_len = remain;
 	s->stats.udp_out += nbsend;
 	s->udp.last_send_time = ev_now(s->loop);
-	return nbsend;
+	return nsend;
 }
 
 #endif /* HAVE_SENDMMSG */

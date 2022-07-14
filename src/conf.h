@@ -28,6 +28,8 @@ struct config {
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
+	/* this option maximizes bandwidth, useful for profiling or benchmarking */
+	bool kcp_flush;
 
 	/* socket options */
 	bool tcp_reuseport, tcp_keepalive, tcp_nodelay;
