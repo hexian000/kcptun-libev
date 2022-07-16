@@ -16,5 +16,5 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
-    "loglevel": 1
+    "loglevel": 2
 }
