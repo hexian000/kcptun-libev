@@ -1,6 +1,8 @@
 # kcptun-libev
 A lightweight alternative implementation to kcptun
 
+[Just take me to setup guide](#runtime)
+
 ## What's this?
 kcptun-libev is a TCP port forwarder which converts the actual transferring protocol into a UDP based one, called [KCP](https://github.com/skywind3000/kcp).
 KCP is more configurable and usually has a much better performance in a lossy network. This project can help you to get better bandwidth in such situation.
@@ -42,11 +44,11 @@ If the encryption is not enabled or not even compiled, no packet overhead is con
 
 In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 
-| Encryption Method      | Status    | Notes      |
-| ---------------------- | --------- | ---------- |
-| chacha20poly1305_ietf  | supported | since v2.0 |
-| xchacha20poly1305_ietf | supported |            |
-| aes256gcm              | supported | since v2.0 |
+| Encryption Method      | Status    | Notes       |
+| ---------------------- | --------- | ----------- |
+| xchacha20poly1305_ietf | supported | recommended |
+| chacha20poly1305_ietf  | supported | since v2.0  |
+| aes256gcm              | supported | since v2.0  |
 
 ## Compatibility
 ### System
@@ -101,17 +103,53 @@ sudo apt install -y libev4 libsodium23
 opkg install libev libsodium
 ```
 
-### Usage
+### Configurations
 
-Create a config file and pass the file name. Just like:
+#### Generate a random key for encryption:
 
+```sh
+./kcptun-libev --genpsk xchacha20poly1305_ietf
 ```
+
+#### Create a server.json file and fill in the options:
+
+```json
+{
+    "udp_bind": "0.0.0.0:12345",
+    "connect": "127.0.0.1:1080",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+#### Start the server:
+
+```sh
 ./kcptun-libev -c server.json
 ```
 
-See [server.json](server.json)/[client.json](client.json)/[peer.json](peer.json) in the source repo for your reference.
+#### Create a client.json file and fill in the options:
 
-Let's explain some fields in server.json/peer.json:
+```json
+{
+    "listen": "127.0.0.1:1080",
+    "udp_connect": "203.0.113.1:12345",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+#### Start the client:
+
+```sh
+./kcptun-libev -c client.json
+```
+
+Now 127.0.0.1:1080 on client is forwarded to server by kcptun-libev.
+
+See [server.json](server.json)/[client.json](client.json) in the source repo for more tunables.
+
+Let's explain some fields in server.json/client.json:
 - The client side "listen" TCP ports and send data to "udp_connect".
 - The server side receive data from "udp_bind" and forward the connections to "connect".
 - Set a password or PSK is strongly suggested when using in public networks.
