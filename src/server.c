@@ -5,6 +5,7 @@
 
 #include "hashtable.h"
 #include "packet.h"
+#include "slog.h"
 #include "util.h"
 #include "sockutil.h"
 
@@ -62,12 +63,13 @@ listener_start(struct server *restrict s, const struct sockaddr *addr)
 	w_accept->data = s;
 	ev_io_start(s->loop, w_accept);
 
-	{
+	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(addr, addr_str, sizeof(addr_str));
 		LOGI_F("listen at: %s", addr_str);
 	}
 	l->fd = fd;
+	LOGD_F("listener fd: %d", l->fd);
 	return true;
 }
 
@@ -90,7 +92,6 @@ static bool udp_start(struct server *restrict s, struct config *restrict conf)
 		LOGE_PERROR("fcntl");
 		return NULL;
 	}
-	socket_set_reuseport(udp->fd, conf->udp_reuseport);
 	socket_set_buffer(udp->fd, conf->udp_sndbuf, conf->udp_rcvbuf);
 	if (conf->udp_bind.sa) {
 		const struct sockaddr *addr = conf->udp_bind.sa;
@@ -198,6 +199,7 @@ static void udp_free(struct ev_loop *loop, struct udp_conn *restrict conn)
 static void listener_free(struct ev_loop *loop, struct listener *restrict l)
 {
 	if (l->fd != -1) {
+		LOGD_F("listener close: %d", l->fd);
 		struct ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
 		close(l->fd);

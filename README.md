@@ -38,7 +38,7 @@ Compared to that, kcptun-libev should be much more lightweight. The main executa
 
 ## Security
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by libsodium.
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://github.com/jedisct1/libsodium).
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed.
 
@@ -64,7 +64,7 @@ Theoretically all systems that support ISO C11.
 
 ### Protocol
 
-kcptun-libev do NOT provide compatibility to any other KCP implements.
+kcptun-libev does NOT provide compatibility to any other KCP implements.
 
 The major version number is the protocol version. Different protocol versions are not compatible.
 

@@ -34,7 +34,6 @@ struct config {
 	/* socket options */
 	bool tcp_reuseport, tcp_keepalive, tcp_nodelay;
 	int tcp_sndbuf, tcp_rcvbuf;
-	bool udp_reuseport;
 	int udp_sndbuf, udp_rcvbuf;
 
 	char *method;

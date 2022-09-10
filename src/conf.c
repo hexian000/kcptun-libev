@@ -149,9 +149,6 @@ static bool udp_scope_cb(void *ud, const json_object_entry *entry)
 	struct config *restrict conf = ud;
 	const char *name = entry->name;
 	const json_value *value = entry->value;
-	if (strcmp(name, "reuseport") == 0) {
-		return parse_bool_json(&conf->udp_reuseport, value);
-	}
 	if (strcmp(name, "sndbuf") == 0) {
 		return parse_int_json(&conf->udp_sndbuf, value);
 	}
@@ -337,7 +334,6 @@ static struct config conf_default()
 		.tcp_reuseport = false,
 		.tcp_keepalive = false,
 		.tcp_nodelay = true,
-		.udp_reuseport = false,
 		.log_level = LOG_LEVEL_INFO,
 	};
 }

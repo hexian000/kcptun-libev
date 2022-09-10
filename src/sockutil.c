@@ -25,6 +25,9 @@ int socket_setup(int fd)
 
 void socket_set_reuseport(const int fd, const bool reuseport)
 {
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int))) {
+		LOGW_PERROR("SO_REUSEADDR");
+	}
 #ifdef SO_REUSEPORT
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_REUSEPORT, &(int){ reuseport ? 1 : 0 },

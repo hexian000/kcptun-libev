@@ -74,5 +74,6 @@ else()
 endif()
 
 target_link_libraries(kcptun-libev pthread m rt)
+install(TARGETS kcptun-libev DESTINATION bin)
 
 configure_file(config.h.in config.h ESCAPE_QUOTES)

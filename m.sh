@@ -1,93 +1,79 @@
 #!/bin/sh
-
+cd "$(dirname "$0")"
 set -ex
 
 case "$1" in
 "x")
     # cross compiling, environment vars need to be set
-    rm -rf xbuild
-    mkdir -p "xbuild" && cd "xbuild"
+    rm -rf "xbuild" && mkdir "xbuild"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_FIND_ROOT_PATH="${BUILDROOT}" \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        ..
-    cmake --build . --parallel
-    ls -lh src/kcptun-libev
-    ;;
-"xs")
-    # cross compiling, environment vars need to be set
-    rm -rf xbuild
-    mkdir -p "xbuild" && cd "xbuild"
-    cmake -G "Ninja" \
-        -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_FIND_ROOT_PATH="${BUILDROOT}" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DLINK_STATIC_LIBS=TRUE \
-        ..
-    cmake --build . --parallel
-    ls -lh src/kcptun-libev
+        -S "." -B "xbuild"
+    cmake --build "xbuild" --parallel
+    ls -lh "xbuild/src/kcptun-libev"
     ;;
 "r")
-    rm -rf build
-    mkdir -p build && cd build
+    # release
+    rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        ..
-    cmake --build . --parallel
-    ls -lh src/kcptun-libev
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 "s")
-    rm -rf build
-    mkdir -p build && cd build
+    # rebuild statically linked executable with musl libc
+    rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_C_COMPILER="musl-gcc" \
+        -DCMAKE_EXE_LINKER_FLAGS="-static" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DLINK_STATIC_LIBS=TRUE \
-        ..
-    cmake --build . --parallel
-    # cd src/tests && ctest
-    ls -lh src/kcptun-libev
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 "p")
-    rm -rf build
-    mkdir -p build && cd build
+    # rebuild for profiling/benchmarking
+    rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        ..
-    cmake --build . --parallel
-    # cd src/tests && ctest
-    cd src
-    objdump -drwS kcptun-libev >kcptun-libev.S
-    ls -lh kcptun-libev
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    objdump -drwS "build/src/kcptun-libev" >"build/src/kcptun-libev.S"
+    ls -lh "build/src/kcptun-libev"
     ;;
 "clang")
-    rm -rf build
-    mkdir -p build && cd build
+    # rebuild with clang/lld
+    rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
-        ..
-    cmake --build . --parallel
-    # cd src/tests && ctest
-    ls -lh src/kcptun-libev
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 "c")
+    # clean artifacts
     rm -rf build xbuild
     ;;
 *)
+    # default to debug builds
     # ln -sf build/compile_commands.json compile_commands.json
-    mkdir -p build && cd build
+    mkdir -p "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Debug" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        ..
-    cmake --build . --parallel
-    # cd src/tests && ctest
-    ls -lh src/kcptun-libev
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 esac
