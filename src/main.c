@@ -38,7 +38,6 @@ static void genpsk(const char *method)
 {
 	struct aead *crypto = aead_create(method);
 	if (crypto == NULL) {
-		fprintf(stderr, "unsupported method: %s", method);
 		exit(EXIT_FAILURE);
 	}
 	unsigned char *key = must_malloc(crypto->key_size);
