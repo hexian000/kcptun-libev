@@ -8,8 +8,21 @@ case "$1" in
     rm -rf "xbuild" && mkdir "xbuild"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
+        -S "." -B "xbuild"
+    cmake --build "xbuild" --parallel
+    ls -lh "xbuild/src/kcptun-libev"
+    ;;
+"xs")
+    # cross compiling, environment vars need to be set
+    rm -rf "xbuild" && mkdir "xbuild"
+    cmake -G "Ninja" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXE_LINKER_FLAGS="-static" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
+        -DLINK_STATIC_LIBS=TRUE \
         -S "." -B "xbuild"
     cmake --build "xbuild" --parallel
     ls -lh "xbuild/src/kcptun-libev"
@@ -25,6 +38,18 @@ case "$1" in
     ls -lh "build/src/kcptun-libev"
     ;;
 "s")
+    # rebuild statically linked executable with musl libc
+    rm -rf "build" && mkdir "build"
+    cmake -G "Ninja" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXE_LINKER_FLAGS="-static" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DLINK_STATIC_LIBS=TRUE \
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
+    ;;
+"xs")
     # rebuild statically linked executable with musl libc
     rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
@@ -54,9 +79,9 @@ case "$1" in
     rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+        -DCMAKE_C_COMPILER="clang" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"

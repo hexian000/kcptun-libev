@@ -32,13 +32,15 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
 
-Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100KiB on most platforms\* and it also have a much lower cpu/mem usage.
+Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100KiB on most platforms\* and it also have a much lower cpu/mem footprint.
 
 *\* Some required libraries are dynamically linked, see runtime dependencies below.*
 
+For your convenience, some statically-linked executables are also provided in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section.
+
 ## Security
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://github.com/jedisct1/libsodium).
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed.
 
@@ -49,6 +51,8 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 | xchacha20poly1305_ietf | supported | recommended |
 | chacha20poly1305_ietf  | supported | since v2.0  |
 | aes256gcm              | supported | since v2.0  |
+
+kcptun-libev will not provide known practically vulnerable encryption method in latest release.
 
 ## Compatibility
 ### System
@@ -62,13 +66,11 @@ Theoretically all systems that support ISO C11.
 | Unix-like    | supported |       |
 | Cygwin/MinGW | supported |       |
 
-### Protocol
+### Version Compatibility
 
-kcptun-libev does NOT provide compatibility to any other KCP implements.
+For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implements.
 
-The major version number is the protocol version. Different protocol versions are not compatible.
-
-Note: Protocol Compatibility Guarantee does not apply to pre-release versions.
+kcptun-libev uses [semantic versioning](https://semver.org/).
 
 ## Build
 ### Dependencies
@@ -95,6 +97,8 @@ See [m.sh](m.sh) for more information about cross compiling support.
 
 ## Runtime
 ### Dependencies
+
+If you downloaded a *-static build in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section, you don't have to install the dependencies below.
 
 ```sh
 # Debian & Ubuntu
