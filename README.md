@@ -9,12 +9,16 @@ KCP is more configurable and usually has a much better performance in a lossy ne
 
 For example, wrap your server to use KCP instead of TCP:
 ```
-client -> kcptun-libev client -> lossy network(KCP) -> kcptun-libev server -> server
+client -> kcptun-libev client ->
+    lossy network (carried by KCP)
+-> kcptun-libev server -> server
 ```
 
 Or typically, the people who using a lossy network may setup kcptun-libev with a proxy server. To get the internet access speeded up.
 ```
-network access -> proxy client -> kcptun-libev client -> lossy network(KCP) -> kcptun-libev server -> proxy server -> stable network
+network access -> proxy client -> kcptun-libev client ->
+    lossy network (carried by KCP)
+-> kcptun-libev server -> proxy server -> stable network
 ```
 
 Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
@@ -23,7 +27,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 - Secure: For proper integration of the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
-- Proper: KCP will be updated on demand, no mechanistic lag introduced.
+- Proper: KCP will be flushed on demand, no mechanistic lag introduced.
 - Simple: Without FEC craps.
 - Morden: Full IPv6 support.
 - DDNS aware: Dynamic IP addresses are supported.
@@ -88,9 +92,12 @@ sudo apt install -y libev-dev libsodium-dev
 ### Build on UNIX-like systems
 
 ```sh
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE="Release" ..
-make -j$(nproc --all)
+git clone https://github.com/hexian000/kcptun-libev.git
+mkdir "kcptun-libev-build"
+cmake -DCMAKE_BUILD_TYPE="Release" \
+    -S "kcptun-libev" \
+    -B "kcptun-libev-build"
+cmake --build "kcptun-libev-build" --parallel
 ```
 
 See [m.sh](m.sh) for more information about cross compiling support.
