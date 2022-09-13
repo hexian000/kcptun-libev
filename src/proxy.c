@@ -13,8 +13,7 @@
 
 bool proxy_dial(struct session *restrict ss, struct sockaddr *sa)
 {
-	int fd = socket(
-		sa->sa_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	// Create socket
 	if (fd < 0) {
 		LOGE_PERROR("socket");

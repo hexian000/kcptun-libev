@@ -2,6 +2,7 @@
 #include "util.h"
 #include "serialize.h"
 
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,7 +107,31 @@ enum aead_method {
 	method_chacha20poly1305_ietf,
 	method_xchacha20poly1305_ietf,
 	method_aes256gcm,
+	method_MAX,
 };
+
+static inline char *strmethod(const enum aead_method m)
+{
+	switch (m) {
+	case method_chacha20poly1305_ietf:
+		return "chacha20poly1305_ietf";
+	case method_xchacha20poly1305_ietf:
+		return "xchacha20poly1305_ietf";
+	case method_aes256gcm:
+		return "aes256gcm";
+	default:
+		break;
+	}
+	return NULL;
+}
+
+static inline void list_methods()
+{
+	fprintf(stderr, "methods available:\n");
+	for (int i = 0; i < method_MAX; i++) {
+		fprintf(stderr, "  %s\n", strmethod(i));
+	}
+}
 
 struct aead *aead_create(const char *method)
 {
@@ -115,23 +140,24 @@ struct aead *aead_create(const char *method)
 	}
 	enum aead_method m;
 	size_t nonce_size, overhead, key_size;
-	if (strcmp(method, "chacha20poly1305_ietf") == 0) {
+	if (strcmp(method, strmethod(method_chacha20poly1305_ietf)) == 0) {
 		m = method_chacha20poly1305_ietf;
 		nonce_size = crypto_aead_chacha20poly1305_ietf_npubbytes();
 		overhead = crypto_aead_chacha20poly1305_ietf_abytes();
 		key_size = crypto_aead_chacha20poly1305_ietf_keybytes();
-	} else if (strcmp(method, "xchacha20poly1305_ietf") == 0) {
+	} else if (strcmp(method, strmethod(method_xchacha20poly1305_ietf)) == 0) {
 		m = method_xchacha20poly1305_ietf;
 		nonce_size = crypto_aead_xchacha20poly1305_ietf_npubbytes();
 		overhead = crypto_aead_xchacha20poly1305_ietf_abytes();
 		key_size = crypto_aead_xchacha20poly1305_ietf_keybytes();
-	} else if (strcmp(method, "aes256gcm") == 0) {
+	} else if (strcmp(method, strmethod(method_aes256gcm)) == 0) {
 		m = method_aes256gcm;
 		nonce_size = crypto_aead_aes256gcm_npubbytes();
 		overhead = crypto_aead_aes256gcm_abytes();
 		key_size = crypto_aead_aes256gcm_keybytes();
 	} else {
 		LOGW_F("unsupported crypto method: %s", method);
+		list_methods();
 		return NULL;
 	}
 	struct aead *aead = util_malloc(sizeof(struct aead));
@@ -183,6 +209,8 @@ struct aead *aead_create(const char *method)
 			.open = &crypto_aead_aes256gcm_decrypt,
 		};
 	} break;
+	default:
+		abort();
 	}
 	return aead;
 }
