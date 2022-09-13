@@ -38,7 +38,7 @@ case "$1" in
     ls -lh "build/src/kcptun-libev"
     ;;
 "s")
-    # rebuild statically linked executable with musl libc
+    # rebuild statically linked executable
     rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
@@ -50,7 +50,7 @@ case "$1" in
     ls -lh "build/src/kcptun-libev"
     ;;
 "xs")
-    # rebuild statically linked executable with musl libc
+    # rebuild statically linked executable with musl-gcc
     rm -rf "build" && mkdir "build"
     cmake -G "Ninja" \
         -DCMAKE_BUILD_TYPE="Release" \
