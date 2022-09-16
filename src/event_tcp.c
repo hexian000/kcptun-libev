@@ -108,7 +108,7 @@ static size_t tcp_recv(struct session *restrict ss)
 			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_F("session [%08" PRIu32
+			LOGE_F("session [%08" PRIX32
 			       "] fd=%d tcp recv error: [%d] %s",
 			       ss->conv, ss->tcp_fd, err, strerror(err));
 			session_shutdown(ss);
@@ -174,7 +174,7 @@ static size_t tcp_send(struct session *restrict ss)
 		    err == ENOMEM) {
 			return 0;
 		}
-		LOGE_F("session [%08" PRIu32 "] fd=%d tcp send error: [%d] %s",
+		LOGE_F("session [%08" PRIX32 "] fd=%d tcp send error: [%d] %s",
 		       ss->conv, ss->tcp_fd, err, strerror(err));
 		session_shutdown(ss);
 		kcp_reset(ss);
