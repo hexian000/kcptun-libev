@@ -10,7 +10,6 @@
 
 #include <ev.h>
 
-#include <netinet/in.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -26,11 +25,11 @@ kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 		return NULL;
 	}
 	ikcp_wndsize(kcp, cfg->kcp_sndwnd, cfg->kcp_rcvwnd);
-	size_t mtu = cfg->kcp_mtu;
+	int mtu = cfg->kcp_mtu;
 #if WITH_CRYPTO
 	struct aead *crypto = ss->server->udp.packets->crypto;
 	if (crypto != NULL) {
-		mtu -= crypto->overhead + crypto->nonce_size;
+		mtu -= (int)(crypto->overhead + crypto->nonce_size);
 	}
 #endif
 	ikcp_setmtu(kcp, mtu);
@@ -141,7 +140,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		}
 		consume_wbuf(ss, hdr->len);
 		return;
-	} break;
+	}
 	case SMSG_PUSH: {
 		/* tcp connection is lost, discard packet */
 		if (ss->tcp_fd == -1) {
@@ -149,7 +148,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		}
 		ss->wbuf_navail = (size_t)hdr->len - TLV_HEADER_SIZE;
 		return;
-	} break;
+	}
 	case SMSG_EOF: {
 		UTIL_ASSERT(hdr->len == TLV_HEADER_SIZE);
 		LOGD_F("session [%08" PRIX32 "] msg: eof", ss->conv);
@@ -157,13 +156,13 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		session_shutdown(ss);
 		ss->state = STATE_LINGER;
 		return;
-	} break;
+	}
 	case SMSG_KEEPALIVE: {
 		UTIL_ASSERT(hdr->len == TLV_HEADER_SIZE);
 		LOGD_F("session [%08" PRIX32 "] msg: keepalive", ss->conv);
 		consume_wbuf(ss, hdr->len);
 		return;
-	} break;
+	}
 	}
 	LOGE_F("smsg error: %04" PRIX16 ", %04" PRIX16, hdr->msg, hdr->len);
 	kcp_reset(ss);

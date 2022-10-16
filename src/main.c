@@ -28,7 +28,7 @@ static void print_usage(char *argv0)
 	       "\n");
 }
 
-static void init()
+static void init(void)
 {
 	ikcp_allocator(util_malloc, util_free);
 }

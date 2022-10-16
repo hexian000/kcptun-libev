@@ -36,7 +36,7 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
-	int r = ikcp_send(ss->kcp, (char *)buf, len);
+	int r = ikcp_send(ss->kcp, (char *)buf, (int)len);
 	if (r < 0) {
 		return false;
 	}
@@ -143,7 +143,7 @@ void kcp_recv(struct session *restrict ss)
 	size_t cap = SESSION_BUF_SIZE - ss->wbuf_len;
 	size_t nrecv = 0;
 	while (cap > 0) {
-		int r = ikcp_recv(ss->kcp, (char *)start, cap);
+		int r = ikcp_recv(ss->kcp, (char *)start, (int)cap);
 		if (r <= 0) {
 			break;
 		}

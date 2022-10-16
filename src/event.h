@@ -21,7 +21,6 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void udp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void udp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-void udp_output_cb(struct ev_loop *loop, struct ev_async *watcher, int revents);
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 

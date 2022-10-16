@@ -266,7 +266,7 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 	table_rehash(table);
 }
 
-struct hashtable *table_create()
+struct hashtable *table_create(void)
 {
 	struct hashtable *table = malloc(sizeof(struct hashtable));
 	if (table == NULL) {

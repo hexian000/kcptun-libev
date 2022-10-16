@@ -1,18 +1,13 @@
 #include "conf.h"
-#include "aead.h"
 #include "slog.h"
 #include "util.h"
 #include "sockutil.h"
 #include "jsonutil.h"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 #define MAX_CONF_SIZE 65536
@@ -92,7 +87,7 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 			LOGE_F("kcp.mtu out of range: %d - %d", 300, 1500);
 			return false;
 		}
-		conf->kcp_mtu = (size_t)mtu;
+		conf->kcp_mtu = mtu;
 		return true;
 	}
 	if (strcmp(name, "sndwnd") == 0) {
@@ -314,7 +309,7 @@ void conf_resolve(struct config *conf)
 	resolve_netaddr(&conf->udp_connect, SOCK_DGRAM);
 }
 
-static struct config conf_default()
+static struct config conf_default(void)
 {
 	return (struct config){
 		.kcp_mtu = 1400,

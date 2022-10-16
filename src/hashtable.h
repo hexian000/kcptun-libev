@@ -19,7 +19,7 @@ typedef bool (*table_iterate_cb)(
  * @brief Create a new hash table.
  * @return Pointer to the newly created table.
  */
-struct hashtable *table_create();
+struct hashtable *table_create(void);
 
 /**
  * @brief Free all memory used by a table.

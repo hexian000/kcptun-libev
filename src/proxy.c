@@ -1,12 +1,9 @@
 #include "proxy.h"
 #include "hashtable.h"
 #include "slog.h"
-#include "util.h"
 #include "sockutil.h"
 #include "server.h"
 #include "session.h"
-
-#include <ev.h>
 
 #include <unistd.h>
 #include <sys/socket.h>

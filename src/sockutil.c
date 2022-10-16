@@ -59,14 +59,14 @@ void socket_set_buffer(int fd, size_t send, size_t recv)
 {
 	if (send > 0) {
 		if (setsockopt(
-			    fd, SOL_SOCKET, SO_SNDBUF, &(int){ send },
+			    fd, SOL_SOCKET, SO_SNDBUF, &(int){ (int)send },
 			    sizeof(int))) {
 			LOGW_PERROR("SO_SNDBUF");
 		}
 	}
 	if (recv > 0) {
 		if (setsockopt(
-			    fd, SOL_SOCKET, SO_RCVBUF, &(int){ recv },
+			    fd, SOL_SOCKET, SO_RCVBUF, &(int){ (int)recv },
 			    sizeof(int))) {
 			LOGW_PERROR("SO_RCVBUF");
 		}

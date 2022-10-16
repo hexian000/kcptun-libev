@@ -1,5 +1,7 @@
 /.vscode
+/.cache
 /.clangd
+/.idea
 /build
 /xbuild
 /compile_commands.json

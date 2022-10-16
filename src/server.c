@@ -1,5 +1,4 @@
 #include "server.h"
-#include "aead.h"
 #include "conf.h"
 #include "event.h"
 
@@ -11,8 +10,6 @@
 
 #include <ev.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/socket.h>

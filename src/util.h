@@ -57,7 +57,7 @@ static inline void *must_malloc(size_t n)
 char *util_strndup(const char *, size_t);
 char *util_strdup(const char *);
 
-void print_bin(const void *b, const size_t n);
+void print_bin(const void *b, size_t n);
 
 /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
 static inline uint32_t xorshift32(uint32_t x)
@@ -68,7 +68,7 @@ static inline uint32_t xorshift32(uint32_t x)
 	return x;
 }
 
-uint32_t rand32();
+uint32_t rand32(void);
 
 static inline uint32_t tstamp2ms(const ev_tstamp t)
 {

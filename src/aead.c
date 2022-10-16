@@ -1,9 +1,7 @@
 #include "aead.h"
 #include "util.h"
-#include "serialize.h"
 
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,7 +11,7 @@
 
 static bool sodium_init_done = false;
 
-static bool aead_init()
+static bool aead_init(void)
 {
 	if (sodium_init_done) {
 		return true;
@@ -22,7 +20,7 @@ static bool aead_init()
 	if (ret != 0) {
 		LOGE_F("sodium_init failed: %d", ret);
 		return false;
-	};
+	}
 	sodium_init_done = true;
 	return true;
 }
@@ -125,7 +123,7 @@ static inline char *strmethod(const enum aead_method m)
 	return NULL;
 }
 
-static inline void list_methods()
+static inline void list_methods(void)
 {
 	fprintf(stderr, "methods available:\n");
 	for (int i = 0; i < method_MAX; i++) {

@@ -1,11 +1,9 @@
 #include "packet.h"
 #include "conf.h"
 #include "event.h"
-#include "event_impl.h"
 #include "hashtable.h"
 #include "kcp/ikcp.h"
 #include "leakypool.h"
-#include "proxy.h"
 #include "aead.h"
 #include "nonce.h"
 #include "serialize.h"
@@ -36,6 +34,9 @@ static bool packet_open_inplace(
 	const size_t src_len = *len;
 	UTIL_ASSERT(size >= src_len);
 	struct aead *restrict crypto = p->crypto;
+	if (crypto == NULL) {
+		return true;
+	}
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	if (src_len <= nonce_size + overhead) {
@@ -240,7 +241,9 @@ static void
 packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 {
 #if WITH_CRYPTO
-	if (!packet_open_inplace(
+	struct packet *restrict p = s->udp.packets;
+	if (p->crypto != NULL &&
+	    !packet_open_inplace(
 		    s->udp.packets, msg->buf, &msg->len, MAX_PACKET_SIZE)) {
 		return;
 	}
@@ -268,8 +271,6 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 			return;
 		}
 		ss->is_accepted = true;
-		hashkey_t sskey;
-		conv_make_key(&sskey, sa, conv);
 		table_set(s->sessions, &sskey, ss);
 		if (LOGLEVEL(LOG_LEVEL_INFO)) {
 			char addr_str[64];
@@ -282,7 +283,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	}
 
 	ss->stats.udp_in += msg->len;
-	int r = ikcp_input(ss->kcp, (const char *)msg->buf, msg->len);
+	int r = ikcp_input(ss->kcp, (const char *)msg->buf, (long)msg->len);
 	if (r < 0) {
 		LOGW_F("ikcp_input: %d", r);
 		return;

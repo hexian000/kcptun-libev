@@ -1,7 +1,6 @@
 #include "nonce.h"
 #include "aead.h"
 #include "serialize.h"
-#include "slog.h"
 #include "util.h"
 
 #if WITH_SODIUM
@@ -10,7 +9,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #if WITH_CRYPTO
 
@@ -19,8 +17,8 @@ ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 {
 	const uint8_t i = b->current & UINT8_C(1);
 	const uint8_t j = i ^ UINT8_C(1);
-	const bool ret = bloom_add(&b->bloom[i], buffer, len) != 0 ||
-			 bloom_check(&b->bloom[j], buffer, len) != 0;
+	const bool ret = bloom_add(&b->bloom[i], buffer, (int)len) != 0 ||
+			 bloom_check(&b->bloom[j], buffer, (int)len) != 0;
 	b->bloom_count[i]++;
 	if (b->bloom_count[i] >= b->entries) {
 		bloom_reset(&b->bloom[j]);
@@ -54,11 +52,11 @@ struct noncegen *noncegen_create(enum noncegen_method method, size_t nonce_len)
 		noncegen_free(g);
 		return NULL;
 	}
-	if (bloom_init(&g->ppbloom.bloom[0], entries, error)) {
+	if (bloom_init(&g->ppbloom.bloom[0], (int)entries, error)) {
 		noncegen_free(g);
 		return NULL;
 	}
-	if (bloom_init(&g->ppbloom.bloom[1], entries, error)) {
+	if (bloom_init(&g->ppbloom.bloom[1], (int)entries, error)) {
 		noncegen_free(g);
 		return NULL;
 	}

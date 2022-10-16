@@ -14,7 +14,14 @@ enum { LOG_LEVEL_VERBOSE,
        LOG_LEVEL_FATAL,
        LOG_LEVEL_SILENCE,
 };
-extern const char slog_level_char[];
+
+#define LOG_LEVEL_VERBOSE_STR "V"
+#define LOG_LEVEL_DEBUG_STR "D"
+#define LOG_LEVEL_INFO_STR "I"
+#define LOG_LEVEL_WARNING_STR "W"
+#define LOG_LEVEL_ERROR_STR "E"
+#define LOG_LEVEL_FATAL_STR "F"
+
 extern int slog_level;
 extern FILE *slog_file;
 
@@ -43,10 +50,9 @@ extern FILE *slog_file;
 				log_filename = (path);                         \
 			}                                                      \
 			(void)fprintf(                                         \
-				log_fp, "%c %*s %s:%d " format "\n",           \
-				slog_level_char[(level)], timestamp_len,       \
-				log_timestamp, log_filename, (line),           \
-				__VA_ARGS__);                                  \
+				log_fp, level##_STR " %*s %s:%d " format "\n", \
+				timestamp_len, log_timestamp, log_filename,    \
+				(line), __VA_ARGS__);                          \
 			(void)fflush(log_fp);                                  \
 		}                                                              \
 	} while (0)

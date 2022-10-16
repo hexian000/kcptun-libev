@@ -47,7 +47,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	int client_fd;
 
 	while (true) {
-		sa_len = sizeof(sa);
+		sa_len = sizeof(m_sa);
 		// Accept client request
 		client_fd = accept(watcher->fd, sa, &sa_len);
 		if (client_fd < 0) {

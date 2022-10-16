@@ -44,7 +44,7 @@ char *util_strdup(const char *str)
 
 static uint32_t rand32_state = UINT32_C(0);
 
-uint32_t rand32()
+uint32_t rand32(void)
 {
 	if (rand32_state == UINT32_C(0)) {
 		rand32_state = time(NULL);
