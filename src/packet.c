@@ -31,12 +31,10 @@ static bool packet_open_inplace(
 	struct packet *restrict p, unsigned char *data, size_t *restrict len,
 	const size_t size)
 {
+	struct aead *restrict crypto = p->crypto;
+	UTIL_ASSERT(crypto != NULL);
 	const size_t src_len = *len;
 	UTIL_ASSERT(size >= src_len);
-	struct aead *restrict crypto = p->crypto;
-	if (crypto == NULL) {
-		return true;
-	}
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	if (src_len <= nonce_size + overhead) {
@@ -242,10 +240,11 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 {
 #if WITH_CRYPTO
 	struct packet *restrict p = s->udp.packets;
-	if (p->crypto != NULL &&
-	    !packet_open_inplace(
-		    s->udp.packets, msg->buf, &msg->len, MAX_PACKET_SIZE)) {
-		return;
+	if (p->crypto != NULL) {
+		if (!packet_open_inplace(
+			    p, msg->buf, &msg->len, MAX_PACKET_SIZE)) {
+			return;
+		}
 	}
 #endif
 

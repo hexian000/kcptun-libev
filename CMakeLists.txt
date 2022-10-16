@@ -27,6 +27,7 @@ function(get_git_version)
             OUTPUT_STRIP_TRAILING_WHITESPACE)
         set(GIT_HEAD "git-${GIT_HEAD}")
     endif()
+    execute_process(COMMAND ${GIT_EXECUTABLE} update-index --refresh)
     execute_process(
         COMMAND ${GIT_EXECUTABLE} diff-index --quiet HEAD --
         RESULT_VARIABLE RESULT)
