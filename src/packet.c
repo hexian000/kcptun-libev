@@ -92,7 +92,7 @@ struct msgframe *msgframe_new(struct packet *p, struct sockaddr *sa)
 	}
 	msg->hdr = (struct msghdr){
 		.msg_name = (struct sockaddr *)&msg->addr,
-		.msg_namelen = sizeof(sockaddr_max_t),
+		.msg_namelen = sizeof(msg->addr),
 		.msg_iov = &msg->iov,
 		.msg_iovlen = 1,
 		.msg_control = NULL,

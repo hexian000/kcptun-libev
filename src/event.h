@@ -11,7 +11,6 @@ struct server;
 struct session;
 
 struct ev_loop;
-struct ev_async;
 struct ev_io;
 struct ev_timer;
 struct IKCPCB;

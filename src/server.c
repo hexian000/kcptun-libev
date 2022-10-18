@@ -18,8 +18,6 @@
 #include <stdbool.h>
 #include <math.h>
 
-#define UDP_BUF_SIZE 65536
-
 static bool
 listener_start(struct server *restrict s, const struct sockaddr *addr)
 {

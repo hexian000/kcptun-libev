@@ -317,7 +317,6 @@ void table_filter(
 #ifndef NDEBUG
 	const unsigned int version = table->version;
 #endif
-	int count = 0;
 	const int capacity = table->capacity;
 	for (int bucket = 0; bucket < capacity; bucket++) {
 		int *last_next = &(table->p[bucket].bucket);
@@ -325,7 +324,6 @@ void table_filter(
 			assert(version == table->version);
 			struct hash_item *restrict p = &(table->p[i]);
 			const bool ok = f(table, &p->key, p->value, context);
-			count++;
 			if (ok) {
 				last_next = &(p->next);
 				continue;

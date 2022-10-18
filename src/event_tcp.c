@@ -80,7 +80,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			LOGI_F("tcp accept from: %s", addr_str);
 		}
 		accept_one((struct server *)watcher->data, client_fd);
-	};
+	}
 }
 
 #define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)

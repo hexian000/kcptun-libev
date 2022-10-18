@@ -57,7 +57,6 @@ static size_t udp_recv(struct server *restrict s)
 			}
 			msgs[i] = (struct mmsghdr){
 				.msg_hdr = frames[i]->hdr,
-				.msg_len = MAX_PACKET_SIZE,
 			};
 		}
 
@@ -85,11 +84,11 @@ static size_t udp_recv(struct server *restrict s)
 			nbrecv += msg->len;
 			frames[i] = NULL;
 			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-				struct sockaddr *sa = msg->hdr.msg_name;
+				const struct sockaddr *sa = msg->hdr.msg_name;
 				char addr_str[64];
 				format_sa(sa, addr_str, sizeof(addr_str));
-				LOGV_F("udp recv: %s %zu bytes", addr_str,
-				       msg->len);
+				LOGV_F("udp recv: %zu bytes from %s", msg->len,
+				       addr_str);
 			}
 		}
 		nrecv += (size_t)ret;
@@ -134,11 +133,11 @@ static size_t udp_recv(struct server *restrict s)
 		msg->len = (size_t)nbrecv;
 		p->mq_recv[p->mq_recv_len++] = msg;
 		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+			const struct sockaddr *sa = msg->hdr.msg_name;
 			char addr_str[64];
-			format_sa(
-				(struct sockaddr *)&msg->addr, addr_str,
-				sizeof(addr_str));
-			LOGV_F("udp recv: %s %zu bytes", addr_str, msg->len);
+			format_sa(sa, addr_str, sizeof(addr_str));
+			LOGV_F("udp recv: %zu bytes from %s", msg->len,
+			       addr_str);
 		}
 		s->stats.udp_in += nbrecv;
 		nrecv++;
@@ -202,12 +201,11 @@ static size_t udp_send(struct server *restrict s)
 			nbsend += msgs[i].msg_len;
 			struct msgframe *restrict msg = p->mq_send[nsend + i];
 			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-				struct sockaddr *sa =
-					(struct sockaddr *)&msg->addr;
+				const struct sockaddr *sa = msg->hdr.msg_name;
 				char addr_str[64];
 				format_sa(sa, addr_str, sizeof(addr_str));
-				LOGV_F("udp send: %s %zu bytes", addr_str,
-				       msg->len);
+				LOGV_F("udp send: %zu bytes to %s", msg->len,
+				       addr_str);
 			}
 			msgframe_delete(p, msg);
 		}
@@ -257,11 +255,10 @@ static size_t udp_send(struct server *restrict s)
 		struct msgframe *restrict msg = p->mq_send[i];
 		nbsend += msg->len;
 		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+			const struct sockaddr *sa = msg->hdr.msg_name;
 			char addr_str[64];
-			format_sa(
-				(struct sockaddr *)&msg->addr, addr_str,
-				sizeof(addr_str));
-			LOGV_F("udp send: %s %zu bytes", addr_str, msg->len);
+			format_sa(sa, addr_str, sizeof(addr_str));
+			LOGV_F("udp send: %zu bytes to %s", msg->len, addr_str);
 		}
 		msgframe_delete(p, msg);
 	}
