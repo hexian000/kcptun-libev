@@ -4,6 +4,7 @@
 #include "sockutil.h"
 #include "jsonutil.h"
 
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 #include <stdbool.h>
@@ -263,7 +264,7 @@ static char *splithostport(const char *addr, char **hostname, char **service)
 	return str;
 }
 
-static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
+static bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 {
 	if (addr->str == NULL) {
 		/* there's nothing to do */
@@ -276,7 +277,7 @@ static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
 		LOGE_F("failed resolving address: %s", addr->str);
 		return false;
 	}
-	struct sockaddr *sa = resolve(hostname, service, socktype);
+	struct sockaddr *sa = resolve(hostname, service, flags);
 	if (sa == NULL) {
 		util_free(str);
 		return false;
@@ -294,10 +295,10 @@ static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
 
 void conf_resolve(struct config *conf)
 {
-	resolve_netaddr(&conf->listen, SOCK_STREAM);
-	resolve_netaddr(&conf->connect, SOCK_STREAM);
-	resolve_netaddr(&conf->udp_bind, SOCK_DGRAM);
-	resolve_netaddr(&conf->udp_connect, SOCK_DGRAM);
+	resolve_netaddr(&conf->listen, RESOLVE_TCP | RESOLVE_PASSIVE);
+	resolve_netaddr(&conf->connect, RESOLVE_TCP);
+	resolve_netaddr(&conf->udp_bind, RESOLVE_UDP | RESOLVE_PASSIVE);
+	resolve_netaddr(&conf->udp_connect, RESOLVE_UDP);
 }
 
 static struct config conf_default(void)

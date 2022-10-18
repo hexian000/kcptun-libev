@@ -29,7 +29,13 @@ void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
 socklen_t getsocklen(const struct sockaddr *sa);
 struct sockaddr *clonesockaddr(const struct sockaddr *src);
 void format_sa(const struct sockaddr *sa, char *s, size_t buf_size);
-struct sockaddr *
-resolve(const char *hostname, const char *service, int socktype);
+
+enum {
+	RESOLVE_TCP = 0x0,
+	RESOLVE_UDP = 0x1,
+	RESOLVE_PASSIVE = 0x2,
+};
+
+struct sockaddr *resolve(const char *hostname, const char *service, int flags);
 
 #endif /* SOCKUTIL_H */
