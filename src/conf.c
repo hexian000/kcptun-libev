@@ -8,67 +8,58 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #define MAX_CONF_SIZE 65536
 
-static json_value *parse_json(const char *file)
+static json_value *conf_parse(const char *filename)
 {
-	json_value *obj = NULL;
-	char *buf = NULL;
-
-	FILE *f = fopen(file, "r");
+	FILE *f = fopen(filename, "r");
 	if (f == NULL) {
-		LOGE_PERROR("cannot open config file");
-		goto cleanup;
+		LOGE_PERROR("unable to open config file");
+		return NULL;
 	}
-
-	fseek(f, 0, SEEK_END);
-	long len = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	if (len < 0) {
-		LOGE_PERROR("cannot seek config file");
-		goto cleanup;
-	}
-
-	if (len >= MAX_CONF_SIZE) {
-		LOGE("too large config file");
-		goto cleanup;
-	}
-
-	buf = util_malloc(len + 1);
-	if (buf == NULL) {
-		LOGF("parse_json: out of memory");
-		goto cleanup;
-	}
-
-	size_t nread = fread(buf, sizeof(char), len, f);
-	if (!nread) {
-		LOGE("failed to read the config file");
-		goto cleanup;
-	}
-	fclose(f);
-	f = NULL;
-
-	buf[nread] = '\0'; // end of string
-
-	json_settings settings = { 0 };
-	{
-		char error_buf[512];
-		obj = json_parse_ex(&settings, buf, len, error_buf);
-		if (obj == NULL) {
-			LOGE_F("failed parsing json: %s", error_buf);
-			goto cleanup;
-		}
-	}
-
-cleanup:
-	if (f != NULL) {
+	if (fseek(f, 0, SEEK_END)) {
+		LOGE_PERROR("unable to seek config file");
 		fclose(f);
+		return NULL;
 	}
-	if (buf != NULL) {
+	const long len = ftell(f);
+	if (len < 0) {
+		LOGE_PERROR("unable to tell config file length");
+		fclose(f);
+		return NULL;
+	}
+	if (len >= MAX_CONF_SIZE) {
+		LOGE("config file is too large");
+		fclose(f);
+		return NULL;
+	}
+	if (fseek(f, 0, SEEK_SET)) {
+		LOGE_PERROR("unable to seek config file");
+		fclose(f);
+		return NULL;
+	}
+	char *buf = util_malloc(len + 1);
+	if (buf == NULL) {
+		LOGF("conf_parse: out of memory");
+		fclose(f);
+		return NULL;
+	}
+	const size_t nread = fread(buf, sizeof(char), (size_t)len, f);
+	fclose(f);
+	if (nread != (size_t)len) {
+		LOGE("unable to read the config file");
 		util_free(buf);
+		return NULL;
+	}
+	buf[nread] = '\0'; // end of string
+	json_value *obj = parse_json(buf, nread);
+	util_free(buf);
+	if (obj == NULL) {
+		LOGF("conf_parse: json parse failed");
+		return NULL;
 	}
 	return obj;
 }
@@ -405,12 +396,12 @@ static bool conf_check(struct config *restrict conf)
 	return true;
 }
 
-struct config *conf_read(const char *file)
+struct config *conf_read(const char *filename)
 {
 	struct config *conf = util_malloc(sizeof(struct config));
 	UTIL_ASSERT(conf);
 	*conf = conf_default();
-	json_value *obj = parse_json(file);
+	json_value *obj = conf_parse(filename);
 	if (obj == NULL) {
 		conf_free(conf);
 		return NULL;
