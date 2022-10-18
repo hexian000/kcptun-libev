@@ -9,6 +9,7 @@
 
 #include "murmurhash3.h"
 #include "../serialize.h"
+#include <stdint.h>
 
 static uint32_t rotl32(uint32_t x, int8_t r)
 {
@@ -19,9 +20,9 @@ static uint32_t rotl32(uint32_t x, int8_t r)
 // Block read - if your platform needs to do endian-swapping or can only
 // handle aligned reads, do the conversion here
 
-static uint32_t getblock32(const uint32_t *p, int i)
+static uint32_t getblock32(const void *restrict p, const int i)
 {
-	return read_uint32((const unsigned char *)&p[i]);
+	return read_uint32(((const unsigned char *)p) + (i * sizeof(uint32_t)));
 }
 
 //-----------------------------------------------------------------------------
@@ -53,7 +54,7 @@ uint32_t murmurhash3(const void *key, int len, uint32_t seed)
 	//----------
 	// body
 
-	const uint32_t *blocks = (const uint32_t *)(data + nblocks * 4);
+	const void *blocks = data + nblocks * 4;
 
 	for (int i = -nblocks; i; i++) {
 		uint32_t k1 = getblock32(blocks, i);

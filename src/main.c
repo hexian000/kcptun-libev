@@ -30,6 +30,7 @@ static void print_usage(char *argv0)
 
 static void init(void)
 {
+	srand(time(NULL));
 	ikcp_allocator(util_malloc, util_free);
 }
 
