@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(kcptun-libev
     LANGUAGES C
-    HOMEPAGE_URL "http://github.com/hexian000/kcptun-libev")
+    HOMEPAGE_URL "https://github.com/hexian000/kcptun-libev")
 
 function(get_git_version)
     find_package(Git)

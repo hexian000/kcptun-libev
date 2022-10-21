@@ -1,4 +1,12 @@
 #include "util.h"
+#include "aead.h"
+
+#include "kcp/ikcp.h"
+
+#define b64_malloc(ptr) util_malloc(ptr)
+#define b64_realloc(ptr, size) util_realloc(ptr, size)
+#include "b64/b64.h"
+
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -60,3 +68,48 @@ uint32_t rand32(void)
 	x = xorshift32(x);
 	return x;
 }
+
+uint32_t tstamp2ms(const ev_tstamp t)
+{
+	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
+}
+
+static void *kcp_malloc(size_t n)
+{
+	return util_malloc(n);
+}
+
+static void kcp_free(void *p)
+{
+	util_free(p);
+}
+
+static void *ev_realloc(void *p, long n)
+{
+	return util_realloc(p, n);
+}
+
+void init(void)
+{
+	ev_set_allocator(&ev_realloc);
+	ikcp_allocator(&kcp_malloc, &kcp_free);
+}
+
+#if WITH_CRYPTO
+void genpsk(const char *method)
+{
+	struct aead *crypto = aead_create(method);
+	if (crypto == NULL) {
+		LOGW_F("unsupported crypto method: %s", method);
+		aead_list_methods();
+		exit(EXIT_FAILURE);
+	}
+	unsigned char *key = must_malloc(crypto->key_size);
+	aead_keygen(crypto, key);
+	char *keystr = b64_encode(key, crypto->key_size);
+	printf("%s\n", keystr);
+	util_free(key);
+	free(keystr);
+	aead_free(crypto);
+}
+#endif

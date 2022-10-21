@@ -1,4 +1,5 @@
 #include "aead.h"
+#include "slog.h"
 #include "util.h"
 
 #include <assert.h>
@@ -124,7 +125,7 @@ static inline char *strmethod(const enum aead_method m)
 	return NULL;
 }
 
-static inline void list_methods(void)
+void aead_list_methods(void)
 {
 	fprintf(stderr, "methods available:\n");
 	for (int i = 0; i < method_MAX; i++) {
@@ -156,7 +157,7 @@ struct aead *aead_create(const char *method)
 		key_size = crypto_aead_aes256gcm_keybytes();
 	} else {
 		LOGW_F("unsupported crypto method: %s", method);
-		list_methods();
+		aead_list_methods();
 		return NULL;
 	}
 	struct aead *aead = util_malloc(sizeof(struct aead));
@@ -173,10 +174,15 @@ struct aead *aead_create(const char *method)
 	}
 	unsigned char *key = sodium_malloc(key_size);
 	if (key == NULL) {
+		LOGE("failed allocating secure memory");
 		aead_free(aead);
 		return NULL;
 	}
-	sodium_mlock(key, key_size);
+	if (!sodium_mlock(key, key_size)) {
+		LOGE("failed locking secure memory");
+		aead_free(aead);
+		return NULL;
+	}
 	switch (m) {
 	case method_chacha20poly1305_ietf: {
 		*(enum noncegen_method *)&aead->noncegen_method =
@@ -220,8 +226,7 @@ static void aead_free_key(struct aead_impl *impl, const size_t key_size)
 		return;
 	}
 	if (impl->key != NULL) {
-		sodium_memzero(impl->key, key_size);
-		sodium_munlock(impl->key, key_size);
+		(void)sodium_munlock(impl->key, key_size);
 		sodium_free(impl->key);
 		impl->key = NULL;
 	}
@@ -246,13 +251,6 @@ void aead_keygen(struct aead *restrict aead, unsigned char *key)
 
 void aead_free(struct aead *restrict aead)
 {
-	struct aead_impl *restrict impl = aead->impl;
-	if (impl != NULL && impl->key != NULL) {
-		sodium_memzero(impl->key, aead->key_size);
-		sodium_munlock(impl->key, aead->key_size);
-		sodium_free(impl->key);
-		impl->key = NULL;
-	}
 	aead_free_key(aead->impl, aead->key_size);
 	UTIL_SAFE_FREE(aead->impl);
 	util_free(aead);

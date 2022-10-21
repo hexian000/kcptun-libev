@@ -5,6 +5,7 @@
 
 #include <ev.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,6 +33,11 @@ static inline void util_free(void *p)
 	free(p);
 }
 
+static inline void *util_realloc(void *p, size_t n)
+{
+	return realloc(p, n);
+}
+
 static inline void *must_malloc(size_t n)
 {
 	void *p = util_malloc(n);
@@ -57,9 +63,10 @@ void print_bin(const void *b, size_t n);
 
 uint32_t rand32(void);
 
-static inline uint32_t tstamp2ms(const ev_tstamp t)
-{
-	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
-}
+uint32_t tstamp2ms(const ev_tstamp t);
+
+void init(void);
+
+void genpsk(const char *method);
 
 #endif /* UTIL_H */

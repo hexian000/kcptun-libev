@@ -37,4 +37,6 @@ size_t aead_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size, const unsigned char *tag, size_t tag_size);
 
+void aead_list_methods(void);
+
 #endif /* AEAD_H */

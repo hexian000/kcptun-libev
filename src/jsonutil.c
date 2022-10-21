@@ -1,10 +1,13 @@
 #include "jsonutil.h"
-#include "json/json.h"
-#include "slog.h"
 #include "util.h"
 
-#include <string.h>
+#include "json/json.h"
+
+#define b64_malloc(ptr) util_malloc(ptr)
+#define b64_realloc(ptr, size) util_realloc(ptr, size)
 #include "b64/b64.h"
+
+#include <string.h>
 
 static void *json_alloc(size_t n, int zero, void *user_data)
 {
