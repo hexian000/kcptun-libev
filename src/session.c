@@ -41,7 +41,8 @@ kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 }
 
 struct session *session_new(
-	struct server *restrict s, struct sockaddr *addr, const uint32_t conv)
+	struct server *restrict s, const struct sockaddr *addr,
+	const uint32_t conv)
 {
 	struct session *restrict ss =
 		(struct session *)util_malloc(sizeof(struct session));

@@ -1,6 +1,5 @@
-#include "conf.h"
-#include "event.h"
 #include "event_impl.h"
+#include "conf.h"
 #include "hashtable.h"
 #include "kcp/ikcp.h"
 #include "packet.h"

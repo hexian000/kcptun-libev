@@ -27,6 +27,7 @@ void socket_set_buffer(int fd, size_t send, size_t recv);
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
 
 socklen_t getsocklen(const struct sockaddr *sa);
+bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);
 struct sockaddr *clonesockaddr(const struct sockaddr *src);
 void format_sa(const struct sockaddr *sa, char *s, size_t buf_size);
 

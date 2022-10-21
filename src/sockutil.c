@@ -100,9 +100,17 @@ socklen_t getsocklen(const struct sockaddr *sa)
 	case AF_INET6:
 		return sizeof(struct sockaddr_in6);
 	default:
-		LOGF("only IPv4/IPv6 addresses are supported");
-		abort();
+		break;
 	}
+	LOGF("only IPv4/IPv6 addresses are supported");
+	abort();
+}
+
+bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
+{
+	const socklen_t na = getsocklen(a);
+	const socklen_t nb = getsocklen(b);
+	return na == nb && memcmp(a, b, na) == 0;
 }
 
 struct sockaddr *clonesockaddr(const struct sockaddr *src)

@@ -10,7 +10,7 @@
 
 #include <inttypes.h>
 
-bool proxy_dial(struct session *restrict ss, struct sockaddr *sa)
+bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 {
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	// Create socket
@@ -39,11 +39,15 @@ bool proxy_dial(struct session *restrict ss, struct sockaddr *sa)
 	ss->state = STATE_CONNECT;
 
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		const struct sockaddr *remote_sa =
+			(const struct sockaddr *)&ss->udp_remote;
+		char raddr_str[64];
+		format_sa(remote_sa, raddr_str, sizeof(raddr_str));
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGI_F("session [%08" PRIX32 "] open: "
-		       "tcp connect to: %s",
-		       ss->conv, addr_str);
+		       "from %s to tcp %s",
+		       ss->conv, raddr_str, addr_str);
 	}
 	session_start(ss, fd);
 	return true;

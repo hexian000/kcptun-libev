@@ -1,4 +1,3 @@
-#include "event.h"
 #include "event_impl.h"
 #include "hashtable.h"
 #include "kcp/ikcp.h"
@@ -12,13 +11,15 @@
 #include <string.h>
 #include <sys/socket.h>
 
-static void
-accept_one(struct server *restrict s, const int fd, const struct sockaddr *sa)
+static void accept_one(
+	struct server *restrict s, const int fd,
+	const struct sockaddr *client_sa)
 {
 	/* Initialize and start watcher to read client requests */
 	uint32_t conv = conv_new(s);
 	struct session *restrict ss;
-	ss = session_new(s, s->conf->udp_connect.sa, conv);
+	const struct sockaddr *sa = s->conf->udp_connect.sa;
+	ss = session_new(s, sa, conv);
 	if (ss == NULL) {
 		LOGE("accept: out of memory");
 		close(fd);
@@ -31,14 +32,14 @@ accept_one(struct server *restrict s, const int fd, const struct sockaddr *sa)
 		return;
 	}
 	hashkey_t key;
-	conv_make_key(&key, s->conf->udp_connect.sa, conv);
+	conv_make_key(&key, sa, conv);
 	table_set(s->sessions, &key, ss);
 	ss->state = STATE_CONNECTED;
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
+		format_sa(client_sa, addr_str, sizeof(addr_str));
 		LOGI_F("session [%08" PRIX32 "] open: "
-		       "tcp accepted from: %s",
+		       "tcp accepted from %s",
 		       conv, addr_str);
 	}
 	session_start(ss, fd);

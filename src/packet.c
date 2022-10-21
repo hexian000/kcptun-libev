@@ -259,7 +259,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
-			LOGW_F("session not found [%08" PRIX32 "]", conv);
+			LOGW_F("session [%08" PRIX32 "] not found", conv);
 			ss0_reset(s, sa, conv);
 			return;
 		}
@@ -271,11 +271,24 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		ss->is_accepted = true;
 		table_set(s->sessions, &sskey, ss);
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGI_F("kcp accept from: %s", addr_str);
+			LOGD_F("session accepted from: %s", addr_str);
 		}
+	}
+	if (!sa_equals(sa, (struct sockaddr *)&ss->udp_remote)) {
+		char oaddr_str[64];
+		format_sa(
+			(struct sockaddr *)&ss->udp_remote, oaddr_str,
+			sizeof(oaddr_str));
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOGW_F("session [%08" PRIX32 "] conv conflict: "
+		       "existing %s, refusing %s",
+		       conv, oaddr_str, addr_str);
+		ss0_reset(s, sa, conv);
+		return;
 	}
 	if (ss->state == STATE_TIME_WAIT) {
 		return;

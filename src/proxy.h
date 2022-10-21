@@ -7,6 +7,6 @@
 
 struct session;
 
-bool proxy_dial(struct session *restrict ss, struct sockaddr *sa);
+bool proxy_dial(struct session *restrict ss, const struct sockaddr *s);
 
 #endif /* PROXY_H */

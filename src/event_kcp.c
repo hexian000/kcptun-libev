@@ -1,4 +1,3 @@
-#include "event.h"
 #include "event_impl.h"
 #include "packet.h"
 #include "proxy.h"

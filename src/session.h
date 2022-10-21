@@ -88,7 +88,7 @@ struct session {
 };
 
 struct session *
-session_new(struct server *s, struct sockaddr *addr, uint32_t conv);
+session_new(struct server *s, const struct sockaddr *addr, uint32_t conv);
 void session_free(struct session *ss);
 
 void session_start(struct session *ss, int fd);

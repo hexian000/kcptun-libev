@@ -5,7 +5,6 @@
 #include "jsonutil.h"
 
 #include <assert.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 
 #include <stdbool.h>
