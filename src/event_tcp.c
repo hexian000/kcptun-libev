@@ -12,7 +12,8 @@
 #include <string.h>
 #include <sys/socket.h>
 
-static void accept_one(struct server *restrict s, const int fd)
+static void
+accept_one(struct server *restrict s, const int fd, const struct sockaddr *sa)
 {
 	/* Initialize and start watcher to read client requests */
 	uint32_t conv = conv_new(s);
@@ -24,7 +25,7 @@ static void accept_one(struct server *restrict s, const int fd)
 		return;
 	}
 	if (!kcp_dial(ss)) {
-		LOGE("kcp_dial: failure");
+		LOGE("kcp_dial: unexpected failure");
 		close(fd);
 		session_free(ss);
 		return;
@@ -33,6 +34,13 @@ static void accept_one(struct server *restrict s, const int fd)
 	conv_make_key(&key, s->conf->udp_connect.sa, conv);
 	table_set(s->sessions, &key, ss);
 	ss->state = STATE_CONNECTED;
+	if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOGI_F("session [%08" PRIX32 "] open: "
+		       "tcp accepted from: %s",
+		       conv, addr_str);
+	}
 	session_start(ss, fd);
 }
 
@@ -74,12 +82,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				client_fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 		}
 
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
-			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGI_F("tcp accept from: %s", addr_str);
-		}
-		accept_one((struct server *)watcher->data, client_fd);
+		accept_one((struct server *)watcher->data, client_fd, sa);
 	}
 }
 
@@ -108,8 +111,8 @@ static size_t tcp_recv(struct session *restrict ss)
 			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_F("session [%08" PRIX32
-			       "] fd=%d tcp recv error: [%d] %s",
+			LOGE_F("session [%08" PRIX32 "] close: "
+			       "tcp recv error on fd %d: [%d] %s",
 			       ss->conv, ss->tcp_fd, err, strerror(err));
 			session_shutdown(ss);
 			kcp_reset(ss);
@@ -132,7 +135,7 @@ static size_t tcp_recv(struct session *restrict ss)
 	}
 
 	if (tcp_eof) {
-		LOGI_F("session [%08" PRIX32 "] tcp closing", ss->conv);
+		LOGI_F("session [%08" PRIX32 "] close: tcp closing", ss->conv);
 		// Stop and free session if client socket is closing
 		session_shutdown(ss);
 		kcp_close(ss);
@@ -174,7 +177,8 @@ static size_t tcp_send(struct session *restrict ss)
 		    err == ENOMEM) {
 			return 0;
 		}
-		LOGE_F("session [%08" PRIX32 "] fd=%d tcp send error: [%d] %s",
+		LOGE_F("session [%08" PRIX32 "] close: "
+		       "tcp send error on fd %d: [%d] %s",
 		       ss->conv, ss->tcp_fd, err, strerror(err));
 		session_shutdown(ss);
 		kcp_reset(ss);

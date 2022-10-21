@@ -207,7 +207,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	if (ss->state == STATE_TIME_WAIT) {
 		return;
 	}
-	LOGI_F("session [%08" PRIX32 "]: session reset by peer", conv);
+	LOGI_F("session [%08" PRIX32 "] close: session reset by peer", conv);
 	session_shutdown(ss);
 	ss->state = STATE_TIME_WAIT;
 }

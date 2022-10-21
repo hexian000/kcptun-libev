@@ -109,7 +109,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	switch (ss->state) {
 	case STATE_HALFOPEN:
 		if (not_seen > s->dial_timeout) {
-			LOGW_F("session [%08" PRIX32 "] dial timed out",
+			LOGW_F("session [%08" PRIX32 "] close: dial timed out",
 			       ss->conv);
 			session_shutdown(ss);
 			kcp_close(ss);
@@ -119,7 +119,8 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	case STATE_CONNECT:
 	case STATE_CONNECTED:
 		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] state %d timed out",
+			LOGW_F("session [%08" PRIX32 "] close: "
+			       "timed out in state %d",
 			       ss->conv, ss->state);
 			session_shutdown(ss);
 			kcp_close(ss);

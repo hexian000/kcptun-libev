@@ -155,7 +155,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
-		LOGD_F("session [%08" PRIX32 "] msg: eof", ss->conv);
+		LOGI_F("session [%08" PRIX32 "] shutdown: eof", ss->conv);
 		ss->wbuf_len = 0;
 		session_shutdown(ss);
 		ss->state = STATE_LINGER;

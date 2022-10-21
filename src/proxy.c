@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
+#include <inttypes.h>
+
 bool proxy_dial(struct session *restrict ss, struct sockaddr *sa)
 {
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
@@ -34,13 +36,15 @@ bool proxy_dial(struct session *restrict ss, struct sockaddr *sa)
 			return NULL;
 		}
 	}
+	ss->state = STATE_CONNECT;
+
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("connect to: %s", addr_str);
+		LOGI_F("session [%08" PRIX32 "] open: "
+		       "tcp connect to: %s",
+		       ss->conv, addr_str);
 	}
-
-	ss->state = STATE_CONNECT;
 	session_start(ss, fd);
 	return true;
 }
