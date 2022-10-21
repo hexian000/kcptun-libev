@@ -1,6 +1,7 @@
 #include "aead.h"
 #include "util.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,7 +71,7 @@ size_t aead_seal(
 	const unsigned char *nonce, const unsigned char *plain,
 	size_t plain_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size >= plain_size + aead->overhead);
+	assert(dst_size >= plain_size + aead->overhead);
 	struct aead_impl *restrict impl = aead->impl;
 	unsigned long long r_len = dst_size;
 	int r = impl->seal(
@@ -88,7 +89,7 @@ size_t aead_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size + aead->overhead >= cipher_size);
+	assert(dst_size + aead->overhead >= cipher_size);
 	struct aead_impl *restrict impl = aead->impl;
 	unsigned long long r_len = dst_size;
 	int r = impl->open(

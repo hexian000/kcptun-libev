@@ -12,17 +12,13 @@
 
 #define UNUSED(x) (void)(x)
 
-#ifndef NDEBUG
-#define UTIL_ASSERT(cond)                                                      \
+#define check(cond)                                                            \
 	do {                                                                   \
 		if (!(cond)) {                                                 \
 			LOGF("assertion failed: " #cond);                      \
 			abort();                                               \
 		}                                                              \
 	} while (0)
-#else
-#define UTIL_ASSERT(cond) (void)(cond)
-#endif /* NDEBUG */
 
 #define countof(array) (sizeof(array) / sizeof((array)[0]))
 
@@ -58,15 +54,6 @@ char *util_strndup(const char *, size_t);
 char *util_strdup(const char *);
 
 void print_bin(const void *b, size_t n);
-
-/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
-static inline uint32_t xorshift32(uint32_t x)
-{
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	return x;
-}
 
 uint32_t rand32(void);
 

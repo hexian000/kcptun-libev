@@ -7,6 +7,7 @@
 #include <sodium.h>
 #endif
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -99,10 +100,10 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 /* higher packet entropy */
 static void noncegen_fill_random(struct noncegen *restrict g)
 {
+	assert(WITH_SODIUM);
 #if WITH_SODIUM
 	randombytes_buf(g->nonce_buf, g->nonce_len);
 #else
-	UTIL_ASSERT(0);
 	noncegen_fill_counter(g);
 #endif
 }

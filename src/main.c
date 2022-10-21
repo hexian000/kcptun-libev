@@ -30,7 +30,6 @@ static void print_usage(char *argv0)
 
 static void init(void)
 {
-	srand((unsigned int)xorshift32(time(NULL)));
 	ikcp_allocator(util_malloc, util_free);
 }
 
@@ -97,7 +96,7 @@ int main(int argc, char **argv)
 	init();
 	LOGI("initializing...");
 	struct ev_loop *loop = ev_default_loop(0);
-	UTIL_ASSERT(loop);
+	check(loop != NULL);
 
 	struct config *conf = conf_read(conf_path);
 	if (conf == NULL) {

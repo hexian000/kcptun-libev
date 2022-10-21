@@ -4,10 +4,12 @@
 #include "proxy.h"
 #include "server.h"
 #include "session.h"
+#include "slog.h"
 #include "util.h"
 
 #include "kcp/ikcp.h"
 
+#include <assert.h>
 #include <ev.h>
 
 #include <stdint.h>
@@ -18,7 +20,7 @@
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
 	UNUSED(kcp);
-	UTIL_ASSERT(len > 0 && len < MAX_PACKET_SIZE);
+	assert(len > 0 && len < MAX_PACKET_SIZE);
 	struct session *restrict ss = (struct session *)user;
 	struct server *restrict s = ss->server;
 	struct packet *p = s->udp.packets;
@@ -166,9 +168,11 @@ void kcp_recv(struct session *restrict ss)
 		return;
 	}
 	struct tlv_header header = tlv_header_read(ss->wbuf);
-	UTIL_ASSERT(
-		header.len >= TLV_HEADER_SIZE &&
-		header.len <= SESSION_BUF_SIZE);
+	if (header.len < TLV_HEADER_SIZE && header.len > SESSION_BUF_SIZE) {
+		LOGE_F("unexpected packet length: %" PRIu16, header.len);
+		kcp_reset(ss);
+		return;
+	}
 	if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
 		/* incomplete data packet */
 		return;
@@ -209,7 +213,7 @@ static void kcp_update(struct session *restrict ss)
 
 void kcp_notify(struct session *restrict ss)
 {
-	UTIL_ASSERT(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
+	assert(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
 	if (ss->rbuf_len == 0) {
 		return;
 	}

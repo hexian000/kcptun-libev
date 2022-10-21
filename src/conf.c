@@ -4,6 +4,7 @@
 #include "sockutil.h"
 #include "jsonutil.h"
 
+#include <assert.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -226,8 +227,8 @@ const char *runmode_str(const int mode)
 		[MODE_CLIENT] = "client",
 		[MODE_PEER] = "peer",
 	};
-	UTIL_ASSERT(mode >= 0);
-	UTIL_ASSERT((size_t)mode < (sizeof(str) / sizeof(str[0])));
+	assert(mode >= 0);
+	assert((size_t)mode < countof(str));
 	return str[mode];
 }
 
@@ -400,7 +401,9 @@ static bool conf_check(struct config *restrict conf)
 struct config *conf_read(const char *filename)
 {
 	struct config *conf = util_malloc(sizeof(struct config));
-	UTIL_ASSERT(conf);
+	if (conf == NULL) {
+		return NULL;
+	}
 	*conf = conf_default();
 	json_value *obj = conf_parse(filename);
 	if (obj == NULL) {

@@ -126,7 +126,9 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 {
 	switch (hdr->msg) {
 	case SMSG_DIAL: {
-		UTIL_ASSERT(hdr->len == TLV_HEADER_SIZE);
+		if (hdr->len != TLV_HEADER_SIZE) {
+			break;
+		}
 		LOGD_F("session [%08" PRIX32 "] msg: dial", ss->conv);
 		if (ss->tcp_fd != -1) {
 			break;
@@ -150,7 +152,9 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		return;
 	}
 	case SMSG_EOF: {
-		UTIL_ASSERT(hdr->len == TLV_HEADER_SIZE);
+		if (hdr->len != TLV_HEADER_SIZE) {
+			break;
+		}
 		LOGD_F("session [%08" PRIX32 "] msg: eof", ss->conv);
 		ss->wbuf_len = 0;
 		session_shutdown(ss);
@@ -158,7 +162,9 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		return;
 	}
 	case SMSG_KEEPALIVE: {
-		UTIL_ASSERT(hdr->len == TLV_HEADER_SIZE);
+		if (hdr->len != TLV_HEADER_SIZE) {
+			break;
+		}
 		LOGD_F("session [%08" PRIX32 "] msg: keepalive", ss->conv);
 		consume_wbuf(ss, hdr->len);
 		return;

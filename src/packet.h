@@ -16,9 +16,9 @@
 
 struct msgframe {
 	struct msghdr hdr;
-	sockaddr_max_t addr;
 	struct iovec iov;
 	size_t len;
+	sockaddr_max_t addr;
 	unsigned char buf[MAX_PACKET_SIZE];
 };
 

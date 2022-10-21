@@ -42,12 +42,21 @@ char *util_strdup(const char *str)
 	return util_strndup(str, strlen(str));
 }
 
-static uint32_t rand32_state = UINT32_C(0);
+/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+static inline uint32_t xorshift32(uint32_t x)
+{
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	return x;
+}
 
 uint32_t rand32(void)
 {
-	if (rand32_state == UINT32_C(0)) {
-		rand32_state = time(NULL);
+	static uint32_t x = UINT32_C(0);
+	if (x == UINT32_C(0)) {
+		x = time(NULL);
 	}
-	return rand32_state = xorshift32(rand32_state);
+	x = xorshift32(x);
+	return x;
 }

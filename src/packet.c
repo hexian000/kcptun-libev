@@ -32,9 +32,9 @@ static bool packet_open_inplace(
 	const size_t size)
 {
 	struct aead *restrict crypto = p->crypto;
-	UTIL_ASSERT(crypto != NULL);
+	assert(crypto != NULL);
 	const size_t src_len = *len;
-	UTIL_ASSERT(size >= src_len);
+	assert(size >= src_len);
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	if (src_len <= nonce_size + overhead) {
@@ -67,7 +67,7 @@ static bool packet_seal_inplace(
 	const size_t src_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
-	UTIL_ASSERT(size >= src_len + overhead + nonce_size);
+	assert(size >= src_len + overhead + nonce_size);
 	const unsigned char *nonce = noncegen_next(p->noncegen);
 	const size_t dst_size = size - nonce_size;
 	size_t dst_len = aead_seal(
@@ -309,7 +309,7 @@ bool packet_send(
 {
 #if WITH_CRYPTO
 	if (p->crypto != NULL) {
-		UTIL_ASSERT(packet_seal_inplace(
+		check(packet_seal_inplace(
 			p, msg->buf, &msg->len, MAX_PACKET_SIZE));
 	}
 #endif

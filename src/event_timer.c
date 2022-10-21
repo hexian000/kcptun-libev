@@ -11,6 +11,7 @@
 #include "sockutil.h"
 #include "util.h"
 
+#include <assert.h>
 #include <ev.h>
 #include <stdint.h>
 #include <sys/socket.h>
@@ -100,7 +101,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	UNUSED(key);
 	struct session *restrict ss = value;
 	struct server *restrict s = ss->server;
-	UTIL_ASSERT(ss->state < STATE_MAX);
+	assert(ss->state < STATE_MAX);
 	const ev_tstamp *restrict now = user;
 	const double last_seen =
 		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
@@ -151,7 +152,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		return true;
 	default:
 		LOGW_F("unexpected session state: %d (bug?)", ss->state);
-		UTIL_ASSERT(0);
+		assert(0);
 		session_free(ss);
 		return false;
 	}

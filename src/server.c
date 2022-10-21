@@ -220,8 +220,10 @@ void server_shutdown(struct server *restrict s)
 
 uint32_t conv_new(struct server *restrict s)
 {
-	do {
-		s->m_conv++;
-	} while (s->m_conv == 0);
-	return s->m_conv;
+	uint32_t conv = s->m_conv + UINT32_C(1);
+	if (conv == UINT32_C(0)) {
+		conv++;
+	}
+	s->m_conv = conv;
+	return conv;
 }
