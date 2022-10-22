@@ -178,10 +178,8 @@ struct aead *aead_create(const char *method)
 		aead_free(aead);
 		return NULL;
 	}
-	if (!sodium_mlock(key, key_size)) {
-		LOGE("failed locking secure memory");
-		aead_free(aead);
-		return NULL;
+	if (sodium_mlock(key, key_size)) {
+		LOGW("failed locking secure memory");
 	}
 	switch (m) {
 	case method_chacha20poly1305_ietf: {
