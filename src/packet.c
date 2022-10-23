@@ -291,6 +291,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	if (ss->state == STATE_TIME_WAIT) {
+		ss0_reset(s, sa, conv);
 		return;
 	}
 
