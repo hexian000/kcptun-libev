@@ -1,12 +1,16 @@
 #!/bin/sh
 cd "$(dirname "$0")"
+GENERATOR="Ninja"
+if ! command -v ninja >/dev/null 2>&1; then
+    GENERATOR="Unix Makefiles"
+fi
 set -ex
 
 case "$1" in
 "x")
     # cross compiling, environment vars need to be set
     rm -rf "xbuild" && mkdir "xbuild"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
@@ -17,7 +21,7 @@ case "$1" in
 "xs")
     # cross compiling, environment vars need to be set
     rm -rf "xbuild" && mkdir "xbuild"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-static" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
@@ -30,7 +34,7 @@ case "$1" in
 "r")
     # release
     rm -rf "build" && mkdir "build"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
@@ -40,7 +44,7 @@ case "$1" in
 "s")
     # rebuild statically linked executable
     rm -rf "build" && mkdir "build"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-static" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
@@ -52,7 +56,7 @@ case "$1" in
 "p")
     # rebuild for profiling/benchmarking
     rm -rf "build" && mkdir "build"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
@@ -63,7 +67,7 @@ case "$1" in
 "clang")
     # rebuild with clang/lld
     rm -rf "build" && mkdir "build"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
         -DCMAKE_C_COMPILER="clang" \
@@ -79,7 +83,7 @@ case "$1" in
 *)
     # default to debug builds
     mkdir -p "build"
-    cmake -G "Ninja" \
+    cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Debug" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
