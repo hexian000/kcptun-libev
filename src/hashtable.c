@@ -3,12 +3,14 @@
 #include "murmur3/murmurhash3.h"
 
 #include <assert.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <limits.h>
 
-#define PRIME_LIST_START (4u)
+#ifndef NDEBUG
+#include <stdio.h>
+#include <inttypes.h>
+#endif
 
 /* start from 2^4 */
 static const int prime_list[] = {
@@ -22,8 +24,8 @@ static const int prime_list[] = {
 
 static inline int get_capacity(int x)
 {
-	const int threshold = prime_list[countof(prime_list) - 1];
-	if (x > threshold) {
+	const int last_prime = prime_list[countof(prime_list) - 1];
+	if (x > last_prime) {
 		/* huge hashtable */
 		return x | 1;
 	}
@@ -62,9 +64,9 @@ key_equals(const hashkey_t *restrict a, const hashkey_t *restrict b)
 	return true;
 }
 
-static inline int get_hash(const hashkey_t *restrict key, const uint32_t seed)
+static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
 {
-	const uint32_t h = murmurhash3(key, sizeof(hashkey_t), seed);
+	const uint32_t h = murmurhash3(x, sizeof(hashkey_t), seed);
 	return (int)(h & (uint32_t)INT_MAX);
 }
 
@@ -131,10 +133,17 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 	}
 	assert(new_capacity >= table->size);
 	const size_t item_size = new_capacity * sizeof(struct hash_item);
-	struct hash_item *m = (struct hash_item *)realloc(table->p, item_size);
+	struct hash_item *m =
+		(struct hash_item *)util_realloc(table->p, item_size);
 	if (m == NULL) {
 		return;
 	}
+#ifndef NDEBUG
+	if (table->p != NULL && table->p != m) {
+		fprintf(stderr, " * realloc moved memory from %p to %p\n",
+			(void *)table->p, (void *)m);
+	}
+#endif
 	table->p = m;
 	table->capacity = new_capacity;
 
@@ -146,12 +155,12 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 
 static inline void table_grow(struct hashtable *restrict table)
 {
-	const int threshold = prime_list[countof(prime_list) - 1];
-	if (table->size < threshold) {
+	const int last_prime = prime_list[countof(prime_list) - 1];
+	if (table->size < last_prime) {
 		/* will fit next number in prime_list */
 		table_reserve(table, table->size + 1);
-	} else if (table->size < (INT_MAX - threshold)) {
-		table_reserve(table, table->size + threshold);
+	} else if (table->size < (INT_MAX - last_prime)) {
+		table_reserve(table, table->size + last_prime);
 	} else {
 		table_reserve(table, INT_MAX);
 	}
@@ -208,6 +217,10 @@ bool table_set(
 
 	if (collision > COLLISION_THRESHOLD) {
 		table->seed = rand32();
+#ifndef NDEBUG
+		fprintf(stderr, "table reseed: size=%d new_seed=%" PRIX32 "\n",
+			table->size, table->seed);
+#endif
 		table_compact(table);
 		table_rehash(table);
 	}
@@ -262,9 +275,9 @@ bool table_del(
 void table_free(struct hashtable *restrict table)
 {
 	if (table->p != NULL) {
-		free(table->p);
+		util_free(table->p);
 	}
-	free(table);
+	util_free(table);
 }
 
 void table_reserve(struct hashtable *restrict table, int new_capacity)
@@ -276,6 +289,10 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 	if (table->capacity == new_capacity) {
 		return;
 	}
+#ifndef NDEBUG
+	fprintf(stderr, "table resize: size=%d capacity=%d new_capacity=%d\n",
+		table->size, table->capacity, new_capacity);
+#endif
 	table_compact(table);
 	table_realloc(table, new_capacity);
 	table_rehash(table);
@@ -283,7 +300,7 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 
 struct hashtable *table_create(void)
 {
-	struct hashtable *table = malloc(sizeof(struct hashtable));
+	struct hashtable *table = util_malloc(sizeof(struct hashtable));
 	if (table == NULL) {
 		return NULL;
 	}
@@ -292,7 +309,7 @@ struct hashtable *table_create(void)
 		.capacity = 0,
 		.size = 0,
 		.freelist = -1,
-		.seed = 0,
+		.seed = rand32(),
 #ifndef NDEBUG
 		.version = 0,
 #endif
@@ -300,7 +317,7 @@ struct hashtable *table_create(void)
 	int capacity = INITIAL_CAPACITY;
 	table_realloc(table, capacity);
 	if (table->p == NULL) {
-		free(table);
+		util_free(table);
 		return NULL;
 	}
 	return table;
