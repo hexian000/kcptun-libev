@@ -4,15 +4,15 @@
 #include "util.h"
 
 #include <netinet/in.h>
-#include <stddef.h>
 #include <fcntl.h>
-#include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +90,15 @@ void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)
 	} break;
 	}
 	ep->conv = conv;
+}
+
+uint32_t conv_get(const hashkey_t *key)
+{
+	struct {
+		sockaddr_max_t sa;
+		uint32_t conv;
+	} *ep = (void *)key;
+	return ep->conv;
 }
 
 socklen_t getsocklen(const struct sockaddr *sa)

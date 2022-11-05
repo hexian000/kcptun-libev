@@ -2,29 +2,7 @@
 #ifndef EVENT_IMPL_H
 #define EVENT_IMPL_H
 
-#include "event.h"
-#include "aead.h"
-#include "hashtable.h"
-#include "server.h"
-#include "session.h"
-#include "serialize.h"
-#include "util.h"
-#include "sockutil.h"
-#include "packet.h"
-
-#include "kcp/ikcp.h"
 #include <ev.h>
-
-#include <inttypes.h>
-#include <math.h>
-#include <stdint.h>
-#include <string.h>
-
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <sys/socket.h>
 
 #define CHECK_EV_ERROR(revents)                                                \
 	do {                                                                   \
@@ -33,5 +11,20 @@
 			return;                                                \
 		}                                                              \
 	} while (0)
+
+#define LOG_RATELIMITEDF(level, loop, rate, format, ...)                       \
+	do {                                                                   \
+		const ev_tstamp now = ev_now(loop);                            \
+		static ev_tstamp last_log = TSTAMP_NIL;                        \
+		if (last_log == TSTAMP_NIL || now - last_log > (rate)) {       \
+			LOG_INTERNAL(                                          \
+				level, __FILE__, __LINE__, format,             \
+				__VA_ARGS__);                                  \
+			last_log = now;                                        \
+		}                                                              \
+	} while (0)
+
+#define LOG_RATELIMITED(level, loop, rate, message)                            \
+	LOG_RATELIMITEDF(level, loop, rate, "%s", message)
 
 #endif /* EVENT_IMPL_H */

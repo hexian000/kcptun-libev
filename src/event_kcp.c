@@ -1,20 +1,12 @@
+#include "event.h"
 #include "event_impl.h"
-#include "packet.h"
-#include "proxy.h"
-#include "server.h"
-#include "session.h"
-#include "slog.h"
 #include "util.h"
+#include "server.h"
+#include "pktqueue.h"
 
 #include "kcp/ikcp.h"
 
-#include <assert.h>
-#include <ev.h>
-
-#include <stdint.h>
-#include <string.h>
-
-#include <sys/socket.h>
+#include <inttypes.h>
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
@@ -22,16 +14,17 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	assert(len > 0 && len < MAX_PACKET_SIZE);
 	struct session *restrict ss = (struct session *)user;
 	struct server *restrict s = ss->server;
-	struct packet *p = s->udp.packets;
-	struct sockaddr *sa = (struct sockaddr *)&ss->udp_remote;
-	struct msgframe *restrict msg = msgframe_new(p, sa);
+	struct pktqueue *q = s->pkt.queue;
+	struct msgframe *restrict msg = msgframe_new(q, &ss->udp_remote.sa);
 	if (msg == NULL) {
 		return -1;
 	}
-	memcpy(msg->buf, buf, len);
+	unsigned char *kcp_packet = msg->buf + msg->off;
+	memcpy(kcp_packet, buf, len);
 	msg->len = len;
-	ss->stats.udp_out += len;
-	return packet_send(p, s, msg) ? len : -1;
+	ss->stats.kcp_out += len;
+	ss->server->stats.kcp_out += len;
+	return packet_send(q, s, msg) ? len : -1;
 }
 
 bool kcp_send(
@@ -41,8 +34,6 @@ bool kcp_send(
 	if (r < 0) {
 		return false;
 	}
-	ss->stats.kcp_out += len;
-	ss->server->stats.kcp_out += len;
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
 	/* invalidate last ikcp_check */
 	ss->kcp_checked = false;
@@ -114,8 +105,7 @@ void kcp_reset(struct session *ss)
 	    now - ss->last_send < 1.0) {
 		return;
 	}
-	struct sockaddr *sa = (struct sockaddr *)&ss->udp_remote;
-	ss0_reset(ss->server, sa, ss->conv);
+	ss0_reset(ss->server, &ss->udp_remote.sa, ss->conv);
 	ss->last_send = now;
 	LOGD_F("session [%08" PRIX32 "] send: reset", ss->conv);
 	ss->state = STATE_TIME_WAIT;
@@ -154,8 +144,6 @@ void kcp_recv(struct session *restrict ss)
 	}
 	if (nrecv > 0) {
 		ss->wbuf_len += nrecv;
-		ss->stats.kcp_in += nrecv;
-		ss->server->stats.kcp_in += nrecv;
 		LOGV_F("session [%08" PRIX32
 		       "] kcp recv: %zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
@@ -232,7 +220,6 @@ void kcp_notify(struct session *restrict ss)
 	if (s->conf->kcp_flush) {
 		ikcp_flush(ss->kcp);
 	}
-	ss->kcp_checked = false;
 }
 
 static bool kcp_update_iter(
@@ -242,14 +229,14 @@ static bool kcp_update_iter(
 	UNUSED(key);
 	kcp_update((struct session *)value);
 	struct server *restrict s = user;
-	struct packet *restrict p = s->udp.packets;
-	return p->mq_send_len < MQ_SEND_SIZE;
+	struct pktqueue *restrict q = s->pkt.queue;
+	return q->mq_send_len < MQ_SEND_SIZE;
 }
 
 static void kcp_update_all(struct server *restrict s)
 {
-	struct packet *restrict p = s->udp.packets;
-	if (p->mq_send_len == MQ_SEND_SIZE) {
+	struct pktqueue *restrict q = s->pkt.queue;
+	if (q->mq_send_len == MQ_SEND_SIZE) {
 		return;
 	}
 	table_iterate(s->sessions, kcp_update_iter, s);

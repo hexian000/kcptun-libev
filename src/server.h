@@ -19,20 +19,22 @@ struct listener {
 	int fd;
 };
 
-struct udp_conn {
+struct pktconn {
 	struct ev_io w_read, w_write;
 	int fd;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;
-	struct packet *packets;
+	struct pktqueue *queue;
 	ev_tstamp inflight_ping;
 };
+
+#define MAX_SESSIONS 65536
 
 struct server {
 	struct config *conf;
 	struct ev_loop *loop;
 	struct listener listener;
-	struct udp_conn udp;
+	struct pktconn pkt;
 	struct hashtable *sessions;
 	struct ev_timer w_kcp_update;
 	struct ev_timer w_timer;
@@ -46,9 +48,12 @@ struct server {
 	double last_resolve_time;
 };
 
-struct server *server_start(struct ev_loop *loop, struct config *conf);
-void server_shutdown(struct server *s);
+struct server *server_new(struct ev_loop *loop, struct config *conf);
+bool server_start(struct server *s);
+bool server_resolve(struct server *s);
+void server_stop(struct server *s);
+void server_free(struct server *s);
 
-uint32_t conv_new(struct server *s);
+uint32_t conv_new(struct server *s, const struct sockaddr *sa);
 
 #endif /* SERVER_H */

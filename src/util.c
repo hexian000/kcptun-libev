@@ -109,7 +109,7 @@ void genpsk(const char *method)
 	char *keystr = b64_encode(key, crypto->key_size);
 	printf("%s\n", keystr);
 	util_free(key);
-	free(keystr);
+	util_free(keystr);
 	aead_free(crypto);
 }
 #endif

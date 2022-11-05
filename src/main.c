@@ -98,11 +98,18 @@ int main(int argc, char **argv)
 	slog_level = conf->log_level;
 
 	struct ev_loop *loop = ev_default_loop(0);
-	check(loop != NULL);
+	CHECK(loop != NULL);
 
-	struct server *restrict s = server_start(loop, conf);
+	struct server *restrict s = server_new(loop, conf);
 	if (s == NULL) {
+		LOGE_F("failed to init %s", runmode_str(conf->mode));
+		conf_free(conf);
+		return EXIT_FAILURE;
+	}
+	bool ok = server_start(s);
+	if (!ok) {
 		LOGE_F("failed to start %s", runmode_str(conf->mode));
+		server_free(s);
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
@@ -132,7 +139,8 @@ int main(int argc, char **argv)
 	ev_signal_stop(loop, &app.w_sigint);
 	ev_signal_stop(loop, &app.w_sigterm);
 
-	server_shutdown(s);
+	server_stop(s);
+	server_free(s);
 	LOGI_F("%s shutdown", runmode_str(conf->mode));
 	conf_free(conf);
 	LOGI("program terminated normally.");

@@ -5,13 +5,10 @@
 
 #if WITH_SODIUM
 #include <sodium.h>
-#endif
 
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#if WITH_CRYPTO
 
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
@@ -67,12 +64,9 @@ struct noncegen *noncegen_create(enum noncegen_method method, size_t nonce_len)
 
 void noncegen_init(struct noncegen *restrict g)
 {
-	if (g->method != noncegen_counter) {
-		return;
-	}
 	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
-	for (size_t i = 0; i < countof(g->src); i++) {
-		g->src[i] = rand32();
+	if (g->method == noncegen_counter) {
+		randombytes_buf(g->src, sizeof(g->src));
 	}
 }
 
@@ -100,12 +94,7 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 /* higher packet entropy */
 static void noncegen_fill_random(struct noncegen *restrict g)
 {
-	assert(WITH_SODIUM);
-#if WITH_SODIUM
 	randombytes_buf(g->nonce_buf, g->nonce_len);
-#else
-	noncegen_fill_counter(g);
-#endif
 }
 
 const unsigned char *noncegen_next(struct noncegen *restrict g)
@@ -137,4 +126,4 @@ void noncegen_free(struct noncegen *g)
 	util_free(g);
 }
 
-#endif /* WITH_CRYPTO */
+#endif /* WITH_SODIUM */

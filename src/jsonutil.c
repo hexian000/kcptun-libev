@@ -108,6 +108,6 @@ unsigned char *parse_b64_json(const json_value *value, size_t *restrict outlen)
 	}
 	unsigned char *data = util_malloc(*outlen);
 	memcpy(data, b, *outlen);
-	free(b);
+	util_free(b);
 	return data;
 }

@@ -16,6 +16,7 @@
 #include <stdint.h>
 
 struct server;
+struct msgframe;
 
 struct tlv_header {
 	uint16_t msg;
@@ -61,7 +62,7 @@ enum session_state {
 struct link_stats {
 	size_t tcp_in, tcp_out;
 	size_t kcp_in, kcp_out;
-	size_t udp_in, udp_out;
+	size_t pkt_in, pkt_out;
 };
 
 struct IKCPCB;
@@ -96,5 +97,26 @@ void session_shutdown(struct session *ss);
 void session_on_msg(struct session *ss, struct tlv_header *hdr);
 
 void session_close_all(struct hashtable *t);
+
+/* session 0 messages */
+enum session0_messages {
+	S0MSG_PING = 0x0000,
+	S0MSG_PONG = 0x0001,
+	S0MSG_RESET = 0x0002,
+};
+
+struct session0_header {
+	uint32_t zero;
+	uint16_t what;
+};
+
+#define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
+
+bool ss0_send(
+	struct server *s, struct sockaddr *sa, uint16_t what,
+	const unsigned char *b, size_t n);
+void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv);
+
+void session0(struct server *restrict s, struct msgframe *restrict msg);
 
 #endif /* SESSION_H */

@@ -1,24 +1,24 @@
+#include "event.h"
 #include "event_impl.h"
 #include "hashtable.h"
-#include "kcp/ikcp.h"
-#include "session.h"
+#include "server.h"
+#include "pktqueue.h"
 #include "slog.h"
 #include "sockutil.h"
 
 #include "util.h"
-
 #include <ev.h>
-#include <string.h>
-#include <sys/socket.h>
+
+#include <inttypes.h>
 
 static void accept_one(
 	struct server *restrict s, const int fd,
 	const struct sockaddr *client_sa)
 {
 	/* Initialize and start watcher to read client requests */
-	uint32_t conv = conv_new(s);
 	struct session *restrict ss;
-	const struct sockaddr *sa = s->conf->udp_connect.sa;
+	const struct sockaddr *sa = s->conf->pkt_connect.sa;
+	uint32_t conv = conv_new(s, sa);
 	ss = session_new(s, sa, conv);
 	if (ss == NULL) {
 		LOGE("accept: out of memory");
@@ -48,24 +48,30 @@ static void accept_one(
 void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	UNUSED(loop);
 
+	struct server *restrict s = watcher->data;
+	struct config *restrict cfg = s->conf;
 	sockaddr_max_t m_sa;
-	struct sockaddr *sa = (struct sockaddr *)&m_sa;
-	socklen_t sa_len;
+	socklen_t sa_len = sizeof(m_sa);
 	int client_fd;
 
 	while (true) {
 		sa_len = sizeof(m_sa);
 		// Accept client request
-		client_fd = accept(watcher->fd, sa, &sa_len);
+		client_fd = accept(watcher->fd, &m_sa.sa, &sa_len);
 		if (client_fd < 0) {
-			/* temporary errors */
-			if ((errno == EAGAIN) || (errno == EWOULDBLOCK) ||
-			    (errno == EINTR) || (errno == ENOMEM)) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK ||
+			    errno == EINTR || errno == ENOMEM) {
 				break;
 			}
 			LOGE_PERROR("accept");
+			return;
+		}
+		if (table_size(s->sessions) >= MAX_SESSIONS) {
+			close(client_fd);
+			LOG_RATELIMITED(
+				LOG_LEVEL_ERROR, loop, 1.0,
+				"* max session count exceeded, new connections refused");
 			return;
 		}
 		if (socket_setup(client_fd)) {
@@ -73,17 +79,10 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			close(client_fd);
 			return;
 		}
-		{
-			struct server *restrict s = watcher->data;
-			struct config *restrict cfg = s->conf;
-			socket_set_tcp(
-				client_fd, cfg->tcp_nodelay,
-				cfg->tcp_keepalive);
-			socket_set_buffer(
-				client_fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
-		}
+		socket_set_tcp(client_fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
+		socket_set_buffer(client_fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
 
-		accept_one((struct server *)watcher->data, client_fd, sa);
+		accept_one((struct server *)watcher->data, client_fd, &m_sa.sa);
 	}
 }
 
@@ -106,12 +105,11 @@ static size_t tcp_recv(struct session *restrict ss)
 		const ssize_t nread =
 			recv(ss->tcp_fd, buf, cap, MSG_DONTWAIT | MSG_NOSIGNAL);
 		if (nread < 0) {
-			const int err = errno;
-			/* temporary errors */
-			if (err == EAGAIN || err == EWOULDBLOCK ||
-			    err == EINTR || err == ENOMEM) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK ||
+			    errno == EINTR || errno == ENOMEM) {
 				break;
 			}
+			const int err = errno;
 			LOGE_F("session [%08" PRIX32 "] close: "
 			       "tcp recv error on fd %d: [%d] %s",
 			       ss->conv, ss->tcp_fd, err, strerror(err));
@@ -172,12 +170,11 @@ static size_t tcp_send(struct session *restrict ss)
 
 	ssize_t nsend = send(ss->tcp_fd, buf, len, MSG_DONTWAIT | MSG_NOSIGNAL);
 	if (nsend < 0) {
-		const int err = errno;
-		/* temporary errors */
-		if (err == EAGAIN || err == EWOULDBLOCK || err == EINPROGRESS ||
-		    err == ENOMEM) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
+		    errno == ENOMEM) {
 			return 0;
 		}
+		const int err = errno;
 		LOGE_F("session [%08" PRIX32 "] close: "
 		       "tcp send error on fd %d: [%d] %s",
 		       ss->conv, ss->tcp_fd, err, strerror(err));

@@ -75,8 +75,8 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 		if (!parse_int_json(&mtu, value)) {
 			return false;
 		}
-		if (mtu < 300 || mtu > 1500) {
-			LOGE_F("kcp.mtu out of range: %d - %d", 300, 1500);
+		if (mtu < 300 || mtu > 1400) {
+			LOGE_F("kcp.mtu out of range: %d - %d", 300, 1400);
 			return false;
 		}
 		conf->kcp_mtu = mtu;
@@ -170,11 +170,11 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 	}
 	if (strcmp(name, "udp_bind") == 0) {
 		char *str = parse_string_json(value);
-		return (conf->udp_bind.str = str) != NULL;
+		return (conf->pkt_bind.str = str) != NULL;
 	}
 	if (strcmp(name, "udp_connect") == 0) {
 		char *str = parse_string_json(value);
-		return (conf->udp_connect.str = str) != NULL;
+		return (conf->pkt_connect.str = str) != NULL;
 	}
 #if WITH_CRYPTO
 	if (strcmp(name, "method") == 0) {
@@ -190,6 +190,12 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
+#if WITH_OBFS
+	if (strcmp(name, "obfs") == 0) {
+		conf->obfs = parse_string_json(value);
+		return conf->obfs != NULL;
+	}
+#endif /* WITH_OBFS */
 	if (strcmp(name, "linger") == 0) {
 		return parse_int_json(&conf->linger, value);
 	}
@@ -231,16 +237,12 @@ const char *runmode_str(const int mode)
 	return str[mode];
 }
 
-static char *splithostport(const char *addr, char **hostname, char **service)
+static bool splithostport(char *str, char **hostname, char **service)
 {
-	char *str = util_strdup(addr);
-	if (str == NULL) {
-		return NULL;
-	}
 	char *port = strrchr(str, ':');
 	if (port == NULL) {
 		util_free(str);
-		return NULL;
+		return false;
 	}
 	*port = '\0';
 	port++;
@@ -261,28 +263,28 @@ static char *splithostport(const char *addr, char **hostname, char **service)
 	if (service != NULL) {
 		*service = port;
 	}
-	return str;
+	return true;
 }
 
-static bool resolve_netaddr(struct netaddr *restrict addr, int flags)
+bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 {
-	if (addr->str == NULL) {
-		/* there's nothing to do */
-		return true;
-	}
 	char *hostname = NULL;
 	char *service = NULL;
-	char *str = splithostport(addr->str, &hostname, &service);
+	char *str = util_strdup(addr->str);
 	if (str == NULL) {
-		LOGE_F("failed resolving address: %s", addr->str);
+		return NULL;
+	}
+	if (!splithostport(str, &hostname, &service)) {
+		LOGE_F("failed splitting address: \"%s\"", addr->str);
+		util_free(str);
 		return false;
 	}
 	struct sockaddr *sa = resolve(hostname, service, flags);
 	if (sa == NULL) {
+		LOGE_F("failed resolving address: \"%s\"", addr->str);
 		util_free(str);
 		return false;
 	}
-	UTIL_SAFE_FREE(str);
 	UTIL_SAFE_FREE(addr->sa);
 	addr->sa = sa;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
@@ -290,15 +292,8 @@ static bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
 	}
+	util_free(str);
 	return true;
-}
-
-void conf_resolve(struct config *conf)
-{
-	resolve_netaddr(&conf->listen, RESOLVE_TCP | RESOLVE_PASSIVE);
-	resolve_netaddr(&conf->connect, RESOLVE_TCP);
-	resolve_netaddr(&conf->udp_bind, RESOLVE_UDP | RESOLVE_PASSIVE);
-	resolve_netaddr(&conf->udp_connect, RESOLVE_UDP);
 }
 
 static struct config conf_default(void)
@@ -328,31 +323,11 @@ static struct config conf_default(void)
 static bool conf_check(struct config *restrict conf)
 {
 	/* 1. network address check */
-	conf_resolve(conf);
-	const struct sockaddr *sa = NULL;
-	if (conf->udp_bind.sa != NULL) {
-		sa = conf->udp_bind.sa;
-	}
-	if (conf->udp_connect.sa != NULL) {
-		if (sa != NULL) {
-			if (conf->udp_connect.sa->sa_family != sa->sa_family) {
-				LOGE("config: udp address must be in same network");
-				return false;
-			}
-		} else {
-			sa = conf->udp_connect.sa;
-		}
-	}
-	if (sa == NULL) {
-		LOGF("config: udp address is missing");
-		return false;
-	}
-	conf->udp_af = sa->sa_family;
 	int mode = 0;
-	if (conf->udp_bind.str != NULL && conf->connect.str != NULL) {
+	if (conf->pkt_bind.str != NULL && conf->connect.str != NULL) {
 		mode |= MODE_SERVER;
 	}
-	if (conf->listen.str != NULL && conf->udp_connect.str != NULL) {
+	if (conf->listen.str != NULL && conf->pkt_connect.str != NULL) {
 		mode |= MODE_CLIENT;
 	}
 	if (mode == 0) {
@@ -433,10 +408,15 @@ void conf_free(struct config *conf)
 {
 	netaddr_safe_free(&conf->listen);
 	netaddr_safe_free(&conf->connect);
-	netaddr_safe_free(&conf->udp_bind);
-	netaddr_safe_free(&conf->udp_connect);
+	netaddr_safe_free(&conf->pkt_bind);
+	netaddr_safe_free(&conf->pkt_connect);
+#if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);
 	UTIL_SAFE_FREE(conf->password);
 	UTIL_SAFE_FREE(conf->psk);
+#endif
+#if WITH_OBFS
+	UTIL_SAFE_FREE(conf->obfs);
+#endif
 	util_free(conf);
 }

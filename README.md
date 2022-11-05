@@ -44,9 +44,9 @@ For your convenience, some statically-linked executables are also provided in th
 
 ## Security
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, security and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed.
+If the encryption is not enabled or not even compiled, no packet overhead is consumed. Therefore, please note that exposing an unencrypted instance on the public networks is considered insecure.
 
 In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 

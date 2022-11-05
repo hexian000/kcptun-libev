@@ -13,15 +13,38 @@
 
 #define UNUSED(x) (void)(x)
 
-#define check(cond)                                                            \
+#ifdef NDEBUG
+#define CHECK_FAILED() exit(EXIT_FAILURE)
+#else
+#define CHECK_FAILED() abort()
+#endif
+
+#define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
 		if (!(cond)) {                                                 \
-			LOGF("assertion failed: " #cond);                      \
-			abort();                                               \
+			LOGF_F("runtime check failed: " format, __VA_ARGS__);  \
+			CHECK_FAILED();                                        \
 		}                                                              \
 	} while (0)
 
+#define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)
+
+#define CHECK(cond) CHECKMSGF(cond, "\"%s\"", #cond)
+
+#define CHECKERR(cond, msg)                                                    \
+	do {                                                                   \
+		if (!(cond)) {                                                 \
+			const int err = errno;                                 \
+			CHECKMSGF("%s, [%d] %s", msg, err, strerror(err));     \
+			CHECK_FAILED();                                        \
+		}                                                              \
+	} while (0)
+
+#define LOGOOM() LOGE("out of memory")
+
 #define countof(array) (sizeof(array) / sizeof((array)[0]))
+
+#define TSTAMP_NIL (-1.0)
 
 static inline void *util_malloc(size_t n)
 {
@@ -42,7 +65,7 @@ static inline void *must_malloc(size_t n)
 {
 	void *p = util_malloc(n);
 	if (p == NULL) {
-		LOGF("fatal: out of memory");
+		LOGOOM();
 		exit(EXIT_FAILURE);
 	}
 	return p;

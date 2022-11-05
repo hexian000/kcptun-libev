@@ -9,15 +9,14 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-typedef struct {
-	uint32_t b[7];
+typedef union {
+	struct sockaddr sa;
+	struct sockaddr_in in;
+	struct sockaddr_in6 in6;
 } sockaddr_max_t;
 _Static_assert(
-	sizeof(sockaddr_max_t) >= sizeof(struct sockaddr_in),
-	"unexpected inet4 address size");
-_Static_assert(
-	sizeof(sockaddr_max_t) >= sizeof(struct sockaddr_in6),
-	"unexpected inet6 address size");
+	sizeof(sockaddr_max_t) <= sizeof(uint32_t[7]),
+	"unexpected sockaddr size");
 
 int socket_setup(int fd);
 void socket_set_reuseport(int fd, bool reuseport);
@@ -25,6 +24,7 @@ void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
 
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
+uint32_t conv_get(const hashkey_t *key);
 
 socklen_t getsocklen(const struct sockaddr *sa);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);

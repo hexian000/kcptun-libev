@@ -3,7 +3,8 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <sys/socket.h>
+
+struct sockaddr;
 
 struct netaddr {
 	char *str;
@@ -21,9 +22,8 @@ const char *runmode_str(int mode);
 struct config {
 	struct netaddr listen;
 	struct netaddr connect;
-	struct netaddr udp_bind;
-	struct netaddr udp_connect;
-	int udp_af;
+	struct netaddr pkt_bind;
+	struct netaddr pkt_connect;
 
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
@@ -36,10 +36,16 @@ struct config {
 	int tcp_sndbuf, tcp_rcvbuf;
 	int udp_sndbuf, udp_rcvbuf;
 
+#if WITH_CRYPTO
 	char *method;
 	char *password;
 	unsigned char *psk;
 	size_t psklen;
+#endif
+
+#if WITH_OBFS
+	char *obfs;
+#endif
 
 	int timeout, linger, keepalive, time_wait;
 	int log_level;
@@ -48,6 +54,6 @@ struct config {
 struct config *conf_read(const char *path);
 void conf_free(struct config *conf);
 
-void conf_resolve(struct config *conf);
+bool resolve_netaddr(struct netaddr *restrict addr, int flags);
 
 #endif /* CONF_H */
