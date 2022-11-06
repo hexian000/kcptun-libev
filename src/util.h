@@ -90,6 +90,8 @@ uint32_t tstamp2ms(const ev_tstamp t);
 
 void init(void);
 
+void drop_privileges(const char *user);
+
 void genpsk(const char *method);
 
 #endif /* UTIL_H */

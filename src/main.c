@@ -15,6 +15,8 @@
 
 static struct {
 	const char *conf_path;
+	const char *user_name;
+	int verbosity;
 	struct ev_signal w_sighup;
 	struct ev_signal w_sigint;
 	struct ev_signal w_sigterm;
@@ -26,9 +28,12 @@ static void print_usage(char *argv0)
 {
 	fprintf(stderr, "usage: %s <option>... \n", argv0);
 	fprintf(stderr, "%s",
-		"  -h, --help                 show usage\n"
+		"  -h, --help                 show usage and exit\n"
 		"  -c, --config <file>        specify json config\n"
+		"  -u, --user <name>          run as the specified limited user, e.g. nobody\n"
+		"  -v, --verbose              increase verbosity\n"
 #if WITH_CRYPTO
+		"  --list-methods             list supported crypto methods and exit\n"
 		"  --genpsk <method>          generate random preshared key for specified method\n"
 #endif
 		"\n");
@@ -54,7 +59,23 @@ static void parse_args(int argc, char **argv)
 			app.conf_path = argv[++i];
 			continue;
 		}
+		if (strcmp(argv[i], "-u") == 0 ||
+		    strcmp(argv[i], "--user") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr,
+					"option \"%s\" requires an argument\n",
+					argv[i]);
+				print_usage(argv[0]);
+				exit(EXIT_FAILURE);
+			}
+			app.user_name = argv[++i];
+			continue;
+		}
 #if WITH_CRYPTO
+		if (strcmp(argv[i], "--list-methods") == 0) {
+			aead_list_methods();
+			exit(EXIT_FAILURE);
+		}
 		if (strcmp(argv[i], "--genpsk") == 0) {
 			if (i + 1 >= argc) {
 				fprintf(stderr,
@@ -67,6 +88,10 @@ static void parse_args(int argc, char **argv)
 			exit(EXIT_SUCCESS);
 		}
 #endif
+		if (strcmp(argv[i], "-v") == 0 ||
+		    strcmp(argv[i], "--verbose") == 0) {
+			app.verbosity++;
+		}
 		if (strcmp(argv[i], "--") == 0) {
 			continue;
 		}
@@ -95,7 +120,7 @@ int main(int argc, char **argv)
 		LOGE("failed to read config");
 		return EXIT_FAILURE;
 	}
-	slog_level = conf->log_level;
+	slog_level = conf->log_level + app.verbosity;
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
@@ -132,6 +157,7 @@ int main(int argc, char **argv)
 	}
 
 	// Start infinite loop
+	drop_privileges(app.user_name);
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 

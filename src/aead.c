@@ -127,7 +127,7 @@ static inline char *strmethod(const enum aead_method m)
 
 void aead_list_methods(void)
 {
-	fprintf(stderr, "methods available:\n");
+	fprintf(stderr, "supported methods:\n");
 	for (int i = 0; i < method_MAX; i++) {
 		fprintf(stderr, "  %s\n", strmethod(i));
 	}

@@ -2,6 +2,8 @@
 #include "aead.h"
 
 #include "kcp/ikcp.h"
+#include "slog.h"
+#include <stdbool.h>
 
 #define b64_malloc(ptr) util_malloc(ptr)
 #define b64_realloc(ptr, size) util_realloc(ptr, size)
@@ -12,6 +14,13 @@
 #include <inttypes.h>
 #include <string.h>
 #include <time.h>
+
+#include <sys/types.h>
+#include <unistd.h>
+#include <pwd.h>
+#if _BSD_SOURCE || _GNU_SOURCE
+#include <grp.h>
+#endif
 
 void print_bin(const void *b, const size_t n)
 {
@@ -93,6 +102,43 @@ void init(void)
 {
 	ev_set_allocator(&ev_realloc);
 	ikcp_allocator(&kcp_malloc, &kcp_free);
+}
+
+bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
+{
+	struct passwd *restrict pwd = getpwnam(name);
+	if (pwd == NULL) {
+		LOGW_PERROR("getpwnam");
+		return false;
+	}
+	*userid = pwd->pw_uid;
+	*groupid = pwd->pw_gid;
+	return true;
+}
+
+void drop_privileges(const char *user)
+{
+	struct passwd *restrict pwd = getpwnam(user);
+	if (pwd == NULL) {
+		LOGW_F("unknown user: %s", user);
+		return;
+	}
+	LOGD_F("dropping privileges: user=%s uid=%jd gid=%jd", user,
+	       (intmax_t)pwd->pw_uid, (intmax_t)pwd->pw_gid);
+#if _BSD_SOURCE || _GNU_SOURCE
+	if (setgroups(0, NULL) != 0) {
+		LOGW_PERROR("unable to drop supplementary group privileges");
+	}
+#endif
+	if (setgid(pwd->pw_gid) != 0 || setegid(pwd->pw_gid) != 0) {
+		LOGW_PERROR("unable to drop group privileges");
+	}
+	if (setuid(pwd->pw_uid) != 0 || seteuid(pwd->pw_uid) != 0) {
+		LOGW_PERROR("unable to drop user privileges");
+	}
+	if (chdir("/") != 0) {
+		LOGW_PERROR("chdir");
+	}
 }
 
 #if WITH_CRYPTO
