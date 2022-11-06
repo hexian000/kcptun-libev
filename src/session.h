@@ -79,7 +79,7 @@ struct session {
 	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
 	size_t rbuf_len;
 	size_t wbuf_len, wbuf_navail, wbuf_flush;
-	sockaddr_max_t udp_remote;
+	sockaddr_max_t raddr;
 	uint32_t conv;
 	double last_send, last_recv;
 	struct link_stats stats;

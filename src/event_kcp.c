@@ -15,7 +15,7 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	struct session *restrict ss = (struct session *)user;
 	struct server *restrict s = ss->server;
 	struct pktqueue *q = s->pkt.queue;
-	struct msgframe *restrict msg = msgframe_new(q, &ss->udp_remote.sa);
+	struct msgframe *restrict msg = msgframe_new(q, &ss->raddr.sa);
 	if (msg == NULL) {
 		return -1;
 	}
@@ -105,7 +105,7 @@ void kcp_reset(struct session *ss)
 	    now - ss->last_send < 1.0) {
 		return;
 	}
-	ss0_reset(ss->server, &ss->udp_remote.sa, ss->conv);
+	ss0_reset(ss->server, &ss->raddr.sa, ss->conv);
 	ss->last_send = now;
 	LOGD_F("session [%08" PRIX32 "] send: reset", ss->conv);
 	ss->state = STATE_TIME_WAIT;

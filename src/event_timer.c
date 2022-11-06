@@ -27,11 +27,17 @@ static bool print_session_iter(
 	struct session *restrict ss = value;
 	struct session_stats *restrict stat = user;
 	stat->data[ss->state]++;
+	switch (ss->state) {
+	case STATE_TIME_WAIT:
+		return true;
+	default:
+		break;
+	}
 	char addr_str[64];
-	format_sa(&ss->udp_remote.sa, addr_str, sizeof(addr_str));
-	LOGD_F("session [%08" PRIX32
-	       "] peer=%s state=%d age=%.0fs tx=%zu rx=%zu rtt=%" PRId32
-	       " rto=%" PRId32 " waitsnd=%d",
+	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
+	LOGD_F("session [%08" PRIX32 "] "
+	       "peer=%s state=%d age=%.0fs tx=%zu rx=%zu "
+	       "rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d",
 	       ss->conv, addr_str, ss->state, stat->now - ss->created,
 	       ss->stats.tcp_in, ss->stats.tcp_out, ss->kcp->rx_srtt,
 	       ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp));

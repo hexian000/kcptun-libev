@@ -161,9 +161,9 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 			LOGD_F("session accepted from: %s", addr_str);
 		}
 	}
-	if (!sa_equals(sa, &ss->udp_remote.sa)) {
+	if (!sa_equals(sa, &ss->raddr.sa)) {
 		char oaddr_str[64];
-		format_sa(&ss->udp_remote.sa, oaddr_str, sizeof(oaddr_str));
+		format_sa(&ss->raddr.sa, oaddr_str, sizeof(oaddr_str));
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGW_F("session [%08" PRIX32 "] conv conflict: "

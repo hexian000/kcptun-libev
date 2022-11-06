@@ -96,11 +96,15 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	return ctx;
 }
 
-static void obfs_ctx_free(struct obfs_ctx *ctx)
+static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 {
 	if (ctx == NULL) {
 		return;
 	}
+	struct ev_io *restrict w_read = &ctx->w_read;
+	ev_io_stop(loop, w_read);
+	struct ev_io *restrict w_write = &ctx->w_write;
+	ev_io_stop(loop, w_write);
 	if (ctx->fd != -1) {
 		(void)close(ctx->fd);
 		ctx->fd = -1;
@@ -153,8 +157,7 @@ obfs_ctx_start(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	struct obfs_ctx *restrict old_ctx = NULL;
 	if (table_del(obfs->contexts, &key, (void **)&old_ctx)) {
-		obfs_ctx_stop(obfs->loop, old_ctx);
-		obfs_ctx_free(old_ctx);
+		obfs_ctx_free(loop, old_ctx);
 	}
 	const bool ok = table_set(obfs->contexts, &key, ctx);
 	if (!ok) {
@@ -202,7 +205,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 	if (connect(fd, sa, getsocklen(sa))) {
 		if (errno != EINPROGRESS) {
 			LOGE_PERROR("obfs tcp connect");
-			obfs_ctx_free(ctx);
+			obfs_ctx_free(obfs->loop, ctx);
 			return false;
 		}
 	}
@@ -216,7 +219,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 	socklen_t len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		LOGE_PERROR("obfs client name");
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(obfs->loop, ctx);
 		return false;
 	}
 	obfs->bind_port = ntohs(ctx->laddr.in.sin_port);
@@ -232,7 +235,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 		w_write->data = ctx;
 	}
 	if (!obfs_ctx_start(obfs, ctx)) {
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(obfs->loop, ctx);
 		return false;
 	}
 	obfs->client = ctx;
@@ -259,8 +262,7 @@ static bool obfs_ctx_timeout_filt(
 		LOGD_F("obfs: timeout ctx %s <-> %s after %.1fs", laddr, raddr,
 		       not_seen);
 	}
-	obfs_ctx_stop(obfs->loop, ctx);
-	obfs_ctx_free(ctx);
+	obfs_ctx_free(obfs->loop, ctx);
 	return false;
 }
 
@@ -444,8 +446,7 @@ static bool obfs_shutdown_filt(
 	UNUSED(key);
 	struct obfs_ctx *restrict ctx = (struct obfs_ctx *)value;
 	struct obfs *restrict obfs = (struct obfs *)user;
-	obfs_ctx_stop(obfs->loop, ctx);
-	obfs_ctx_free(ctx);
+	obfs_ctx_free(obfs->loop, ctx);
 	return false;
 }
 
@@ -694,7 +695,6 @@ static size_t http_server_date(char *buf, size_t buf_size)
 void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	UNUSED(loop);
 
 	struct obfs *restrict obfs = watcher->data;
 	sockaddr_max_t m_sa;
@@ -716,7 +716,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		LOGE_PERROR("obfs accept name");
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -728,7 +728,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		LOGD_F("obfs: accept %s", addr_str);
 	}
 	if (!obfs_ctx_start(obfs, ctx)) {
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(loop, ctx);
 	}
 }
 
@@ -748,10 +748,9 @@ void http_server_read_cb(
 			return;
 		}
 		LOGE_PERROR("read");
-		obfs_ctx_stop(loop, ctx);
 		/* harden for SYN flood */
 		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 	buf[nbrecv] = '\0';
@@ -760,10 +759,9 @@ void http_server_read_cb(
 	if (regexec(pat, buf, 1, &m, 0) != 0) {
 		/* bad request */
 		LOGD("http bad request");
-		obfs_ctx_stop(loop, ctx);
 		/* harden for DDoS attack */
 		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 
@@ -774,10 +772,9 @@ void http_server_read_cb(
 	ssize_t nbsend = write(watcher->fd, buf, n);
 	if (nbsend != n) {
 		LOGE_PERROR("write");
-		obfs_ctx_stop(loop, ctx);
 		/* harden for DDoS attack */
 		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 	LOGD("obfs: request handled");

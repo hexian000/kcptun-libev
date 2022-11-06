@@ -64,8 +64,8 @@ struct session *session_new(
 		session_free(ss);
 		return NULL;
 	}
-	memset(&ss->udp_remote, 0, sizeof(ss->udp_remote));
-	memcpy(&ss->udp_remote, addr, getsocklen(addr));
+	memset(&ss->raddr, 0, sizeof(ss->raddr));
+	memcpy(&ss->raddr, addr, getsocklen(addr));
 	LOGD_F("session [%08" PRIX32 "] new: %p", conv, (void *)ss);
 	return ss;
 }
@@ -74,6 +74,11 @@ void session_free(struct session *restrict ss)
 {
 	session_shutdown(ss);
 	LOGD_F("session [%08" PRIX32 "] free: %p", ss->conv, (void *)ss);
+	struct ev_loop *loop = ss->server->loop;
+	struct ev_io *restrict w_read = &ss->w_read;
+	ev_io_stop(loop, w_read);
+	struct ev_io *restrict w_write = &ss->w_write;
+	ev_io_stop(loop, w_write);
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
@@ -106,9 +111,13 @@ void session_shutdown(struct session *restrict ss)
 		       ss->tcp_fd);
 		struct ev_loop *loop = ss->server->loop;
 		struct ev_io *restrict w_read = &ss->w_read;
+		if (ev_is_active(w_read)) {
+			ev_io_stop(loop, w_read);
+		}
 		struct ev_io *restrict w_write = &ss->w_write;
-		ev_io_stop(loop, w_read);
-		ev_io_stop(loop, w_write);
+		if (ev_is_active(w_write)) {
+			ev_io_stop(loop, w_write);
+		}
 		close(ss->tcp_fd);
 		ss->tcp_fd = -1;
 	}
@@ -152,7 +161,7 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		const struct sockaddr *remote_sa =
-			(const struct sockaddr *)&ss->udp_remote;
+			(const struct sockaddr *)&ss->raddr;
 		char raddr_str[64];
 		format_sa(remote_sa, raddr_str, sizeof(raddr_str));
 		char addr_str[64];
