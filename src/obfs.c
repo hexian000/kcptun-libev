@@ -604,8 +604,10 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
-			LOGD_F("obfs: unrelated %" PRIu16 " bytes from %s",
-			       msg->len, addr_str);
+			LOG_RATELIMITEDF(
+				LOG_LEVEL_DEBUG, obfs->loop, 1.0,
+				"* obfs: unrelated %" PRIu16 " bytes from %s",
+				msg->len, addr_str);
 		}
 		return false;
 	}
@@ -614,7 +616,9 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 	if (LOGLEVEL(LOG_LEVEL_DEBUG) && tcp->rst) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
-		LOGD_F("obfs: rst from %s", addr_str);
+		LOG_RATELIMITEDF(
+			LOG_LEVEL_DEBUG, obfs->loop, 1.0, "* obfs: rst from %s",
+			addr_str);
 		return false;
 	}
 	ctx->last_seen = msg->ts;
@@ -635,8 +639,10 @@ bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
 	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
-		LOGW_F("obfs: can't send %" PRIu16 "bytes to unrelated %s",
-		       msg->len, addr_str);
+		LOG_RATELIMITEDF(
+			LOG_LEVEL_WARNING, obfs->loop, 1.0,
+			"* obfs: can't send %" PRIu16 " bytes to unrelated %s",
+			msg->len, addr_str);
 		return false;
 	}
 	if (!ctx->captured) {

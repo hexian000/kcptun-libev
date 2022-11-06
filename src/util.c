@@ -118,6 +118,9 @@ bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
 
 void drop_privileges(const char *user)
 {
+	if (user == NULL) {
+		return;
+	}
 	struct passwd *restrict pwd = getpwnam(user);
 	if (pwd == NULL) {
 		LOGW_F("unknown user: %s", user);
