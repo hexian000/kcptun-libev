@@ -3,10 +3,12 @@
 #include "hashtable.h"
 #include "server.h"
 #include "pktqueue.h"
+#include "session.h"
 #include "slog.h"
 #include "util.h"
 #include "sockutil.h"
 
+#include <assert.h>
 #include <ev.h>
 
 #include <unistd.h>
@@ -24,12 +26,16 @@ static void accept_one(
 	ss = session_new(s, sa, conv);
 	if (ss == NULL) {
 		LOGE("accept: out of memory");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return;
 	}
 	if (!kcp_dial(ss)) {
 		LOGE("kcp_dial: unexpected failure");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		session_free(ss);
 		return;
 	}
@@ -70,7 +76,9 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			return;
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
-			close(client_fd);
+			if (close(client_fd) != 0) {
+				LOGW_PERROR("close");
+			}
 			LOG_RATELIMITED(
 				LOG_LEVEL_ERROR, loop, 1.0,
 				"* max session count exceeded, new connections refused");
@@ -78,7 +86,9 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		if (socket_setup(client_fd)) {
 			LOGE_PERROR("fcntl");
-			close(client_fd);
+			if (close(client_fd) != 0) {
+				LOGW_PERROR("close");
+			}
 			return;
 		}
 		socket_set_tcp(client_fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
@@ -149,7 +159,8 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct session *restrict ss = (struct session *)watcher->data;
-	CHECK(ss->tcp_fd != -1);
+	assert(watcher->fd == ss->tcp_fd);
+	assert(watcher == &ss->w_read);
 	tcp_recv(ss);
 	kcp_notify(ss);
 }
@@ -158,6 +169,9 @@ static size_t tcp_send(struct session *restrict ss)
 {
 	const size_t navail = ss->wbuf_navail;
 	if (navail == 0) {
+		if (ss->state == STATE_LINGER) {
+			session_stop(ss);
+		}
 		return 0;
 	}
 
@@ -205,7 +219,7 @@ void tcp_notify_write(struct session *restrict ss)
 	if (ss->tcp_fd == -1) {
 		return;
 	}
-	if (ss->state != STATE_CONNECTED) {
+	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
 		return;
 	}
 	while (ss->wbuf_navail > 0) {
@@ -213,9 +227,12 @@ void tcp_notify_write(struct session *restrict ss)
 			break;
 		}
 		kcp_recv(ss);
+		if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
+			return;
+		}
 	}
 	struct ev_io *restrict w_write = &ss->w_write;
-	if (ss->wbuf_navail > 0 && !ev_is_active(w_write)) {
+	if (ss->wbuf_navail > 0 && ss->tcp_fd != -1 && !ev_is_active(w_write)) {
 		ev_io_start(ss->server->loop, w_write);
 	}
 }
@@ -225,7 +242,8 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct session *restrict ss = (struct session *)watcher->data;
-	CHECK(ss->tcp_fd != -1);
+	assert(watcher->fd == ss->tcp_fd);
+	assert(watcher == &ss->w_write);
 
 	if (ss->state == STATE_CONNECT) {
 		ss->state = STATE_CONNECTED;
@@ -235,6 +253,9 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 
 	for (kcp_recv(ss); ss->wbuf_navail > 0; kcp_recv(ss)) {
+		if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
+			return;
+		}
 		if (tcp_send(ss) == 0) {
 			return;
 		}

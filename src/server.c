@@ -36,7 +36,9 @@ static bool listener_start(struct server *restrict s, struct netaddr *addr)
 	}
 	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return false;
 	}
 	socket_set_reuseport(fd, cfg->tcp_reuseport);
@@ -46,14 +48,18 @@ static bool listener_start(struct server *restrict s, struct netaddr *addr)
 	// Bind socket to address
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
 		LOGE_PERROR("bind error");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return false;
 	}
 
 	// Start listing on the socket
 	if (listen(fd, 16)) {
 		LOGE_PERROR("listen error");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return false;
 	}
 
@@ -239,7 +245,9 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	ev_io_stop(loop, w_read);
 	struct ev_io *restrict w_write = &conn->w_write;
 	ev_io_stop(loop, w_write);
-	close(conn->fd);
+	if (close(conn->fd) != 0) {
+		LOGW_PERROR("close");
+	}
 	conn->fd = -1;
 }
 
@@ -262,7 +270,9 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 	LOGD_F("listener close: %d", l->fd);
 	struct ev_io *restrict w_accept = &l->w_accept;
 	ev_io_stop(loop, w_accept);
-	close(l->fd);
+	if (close(l->fd) != 0) {
+		LOGW_PERROR("close");
+	}
 	l->fd = -1;
 }
 

@@ -64,7 +64,7 @@ bool kcp_dial(struct session *restrict ss)
 		.len = TLV_HEADER_SIZE,
 	};
 	tlv_header_write(buf, header);
-	LOGD_F("session [%08" PRIX32 "] send dial", ss->conv);
+	LOGD_F("session [%08" PRIX32 "] send: dial", ss->conv);
 	return kcp_send(ss, buf, TLV_HEADER_SIZE);
 }
 
@@ -189,8 +189,8 @@ static void kcp_update(struct session *restrict ss)
 		ss->kcp_checked = true;
 	}
 	struct ev_io *restrict w_read = &ss->w_read;
-	const int waitsnd = ikcp_waitsnd(ss->kcp);
 	if (ss->tcp_fd != -1 && !ev_is_active(w_read)) {
+		const int waitsnd = ikcp_waitsnd(ss->kcp);
 		const int window_size = s->conf->kcp_sndwnd;
 		if (waitsnd < window_size) {
 			ev_io_start(s->loop, w_read);

@@ -113,7 +113,9 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		ev_io_stop(loop, w_read);
 		struct ev_io *restrict w_write = &ctx->w_write;
 		ev_io_stop(loop, w_write);
-		(void)close(ctx->fd);
+		if (close(ctx->fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		ctx->fd = -1;
 	}
 	util_free(ctx);
@@ -208,7 +210,9 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 	}
 	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return false;
 	}
 	obfs_tcp_setup(fd);
@@ -462,19 +466,25 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 	if (obfs->fd != -1) {
 		struct ev_io *restrict w_accept = &obfs->w_accept;
 		ev_io_stop(loop, w_accept);
-		close(obfs->fd);
+		if (close(obfs->fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		obfs->fd = -1;
 	}
 	if (obfs->cap_fd != -1) {
 		struct ev_io *restrict w_read = &pkt->w_read;
 		ev_io_stop(loop, w_read);
-		close(obfs->cap_fd);
+		if (close(obfs->cap_fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		obfs->cap_fd = -1;
 	}
 	if (obfs->raw_fd != -1) {
 		struct ev_io *restrict w_write = &pkt->w_write;
 		ev_io_stop(loop, w_write);
-		close(obfs->raw_fd);
+		if (close(obfs->raw_fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		obfs->raw_fd = -1;
 	}
 }
@@ -690,20 +700,26 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	const int fd = accept(watcher->fd, &m_sa.sa, &len);
 	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return;
 	}
 	struct obfs_ctx *restrict ctx = obfs_ctx_new(obfs);
 	if (ctx == NULL) {
 		LOGOOM();
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return;
 	}
 	memcpy(&ctx->raddr.sa, &m_sa, len);
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		LOGE_PERROR("obfs accept name");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		obfs_ctx_free(loop, ctx);
 		return;
 	}

@@ -4,6 +4,7 @@
 #include "hashtable.h"
 #include "server.h"
 #include "pktqueue.h"
+#include "slog.h"
 #include "sockutil.h"
 #include "util.h"
 
@@ -104,14 +105,15 @@ void session_stop(struct session *restrict ss)
 	if (ss->tcp_fd == -1) {
 		return;
 	}
-	LOGD_F("session [%08" PRIX32 "] shutdown, fd: %d", ss->conv,
-	       ss->tcp_fd);
+	LOGD_F("session [%08" PRIX32 "] stop, fd: %d", ss->conv, ss->tcp_fd);
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_stop(loop, w_read);
 	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_stop(loop, w_write);
-	close(ss->tcp_fd);
+	if (close(ss->tcp_fd) != 0) {
+		LOGW_PERROR("close");
+	}
 	ss->tcp_fd = -1;
 }
 
@@ -133,7 +135,9 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	}
 	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
-		close(fd);
+		if (close(fd) != 0) {
+			LOGW_PERROR("close");
+		}
 		return false;
 	}
 	{
@@ -200,8 +204,13 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 			break;
 		}
 		LOGI_F("session [%08" PRIX32 "] shutdown: eof", ss->conv);
-		ss->wbuf_len = 0;
-		session_stop(ss);
+		if (ss->tcp_fd != -1) {
+			struct ev_io *restrict w_read = &ss->w_read;
+			ev_io_stop(ss->server->loop, w_read);
+			if (shutdown(ss->tcp_fd, SHUT_RD) != 0) {
+				LOGW_PERROR("shutdown");
+			}
+		}
 		ss->state = STATE_LINGER;
 		return;
 	}
