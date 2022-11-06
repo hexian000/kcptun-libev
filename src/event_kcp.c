@@ -35,8 +35,6 @@ bool kcp_send(
 		return false;
 	}
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
-	/* invalidate last ikcp_check */
-	ss->kcp_checked = false;
 	ss->last_send = ev_now(ss->server->loop);
 	return true;
 }
@@ -53,6 +51,9 @@ static bool kcp_push(struct session *restrict ss)
 		return false;
 	}
 	ss->rbuf_len = 0;
+	if (ss->kcp_flush) {
+		ikcp_flush(ss->kcp);
+	}
 	return true;
 }
 
@@ -181,18 +182,14 @@ static void kcp_update(struct session *restrict ss)
 	struct server *restrict s = ss->server;
 	const ev_tstamp now = ev_now(s->loop);
 	const uint32_t now_ms = tstamp2ms(now);
-	if (!ss->kcp_checked || (int32_t)(now_ms - ss->kcp_next) >= 0) {
-		ikcp_update(ss->kcp, now_ms);
-		kcp_recv(ss);
-		tcp_notify_write(ss);
-		ss->kcp_next = ikcp_check(ss->kcp, now_ms);
-		ss->kcp_checked = true;
-	}
-	struct ev_io *restrict w_read = &ss->w_read;
-	if (ss->tcp_fd != -1 && !ev_is_active(w_read)) {
+	ikcp_update(ss->kcp, now_ms);
+	kcp_recv(ss);
+	tcp_notify_write(ss);
+	if (ss->state != STATE_LINGER && ss->tcp_fd != -1) {
+		struct ev_io *restrict w_read = &ss->w_read;
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
 		const int window_size = s->conf->kcp_sndwnd;
-		if (waitsnd < window_size) {
+		if (!ev_is_active(w_read) && waitsnd < window_size) {
 			ev_io_start(s->loop, w_read);
 		}
 	}
@@ -216,9 +213,6 @@ void kcp_notify(struct session *restrict ss)
 	}
 	if (!kcp_push(ss)) {
 		return;
-	}
-	if (s->conf->kcp_flush) {
-		ikcp_flush(ss->kcp);
 	}
 }
 

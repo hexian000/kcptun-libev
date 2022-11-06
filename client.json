@@ -6,7 +6,7 @@
         "sndwnd": 512,
         "rcvwnd": 512,
         "nodelay": 0,
-        "interval": 10,
+        "interval": 50,
         "resend": 3,
         "nc": 1
     },

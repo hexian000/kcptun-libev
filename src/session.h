@@ -70,7 +70,6 @@ struct IKCPCB;
 #define SESSION_BUF_SIZE 16384
 
 struct session {
-	bool is_accepted;
 	ev_tstamp created;
 	int state;
 	int tcp_fd;
@@ -84,8 +83,8 @@ struct session {
 	double last_send, last_recv;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
-	bool kcp_checked;
-	uint32_t kcp_next;
+	bool kcp_flush;
+	bool is_accepted;
 };
 
 struct session *

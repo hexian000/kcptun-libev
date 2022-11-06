@@ -20,14 +20,14 @@
 static ikcpcb *
 kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 {
-	ikcpcb *kcp = ikcp_create(conv, ss);
+	ikcpcb *restrict kcp = ikcp_create(conv, ss);
 	if (kcp == NULL) {
 		return NULL;
 	}
 	ikcp_wndsize(kcp, cfg->kcp_sndwnd, cfg->kcp_rcvwnd);
 	int mtu = cfg->kcp_mtu;
 #if WITH_CRYPTO
-	struct aead *crypto = ss->server->pkt.queue->crypto;
+	struct aead *restrict crypto = ss->server->pkt.queue->crypto;
 	if (crypto != NULL) {
 		mtu -= (int)(crypto->overhead + crypto->nonce_size);
 	}
@@ -56,7 +56,7 @@ struct session *session_new(
 		.server = s,
 		.tcp_fd = -1,
 		.conv = conv,
-		.kcp_checked = false,
+		.kcp_flush = s->conf->kcp_flush,
 		.last_send = now,
 		.last_recv = now,
 	};
@@ -150,10 +150,12 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	if (connect(fd, sa, getsocklen(sa)) != 0) {
 		if (errno != EINPROGRESS) {
 			LOGE_PERROR("connect");
-			return NULL;
+			return false;
 		}
+		ss->state = STATE_CONNECT;
+	} else {
+		ss->state = STATE_CONNECTED;
 	}
-	ss->state = STATE_CONNECT;
 
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		const struct sockaddr *remote_sa =
@@ -203,13 +205,11 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
-		LOGI_F("session [%08" PRIX32 "] shutdown: eof", ss->conv);
-		if (ss->tcp_fd != -1) {
-			struct ev_io *restrict w_read = &ss->w_read;
+		LOGI_F("session [%08" PRIX32 "] close: kcp closed by peer",
+		       ss->conv);
+		struct ev_io *restrict w_read = &ss->w_read;
+		if (ss->tcp_fd != -1 && ev_is_active(w_read)) {
 			ev_io_stop(ss->server->loop, w_read);
-			if (shutdown(ss->tcp_fd, SHUT_RD) != 0) {
-				LOGW_PERROR("shutdown");
-			}
 		}
 		ss->state = STATE_LINGER;
 		return;

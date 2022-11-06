@@ -146,7 +146,8 @@ static void tcp_recv(struct session *restrict ss)
 	}
 
 	if (tcp_eof) {
-		LOGI_F("session [%08" PRIX32 "] close: tcp closing", ss->conv);
+		LOGI_F("session [%08" PRIX32 "] close: tcp closed by peer",
+		       ss->conv);
 		// Stop and free session if client socket is closing
 		session_stop(ss);
 		kcp_close(ss);

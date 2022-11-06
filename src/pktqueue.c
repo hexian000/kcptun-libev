@@ -184,7 +184,6 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
-	ss->kcp_checked = false;
 }
 
 void packet_recv(struct pktqueue *restrict q, struct server *s)

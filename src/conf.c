@@ -76,7 +76,7 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 			return false;
 		}
 		if (mtu < 300 || mtu > 1400) {
-			LOGE_F("kcp.mtu out of range: %d - %d", 300, 1400);
+			LOGE("kcp.mtu out of range");
 			return false;
 		}
 		conf->kcp_mtu = mtu;
@@ -303,13 +303,13 @@ static struct config conf_default(void)
 {
 	return (struct config){
 		.kcp_mtu = 1400,
-		.kcp_sndwnd = 256,
-		.kcp_rcvwnd = 256,
+		.kcp_sndwnd = 512,
+		.kcp_rcvwnd = 512,
 		.kcp_nodelay = 0,
-		.kcp_interval = 10,
+		.kcp_interval = 50,
 		.kcp_resend = 3,
 		.kcp_nc = 1,
-		.kcp_flush = false,
+		.kcp_flush = true,
 		.password = NULL,
 		.psk = NULL,
 		.timeout = 600,
