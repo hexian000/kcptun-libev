@@ -413,6 +413,7 @@ void conf_free(struct config *conf)
 	netaddr_safe_free(&conf->connect);
 	netaddr_safe_free(&conf->pkt_bind);
 	netaddr_safe_free(&conf->pkt_connect);
+	UTIL_SAFE_FREE(conf->user);
 #if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);
 	UTIL_SAFE_FREE(conf->password);

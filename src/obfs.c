@@ -329,10 +329,6 @@ struct obfs *obfs_new(struct ev_loop *restrict loop, struct config *conf)
 bool obfs_resolve(struct obfs *obfs)
 {
 	struct config *restrict conf = obfs->conf;
-	if (conf->pkt_connect.str != NULL &&
-	    !resolve_netaddr(&conf->pkt_connect, RESOLVE_TCP)) {
-		return false;
-	}
 	if (conf->pkt_bind.str != NULL &&
 	    !resolve_netaddr(&conf->pkt_bind, RESOLVE_TCP | RESOLVE_PASSIVE)) {
 		return false;
@@ -368,9 +364,6 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 
 	if (conf->mode & MODE_SERVER) {
 		struct netaddr *restrict addr = &conf->pkt_bind;
-		if (!resolve_netaddr(addr, RESOLVE_TCP | RESOLVE_PASSIVE)) {
-			return false;
-		}
 		const struct sockaddr *restrict sa = addr->sa;
 		if (sa->sa_family != AF_INET) {
 			LOGE("obfs: currently only ipv4 is supported");
