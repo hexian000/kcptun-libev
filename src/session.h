@@ -93,7 +93,7 @@ session_new(struct server *s, const struct sockaddr *addr, uint32_t conv);
 void session_free(struct session *ss);
 
 void session_start(struct session *ss, int fd);
-void session_shutdown(struct session *ss);
+void session_stop(struct session *ss);
 void session_on_msg(struct session *ss, struct tlv_header *hdr);
 
 void session_close_all(struct hashtable *t);

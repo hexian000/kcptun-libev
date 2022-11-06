@@ -79,9 +79,16 @@ http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 http_server_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
+http_server_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+static void
 http_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 http_client_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+
+static bool obfs_is_client(struct obfs *restrict obfs)
+{
+	return !!(obfs->conf->mode & MODE_CLIENT);
+}
 
 static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 {
@@ -112,11 +119,6 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 	util_free(ctx);
 }
 
-static bool obfs_is_client(struct obfs *restrict obfs)
-{
-	return !!(obfs->conf->mode & MODE_CLIENT);
-}
-
 static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 {
 	hashkey_t key;
@@ -136,15 +138,29 @@ static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 	}
 }
 
-static bool
-obfs_ctx_start(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
+static bool obfs_ctx_start(
+	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
 {
+	ctx->fd = fd;
 	struct ev_loop *loop = obfs->loop;
-	struct ev_io *restrict w_read = &ctx->w_read;
-	ev_io_start(loop, w_read);
 	if (obfs_is_client(obfs)) {
+		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io_init(w_read, http_client_read_cb, fd, EV_READ);
+		w_read->data = ctx;
+		ev_io_start(loop, w_read);
 		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io_init(w_write, http_client_write_cb, fd, EV_WRITE);
+		w_write->data = ctx;
 		ev_io_start(loop, w_write);
+	} else {
+		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io_init(w_read, http_server_read_cb, fd, EV_READ);
+		w_read->data = ctx;
+		ev_io_start(loop, w_read);
+		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io_init(w_write, http_server_write_cb, fd, EV_WRITE);
+		w_write->data = ctx;
+		/* w_write is not used on the server side */
 	}
 	ctx->last_seen = ev_now(loop);
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
@@ -200,7 +216,6 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 	if (ctx == NULL) {
 		return false;
 	}
-	ctx->fd = fd;
 
 	if (connect(fd, sa, getsocklen(sa))) {
 		if (errno != EINPROGRESS) {
@@ -225,16 +240,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 	obfs->bind_port = ntohs(ctx->laddr.in.sin_port);
 	LOGD_F("obfs: cap bind %" PRIu16, obfs->bind_port);
 
-	{
-		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, &http_client_read_cb, fd, EV_READ);
-		w_read->data = ctx;
-
-		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, &http_client_write_cb, fd, EV_WRITE);
-		w_write->data = ctx;
-	}
-	if (!obfs_ctx_start(obfs, ctx)) {
+	if (!obfs_ctx_start(obfs, ctx, fd)) {
 		obfs_ctx_free(obfs->loop, ctx);
 		return false;
 	}
@@ -450,7 +456,7 @@ static bool obfs_shutdown_filt(
 	return false;
 }
 
-void obfs_stop(struct obfs *obfs, struct server *s)
+void obfs_stop(struct obfs *restrict obfs, struct server *s)
 {
 	struct pktconn *restrict pkt = &s->pkt;
 	table_filter(obfs->contexts, obfs_shutdown_filt, obfs);
@@ -458,30 +464,25 @@ void obfs_stop(struct obfs *obfs, struct server *s)
 	struct ev_loop *loop = obfs->loop;
 	{
 		struct ev_timer *restrict w_timer = &obfs->w_timer;
-		if (ev_is_active(w_timer)) {
-			ev_timer_stop(loop, w_timer);
-		}
+		ev_timer_stop(loop, w_timer);
 	}
 	if (obfs->fd != -1) {
 		struct ev_io *restrict w_accept = &obfs->w_accept;
-		if (ev_is_active(w_accept)) {
-			ev_io_stop(loop, w_accept);
-		}
+		ev_io_stop(loop, w_accept);
 		close(obfs->fd);
+		obfs->fd = -1;
 	}
 	if (obfs->cap_fd != -1) {
 		struct ev_io *restrict w_read = &pkt->w_read;
-		if (ev_is_active(w_read)) {
-			ev_io_stop(loop, w_read);
-		}
+		ev_io_stop(loop, w_read);
 		close(obfs->cap_fd);
+		obfs->cap_fd = -1;
 	}
 	if (obfs->raw_fd != -1) {
 		struct ev_io *restrict w_write = &pkt->w_write;
-		if (ev_is_active(w_write)) {
-			ev_io_stop(loop, w_write);
-		}
+		ev_io_stop(loop, w_write);
 		close(obfs->raw_fd);
+		obfs->raw_fd = -1;
 	}
 }
 
@@ -489,18 +490,6 @@ void obfs_free(struct obfs *obfs)
 {
 	if (obfs == NULL) {
 		return;
-	}
-	if (obfs->fd != -1) {
-		close(obfs->fd);
-		obfs->fd = -1;
-	}
-	if (obfs->cap_fd != -1) {
-		close(obfs->cap_fd);
-		obfs->cap_fd = -1;
-	}
-	if (obfs->raw_fd != -1) {
-		close(obfs->raw_fd);
-		obfs->raw_fd = -1;
 	}
 	if (obfs->contexts != NULL) {
 		table_free(obfs->contexts);
@@ -717,11 +706,11 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		close(fd);
 		return;
 	}
-	ctx->fd = fd;
 	memcpy(&ctx->raddr.sa, &m_sa, len);
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		LOGE_PERROR("obfs accept name");
+		close(fd);
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
@@ -733,7 +722,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		format_sa(&m_sa.sa, addr_str, sizeof(addr_str));
 		LOGD_F("obfs: accept %s", addr_str);
 	}
-	if (!obfs_ctx_start(obfs, ctx)) {
+	if (!obfs_ctx_start(obfs, ctx, fd)) {
 		obfs_ctx_free(loop, ctx);
 	}
 }
@@ -784,6 +773,13 @@ void http_server_read_cb(
 		return;
 	}
 	LOGD("obfs: request handled");
+}
+
+void http_server_write_cb(
+	struct ev_loop *loop, struct ev_io *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	ev_io_stop(loop, watcher);
 }
 
 void http_client_read_cb(

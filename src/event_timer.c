@@ -125,7 +125,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		if (not_seen > s->dial_timeout) {
 			LOGW_F("session [%08" PRIX32 "] close: dial timed out",
 			       ss->conv);
-			session_shutdown(ss);
+			session_stop(ss);
 			kcp_close(ss);
 			return true;
 		}
@@ -136,7 +136,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 			LOGW_F("session [%08" PRIX32 "] close: "
 			       "timed out in state %d",
 			       ss->conv, ss->state);
-			session_shutdown(ss);
+			session_stop(ss);
 			kcp_close(ss);
 			return true;
 		}

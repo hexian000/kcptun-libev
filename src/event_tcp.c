@@ -115,7 +115,7 @@ static size_t tcp_recv(struct session *restrict ss)
 			LOGE_F("session [%08" PRIX32 "] close: "
 			       "tcp recv error on fd %d: [%d] %s",
 			       ss->conv, ss->tcp_fd, err, strerror(err));
-			session_shutdown(ss);
+			session_stop(ss);
 			kcp_reset(ss);
 			return 0;
 		}
@@ -138,7 +138,7 @@ static size_t tcp_recv(struct session *restrict ss)
 	if (tcp_eof) {
 		LOGI_F("session [%08" PRIX32 "] close: tcp closing", ss->conv);
 		// Stop and free session if client socket is closing
-		session_shutdown(ss);
+		session_stop(ss);
 		kcp_close(ss);
 	}
 	return len;
@@ -180,7 +180,7 @@ static size_t tcp_send(struct session *restrict ss)
 		LOGE_F("session [%08" PRIX32 "] close: "
 		       "tcp send error on fd %d: [%d] %s",
 		       ss->conv, ss->tcp_fd, err, strerror(err));
-		session_shutdown(ss);
+		session_stop(ss);
 		kcp_reset(ss);
 		return 0;
 	}

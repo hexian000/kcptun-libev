@@ -72,13 +72,8 @@ struct session *session_new(
 
 void session_free(struct session *restrict ss)
 {
-	session_shutdown(ss);
+	session_stop(ss);
 	LOGD_F("session [%08" PRIX32 "] free: %p", ss->conv, (void *)ss);
-	struct ev_loop *loop = ss->server->loop;
-	struct ev_io *restrict w_read = &ss->w_read;
-	ev_io_stop(loop, w_read);
-	struct ev_io *restrict w_write = &ss->w_write;
-	ev_io_stop(loop, w_write);
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
@@ -93,31 +88,27 @@ void session_start(struct session *restrict ss, const int fd)
 	// Initialize and start watchers to transfer data
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
-	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_init(w_read, read_cb, fd, EV_READ);
 	w_read->data = ss;
 	if (ss->state == STATE_CONNECTED) {
 		ev_io_start(loop, w_read);
 	}
+	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_init(w_write, write_cb, fd, EV_WRITE);
 	w_write->data = ss;
 	ev_io_start(loop, w_write);
 }
 
-void session_shutdown(struct session *restrict ss)
+void session_stop(struct session *restrict ss)
 {
 	if (ss->tcp_fd != -1) {
 		LOGD_F("session [%08" PRIX32 "] shutdown, fd: %d", ss->conv,
 		       ss->tcp_fd);
 		struct ev_loop *loop = ss->server->loop;
 		struct ev_io *restrict w_read = &ss->w_read;
-		if (ev_is_active(w_read)) {
-			ev_io_stop(loop, w_read);
-		}
+		ev_io_stop(loop, w_read);
 		struct ev_io *restrict w_write = &ss->w_write;
-		if (ev_is_active(w_write)) {
-			ev_io_stop(loop, w_write);
-		}
+		ev_io_stop(loop, w_write);
 		close(ss->tcp_fd);
 		ss->tcp_fd = -1;
 	}
@@ -209,7 +200,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		}
 		LOGI_F("session [%08" PRIX32 "] shutdown: eof", ss->conv);
 		ss->wbuf_len = 0;
-		session_shutdown(ss);
+		session_stop(ss);
 		ss->state = STATE_LINGER;
 		return;
 	}
@@ -337,7 +328,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	LOGI_F("session [%08" PRIX32 "] close: session reset by peer", conv);
-	session_shutdown(ss);
+	session_stop(ss);
 	ss->state = STATE_TIME_WAIT;
 }
 
