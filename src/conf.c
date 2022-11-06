@@ -221,6 +221,10 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		conf->log_level = l;
 		return true;
 	}
+	if (strcmp(name, "user") == 0) {
+		conf->user = parse_string_json(value);
+		return conf->user != NULL;
+	}
 	LOGW_F("unknown config: \"%s\"", name);
 	return true;
 }

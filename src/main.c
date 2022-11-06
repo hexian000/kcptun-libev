@@ -157,7 +157,7 @@ int main(int argc, char **argv)
 	}
 
 	// Start infinite loop
-	drop_privileges(app.user_name);
+	drop_privileges(app.user_name ? app.user_name : conf->user);
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 

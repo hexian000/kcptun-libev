@@ -43,11 +43,12 @@ struct config {
 #endif
 
 #if WITH_OBFS
-	char *obfs;
+	const char *obfs;
 #endif
 
 	int timeout, linger, keepalive, time_wait;
 	int log_level;
+	const char *user;
 };
 
 struct config *conf_read(const char *path);
