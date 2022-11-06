@@ -230,7 +230,6 @@ const char *runmode_str(const int mode)
 	static const char *str[] = {
 		[MODE_SERVER] = "server",
 		[MODE_CLIENT] = "client",
-		[MODE_PEER] = "peer",
 	};
 	assert(mode >= 0);
 	assert((size_t)mode < countof(str));
@@ -330,7 +329,7 @@ static bool conf_check(struct config *restrict conf)
 	if (conf->listen.str != NULL && conf->pkt_connect.str != NULL) {
 		mode |= MODE_CLIENT;
 	}
-	if (mode == 0) {
+	if (mode != MODE_SERVER && mode != MODE_CLIENT) {
 		LOGF("config: no forward could be provided (are you missing some address field?)");
 		return false;
 	}
@@ -345,29 +344,29 @@ static bool conf_check(struct config *restrict conf)
 	/* 3. range check */
 	if (conf->kcp_interval < 10 || conf->kcp_interval > 500) {
 		conf->kcp_interval = 50;
-		LOGW_F("config: invalid kcp.interval, using default: %d",
-		       conf->kcp_interval);
+		LOGW_F("config: %s is out of range, using default: %d",
+		       "kcp.interval", conf->kcp_interval);
 	}
 	if (conf->linger < 5 || conf->linger > 600) {
 		conf->linger = 60;
-		LOGW_F("config: invalid kcp.interval, using default: %d",
-		       conf->linger);
+		LOGW_F("config: %s is out of range, using default: %d",
+		       "linger", conf->linger);
 	}
 	if (conf->timeout < 60 || conf->timeout > 86400) {
 		conf->timeout = 600;
-		LOGW_F("config: invalid timeout, using default: %d",
-		       conf->timeout);
+		LOGW_F("config: %s is out of range, using default: %d",
+		       "timeout", conf->timeout);
 	}
 	if (conf->keepalive < 0 || conf->keepalive > 7200) {
 		conf->keepalive = 25;
-		LOGW_F("config: invalid keepalive, using default: %d",
-		       conf->timeout);
+		LOGW_F("config: %s is out of range, using default: %d",
+		       "keepalive", conf->timeout);
 	}
 	if (conf->time_wait < 5 || conf->time_wait > 3600 ||
 	    conf->time_wait <= conf->linger) {
 		conf->time_wait = conf->linger * 4;
-		LOGW_F("config: invalid keepalive, using default: %d",
-		       conf->time_wait);
+		LOGW_F("config: %s is out of range, using default: %d",
+		       "time_wait", conf->time_wait);
 	}
 	return true;
 }

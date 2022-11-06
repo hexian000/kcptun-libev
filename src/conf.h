@@ -14,7 +14,6 @@ struct netaddr {
 enum runmode {
 	MODE_SERVER = 1 << 0,
 	MODE_CLIENT = 1 << 1,
-	MODE_PEER = MODE_SERVER | MODE_CLIENT,
 };
 
 const char *runmode_str(int mode);

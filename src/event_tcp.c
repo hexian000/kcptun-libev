@@ -4,10 +4,12 @@
 #include "server.h"
 #include "pktqueue.h"
 #include "slog.h"
+#include "util.h"
 #include "sockutil.h"
 
-#include "util.h"
 #include <ev.h>
+
+#include <unistd.h>
 
 #include <inttypes.h>
 

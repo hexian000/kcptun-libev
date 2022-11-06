@@ -1,3 +1,5 @@
+/* obfs.c - a quick & dirty obfuscator */
+
 #include "obfs.h"
 
 #if WITH_OBFS
@@ -111,6 +113,13 @@ static bool obfs_is_client(struct obfs *restrict obfs)
 	return !!(obfs->conf->mode & MODE_CLIENT);
 }
 
+static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
+{
+	hashkey_t key;
+	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
+	(void)table_del(obfs->contexts, &key, NULL);
+}
+
 static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 {
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -160,10 +169,10 @@ static void obfs_tcp_setup(const int fd)
 	if (setsockopt(
 		    fd, SOL_SOCKET, TCP_WINDOW_CLAMP, &(int){ 32768 },
 		    sizeof(int))) {
-		LOGE_PERROR("obfs tcp window");
+		LOGW_PERROR("obfs tcp window");
 	}
 	if (setsockopt(fd, SOL_SOCKET, TCP_QUICKACK, &(int){ 0 }, sizeof(int))) {
-		LOGE_PERROR("obfs tcp quickack");
+		LOGW_PERROR("obfs tcp quickack");
 	}
 }
 
@@ -240,17 +249,19 @@ static bool obfs_ctx_timeout_filt(
 	const ev_tstamp now = ev_now(obfs->loop);
 	assert(now >= ctx->last_seen);
 	const double not_seen = now - ctx->last_seen;
-	if (not_seen > 60.0) {
+	if (not_seen < 60.0) {
+		return true;
+	}
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char laddr[64], raddr[64];
 		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
 		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
 		LOGD_F("obfs: timeout ctx %s <-> %s after %.1fs", laddr, raddr,
 		       not_seen);
-		obfs_ctx_stop(obfs->loop, ctx);
-		obfs_ctx_free(ctx);
-		return false;
 	}
-	return true;
+	obfs_ctx_stop(obfs->loop, ctx);
+	obfs_ctx_free(ctx);
+	return false;
 }
 
 static void
@@ -558,6 +569,7 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 	assert(ip->version == IPVERSION);
 	assert(ip->protocol == IPPROTO_TCP);
 	struct tcphdr *restrict tcp = (struct tcphdr *)(msg->buf + ihl);
+#if RAW_INPUT_CHECKSUM
 	{
 		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
 			.saddr = ip->saddr,
@@ -572,6 +584,7 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 			return false;
 		}
 	}
+#endif
 	if (ntohs(tcp->dest) != obfs->bind_port) {
 		return false;
 	}
@@ -586,7 +599,7 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 	hashkey_t key;
 	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
 	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
-		/* unrelated */
+		/* IP spoofing is not handled */
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
@@ -671,10 +684,11 @@ bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
 
 static size_t http_server_date(char *buf, size_t buf_size)
 {
-	static const char rfc1123fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
+	/* see RFC 1123: Section 5.2.14 */
+	static const char fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
 	const time_t now = time(NULL);
 	const struct tm *gmt = gmtime(&now);
-	return strftime(buf, buf_size, rfc1123fmt, gmt);
+	return strftime(buf, buf_size, fmt, gmt);
 }
 
 void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -735,6 +749,9 @@ void http_server_read_cb(
 		}
 		LOGE_PERROR("read");
 		obfs_ctx_stop(loop, ctx);
+		/* harden for SYN flood */
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(ctx);
 		return;
 	}
 	buf[nbrecv] = '\0';
@@ -744,6 +761,9 @@ void http_server_read_cb(
 		/* bad request */
 		LOGD("http bad request");
 		obfs_ctx_stop(loop, ctx);
+		/* harden for DDoS attack */
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(ctx);
 		return;
 	}
 
@@ -755,6 +775,9 @@ void http_server_read_cb(
 	if (nbsend != n) {
 		LOGE_PERROR("write");
 		obfs_ctx_stop(loop, ctx);
+		/* harden for DDoS attack */
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(ctx);
 		return;
 	}
 	LOGD("obfs: request handled");
