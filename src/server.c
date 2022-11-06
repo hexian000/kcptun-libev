@@ -78,13 +78,25 @@ static bool listener_start(struct server *restrict s, struct netaddr *addr)
 	return true;
 }
 
-static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
+static bool udp_resolve(struct config *restrict conf)
 {
 	if (conf->pkt_bind.str != NULL) {
 		if (!resolve_netaddr(
 			    &conf->pkt_bind, RESOLVE_UDP | RESOLVE_PASSIVE)) {
 			return false;
 		}
+	}
+	if (conf->pkt_connect.str != NULL) {
+		if (!resolve_netaddr(&conf->pkt_connect, RESOLVE_UDP)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
+{
+	if (conf->pkt_bind.sa != NULL) {
 		const struct sockaddr *sa = conf->pkt_bind.sa;
 		if (bind(udp->fd, sa, getsocklen(sa))) {
 			LOGE_PERROR("udp bind");
@@ -94,10 +106,7 @@ static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGI_F("udp bind: %s", addr_str);
 	}
-	if (conf->pkt_connect.str != NULL) {
-		if (!resolve_netaddr(&conf->pkt_connect, RESOLVE_UDP)) {
-			return false;
-		}
+	if (conf->pkt_connect.sa != NULL) {
 		const struct sockaddr *sa = conf->pkt_connect.sa;
 		if (connect(udp->fd, sa, getsocklen(sa))) {
 			LOGE_PERROR("udp connect");
@@ -108,6 +117,11 @@ static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 		LOGI_F("udp connect: %s", addr_str);
 	}
 	return true;
+}
+
+static bool udp_rebind(struct pktconn *udp, struct config *conf)
+{
+	return udp_resolve(conf) && udp_bind(udp, conf);
 }
 
 bool server_resolve(struct server *restrict s)
@@ -122,12 +136,15 @@ bool server_resolve(struct server *restrict s)
 		return obfs_resolve(s->pkt.queue->obfs);
 	}
 #endif
-	return udp_bind(&s->pkt, conf);
+	return udp_rebind(&s->pkt, conf);
 }
 
 static bool udp_start(struct server *restrict s)
 {
 	struct config *restrict conf = s->conf;
+	if (!udp_resolve(conf)) {
+		return false;
+	}
 	struct pktconn *restrict udp = &s->pkt;
 
 	// Setup a udp socket.
@@ -212,15 +229,16 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 
 bool server_start(struct server *s)
 {
-	if (!server_resolve(s)) {
-		return false;
-	}
 	struct ev_loop *loop = s->loop;
 	struct config *restrict conf = s->conf;
 	if (conf->listen.str) {
 		if (!listener_start(s, &conf->listen)) {
 			return false;
 		}
+	}
+	if (conf->connect.str != NULL &&
+	    !resolve_netaddr(&conf->connect, RESOLVE_TCP)) {
+		return false;
 	}
 	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
 	ev_timer_start(loop, w_kcp_update);

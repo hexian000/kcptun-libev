@@ -9,6 +9,7 @@
 #include "kcp/ikcp.h"
 #include <ev.h>
 
+#include <math.h>
 #include <sys/socket.h>
 
 #include <assert.h>
@@ -211,9 +212,9 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 			return;
 		}
 		LOGD("ping timeout");
-		s->pkt.inflight_ping = 0;
+		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
-	const double timeout = s->keepalive > 20.0 ? s->keepalive * 3.0 : 60.0;
+	const double timeout = fmax(s->keepalive * 3.0, 60.0);
 	if (now - s->pkt.last_recv_time > timeout &&
 	    now - s->last_resolve_time > timeout) {
 		LOGD_F("remote not seen for %.0fs, try resolve addresses",

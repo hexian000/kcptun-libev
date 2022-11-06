@@ -87,8 +87,10 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		nrecv += (size_t)ret;
 		navail -= (size_t)ret;
 	} while (nbatch == MMSG_BATCH_SIZE && navail > 0);
-	s->stats.pkt_in += nbrecv;
-	s->pkt.last_recv_time = ev_now(s->loop);
+	if (nrecv > 0) {
+		s->stats.pkt_in += nbrecv;
+		s->pkt.last_recv_time = ev_now(s->loop);
+	}
 	return nrecv;
 }
 

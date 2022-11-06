@@ -119,6 +119,9 @@ bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
 void drop_privileges(const char *user)
 {
 	if (user == NULL) {
+		if (getuid() == 0) {
+			LOGW("running with root privileges, setting the \"user\" field in config file is recommended");
+		}
 		return;
 	}
 	struct passwd *restrict pwd = getpwnam(user);
@@ -126,8 +129,8 @@ void drop_privileges(const char *user)
 		LOGW_F("unknown user: %s", user);
 		return;
 	}
-	LOGD_F("dropping privileges: user=%s uid=%jd gid=%jd", user,
-	       (intmax_t)pwd->pw_uid, (intmax_t)pwd->pw_gid);
+	LOGD_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pwd->pw_uid,
+	       (intmax_t)pwd->pw_gid);
 #if _BSD_SOURCE || _GNU_SOURCE
 	if (setgroups(0, NULL) != 0) {
 		LOGW_PERROR("unable to drop supplementary group privileges");

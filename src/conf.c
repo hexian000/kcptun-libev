@@ -168,11 +168,11 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		char *str = parse_string_json(value);
 		return (conf->connect.str = str) != NULL;
 	}
-	if (strcmp(name, "udp_bind") == 0) {
+	if (strcmp(name, "kcp_bind") == 0) {
 		char *str = parse_string_json(value);
 		return (conf->pkt_bind.str = str) != NULL;
 	}
-	if (strcmp(name, "udp_connect") == 0) {
+	if (strcmp(name, "kcp_connect") == 0) {
 		char *str = parse_string_json(value);
 		return (conf->pkt_connect.str = str) != NULL;
 	}

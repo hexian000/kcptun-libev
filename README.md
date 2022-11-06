@@ -126,7 +126,7 @@ opkg install libev libsodium
 
 ```json
 {
-    "udp_bind": "0.0.0.0:12345",
+    "kcp_bind": "0.0.0.0:12345",
     "connect": "127.0.0.1:1080",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
@@ -144,7 +144,7 @@ opkg install libev libsodium
 ```json
 {
     "listen": "127.0.0.1:1080",
-    "udp_connect": "203.0.113.1:12345",
+    "kcp_connect": "203.0.113.1:12345",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
 }
@@ -161,8 +161,8 @@ Now 127.0.0.1:1080 on client is forwarded to server by kcptun-libev.
 See [server.json](server.json)/[client.json](client.json) in the source repo for more tunables.
 
 Let's explain some fields in server.json/client.json:
-- The client side "listen" TCP ports and send data to "udp_connect".
-- The server side receive data from "udp_bind" and forward the connections to "connect".
+- The client side "listen" TCP ports and send data to "kcp_connect".
+- The server side receive data from "kcp_bind" and forward the connections to "connect".
 - Set a password or PSK is strongly suggested when using in public networks.
 - Log level: 0-6, the default is 2 (INFO)
 
