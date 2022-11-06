@@ -266,21 +266,17 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct server *restrict s = (struct server *)watcher->data;
 	(void)pkt_send(watcher->fd, s);
 	struct pktqueue *restrict q = s->pkt.queue;
-	if (q->mq_send_len > 0) {
-		return;
+	if (q->mq_send_len == 0) {
+		ev_io_stop(loop, watcher);
 	}
-	ev_io_stop(loop, watcher);
 }
 
-void udp_notify_write(struct server *restrict s)
+void pkt_notify_write(struct server *restrict s)
 {
-	if (s->pkt.queue->mq_send_len == 0) {
-		return;
-	}
+	struct pktqueue *restrict q = s->pkt.queue;
 	struct ev_io *restrict w_write = &s->pkt.w_write;
 	(void)pkt_send(w_write->fd, s);
-	if (ev_is_active(w_write)) {
-		return;
+	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
+		ev_io_start(s->loop, w_write);
 	}
-	ev_io_start(s->loop, w_write);
 }

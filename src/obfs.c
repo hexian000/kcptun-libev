@@ -108,11 +108,11 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 	if (ctx == NULL) {
 		return;
 	}
-	struct ev_io *restrict w_read = &ctx->w_read;
-	ev_io_stop(loop, w_read);
-	struct ev_io *restrict w_write = &ctx->w_write;
-	ev_io_stop(loop, w_write);
 	if (ctx->fd != -1) {
+		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io_stop(loop, w_read);
+		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io_stop(loop, w_write);
 		(void)close(ctx->fd);
 		ctx->fd = -1;
 	}

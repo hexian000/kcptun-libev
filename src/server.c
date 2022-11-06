@@ -72,6 +72,38 @@ static bool listener_start(struct server *restrict s, struct netaddr *addr)
 	return true;
 }
 
+static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
+{
+	if (conf->pkt_bind.str != NULL) {
+		if (!resolve_netaddr(
+			    &conf->pkt_bind, RESOLVE_UDP | RESOLVE_PASSIVE)) {
+			return false;
+		}
+		const struct sockaddr *sa = conf->pkt_bind.sa;
+		if (bind(udp->fd, sa, getsocklen(sa))) {
+			LOGE_PERROR("udp bind");
+			return false;
+		}
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOGI_F("udp bind: %s", addr_str);
+	}
+	if (conf->pkt_connect.str != NULL) {
+		if (!resolve_netaddr(&conf->pkt_connect, RESOLVE_UDP)) {
+			return false;
+		}
+		const struct sockaddr *sa = conf->pkt_connect.sa;
+		if (connect(udp->fd, sa, getsocklen(sa))) {
+			LOGE_PERROR("udp connect");
+			return false;
+		}
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOGI_F("udp connect: %s", addr_str);
+	}
+	return true;
+}
+
 bool server_resolve(struct server *restrict s)
 {
 	struct config *restrict conf = s->conf;
@@ -84,15 +116,7 @@ bool server_resolve(struct server *restrict s)
 		return obfs_resolve(s->pkt.queue->obfs);
 	}
 #endif
-	if (conf->pkt_connect.str != NULL &&
-	    !resolve_netaddr(&conf->pkt_connect, RESOLVE_UDP)) {
-		return false;
-	}
-	if (conf->pkt_bind.str != NULL &&
-	    !resolve_netaddr(&conf->pkt_bind, RESOLVE_UDP | RESOLVE_PASSIVE)) {
-		return false;
-	}
-	return true;
+	return udp_bind(&s->pkt, conf);
 }
 
 static bool udp_start(struct server *restrict s)
@@ -113,25 +137,8 @@ static bool udp_start(struct server *restrict s)
 		return false;
 	}
 	socket_set_buffer(udp->fd, conf->udp_sndbuf, conf->udp_rcvbuf);
-	if (conf->pkt_bind.sa) {
-		const struct sockaddr *sa = conf->pkt_bind.sa;
-		if (bind(s->pkt.fd, sa, getsocklen(sa))) {
-			LOGE_PERROR("udp bind");
-			return false;
-		}
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("kcp bind: %s", addr_str);
-	}
-	if (conf->pkt_connect.sa) {
-		const struct sockaddr *sa = conf->pkt_connect.sa;
-		if (connect(udp->fd, sa, getsocklen(sa))) {
-			LOGE_PERROR("udp connect");
-			return false;
-		}
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("udp connect: %s", addr_str);
+	if (!udp_bind(udp, conf)) {
+		return false;
 	}
 
 	struct ev_io *restrict w_read = &udp->w_read;
@@ -229,13 +236,9 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 		return;
 	}
 	struct ev_io *restrict w_read = &conn->w_read;
-	if (ev_is_active(w_read)) {
-		ev_io_stop(loop, w_read);
-	}
+	ev_io_stop(loop, w_read);
 	struct ev_io *restrict w_write = &conn->w_write;
-	if (ev_is_active(w_write)) {
-		ev_io_stop(loop, w_write);
-	}
+	ev_io_stop(loop, w_write);
 	close(conn->fd);
 	conn->fd = -1;
 }
@@ -253,13 +256,14 @@ static void udp_free(struct pktconn *restrict conn)
 
 static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 {
-	if (l->fd != -1) {
-		LOGD_F("listener close: %d", l->fd);
-		struct ev_io *restrict w_accept = &l->w_accept;
-		ev_io_stop(loop, w_accept);
-		close(l->fd);
-		l->fd = -1;
+	if (l->fd == -1) {
+		return;
 	}
+	LOGD_F("listener close: %d", l->fd);
+	struct ev_io *restrict w_accept = &l->w_accept;
+	ev_io_stop(loop, w_accept);
+	close(l->fd);
+	l->fd = -1;
 }
 
 void server_stop(struct server *restrict s)

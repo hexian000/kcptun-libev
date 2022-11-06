@@ -101,17 +101,18 @@ void session_start(struct session *restrict ss, const int fd)
 
 void session_stop(struct session *restrict ss)
 {
-	if (ss->tcp_fd != -1) {
-		LOGD_F("session [%08" PRIX32 "] shutdown, fd: %d", ss->conv,
-		       ss->tcp_fd);
-		struct ev_loop *loop = ss->server->loop;
-		struct ev_io *restrict w_read = &ss->w_read;
-		ev_io_stop(loop, w_read);
-		struct ev_io *restrict w_write = &ss->w_write;
-		ev_io_stop(loop, w_write);
-		close(ss->tcp_fd);
-		ss->tcp_fd = -1;
+	if (ss->tcp_fd == -1) {
+		return;
 	}
+	LOGD_F("session [%08" PRIX32 "] shutdown, fd: %d", ss->conv,
+	       ss->tcp_fd);
+	struct ev_loop *loop = ss->server->loop;
+	struct ev_io *restrict w_read = &ss->w_read;
+	ev_io_stop(loop, w_read);
+	struct ev_io *restrict w_write = &ss->w_write;
+	ev_io_stop(loop, w_write);
+	close(ss->tcp_fd);
+	ss->tcp_fd = -1;
 }
 
 static void consume_wbuf(struct session *restrict ss, size_t len)

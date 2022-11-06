@@ -232,6 +232,6 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->pkt_connect.sa, S0MSG_PING, b, sizeof(b));
-	udp_notify_write(s);
+	pkt_notify_write(s);
 	s->pkt.inflight_ping = ping_ts;
 }

@@ -270,7 +270,7 @@ bool packet_send(
 	msg->iov.iov_len = msg->len;
 	q->mq_send[q->mq_send_len++] = msg;
 	if (q->mq_send_len == MQ_SEND_SIZE) {
-		udp_notify_write(s);
+		pkt_notify_write(s);
 	}
 	return true;
 }

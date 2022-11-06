@@ -144,8 +144,8 @@ void kcp_recv(struct session *restrict ss)
 	}
 	if (nrecv > 0) {
 		ss->wbuf_len += nrecv;
-		LOGV_F("session [%08" PRIX32
-		       "] kcp recv: %zu bytes, cap: %zu bytes",
+		LOGV_F("session [%08" PRIX32 "] kcp recv: "
+		       "%zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
 		ss->last_recv = ev_now(ss->server->loop);
 	}
@@ -240,7 +240,7 @@ static void kcp_update_all(struct server *restrict s)
 		return;
 	}
 	table_iterate(s->sessions, kcp_update_iter, s);
-	udp_notify_write(s);
+	pkt_notify_write(s);
 }
 
 void kcp_notify_all(struct server *s)
