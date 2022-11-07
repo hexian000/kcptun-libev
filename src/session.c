@@ -10,6 +10,7 @@
 
 #include <ev.h>
 
+#include <stddef.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -198,7 +199,13 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		if (ss->tcp_fd == -1) {
 			break;
 		}
-		ss->wbuf_navail = (size_t)hdr->len - TLV_HEADER_SIZE;
+		const size_t navail = (size_t)hdr->len - TLV_HEADER_SIZE;
+		if (navail == 0) {
+			consume_wbuf(ss, hdr->len);
+			return;
+		}
+		ss->wbuf_navail = navail;
+		tcp_notify_write(ss);
 		return;
 	}
 	case SMSG_EOF: {
@@ -212,6 +219,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 			ev_io_stop(ss->server->loop, w_read);
 		}
 		ss->state = STATE_LINGER;
+		tcp_notify_write(ss);
 		return;
 	}
 	case SMSG_KEEPALIVE: {

@@ -127,7 +127,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 			LOGW_F("session [%08" PRIX32 "] close: kcp dial timed out",
 			       ss->conv);
 			session_stop(ss);
-			kcp_close(ss);
+			kcp_reset(ss);
 			return true;
 		}
 		break;

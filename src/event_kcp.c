@@ -25,8 +25,8 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	unsigned char *kcp_packet = msg->buf + msg->off;
 	memcpy(kcp_packet, buf, len);
 	msg->len = len;
+	s->stats.kcp_out += len;
 	ss->stats.kcp_out += len;
-	ss->server->stats.kcp_out += len;
 	return packet_send(q, s, msg) ? len : -1;
 }
 
@@ -108,7 +108,7 @@ void kcp_close(struct session *restrict ss)
 	ss->state = STATE_LINGER;
 }
 
-void kcp_recv(struct session *restrict ss)
+static void kcp_recv(struct session *restrict ss)
 {
 	switch (ss->state) {
 	case STATE_HALFOPEN:
@@ -184,33 +184,32 @@ static void kcp_update(struct session *restrict ss)
 	if (ss->state != STATE_LINGER && ss->tcp_fd != -1) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
-		const int window_size = s->conf->kcp_sndwnd;
-		if (!ev_is_active(w_read) && waitsnd < window_size) {
+		const int window_size = (int)ss->kcp->snd_wnd;
+		if (waitsnd < window_size && !ev_is_active(w_read)) {
 			ev_io_start(s->loop, w_read);
 		}
-		tcp_notify_write(ss);
 	}
 }
 
 void kcp_notify_write(struct session *restrict ss)
 {
 	assert(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
-	if (ss->rbuf_len == 0) {
+	if (!kcp_push(ss)) {
+		kcp_reset(ss);
+		session_stop(ss);
 		return;
 	}
-	struct server *restrict s = ss->server;
+	if (ss->state == STATE_LINGER) {
+		session_stop(ss);
+		return;
+	}
 	const int waitsnd = ikcp_waitsnd(ss->kcp);
-	const int window_size = s->conf->kcp_sndwnd;
+	const int window_size = (int)ss->kcp->snd_wnd;
 	if (waitsnd >= window_size) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		if (ev_is_active(w_read)) {
 			ev_io_stop(ss->server->loop, w_read);
 		}
-		return;
-	}
-	if (!kcp_push(ss)) {
-		session_stop(ss);
-		kcp_reset(ss);
 	}
 }
 

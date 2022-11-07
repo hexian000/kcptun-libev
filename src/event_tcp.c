@@ -11,6 +11,8 @@
 #include <assert.h>
 #include <ev.h>
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <unistd.h>
 
 #include <inttypes.h>
@@ -163,9 +165,6 @@ static size_t tcp_send(struct session *restrict ss)
 {
 	const size_t navail = ss->wbuf_navail;
 	if (navail == 0) {
-		if (ss->state == STATE_LINGER) {
-			session_stop(ss);
-		}
 		return 0;
 	}
 
@@ -208,7 +207,7 @@ static size_t tcp_send(struct session *restrict ss)
 	return (size_t)nsend;
 }
 
-void tcp_notify_write(struct session *restrict ss)
+static void tcp_push(struct session *restrict ss)
 {
 	if (ss->tcp_fd == -1) {
 		return;
@@ -216,19 +215,32 @@ void tcp_notify_write(struct session *restrict ss)
 	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
 		return;
 	}
-	while (ss->wbuf_navail > 0) {
-		if (tcp_send(ss) == 0) {
-			break;
-		}
-		kcp_recv(ss);
-		if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
+	const size_t navail = ss->wbuf_navail;
+	if (navail > 0) {
+		if (tcp_send(ss) == navail) {
 			return;
 		}
 	}
-	struct ev_io *restrict w_write = &ss->w_write;
-	if (ss->wbuf_navail > 0 && ss->tcp_fd != -1 && !ev_is_active(w_write)) {
-		ev_io_start(ss->server->loop, w_write);
+	if (ss->tcp_fd == -1) {
+		return;
 	}
+	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
+		return;
+	}
+	if (ss->wbuf_navail > 0) {
+		struct ev_io *restrict w_write = &ss->w_write;
+		if (!ev_is_active(w_write)) {
+			ev_io_start(ss->server->loop, w_write);
+		}
+	} else if (ss->state == STATE_LINGER) {
+		session_stop(ss);
+	}
+	return;
+}
+
+void tcp_notify_write(struct session *restrict ss)
+{
+	(void)tcp_push(ss);
 }
 
 void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -246,14 +258,9 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->conv);
 	}
 
-	for (kcp_recv(ss); ss->wbuf_navail > 0; kcp_recv(ss)) {
-		if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
-			return;
-		}
-		if (tcp_send(ss) == 0) {
-			return;
-		}
-	}
+	tcp_push(ss);
 	/* no more data */
-	ev_io_stop(loop, watcher);
+	if (ss->tcp_fd != -1 && ss->wbuf_navail == 0) {
+		ev_io_stop(loop, watcher);
+	}
 }

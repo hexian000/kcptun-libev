@@ -179,13 +179,13 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 
-	ss->stats.kcp_in += msg->len;
-	ss->server->stats.kcp_in += msg->len;
 	int r = ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
 	if (r < 0) {
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
+	s->stats.kcp_in += msg->len;
+	ss->stats.kcp_in += msg->len;
 }
 
 void packet_recv(struct pktqueue *restrict q, struct server *s)

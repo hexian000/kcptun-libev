@@ -109,6 +109,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "%s",
 		PROJECT_NAME " " PROJECT_VER "\n"
 			     "  " PROJECT_HOMEPAGE "\n\n");
+	fflush(stderr);
 
 	parse_args(argc, argv);
 	if (app.conf_path == NULL) {
@@ -122,7 +123,7 @@ int main(int argc, char **argv)
 		LOGE("failed to read config");
 		return EXIT_FAILURE;
 	}
-	slog_level = conf->log_level + app.verbosity;
+	slog_level = conf->log_level - app.verbosity;
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
