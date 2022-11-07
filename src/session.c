@@ -224,6 +224,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 	}
 	}
 	LOGE_F("smsg error: %04" PRIX16 ", %04" PRIX16, hdr->msg, hdr->len);
+	session_stop(ss);
 	kcp_reset(ss);
 	ss->state = STATE_LINGER;
 }

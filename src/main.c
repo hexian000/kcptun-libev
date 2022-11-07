@@ -92,6 +92,7 @@ static void parse_args(int argc, char **argv)
 		if (strcmp(argv[i], "-v") == 0 ||
 		    strcmp(argv[i], "--verbose") == 0) {
 			app.verbosity++;
+			continue;
 		}
 		if (strcmp(argv[i], "--") == 0) {
 			continue;
@@ -189,6 +190,7 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 		conf_free(s->conf);
 		s->conf = conf;
 		slog_level = conf->log_level;
+		(void)server_resolve(s);
 		LOGI("config successfully reloaded");
 	} break;
 	case SIGINT:

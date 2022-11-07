@@ -558,9 +558,18 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 {
 	struct iphdr *restrict ip = (struct iphdr *)msg->buf;
 	const size_t ihl = ip->ihl * 4u;
-	assert(ip->version == IPVERSION);
-	assert(ip->protocol == IPPROTO_TCP);
+	if (ip->version != IPVERSION || ip->protocol != IPPROTO_TCP) {
+		return false;
+	}
+	if (ntohs(ip->tot_len) > msg->len ||
+	    ihl + sizeof(struct tcphdr) > msg->len) {
+		return false;
+	}
 	struct tcphdr *restrict tcp = (struct tcphdr *)(msg->buf + ihl);
+	const size_t doff = tcp->doff * 4u;
+	if (ihl + doff > msg->len) {
+		return false;
+	}
 #if RAW_INPUT_CHECKSUM
 	{
 		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
@@ -580,7 +589,6 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 	if (ntohs(tcp->dest) != obfs->bind_port) {
 		return false;
 	}
-	const size_t doff = tcp->doff * 4u;
 	msg->addr.in = (struct sockaddr_in){
 		.sin_family = AF_INET,
 		.sin_addr.s_addr = ip->saddr,

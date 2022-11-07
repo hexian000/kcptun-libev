@@ -98,10 +98,14 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
-#define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
-
-static void tcp_recv(struct session *restrict ss)
+void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
+	CHECK_EV_ERROR(revents);
+	UNUSED(loop);
+	struct session *restrict ss = (struct session *)watcher->data;
+	assert(watcher->fd == ss->tcp_fd);
+	assert(watcher == &ss->w_read);
+
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
 	if (cap == 0) {
@@ -112,7 +116,7 @@ static void tcp_recv(struct session *restrict ss)
 	unsigned char *buf = ss->rbuf + TLV_HEADER_SIZE + ss->rbuf_len;
 	size_t len = 0;
 	bool tcp_eof = false;
-	while (cap > 0) {
+	do {
 		/* Receive message from client socket */
 		const ssize_t nread =
 			recv(ss->tcp_fd, buf, cap, MSG_DONTWAIT | MSG_NOSIGNAL);
@@ -134,8 +138,8 @@ static void tcp_recv(struct session *restrict ss)
 			break;
 		}
 		buf += nread, cap -= nread, len += nread;
-	}
-	ss->rbuf_len = len;
+	} while (false);
+	ss->rbuf_len += len;
 
 	if (len > 0) {
 		ss->stats.tcp_in += len;
@@ -152,18 +156,7 @@ static void tcp_recv(struct session *restrict ss)
 		session_stop(ss);
 		kcp_close(ss);
 	}
-	return;
-}
-
-void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
-{
-	CHECK_EV_ERROR(revents);
-	UNUSED(loop);
-	struct session *restrict ss = (struct session *)watcher->data;
-	assert(watcher->fd == ss->tcp_fd);
-	assert(watcher == &ss->w_read);
-	tcp_recv(ss);
-	kcp_notify(ss);
+	kcp_notify_write(ss);
 }
 
 static size_t tcp_send(struct session *restrict ss)

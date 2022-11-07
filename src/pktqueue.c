@@ -173,7 +173,9 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	if (ss->state == STATE_TIME_WAIT) {
-		ss0_reset(s, sa, conv);
+		if (ev_now(s->loop) - ss->last_send > 1.0) {
+			ss0_reset(s, sa, conv);
+		}
 		return;
 	}
 
@@ -330,7 +332,8 @@ struct pktqueue *pktqueue_new(struct server *restrict s)
 		return NULL;
 	}
 	if (q->crypto == NULL) {
-		LOGW("packets will not be encrypted, please note that exposing this service on the public networks is considered insecure");
+		/* for now, protocol security relies on encryption */
+		LOGW("packets will not be encrypted or authenticated. malformed packet may lead to crash, use at your own risk");
 	}
 #endif
 #if WITH_OBFS
