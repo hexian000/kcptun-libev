@@ -118,15 +118,15 @@ bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
 
 void drop_privileges(const char *user)
 {
-	if (user == NULL) {
-		if (getuid() == 0) {
-			LOGW("running with root privileges, setting the \"user\" field in config file is recommended");
-		}
+	if (getuid() != 0) {
 		return;
+	}
+	if (chdir("/") != 0) {
+		LOGW_PERROR("chdir");
 	}
 	struct passwd *restrict pwd = getpwnam(user);
 	if (pwd == NULL) {
-		LOGW_F("unknown user: %s", user);
+		LOGW_F("su: user \"%s\" does not exist ", user);
 		return;
 	}
 	LOGD_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pwd->pw_uid,
@@ -141,9 +141,6 @@ void drop_privileges(const char *user)
 	}
 	if (setuid(pwd->pw_uid) != 0 || seteuid(pwd->pw_uid) != 0) {
 		LOGW_PERROR("unable to drop user privileges");
-	}
-	if (chdir("/") != 0) {
-		LOGW_PERROR("chdir");
 	}
 }
 

@@ -33,6 +33,7 @@ static void print_usage(char *argv0)
 		"  -u, --user <name>          run as the specified limited user, e.g. nobody\n"
 		"  -v, --verbose              increase verbosity\n"
 #if WITH_CRYPTO
+		"\ncrypto options:\n"
 		"  --list-methods             list supported crypto methods and exit\n"
 		"  --genpsk <method>          generate random preshared key for specified method\n"
 #endif
