@@ -34,6 +34,9 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
+#if USE_SOCK_FILTER
+#include <linux/filter.h>
+#endif
 
 struct obfs_stats {
 	size_t pkt_rx, pkt_tx;
@@ -206,6 +209,45 @@ static void obfs_tcp_setup(const int fd)
 	}
 }
 
+#if USE_SOCK_FILTER
+static struct sock_fprog filter_compile(const int domain, const uint16_t port)
+{
+	/* "(ip proto \\tcp) and (tcp dst port 80)" */
+	static struct sock_filter tcp4[] = {
+		{ 0x28, 0, 0, 0x0000000c }, { 0x15, 0, 8, 0x00000800 },
+		{ 0x30, 0, 0, 0x00000017 }, { 0x15, 0, 6, 0x00000006 },
+		{ 0x28, 0, 0, 0x00000014 }, { 0x45, 4, 0, 0x00001fff },
+		{ 0xb1, 0, 0, 0x0000000e }, { 0x48, 0, 0, 0x00000010 },
+		{ 0x15, 0, 1, 0x00000050 }, { 0x6, 0, 0, 0x00040000 },
+		{ 0x6, 0, 0, 0x00000000 },
+	};
+	/* "(ip6 proto \\tcp) and (tcp dst port 80)" */
+	static struct sock_filter tcp6[] = {
+		{ 0x28, 0, 0, 0x0000000c }, { 0x15, 0, 5, 0x000086dd },
+		{ 0x30, 0, 0, 0x00000014 }, { 0x15, 0, 3, 0x00000006 },
+		{ 0x28, 0, 0, 0x00000038 }, { 0x15, 0, 1, 0x00000050 },
+		{ 0x6, 0, 0, 0x00040000 },  { 0x6, 0, 0, 0x00000000 },
+	};
+	switch (domain) {
+	case AF_INET:
+		tcp4[8].k = (uint32_t)port;
+		return (struct sock_fprog){
+			.len = countof(tcp4),
+			.filter = tcp4,
+		};
+	case AF_INET6:
+		tcp6[5].k = (uint32_t)port;
+		return (struct sock_fprog){
+			.len = countof(tcp6),
+			.filter = tcp6,
+		};
+	default:
+		break;
+	}
+	CHECK_FAILED();
+}
+#endif
+
 static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
@@ -218,17 +260,27 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	default:
 		return false;
 	}
-	if (obfs_is_client(obfs)) {
-		/* client side offload */
+	if (obfs->cap_eth) {
+#if USE_SOCK_FILTER
+		if (setsockopt(
+			    obfs->cap_fd, SOL_SOCKET, SO_DETACH_FILTER, NULL,
+			    0)) {
+			LOGW_PERROR("cap bind");
+		}
+		const struct sock_fprog bpf =
+			filter_compile(sa->sa_family, obfs->bind_port);
+		if (setsockopt(
+			    obfs->cap_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf,
+			    sizeof(bpf))) {
+			LOGW_PERROR("cap bind");
+		}
+#endif
+	} else {
 		if (bind(obfs->cap_fd, sa, getsocklen(sa))) {
 			LOGW_PERROR("cap bind");
 		}
 	}
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGD_F("obfs: cap bind %s", addr_str);
-	}
+	LOGD_F("obfs: cap bind to port %" PRIu16, obfs->bind_port);
 	return true;
 }
 
@@ -438,7 +490,6 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		obfs->cap_eth = false;
 		break;
 	case AF_INET6:
-		LOGW("obfs: ipv6 is supported on ethernet only");
 		obfs->cap_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IPV6));
 		obfs->cap_eth = true;
 		break;
@@ -1010,13 +1061,17 @@ void http_server_read_cb(
 
 	char buf[256];
 	const ssize_t nbrecv = read(watcher->fd, buf, sizeof(buf) - 1);
-	if (nbrecv <= 0) {
+	if (nbrecv < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
 		    errno == ENOMEM) {
 			return;
 		}
 		LOGE_PERROR("read");
 		/* harden for SYN flood */
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	} else if (nbrecv == 0) {
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;

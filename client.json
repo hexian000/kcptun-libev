@@ -16,7 +16,7 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
-    "obfs": "dpi/tcp-wnd",
     "loglevel": 2,
+    "obfs": "dpi/tcp-wnd",
     "user": "nobody"
 }

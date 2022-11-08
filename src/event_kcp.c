@@ -46,11 +46,12 @@ void kcp_reset(struct session *ss)
 bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
+	const bool can_flush = ss->kcp_flush && ikcp_waitsnd(ss->kcp) == 0;
 	int r = ikcp_send(ss->kcp, (char *)buf, (int)len);
 	if (r < 0) {
 		return false;
 	}
-	if (ss->kcp_flush) {
+	if (can_flush) {
 		ikcp_flush(ss->kcp);
 	}
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
