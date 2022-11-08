@@ -97,105 +97,6 @@ http_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 http_client_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 
-static bool obfs_is_client(struct obfs *restrict obfs)
-{
-	return !!(obfs->conf->mode & MODE_CLIENT);
-}
-
-static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
-{
-	struct obfs_ctx *restrict ctx = util_malloc(sizeof(struct obfs_ctx));
-	if (ctx == NULL) {
-		return NULL;
-	}
-	*ctx = (struct obfs_ctx){
-		.obfs = obfs,
-		.captured = false,
-	};
-	return ctx;
-}
-
-static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
-{
-	if (ctx == NULL) {
-		return;
-	}
-	if (ctx->fd != -1) {
-		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_stop(loop, w_read);
-		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_stop(loop, w_write);
-		if (close(ctx->fd) != 0) {
-			LOGW_PERROR("close");
-		}
-		ctx->fd = -1;
-	}
-	util_free(ctx);
-}
-
-static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
-{
-	hashkey_t key;
-	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
-	(void)table_del(obfs->contexts, &key, NULL);
-}
-
-static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
-{
-	struct ev_io *restrict w_read = &ctx->w_read;
-	if (ev_is_active(w_read)) {
-		ev_io_stop(loop, w_read);
-	}
-	struct ev_io *restrict w_write = &ctx->w_write;
-	if (ev_is_active(w_write)) {
-		ev_io_stop(loop, w_write);
-	}
-}
-
-static bool obfs_ctx_start(
-	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
-{
-	ctx->fd = fd;
-	struct ev_loop *loop = obfs->loop;
-	if (obfs_is_client(obfs)) {
-		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, http_client_read_cb, fd, EV_READ);
-		w_read->data = ctx;
-		ev_io_start(loop, w_read);
-		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, http_client_write_cb, fd, EV_WRITE);
-		w_write->data = ctx;
-		ev_io_start(loop, w_write);
-	} else {
-		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, http_server_read_cb, fd, EV_READ);
-		w_read->data = ctx;
-		ev_io_start(loop, w_read);
-		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, http_server_write_cb, fd, EV_WRITE);
-		w_write->data = ctx;
-		/* w_write is not used on the server side */
-	}
-	ctx->last_seen = ev_now(loop);
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		char laddr[64], raddr[64];
-		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
-		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
-		LOGD_F("obfs: start %s <-> %s", laddr, raddr);
-	}
-	hashkey_t key;
-	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
-	struct obfs_ctx *restrict old_ctx = NULL;
-	if (table_del(obfs->contexts, &key, (void **)&old_ctx)) {
-		obfs_ctx_free(loop, old_ctx);
-	}
-	const bool ok = table_set(obfs->contexts, &key, ctx);
-	if (!ok) {
-		obfs_ctx_stop(loop, ctx);
-	}
-	return ok;
-}
-
 static void obfs_tcp_setup(const int fd)
 {
 	socket_set_buffer(fd, 65536, 65536);
@@ -284,6 +185,161 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	return true;
 }
 
+static bool obfs_raw_start(struct obfs *restrict obfs)
+{
+	const int domain = obfs->domain;
+	struct config *restrict conf = obfs->conf;
+	switch (domain) {
+	case AF_INET:
+		obfs->cap_fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+		obfs->cap_eth = false;
+		break;
+	case AF_INET6:
+		obfs->cap_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IPV6));
+		obfs->cap_eth = true;
+		break;
+	default:
+		LOGF_F("unknown domain: %d", domain);
+		return false;
+	}
+	if (obfs->cap_fd < 0) {
+		LOGE_PERROR("obfs capture");
+		return false;
+	}
+	if (socket_setup(obfs->cap_fd)) {
+		LOGE_PERROR("fcntl");
+		return false;
+	}
+	socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
+
+	obfs->raw_fd = socket(domain, SOCK_RAW, IPPROTO_RAW);
+	if (obfs->raw_fd < 0) {
+		LOGE_PERROR("obfs raw");
+		return false;
+	}
+	if (socket_setup(obfs->raw_fd)) {
+		LOGE_PERROR("fcntl");
+		return false;
+	}
+	switch (domain) {
+	case AF_INET:
+		if (setsockopt(
+			    obfs->raw_fd, IPPROTO_IP, IP_HDRINCL, &(int){ 1 },
+			    sizeof(int))) {
+			LOGE_PERROR("raw setup");
+			return false;
+		}
+		break;
+	case AF_INET6:
+		if (setsockopt(
+			    obfs->raw_fd, IPPROTO_IPV6, IPV6_HDRINCL,
+			    &(int){ 1 }, sizeof(int))) {
+			LOGE_PERROR("raw setup");
+			return false;
+		}
+		break;
+	default:
+		LOGF_F("unknown domain: %d", domain);
+		return false;
+	}
+	socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
+	return true;
+}
+
+static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
+{
+	struct obfs_ctx *restrict ctx = util_malloc(sizeof(struct obfs_ctx));
+	if (ctx == NULL) {
+		return NULL;
+	}
+	*ctx = (struct obfs_ctx){
+		.obfs = obfs,
+		.captured = false,
+	};
+	return ctx;
+}
+
+static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
+{
+	if (ctx == NULL) {
+		return;
+	}
+	if (ctx->fd != -1) {
+		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io_stop(loop, w_read);
+		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io_stop(loop, w_write);
+		if (close(ctx->fd) != 0) {
+			LOGW_PERROR("close");
+		}
+		ctx->fd = -1;
+	}
+	util_free(ctx);
+}
+
+static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
+{
+	hashkey_t key;
+	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
+	(void)table_del(obfs->contexts, &key, NULL);
+}
+
+static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
+{
+	struct ev_io *restrict w_read = &ctx->w_read;
+	if (ev_is_active(w_read)) {
+		ev_io_stop(loop, w_read);
+	}
+	struct ev_io *restrict w_write = &ctx->w_write;
+	if (ev_is_active(w_write)) {
+		ev_io_stop(loop, w_write);
+	}
+}
+
+static bool obfs_ctx_start(
+	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
+{
+	ctx->fd = fd;
+	struct ev_loop *loop = obfs->loop;
+	if (obfs->conf->mode & MODE_CLIENT) {
+		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io_init(w_read, http_client_read_cb, fd, EV_READ);
+		w_read->data = ctx;
+		ev_io_start(loop, w_read);
+		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io_init(w_write, http_client_write_cb, fd, EV_WRITE);
+		w_write->data = ctx;
+		ev_io_start(loop, w_write);
+	} else {
+		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io_init(w_read, http_server_read_cb, fd, EV_READ);
+		w_read->data = ctx;
+		ev_io_start(loop, w_read);
+		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io_init(w_write, http_server_write_cb, fd, EV_WRITE);
+		w_write->data = ctx;
+		/* w_write is not used on the server side */
+	}
+	ctx->last_seen = ev_now(loop);
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		char laddr[64], raddr[64];
+		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
+		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
+		LOGD_F("obfs: start %s <-> %s", laddr, raddr);
+	}
+	hashkey_t key;
+	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
+	struct obfs_ctx *restrict old_ctx = NULL;
+	if (table_del(obfs->contexts, &key, (void **)&old_ctx)) {
+		obfs_ctx_free(loop, old_ctx);
+	}
+	const bool ok = table_set(obfs->contexts, &key, ctx);
+	if (!ok) {
+		obfs_ctx_stop(loop, ctx);
+	}
+	return ok;
+}
+
 static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
 	int fd = -1;
@@ -366,7 +422,7 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	UNUSED(loop);
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
 	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
-	if (obfs_is_client(obfs) && obfs->client == NULL) {
+	if ((obfs->conf->mode & MODE_CLIENT) && obfs->client == NULL) {
 		struct netaddr *addr = &obfs->conf->pkt_connect;
 		if (resolve_netaddr(addr, RESOLVE_TCP)) {
 			(void)obfs_ctx_dial(obfs, addr->sa);
@@ -374,19 +430,19 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	}
 }
 
-const char http_request[] = "GET /generate_204 HTTP/1.1\r\n"
-			    "Host: %s\r\n"
-			    "User-Agent: curl/7.81.0\r\n"
-			    "Accept: */*\r\n\r\n";
+static const char http_request[] = "GET /generate_204 HTTP/1.1\r\n"
+				   "Host: %s\r\n"
+				   "User-Agent: curl/7.81.0\r\n"
+				   "Accept: */*\r\n\r\n";
 
-const char http_reqpat[] =
+static const char http_reqpat[] =
 	"^GET /generate_204 HTTP/[0-9][1-9]*(\\.[0-9][1-9]*)?\r\n"
 	"([a-zA-Z0-9\\-]+:\\s*\\S*\r\n)*\r\n$";
 
-const char http_reply_204[] = "HTTP/1.1 204 No Content\r\n"
-			      "Date: %s\r\n"
-			      "Content-Length: 0\r\n"
-			      "Connection: keep-alive\r\n\r\n";
+static const char http_reply_204[] = "HTTP/1.1 204 No Content\r\n"
+				     "Date: %s\r\n"
+				     "Content-Length: 0\r\n"
+				     "Connection: keep-alive\r\n\r\n";
 
 struct obfs *obfs_new(struct ev_loop *restrict loop, struct config *conf)
 {
@@ -446,81 +502,12 @@ void obfs_stats(struct obfs *obfs)
 		double pkt_rate, byte_rate;
 		pkt_rate = (double)(dstats.pkt_rx) / dt;
 		byte_rate = (double)(dstats.byt_rx >> 10u) / dt;
-		LOGD_F("obfs: capture %.1f pkt/s, %.1f KiB/s, total %zu pkts",
-		       pkt_rate, byte_rate, obfs->stats.pkt_rx);
+		LOGD_F("obfs: %d contexts, capture %.1f pkt/s, %.1f KiB/s, total %zu pkts",
+		       table_size(obfs->contexts), pkt_rate, byte_rate,
+		       obfs->stats.pkt_rx);
 	}
 	last_print_time = now;
 	last_stats = obfs->stats;
-}
-
-static bool obfs_raw_setup(struct obfs *restrict obfs)
-{
-	const int domain = obfs->domain;
-	const int fd = obfs->raw_fd;
-	int level;
-	int optname;
-	int value = 1;
-	switch (domain) {
-	case AF_INET:
-		level = IPPROTO_IP;
-		optname = IP_HDRINCL;
-		break;
-	case AF_INET6:
-		level = IPPROTO_IPV6;
-		optname = IPV6_HDRINCL;
-		break;
-	default:
-		LOGF_F("unknown domain: %d", domain);
-		return false;
-	}
-	if (setsockopt(fd, level, optname, &value, sizeof(value))) {
-		LOGE_PERROR("raw setup");
-		return false;
-	}
-	return true;
-}
-
-static bool obfs_raw_start(struct obfs *restrict obfs)
-{
-	const int domain = obfs->domain;
-	struct config *restrict conf = obfs->conf;
-	switch (domain) {
-	case AF_INET:
-		obfs->cap_fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
-		obfs->cap_eth = false;
-		break;
-	case AF_INET6:
-		obfs->cap_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IPV6));
-		obfs->cap_eth = true;
-		break;
-	default:
-		LOGF_F("unknown domain: %d", domain);
-		return false;
-	}
-	if (obfs->cap_fd < 0) {
-		LOGE_PERROR("obfs capture");
-		return false;
-	}
-	if (socket_setup(obfs->cap_fd)) {
-		LOGE_PERROR("fcntl");
-		return false;
-	}
-	socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
-
-	obfs->raw_fd = socket(domain, SOCK_RAW, IPPROTO_RAW);
-	if (obfs->raw_fd < 0) {
-		LOGE_PERROR("obfs raw");
-		return false;
-	}
-	if (socket_setup(obfs->raw_fd)) {
-		LOGE_PERROR("fcntl");
-		return false;
-	}
-	if (!obfs_raw_setup(obfs)) {
-		return false;
-	}
-	socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
-	return true;
 }
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
@@ -682,7 +669,7 @@ uint16_t obfs_offset(struct obfs *obfs)
 }
 
 /* RFC 1071 */
-static uint32_t in_cksum(uint32_t sum, const void *data, size_t n)
+static inline uint32_t in_cksum(uint32_t sum, const void *data, size_t n)
 {
 	assert(!(n & 1));
 	const uint16_t *b = data;
@@ -693,7 +680,7 @@ static uint32_t in_cksum(uint32_t sum, const void *data, size_t n)
 	return sum;
 }
 
-static uint16_t in_cksum_fin(uint32_t sum, const void *data, size_t n)
+static inline uint16_t in_cksum_fin(uint32_t sum, const void *data, size_t n)
 {
 	const uint16_t *b = data;
 	while (n > 1) {
@@ -745,6 +732,25 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 		return false;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
+	if ((ip.saddr >> IN_CLASSA_NSHIFT) != IN_LOOPBACKNET) {
+		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
+			.saddr = ip.saddr,
+			.daddr = ip.daddr,
+			.protocol = IPPROTO_TCP,
+			.tot_len = htons(plen),
+		};
+		const uint16_t check = tcp.check;
+		tcp.check = 0;
+		uint32_t sum = 0;
+		sum = in_cksum(sum, &pseudo, sizeof(pseudo));
+		sum = in_cksum(sum, &tcp, sizeof(tcp));
+		sum = in_cksum_fin(
+			sum, msg->buf + ehl + ihl + sizeof(tcp),
+			plen - sizeof(tcp));
+		if (check != (uint16_t)sum) {
+			return false;
+		}
+	}
 	const uint16_t doff = tcp.doff * UINT16_C(4);
 	if (msg->len < ehl + ihl + doff) {
 		return false;
@@ -808,6 +814,25 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 		return false;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
+	if (!IN6_IS_ADDR_LOOPBACK(&ip6.ip6_src)) {
+		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
+			.src = ip6.ip6_src,
+			.dst = ip6.ip6_dst,
+			.nxt = IPPROTO_TCP,
+			.plen = htonl(plen),
+		};
+		const uint16_t check = tcp.check;
+		tcp.check = 0;
+		uint32_t sum = 0;
+		sum = in_cksum(sum, &pseudo, sizeof(pseudo));
+		sum = in_cksum(sum, &tcp, sizeof(tcp));
+		sum = in_cksum_fin(
+			sum, msg->buf + ehl + ihl + sizeof(tcp),
+			plen - sizeof(tcp));
+		if (check != (uint16_t)sum) {
+			return false;
+		}
+	}
 	const uint16_t doff = tcp.doff * UINT16_C(4);
 	if (ehl + ihl + doff > msg->len) {
 		return false;
@@ -818,8 +843,8 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 	msg->addr.in6 = (struct sockaddr_in6){
 		.sin6_family = AF_INET6,
 		.sin6_port = tcp.source,
+		.sin6_addr = ip6.ip6_src,
 	};
-	memcpy(&msg->addr.in6.sin6_addr, &ip6.ip6_src, sizeof(struct in6_addr));
 
 	struct obfs_ctx *restrict ctx;
 	hashkey_t key;
@@ -929,9 +954,9 @@ bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
 		.ip6_plen = htons(plen),
 		.ip6_nxt = IPPROTO_TCP,
 		.ip6_hops = UINT8_C(64),
+		.ip6_src = src->sin6_addr,
+		.ip6_dst = dst->sin6_addr,
 	};
-	memcpy(&ip6.ip6_src, &src->sin6_addr, sizeof(struct in6_addr));
-	memcpy(&ip6.ip6_dst, &dst->sin6_addr, sizeof(struct in6_addr));
 	memcpy(msg->buf, &ip6, sizeof(ip6));
 	struct tcphdr tcp = (struct tcphdr){
 		.source = src->sin6_port,
@@ -945,11 +970,11 @@ bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
 	};
 	{
 		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
+			.src = src->sin6_addr,
+			.dst = dst->sin6_addr,
 			.nxt = IPPROTO_TCP,
 			.plen = htonl(plen),
 		};
-		memcpy(&pseudo.src, &src->sin6_addr, sizeof(struct in6_addr));
-		memcpy(&pseudo.dst, &dst->sin6_addr, sizeof(struct in6_addr));
 		uint32_t sum = 0;
 		sum = in_cksum(sum, &pseudo, sizeof(pseudo));
 		sum = in_cksum(sum, &tcp, sizeof(tcp));
