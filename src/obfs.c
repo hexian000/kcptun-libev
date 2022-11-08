@@ -27,11 +27,18 @@
 #include <regex.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <netinet/if_ether.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
+
+struct obfs_stats {
+	size_t pkt_rx, pkt_tx;
+	size_t byt_rx, byt_tx;
+};
 
 struct obfs {
 	struct config *conf;
@@ -41,9 +48,12 @@ struct obfs {
 	struct ev_io w_accept;
 	struct ev_timer w_timer;
 	struct obfs_ctx *client;
+	struct obfs_stats stats;
 	uint16_t bind_port;
+	bool cap_eth;
 	int cap_fd, raw_fd;
 	int fd;
+	int domain;
 };
 
 struct obfs_ctx {
@@ -66,12 +76,11 @@ struct pseudo_iphdr {
 };
 
 struct pseudo_ip6hdr {
-	struct in6_addr ip6_src;
-	struct in6_addr ip6_dst;
-	uint32_t ip6_plen;
-	uint16_t zero1;
-	uint8_t zero2;
-	uint8_t ip6_nxt;
+	struct in6_addr src;
+	struct in6_addr dst;
+	uint32_t plen;
+	uint8_t zero[3];
+	uint8_t nxt;
 };
 
 static void
@@ -197,14 +206,36 @@ static void obfs_tcp_setup(const int fd)
 	}
 }
 
-static bool obfs_ctx_dial(struct obfs *restrict obfs)
+static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	if (!resolve_netaddr(&obfs->conf->pkt_connect, RESOLVE_TCP)) {
+	switch (sa->sa_family) {
+	case AF_INET:
+		obfs->bind_port = ntohs(((struct sockaddr_in *)sa)->sin_port);
+		break;
+	case AF_INET6:
+		obfs->bind_port = ntohs(((struct sockaddr_in6 *)sa)->sin6_port);
+		break;
+	default:
 		return false;
 	}
-	const struct sockaddr *sa = obfs->conf->pkt_connect.sa;
+	if (obfs_is_client(obfs)) {
+		/* client side offload */
+		if (bind(obfs->cap_fd, sa, getsocklen(sa))) {
+			LOGW_PERROR("cap bind");
+		}
+	}
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOGD_F("obfs: cap bind %s", addr_str);
+	}
+	return true;
+}
+
+static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
+{
 	int fd = -1;
-	if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+	if ((fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP)) < 0) {
 		LOGE_PERROR("obfs tcp");
 		return false;
 	}
@@ -241,9 +272,9 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs)
 		obfs_ctx_free(obfs->loop, ctx);
 		return false;
 	}
-	obfs->bind_port = ntohs(ctx->laddr.in.sin_port);
-	LOGD_F("obfs: cap bind %" PRIu16, obfs->bind_port);
-
+	if (!obfs_cap_bind(obfs, &ctx->laddr.sa)) {
+		return false;
+	}
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
 		obfs_ctx_free(obfs->loop, ctx);
 		return false;
@@ -284,7 +315,10 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
 	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 	if (obfs_is_client(obfs) && obfs->client == NULL) {
-		(void)obfs_ctx_dial(obfs);
+		struct netaddr *addr = &obfs->conf->pkt_connect;
+		if (resolve_netaddr(addr, RESOLVE_TCP)) {
+			(void)obfs_ctx_dial(obfs, addr->sa);
+		}
 	}
 }
 
@@ -336,11 +370,82 @@ bool obfs_resolve(struct obfs *obfs)
 	return true;
 }
 
-bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
+void obfs_stats(struct obfs *obfs)
 {
+	const ev_tstamp now = ev_now(obfs->loop);
+	static struct obfs_stats last_stats = { 0 };
+	static double last_print_time = TSTAMP_NIL;
+	if (last_print_time == TSTAMP_NIL) {
+		last_print_time = now;
+		last_stats = obfs->stats;
+		return;
+	}
+	if (now - last_print_time < 30.0) {
+		return;
+	}
+
+	const double dt = now - last_print_time;
+	struct obfs_stats dstats = (struct obfs_stats){
+		.pkt_rx = obfs->stats.pkt_rx - last_stats.pkt_rx,
+		.byt_rx = obfs->stats.byt_rx - last_stats.byt_rx,
+	};
+
+	if (dstats.pkt_rx) {
+		double pkt_rate, byte_rate;
+		pkt_rate = (double)(dstats.pkt_rx) / dt;
+		byte_rate = (double)(dstats.byt_rx >> 10u) / dt;
+		LOGD_F("obfs: capture %.1f pkt/s, %.1f KiB/s, total %zu pkts",
+		       pkt_rate, byte_rate, obfs->stats.pkt_rx);
+	}
+	last_print_time = now;
+	last_stats = obfs->stats;
+}
+
+static bool obfs_raw_setup(struct obfs *restrict obfs)
+{
+	const int domain = obfs->domain;
+	const int fd = obfs->raw_fd;
+	int level;
+	int optname;
+	int value = 1;
+	switch (domain) {
+	case AF_INET:
+		level = IPPROTO_IP;
+		optname = IP_HDRINCL;
+		break;
+	case AF_INET6:
+		level = IPPROTO_IPV6;
+		optname = IPV6_HDRINCL;
+		break;
+	default:
+		LOGF_F("unknown domain: %d", domain);
+		return false;
+	}
+	if (setsockopt(fd, level, optname, &value, sizeof(value))) {
+		LOGE_PERROR("raw setup");
+		return false;
+	}
+	return true;
+}
+
+static bool obfs_raw_start(struct obfs *restrict obfs)
+{
+	const int domain = obfs->domain;
 	struct config *restrict conf = obfs->conf;
-	struct pktconn *restrict pkt = &s->pkt;
-	obfs->cap_fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+	switch (domain) {
+	case AF_INET:
+		obfs->cap_fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+		obfs->cap_eth = false;
+		break;
+	case AF_INET6:
+		LOGW("obfs: ipv6 is supported on ethernet only");
+		obfs->cap_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IPV6));
+		obfs->cap_eth = true;
+		break;
+	default:
+		LOGF_F("unknown domain: %d", domain);
+		return false;
+	}
 	if (obfs->cap_fd < 0) {
 		LOGE_PERROR("obfs capture");
 		return false;
@@ -351,7 +456,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	}
 	socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
 
-	obfs->raw_fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	obfs->raw_fd = socket(domain, SOCK_RAW, IPPROTO_RAW);
 	if (obfs->raw_fd < 0) {
 		LOGE_PERROR("obfs raw");
 		return false;
@@ -360,21 +465,30 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		LOGE_PERROR("fcntl");
 		return false;
 	}
+	if (!obfs_raw_setup(obfs)) {
+		return false;
+	}
 	socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
+	return true;
+}
 
+bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
+{
+	struct config *restrict conf = obfs->conf;
+	struct pktconn *restrict pkt = &s->pkt;
 	if (conf->mode & MODE_SERVER) {
 		struct netaddr *restrict addr = &conf->pkt_bind;
 		if (!resolve_netaddr(addr, RESOLVE_TCP | RESOLVE_PASSIVE)) {
 			return false;
 		}
 		const struct sockaddr *restrict sa = addr->sa;
-		if (sa->sa_family != AF_INET) {
-			LOGE("obfs: currently only ipv4 is supported");
+		const int domain = sa->sa_family;
+		obfs->domain = domain;
+		obfs_raw_start(obfs);
+		if (!obfs_cap_bind(obfs, sa)) {
 			return false;
 		}
-		obfs->bind_port = ntohs(((struct sockaddr_in *)sa)->sin_port);
-		LOGD_F("obfs: cap bind %" PRIu16, obfs->bind_port);
-		obfs->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		obfs->fd = socket(domain, SOCK_STREAM, IPPROTO_TCP);
 		if (obfs->fd < 0) {
 			LOGE_PERROR("obfs tcp");
 			return false;
@@ -393,20 +507,22 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 			LOGE_PERROR("obfs tcp listen");
 			return false;
 		}
-		if (((struct sockaddr_in *)sa)->sin_addr.s_addr != INADDR_ANY) {
-			if (bind(obfs->cap_fd, sa, getsocklen(sa))) {
-				LOGE_PERROR("obfs cap bind");
-				return false;
-			}
-		}
 		if (LOGLEVEL(LOG_LEVEL_INFO)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
 			LOGI_F("obfs: tcp listen %s", addr_str);
 		}
 	}
-	if (obfs_is_client(obfs) && !obfs_ctx_dial(obfs)) {
-		return false;
+	if (conf->mode & MODE_CLIENT) {
+		if (!resolve_netaddr(&obfs->conf->pkt_connect, RESOLVE_TCP)) {
+			return false;
+		}
+		const struct sockaddr *sa = obfs->conf->pkt_connect.sa;
+		obfs->domain = sa->sa_family;
+		obfs_raw_start(obfs);
+		if (!obfs_ctx_dial(obfs, sa)) {
+			return false;
+		}
 	}
 
 	{
@@ -503,14 +619,22 @@ void obfs_free(struct obfs *obfs)
 
 uint16_t obfs_offset(struct obfs *obfs)
 {
-	UNUSED(obfs);
-	return sizeof(struct iphdr) + sizeof(struct tcphdr);
+	switch (obfs->domain) {
+	case AF_INET:
+		return sizeof(struct iphdr) + sizeof(struct tcphdr);
+	case AF_INET6:
+		return sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
+	default:
+		break;
+	}
+	CHECK_FAILED();
 }
 
-static uint32_t in_cksum(uint32_t sum, void *data, size_t n)
+/* RFC 1071 */
+static uint32_t in_cksum(uint32_t sum, const void *data, size_t n)
 {
 	assert(!(n & 1));
-	uint16_t *b = data;
+	const uint16_t *b = data;
 	while (n > 1) {
 		sum += *b++;
 		n -= 2;
@@ -518,9 +642,9 @@ static uint32_t in_cksum(uint32_t sum, void *data, size_t n)
 	return sum;
 }
 
-static uint16_t in_cksum_fin(uint32_t sum, void *data, size_t n)
+static uint16_t in_cksum_fin(uint32_t sum, const void *data, size_t n)
 {
-	uint16_t *b = data;
+	const uint16_t *b = data;
 	while (n > 1) {
 		sum += *b++;
 		n -= 2;
@@ -536,11 +660,9 @@ static uint16_t in_cksum_fin(uint32_t sum, void *data, size_t n)
 	return ~(uint16_t)(sum);
 }
 
-static void obfs_capture(struct obfs_ctx *ctx, struct msgframe *msg)
+static void
+obfs_capture(struct obfs_ctx *ctx, const struct tcphdr *restrict tcp)
 {
-	struct iphdr *restrict ip = (struct iphdr *)msg->buf;
-	const size_t ihl = ip->ihl * 4u;
-	struct tcphdr *restrict tcp = (struct tcphdr *)(msg->buf + ihl);
 	if (ctx->captured) {
 		return;
 	}
@@ -549,50 +671,40 @@ static void obfs_capture(struct obfs_ctx *ctx, struct msgframe *msg)
 	ctx->captured = true;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
-		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
 		LOGD_F("obfs: captured from %s", addr_str);
 	}
 }
 
-bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
+static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 {
-	struct iphdr *restrict ip = (struct iphdr *)msg->buf;
-	const size_t ihl = ip->ihl * 4u;
-	if (ip->version != IPVERSION || ip->protocol != IPPROTO_TCP) {
+	const uint16_t ehl = obfs->cap_eth ? sizeof(struct ethhdr) : 0;
+	if (msg->len < ehl + sizeof(struct iphdr)) {
 		return false;
 	}
-	if (ntohs(ip->tot_len) > msg->len ||
-	    ihl + sizeof(struct tcphdr) > msg->len) {
+	struct iphdr ip;
+	struct tcphdr tcp;
+	memcpy(&ip, msg->buf + ehl, sizeof(ip));
+	const uint16_t ihl = ip.ihl * UINT16_C(4);
+	const uint16_t plen = ntohs(ip.tot_len) - ihl;
+	if (ip.protocol != IPPROTO_TCP) {
 		return false;
 	}
-	struct tcphdr *restrict tcp = (struct tcphdr *)(msg->buf + ihl);
-	const size_t doff = tcp->doff * 4u;
-	if (ihl + doff > msg->len) {
+	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
 		return false;
 	}
-#if RAW_INPUT_CHECKSUM
-	{
-		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
-			.saddr = ip->saddr,
-			.daddr = ip->daddr,
-			.protocol = IPPROTO_TCP,
-			.tot_len = htons(msg->len - ihl),
-		};
-		const uint16_t check = tcp->check;
-		tcp->check = 0;
-		uint32_t sum = in_cksum(0, &pseudo, sizeof(pseudo));
-		if (check != in_cksum_fin(sum, tcp, msg->len - ihl)) {
-			return false;
-		}
+	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
+	const uint16_t doff = tcp.doff * UINT16_C(4);
+	if (msg->len < ehl + ihl + doff) {
+		return false;
 	}
-#endif
-	if (ntohs(tcp->dest) != obfs->bind_port) {
+	if (ntohs(tcp.dest) != obfs->bind_port) {
 		return false;
 	}
 	msg->addr.in = (struct sockaddr_in){
 		.sin_family = AF_INET,
-		.sin_addr.s_addr = ip->saddr,
-		.sin_port = tcp->source,
+		.sin_addr.s_addr = ip.saddr,
+		.sin_port = tcp.source,
 	};
 
 	struct obfs_ctx *restrict ctx;
@@ -612,7 +724,7 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 	}
 
 	/* inbound */
-	if (LOGLEVEL(LOG_LEVEL_DEBUG) && tcp->rst) {
+	if (LOGLEVEL(LOG_LEVEL_DEBUG) && tcp.rst) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		LOG_RATELIMITEDF(
@@ -620,13 +732,181 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 			addr_str);
 		return false;
 	}
+	obfs_capture(ctx, &tcp);
 	ctx->last_seen = msg->ts;
-	obfs_capture(ctx, msg);
-	msg->off = ihl + doff;
-	if (msg->off >= msg->len) {
+	msg->off = ehl + ihl + doff;
+	msg->len = plen - doff;
+	return true;
+}
+
+static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
+{
+	const uint16_t ehl = obfs->cap_eth ? sizeof(struct ethhdr) : 0;
+	if (ehl + sizeof(struct ip6_hdr) > msg->len) {
 		return false;
 	}
-	msg->len -= msg->off;
+	struct ip6_hdr ip6;
+	struct tcphdr tcp;
+	memcpy(&ip6, msg->buf + ehl, sizeof(ip6));
+	const uint16_t ihl = sizeof(struct ip6_hdr);
+	const uint16_t plen = ntohs(ip6.ip6_plen);
+	if (ip6.ip6_nxt != IPPROTO_TCP) {
+		return false;
+	}
+	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
+		return false;
+	}
+	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
+	const uint16_t doff = tcp.doff * UINT16_C(4);
+	if (ehl + ihl + doff > msg->len) {
+		return false;
+	}
+	if (ntohs(tcp.dest) != obfs->bind_port) {
+		return false;
+	}
+	msg->addr.in6 = (struct sockaddr_in6){
+		.sin6_family = AF_INET6,
+		.sin6_port = tcp.source,
+	};
+	memcpy(&msg->addr.in6.sin6_addr, &ip6.ip6_src, sizeof(struct in6_addr));
+
+	struct obfs_ctx *restrict ctx;
+	hashkey_t key;
+	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
+	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
+		/* IP spoofing is not handled */
+		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+			char addr_str[64];
+			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			LOG_RATELIMITEDF(
+				LOG_LEVEL_DEBUG, obfs->loop, 1.0,
+				"* obfs: unrelated %" PRIu16 " bytes from %s",
+				msg->len, addr_str);
+		}
+		return false;
+	}
+
+	/* inbound */
+	if (LOGLEVEL(LOG_LEVEL_DEBUG) && tcp.rst) {
+		char addr_str[64];
+		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		LOG_RATELIMITEDF(
+			LOG_LEVEL_DEBUG, obfs->loop, 1.0, "* obfs: rst from %s",
+			addr_str);
+		return false;
+	}
+	obfs_capture(ctx, &tcp);
+	ctx->last_seen = msg->ts;
+	msg->off = ehl + ihl + doff;
+	msg->len = plen - doff;
+	return true;
+}
+
+bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
+{
+	obfs->stats.pkt_rx++;
+	obfs->stats.byt_rx += msg->len;
+	switch (obfs->domain) {
+	case AF_INET:
+		return obfs_open_ipv4(obfs, msg);
+	case AF_INET6:
+		return obfs_open_ipv6(obfs, msg);
+	default:
+		break;
+	}
+	return false;
+}
+
+bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
+{
+	assert(msg->off == sizeof(struct iphdr) + sizeof(struct tcphdr));
+	const struct sockaddr_in *restrict src = &ctx->laddr.in;
+	assert(src->sin_family == AF_INET);
+	const struct sockaddr_in *restrict dst = &msg->addr.in;
+	assert(dst->sin_family == AF_INET);
+	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
+	struct iphdr ip = (struct iphdr){
+		.version = IPVERSION,
+		.ihl = sizeof(struct iphdr) / 4u,
+		.tot_len = htons(sizeof(struct iphdr) + plen),
+		.id = (uint16_t)rand32(),
+		.frag_off = htons(UINT16_C(0x4000)),
+		.ttl = UINT8_C(64),
+		.protocol = IPPROTO_TCP,
+		.saddr = src->sin_addr.s_addr,
+		.daddr = dst->sin_addr.s_addr,
+	};
+	memcpy(msg->buf, &ip, sizeof(struct iphdr));
+	struct tcphdr tcp = (struct tcphdr){
+		.source = src->sin_port,
+		.dest = dst->sin_port,
+		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
+		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
+		.doff = sizeof(struct tcphdr) / 4u,
+		.psh = 1,
+		.ack = 1,
+		.window = htons(16384),
+	};
+	{
+		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
+			.saddr = src->sin_addr.s_addr,
+			.daddr = dst->sin_addr.s_addr,
+			.protocol = IPPROTO_TCP,
+			.tot_len = htons(plen),
+		};
+		uint32_t sum = 0;
+		sum = in_cksum(sum, &pseudo, sizeof(pseudo));
+		sum = in_cksum(sum, &tcp, sizeof(tcp));
+		tcp.check = in_cksum_fin(sum, msg->buf + msg->off, msg->len);
+	}
+	memcpy(msg->buf + sizeof(ip), &tcp, sizeof(tcp));
+	msg->len += msg->off;
+	msg->addr.in.sin_port = 0;
+	return true;
+}
+
+bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
+{
+	assert(msg->off == sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
+	const struct sockaddr_in6 *restrict src = &ctx->laddr.in6;
+	assert(src->sin6_family == AF_INET6);
+	const struct sockaddr_in6 *restrict dst = &msg->addr.in6;
+	assert(dst->sin6_family == AF_INET6);
+	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
+	struct ip6_hdr ip6 = (struct ip6_hdr){
+		.ip6_flow = htonl((6u << 28u) | (0u << 20u) | 0u),
+		.ip6_plen = htons(plen),
+		.ip6_nxt = IPPROTO_TCP,
+		.ip6_hops = UINT8_C(64),
+	};
+	memcpy(&ip6.ip6_src, &src->sin6_addr, sizeof(struct in6_addr));
+	memcpy(&ip6.ip6_dst, &dst->sin6_addr, sizeof(struct in6_addr));
+	memcpy(msg->buf, &ip6, sizeof(ip6));
+	struct tcphdr tcp = (struct tcphdr){
+		.source = src->sin6_port,
+		.dest = dst->sin6_port,
+		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
+		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
+		.doff = sizeof(struct tcphdr) / 4u,
+		.psh = 1,
+		.ack = 1,
+		.window = htons(16384),
+	};
+	{
+		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
+			.nxt = IPPROTO_TCP,
+			.plen = htonl(plen),
+		};
+		memcpy(&pseudo.src, &src->sin6_addr, sizeof(struct in6_addr));
+		memcpy(&pseudo.dst, &dst->sin6_addr, sizeof(struct in6_addr));
+		uint32_t sum = 0;
+		sum = in_cksum(sum, &pseudo, sizeof(pseudo));
+		sum = in_cksum(sum, &tcp, sizeof(tcp));
+		tcp.check = in_cksum_fin(sum, msg->buf + msg->off, msg->len);
+	}
+	memcpy(msg->buf + sizeof(ip6), &tcp, sizeof(tcp));
+	msg->len += msg->off;
+	msg->addr.in6.sin6_port = 0;
 	return true;
 }
 
@@ -647,50 +927,27 @@ bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
 	if (!ctx->captured) {
 		return false;
 	}
-	const struct sockaddr_in *restrict src = &ctx->laddr.in;
-	const struct sockaddr_in *restrict dst = &msg->addr.in;
-	struct iphdr *restrict ip = (struct iphdr *)msg->buf;
-	*ip = (struct iphdr){
-		.version = IPVERSION,
-		.ihl = sizeof(struct iphdr) / 4u,
-		.frag_off = htons(UINT16_C(0x4000)),
-		.ttl = UINT8_C(64),
-		.protocol = IPPROTO_TCP,
-		.daddr = dst->sin_addr.s_addr,
-		.id = (uint16_t)rand32(),
-	};
-	CHECK(msg->off == sizeof(struct iphdr) + sizeof(struct tcphdr));
-	struct tcphdr *restrict tcp =
-		(struct tcphdr *)(msg->buf + sizeof(struct iphdr));
-	*tcp = (struct tcphdr){
-		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
-		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
-		.psh = 1,
-		.ack = 1,
-		.window = htons(16384),
-		.source = src->sin_port,
-		.dest = dst->sin_port,
-		.doff = sizeof(struct tcphdr) / 4u,
-	};
-
-	{
-		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
-			.saddr = src->sin_addr.s_addr,
-			.daddr = dst->sin_addr.s_addr,
-			.protocol = IPPROTO_TCP,
-			.tot_len = htons(sizeof(struct tcphdr) + msg->len),
-		};
-		uint32_t sum = in_cksum(0, &pseudo, sizeof(pseudo));
-		tcp->check = in_cksum_fin(
-			sum, tcp, sizeof(struct tcphdr) + msg->len);
+	bool ok = false;
+	switch (obfs->domain) {
+	case AF_INET:
+		ok = obfs_seal_ipv4(ctx, msg);
+		break;
+	case AF_INET6:
+		ok = obfs_seal_ipv6(ctx, msg);
+		break;
+	default:
+		break;
 	}
-	msg->len += msg->off;
-	return true;
+	if (ok) {
+		obfs->stats.pkt_tx++;
+		obfs->stats.byt_tx += msg->len;
+	}
+	return ok;
 }
 
 static size_t http_server_date(char *buf, size_t buf_size)
 {
-	/* see RFC 1123: Section 5.2.14 */
+	/* RFC 1123: Section 5.2.14 */
 	static const char fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
 	const time_t now = time(NULL);
 	const struct tm *gmt = gmtime(&now);
@@ -807,12 +1064,17 @@ void http_client_read_cb(
 
 	char buf[256];
 	const ssize_t nbrecv = read(watcher->fd, buf, sizeof(buf));
-	if (nbrecv <= 0) {
+	if (nbrecv < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
 		    errno == ENOMEM) {
 			return;
 		}
 		LOGE_PERROR("read");
+		obfs_ctx_stop(loop, ctx);
+		obfs->client = NULL;
+		return;
+	} else if (nbrecv == 0) {
+		LOGD("obfs: client eof");
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
 		return;

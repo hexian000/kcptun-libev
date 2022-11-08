@@ -320,7 +320,7 @@ static struct config conf_default(void)
 		.tcp_keepalive = false,
 		.tcp_nodelay = true,
 		.log_level = LOG_LEVEL_INFO,
-		.user = "nobody",
+		.user = NULL,
 	};
 }
 

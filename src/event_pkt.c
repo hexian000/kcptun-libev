@@ -88,7 +88,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		navail -= (size_t)ret;
 	} while (nbatch == MMSG_BATCH_SIZE && navail > 0);
 	if (nrecv > 0) {
-		s->stats.pkt_in += nbrecv;
+		s->stats.pkt_rx += nbrecv;
 		s->pkt.last_recv_time = ev_now(s->loop);
 	}
 	return nrecv;
@@ -132,7 +132,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			LOGV_F("kcp recv: %" PRIu16 " bytes from %s", msg->len,
 			       addr_str);
 		}
-		s->stats.pkt_in += nbrecv;
+		s->stats.pkt_rx += nbrecv;
 		nrecv++;
 	} while (true);
 	if (nrecv > 0) {
@@ -209,7 +209,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		q->mq_send[i] = q->mq_send[nsend + i];
 	}
 	q->mq_send_len = navail;
-	s->stats.pkt_out += nbsend;
+	s->stats.pkt_tx += nbsend;
 	s->pkt.last_send_time = ev_now(s->loop);
 	return nsend;
 }

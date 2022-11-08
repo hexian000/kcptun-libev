@@ -121,6 +121,9 @@ void drop_privileges(const char *user)
 	if (getuid() != 0) {
 		return;
 	}
+	if (user == NULL) {
+		user = "nobody";
+	}
 	if (chdir("/") != 0) {
 		LOGW_PERROR("chdir");
 	}

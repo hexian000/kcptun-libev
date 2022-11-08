@@ -41,7 +41,6 @@ static bool crypto_open_inplace(
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	if (src_len <= nonce_size + overhead) {
-		LOGV_F("packet too short: %zu", src_len);
 		return false;
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
@@ -184,8 +183,8 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
-	s->stats.kcp_in += msg->len;
-	ss->stats.kcp_in += msg->len;
+	s->stats.kcp_rx += msg->len;
+	ss->stats.kcp_rx += msg->len;
 }
 
 void packet_recv(struct pktqueue *restrict q, struct server *s)
@@ -223,7 +222,7 @@ void packet_recv(struct pktqueue *restrict q, struct server *s)
 		msgframe_delete(q, msg);
 	}
 	if (nbrecv > 0) {
-		s->stats.pkt_in += nbrecv;
+		s->stats.pkt_rx += nbrecv;
 		s->pkt.last_recv_time = ev_now(s->loop);
 	}
 	q->mq_recv_len = 0;
@@ -346,8 +345,6 @@ struct pktqueue *pktqueue_new(struct server *restrict s)
 		q->obfs = obfs_new(s->loop, conf);
 		if (q->obfs == NULL) {
 			LOGW_F("obfs init failed: %s", conf->obfs);
-		} else {
-			q->pkt_offset = obfs_offset(q->obfs);
 		}
 	}
 #endif

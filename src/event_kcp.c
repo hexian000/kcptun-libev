@@ -25,8 +25,8 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	unsigned char *kcp_packet = msg->buf + msg->off;
 	memcpy(kcp_packet, buf, len);
 	msg->len = len;
-	s->stats.kcp_out += len;
-	ss->stats.kcp_out += len;
+	s->stats.kcp_tx += len;
+	ss->stats.kcp_tx += len;
 	return packet_send(q, s, msg) ? len : -1;
 }
 

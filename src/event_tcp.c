@@ -144,8 +144,8 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ss->rbuf_len += len;
 
 	if (len > 0) {
-		ss->stats.tcp_in += len;
-		ss->server->stats.tcp_in += len;
+		ss->stats.tcp_rx += len;
+		ss->server->stats.tcp_rx += len;
 		LOGV_F("session [%08" PRIX32 "] "
 		       "tcp recv: %zu bytes, cap: %zu bytes",
 		       ss->conv, len, cap);
@@ -200,8 +200,8 @@ static size_t tcp_send(struct session *restrict ss)
 		memmove(ss->wbuf, next, ss->wbuf_len);
 	}
 
-	ss->stats.tcp_out += nsend;
-	ss->server->stats.tcp_out += nsend;
+	ss->stats.tcp_tx += nsend;
+	ss->server->stats.tcp_tx += nsend;
 	LOGV_F("session [%08" PRIX32 "] tcp send: %zd bytes, remain: %zu bytes",
 	       ss->conv, nsend, len - (size_t)nsend + ss->wbuf_len);
 	return (size_t)nsend;

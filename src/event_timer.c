@@ -40,7 +40,7 @@ static bool print_session_iter(
 	       "peer=%s state=%d age=%.0fs tx=%zu rx=%zu "
 	       "rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d",
 	       ss->conv, addr_str, ss->state, stat->now - ss->created,
-	       ss->stats.tcp_in, ss->stats.tcp_out, ss->kcp->rx_srtt,
+	       ss->stats.tcp_rx, ss->stats.tcp_tx, ss->kcp->rx_srtt,
 	       ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp));
 	return true;
 }
@@ -62,7 +62,7 @@ static void print_session_table(struct server *restrict s, const ev_tstamp now)
 	}
 }
 
-static void print_debug_info(struct server *restrict s, const ev_tstamp now)
+static void print_server_stats(struct server *restrict s, const ev_tstamp now)
 {
 	static struct link_stats last_stats = { 0 };
 	static double last_print_time = TSTAMP_NIL;
@@ -78,31 +78,30 @@ static void print_debug_info(struct server *restrict s, const ev_tstamp now)
 		print_session_table(s, now);
 	}
 
+	struct link_stats *restrict stats = &s->stats;
 	const double dt = now - last_print_time;
 	struct link_stats dstats = (struct link_stats){
-		.pkt_in = s->stats.pkt_in - last_stats.pkt_in,
-		.pkt_out = s->stats.pkt_out - last_stats.pkt_out,
-		.kcp_in = s->stats.kcp_in - last_stats.kcp_in,
-		.kcp_out = s->stats.kcp_out - last_stats.kcp_out,
-		.tcp_in = s->stats.tcp_in - last_stats.tcp_in,
-		.tcp_out = s->stats.tcp_out - last_stats.tcp_out,
+		.pkt_rx = stats->pkt_rx - last_stats.pkt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats.pkt_tx,
+		.kcp_rx = stats->kcp_rx - last_stats.kcp_rx,
+		.kcp_tx = stats->kcp_tx - last_stats.kcp_tx,
+		.tcp_rx = stats->tcp_rx - last_stats.tcp_rx,
+		.tcp_tx = stats->tcp_tx - last_stats.tcp_tx,
 	};
 
-	if (dstats.kcp_in || dstats.kcp_out || dstats.tcp_in ||
-	    dstats.tcp_out) {
-		double kcp_up, kcp_down, tcp_up, tcp_down;
-		kcp_up = (double)(dstats.kcp_out >> 10u) / dt;
-		kcp_down = (double)(dstats.kcp_in >> 10u) / dt;
-		tcp_up = (double)(dstats.tcp_in >> 10u) / dt;
-		tcp_down = (double)(dstats.tcp_out >> 10u) / dt;
+	if (dstats.kcp_rx || dstats.kcp_tx || dstats.tcp_rx || dstats.tcp_tx) {
+		double kcp_tx, kcp_rx, tcp_tx, tcp_rx;
+		kcp_tx = (double)(dstats.kcp_tx >> 10u) / dt;
+		kcp_rx = (double)(dstats.kcp_rx >> 10u) / dt;
+		tcp_tx = (double)(dstats.tcp_rx >> 10u) / dt;
+		tcp_rx = (double)(dstats.tcp_tx >> 10u) / dt;
 		LOGD_F("traffic(KiB/s) kcp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
-		       kcp_up, kcp_down, tcp_up, tcp_down,
-		       tcp_up / kcp_up * 100.0, tcp_down / kcp_down * 100.0);
+		       kcp_tx, kcp_rx, tcp_tx, tcp_rx, tcp_tx / kcp_tx * 100.0,
+		       tcp_rx / kcp_rx * 100.0);
 		LOGD_F("total kcp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
-		       s->stats.kcp_out, s->stats.kcp_in, s->stats.tcp_in,
-		       s->stats.tcp_out,
-		       s->stats.tcp_in * 100.0 / s->stats.kcp_out,
-		       s->stats.tcp_out * 100.0 / s->stats.kcp_in);
+		       stats->kcp_tx, stats->kcp_rx, stats->tcp_rx,
+		       stats->tcp_tx, stats->tcp_rx * 100.0 / stats->kcp_tx,
+		       stats->tcp_tx * 100.0 / stats->kcp_rx);
 	}
 
 	last_print_time = now;
@@ -124,7 +123,8 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	switch (ss->state) {
 	case STATE_HALFOPEN:
 		if (not_seen > s->dial_timeout) {
-			LOGW_F("session [%08" PRIX32 "] close: kcp dial timed out",
+			LOGW_F("session [%08" PRIX32 "] close: "
+			       "kcp dial timed out",
 			       ss->conv);
 			session_stop(ss);
 			kcp_reset(ss);
@@ -198,7 +198,12 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	timeout_check(s, now);
 
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		print_debug_info(s, now);
+		print_server_stats(s, now);
+#if WITH_OBFS
+		if (s->pkt.queue->obfs != NULL) {
+			obfs_stats(s->pkt.queue->obfs);
+		}
+#endif
 	}
 
 	if ((s->conf->mode & MODE_CLIENT) == 0) {

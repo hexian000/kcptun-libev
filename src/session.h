@@ -60,9 +60,9 @@ enum session_state {
 };
 
 struct link_stats {
-	size_t tcp_in, tcp_out;
-	size_t kcp_in, kcp_out;
-	size_t pkt_in, pkt_out;
+	size_t tcp_rx, tcp_tx;
+	size_t kcp_rx, kcp_tx;
+	size_t pkt_rx, pkt_tx;
 };
 
 struct IKCPCB;

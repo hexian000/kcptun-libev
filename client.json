@@ -1,6 +1,6 @@
 {
     "listen": ":5202",
-    "kcp_connect": "127.0.0.1:5555",
+    "kcp_connect": "[::1]:5555",
     "kcp": {
         "mtu": 1400,
         "sndwnd": 512,
@@ -16,6 +16,7 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
+    "obfs": "dpi/tcp-wnd",
     "loglevel": 2,
     "user": "nobody"
 }

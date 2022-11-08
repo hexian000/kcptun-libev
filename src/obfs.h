@@ -14,6 +14,7 @@ struct obfs_ctx;
 
 struct obfs *obfs_new(struct ev_loop *loop, struct config *conf);
 bool obfs_resolve(struct obfs *obfs);
+void obfs_stats(struct obfs *obfs);
 bool obfs_start(struct obfs *obfs, struct server *s);
 void obfs_stop(struct obfs *obfs, struct server *s);
 void obfs_free(struct obfs *obfs);
