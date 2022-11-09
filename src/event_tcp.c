@@ -167,6 +167,7 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		if (ss->tcp_fd != -1 && ev_is_active(watcher)) {
 			ev_io_stop(loop, watcher);
 		}
+		return;
 	}
 
 	do {
