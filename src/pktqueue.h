@@ -54,7 +54,7 @@ struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa);
 void msgframe_delete(struct pktqueue *q, struct msgframe *msg);
 
 /* process mq_recv */
-void packet_recv(struct pktqueue *q, struct server *s);
+size_t packet_recv(struct pktqueue *q, struct server *s);
 
 /* send a plain packet */
 bool packet_send(struct pktqueue *q, struct server *s, struct msgframe *msg);

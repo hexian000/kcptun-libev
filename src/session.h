@@ -24,6 +24,8 @@ struct tlv_header {
 };
 
 #define TLV_HEADER_SIZE (sizeof(struct tlv_header))
+/* reserve space for one more kcp segment */
+#define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
 
 static inline struct tlv_header tlv_header_read(const unsigned char *d)
 {
@@ -75,16 +77,17 @@ struct session {
 	int tcp_fd;
 	struct ev_io w_read, w_write;
 	struct server *server;
-	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
-	size_t rbuf_len;
-	size_t wbuf_len, wbuf_navail, wbuf_flush;
 	sockaddr_max_t raddr;
 	uint32_t conv;
 	double last_send, last_recv;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
 	bool kcp_flush;
+	bool kcp_arrived;
 	bool is_accepted;
+	size_t rbuf_len;
+	size_t wbuf_flush, wbuf_next, wbuf_len;
+	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
 };
 
 struct session *
@@ -93,7 +96,7 @@ void session_free(struct session *ss);
 
 void session_start(struct session *ss, int fd);
 void session_stop(struct session *ss);
-void session_on_msg(struct session *ss, struct tlv_header *hdr);
+void session_parse(struct session *ss);
 
 void session_close_all(struct hashtable *t);
 

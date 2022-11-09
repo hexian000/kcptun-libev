@@ -173,7 +173,8 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	return true;
 }
 
-void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
+static void
+session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 {
 	switch (hdr->msg) {
 	case SMSG_DIAL: {
@@ -204,8 +205,7 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 			consume_wbuf(ss, hdr->len);
 			return;
 		}
-		ss->wbuf_navail = navail;
-		tcp_notify_write(ss);
+		ss->wbuf_next = navail;
 		return;
 	}
 	case SMSG_EOF: {
@@ -219,7 +219,6 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 			ev_io_stop(ss->server->loop, w_read);
 		}
 		ss->state = STATE_LINGER;
-		tcp_notify_write(ss);
 		return;
 	}
 	case SMSG_KEEPALIVE: {
@@ -231,10 +230,39 @@ void session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr
 		return;
 	}
 	}
-	LOGE_F("smsg error: %04" PRIX16 ", %04" PRIX16, hdr->msg, hdr->len);
+	LOGE_F("session [%08" PRIX32 "] error: %04" PRIX16 ", %04" PRIX16,
+	       ss->conv, hdr->msg, hdr->len);
 	session_stop(ss);
 	kcp_reset(ss);
-	ss->state = STATE_LINGER;
+	ss->state = STATE_TIME_WAIT;
+}
+
+void session_parse(struct session *restrict ss)
+{
+	switch (ss->state) {
+	case STATE_HALFOPEN:
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
+		return;
+	}
+	if (ss->wbuf_len < TLV_HEADER_SIZE) {
+		/* no data available */
+		return;
+	}
+	struct tlv_header header = tlv_header_read(ss->wbuf);
+	if (header.len < TLV_HEADER_SIZE && header.len > TLV_MAX_LENGTH) {
+		LOGE_F("unexpected packet length: %" PRIu16, header.len);
+		session_stop(ss);
+		kcp_reset(ss);
+		return;
+	}
+	if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
+		/* incomplete data packet */
+		return;
+	}
+	session_on_msg(ss, &header);
 }
 
 static bool

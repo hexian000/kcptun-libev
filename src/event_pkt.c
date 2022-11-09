@@ -86,7 +86,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		}
 		nrecv += (size_t)ret;
 		navail -= (size_t)ret;
-	} while (nbatch == MMSG_BATCH_SIZE && navail > 0);
+	} while (navail > 0);
 	if (nrecv > 0) {
 		s->stats.pkt_rx += nbrecv;
 		s->pkt.last_recv_time = ev_now(s->loop);
@@ -149,11 +149,10 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
 	struct pktqueue *restrict q = s->pkt.queue;
-	const size_t nrecv = pkt_recv(watcher->fd, s);
-	if (nrecv > 0) {
-		packet_recv(q, s);
-		kcp_notify_all(s);
+	while (pkt_recv(watcher->fd, s) > 0) {
+		(void)packet_recv(q, s);
 	}
+	kcp_notify_recv(s);
 }
 
 #if HAVE_SENDMMSG
@@ -202,7 +201,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		}
 		nsend += (size_t)ret;
 		navail -= (size_t)ret;
-	} while (nbatch == MMSG_BATCH_SIZE && navail > 0);
+	} while (navail > 0);
 
 	/* move remaining messages */
 	for (size_t i = 0; i < navail; i++) {
@@ -266,14 +265,16 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
-	(void)pkt_send(watcher->fd, s);
+	while (pkt_send(watcher->fd, s) > 0) {
+		kcp_notify_update(s);
+	}
 	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->mq_send_len == 0) {
 		ev_io_stop(loop, watcher);
 	}
 }
 
-void pkt_notify_write(struct server *restrict s)
+void pkt_flush(struct server *restrict s)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	struct ev_io *restrict w_write = &s->pkt.w_write;

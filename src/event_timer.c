@@ -142,15 +142,9 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 			return true;
 		}
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
-			unsigned char buf[TLV_HEADER_SIZE];
-			struct tlv_header header = (struct tlv_header){
-				.msg = SMSG_KEEPALIVE,
-				.len = TLV_HEADER_SIZE,
-			};
-			tlv_header_write(buf, header);
-			(void)kcp_send(ss, buf, TLV_HEADER_SIZE);
 			LOGD_F("session [%08" PRIX32 "] send: keepalive",
 			       ss->conv);
+			kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		break;
 	case STATE_LINGER:
@@ -238,6 +232,6 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->pkt_connect.sa, S0MSG_PING, b, sizeof(b));
-	pkt_notify_write(s);
+	pkt_flush(s);
 	s->pkt.inflight_ping = ping_ts;
 }

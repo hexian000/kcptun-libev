@@ -1,6 +1,7 @@
 #include "event.h"
 #include "event_impl.h"
 #include "session.h"
+#include "slog.h"
 #include "util.h"
 #include "server.h"
 #include "pktqueue.h"
@@ -9,6 +10,8 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
@@ -43,23 +46,19 @@ void kcp_reset(struct session *ss)
 	ss->state = STATE_TIME_WAIT;
 }
 
-bool kcp_send(
+static bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
-	const bool can_flush = ss->kcp_flush && ikcp_waitsnd(ss->kcp) == 0;
 	int r = ikcp_send(ss->kcp, (char *)buf, (int)len);
 	if (r < 0) {
 		return false;
-	}
-	if (can_flush) {
-		ikcp_flush(ss->kcp);
 	}
 	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
 	ss->last_send = ev_now(ss->server->loop);
 	return true;
 }
 
-static bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg)
+bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg)
 {
 	unsigned char buf[TLV_HEADER_SIZE];
 	struct tlv_header header = (struct tlv_header){
@@ -75,6 +74,7 @@ static bool kcp_push(struct session *restrict ss)
 	if (ss->rbuf_len == 0) {
 		return true;
 	}
+	assert(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf_len;
 	struct tlv_header header = (struct tlv_header){
 		.msg = SMSG_PUSH,
@@ -83,12 +83,6 @@ static bool kcp_push(struct session *restrict ss)
 	tlv_header_write(ss->rbuf, header);
 	ss->rbuf_len = 0;
 	return kcp_send(ss, ss->rbuf, len);
-}
-
-bool kcp_dial(struct session *restrict ss)
-{
-	LOGD_F("session [%08" PRIX32 "] send: dial", ss->conv);
-	return kcp_sendmsg(ss, SMSG_DIAL);
 }
 
 void kcp_close(struct session *restrict ss)
@@ -105,11 +99,13 @@ void kcp_close(struct session *restrict ss)
 		kcp_reset(ss);
 		return;
 	}
+	/* always flush EOF message */
+	ikcp_flush(ss->kcp);
 	LOGD_F("session [%08" PRIX32 "] send: eof", ss->conv);
 	ss->state = STATE_LINGER;
 }
 
-static void kcp_recv(struct session *restrict ss)
+void kcp_recv(struct session *restrict ss)
 {
 	switch (ss->state) {
 	case STATE_HALFOPEN:
@@ -125,7 +121,7 @@ static void kcp_recv(struct session *restrict ss)
 		return;
 	}
 	}
-	if (ss->wbuf_navail > 0) {
+	if (ss->wbuf_next > 0) {
 		return;
 	}
 	unsigned char *start = ss->wbuf + ss->wbuf_len;
@@ -147,23 +143,7 @@ static void kcp_recv(struct session *restrict ss)
 		       ss->conv, nrecv, cap);
 		ss->last_recv = ev_now(ss->server->loop);
 	}
-
-	if (ss->wbuf_len < TLV_HEADER_SIZE) {
-		/* no data available */
-		return;
-	}
-	struct tlv_header header = tlv_header_read(ss->wbuf);
-	if (header.len < TLV_HEADER_SIZE && header.len > TLV_MAX_LENGTH) {
-		LOGE_F("unexpected packet length: %" PRIu16, header.len);
-		session_stop(ss);
-		kcp_reset(ss);
-		return;
-	}
-	if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
-		/* incomplete data packet */
-		return;
-	}
-	session_on_msg(ss, &header);
+	return;
 }
 
 static void kcp_update(struct session *restrict ss)
@@ -181,7 +161,6 @@ static void kcp_update(struct session *restrict ss)
 	const ev_tstamp now = ev_now(s->loop);
 	const uint32_t now_ms = tstamp2ms(now);
 	ikcp_update(ss->kcp, now_ms);
-	kcp_recv(ss);
 	if (ss->state != STATE_LINGER && ss->tcp_fd != -1) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
@@ -192,16 +171,9 @@ static void kcp_update(struct session *restrict ss)
 	}
 }
 
-void kcp_notify_write(struct session *restrict ss)
+void kcp_flush(struct session *restrict ss)
 {
-	assert(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
-	if (!kcp_push(ss)) {
-		kcp_reset(ss);
-		session_stop(ss);
-		return;
-	}
-	if (ss->state == STATE_LINGER) {
-		session_stop(ss);
+	if (ss->rbuf_len == 0) {
 		return;
 	}
 	const int waitsnd = ikcp_waitsnd(ss->kcp);
@@ -211,6 +183,15 @@ void kcp_notify_write(struct session *restrict ss)
 		if (ev_is_active(w_read)) {
 			ev_io_stop(ss->server->loop, w_read);
 		}
+		return;
+	}
+	if (!kcp_push(ss)) {
+		kcp_reset(ss);
+		session_stop(ss);
+		return;
+	}
+	if (ss->kcp_flush) {
+		ikcp_flush(ss->kcp);
 	}
 }
 
@@ -219,30 +200,45 @@ static bool kcp_update_iter(
 {
 	UNUSED(t);
 	UNUSED(key);
-	kcp_update((struct session *)value);
+	struct session *restrict ss = value;
+	kcp_update(ss);
 	struct server *restrict s = user;
 	struct pktqueue *restrict q = s->pkt.queue;
 	return q->mq_send_len < MQ_SEND_SIZE;
-}
-
-static void kcp_update_all(struct server *restrict s)
-{
-	struct pktqueue *restrict q = s->pkt.queue;
-	if (q->mq_send_len == MQ_SEND_SIZE) {
-		return;
-	}
-	table_iterate(s->sessions, kcp_update_iter, s);
-	pkt_notify_write(s);
-}
-
-void kcp_notify_all(struct server *s)
-{
-	kcp_update_all(s);
 }
 
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	kcp_update_all(watcher->data);
+	struct server *restrict s = watcher->data;
+	table_iterate(s->sessions, kcp_update_iter, s);
+}
+
+void kcp_notify_update(struct server *restrict s)
+{
+	table_iterate(s->sessions, kcp_update_iter, s);
+}
+
+static bool kcp_recv_iter(
+	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	struct session *restrict ss = value;
+	if (ss->kcp_arrived) {
+		kcp_recv(ss), session_parse(ss), tcp_flush(ss);
+		if (ss->kcp_flush) {
+			/* flush acks */
+			ikcp_flush(ss->kcp);
+		}
+		ss->kcp_arrived = false;
+	}
+	return true;
+}
+
+void kcp_notify_recv(struct server *restrict s)
+{
+	table_iterate(s->sessions, kcp_recv_iter, NULL);
 }

@@ -132,6 +132,9 @@ void drop_privileges(const char *user)
 		LOGW_F("su: user \"%s\" does not exist ", user);
 		return;
 	}
+	if (pwd->pw_uid == 0) {
+		return;
+	}
 	LOGD_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pwd->pw_uid,
 	       (intmax_t)pwd->pw_gid);
 #if _BSD_SOURCE || _GNU_SOURCE

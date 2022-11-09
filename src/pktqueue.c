@@ -89,7 +89,7 @@ struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 {
 	struct msgframe *restrict msg = pool_get(&q->msgpool);
 	if (msg == NULL) {
-		LOGE("msgframe: out of memory");
+		LOGOOM();
 		return NULL;
 	}
 	msg->hdr = (struct msghdr){
@@ -149,7 +149,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		/* serve new kcp session */
 		ss = session_new(s, sa, conv);
 		if (ss == NULL) {
-			LOGE("session_new: out of memory");
+			LOGOOM();
 			return;
 		}
 		ss->is_accepted = true;
@@ -183,14 +183,15 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
+	ss->kcp_arrived = true;
 	s->stats.kcp_rx += msg->len;
 	ss->stats.kcp_rx += msg->len;
 }
 
-void packet_recv(struct pktqueue *restrict q, struct server *s)
+size_t packet_recv(struct pktqueue *restrict q, struct server *s)
 {
 	if (q->mq_recv_len == 0) {
-		return;
+		return 0;
 	}
 	size_t nbrecv = 0;
 	for (size_t i = 0; i < q->mq_recv_len; i++) {
@@ -205,9 +206,8 @@ void packet_recv(struct pktqueue *restrict q, struct server *s)
 #endif
 #if WITH_CRYPTO
 		if (q->crypto != NULL) {
-			const size_t msglen = msg->len;
 			size_t cap = MAX_PACKET_SIZE - msg->off;
-			size_t len = msglen;
+			size_t len = msg->len;
 			if (!crypto_open_inplace(
 				    q, msg->buf + msg->off, &len, cap)) {
 				msgframe_delete(q, msg);
@@ -215,10 +215,10 @@ void packet_recv(struct pktqueue *restrict q, struct server *s)
 			}
 			assert(len <= UINT16_MAX);
 			msg->len = len;
-			nbrecv += msglen;
 		}
 #endif
 		packet_recv_one(s, msg);
+		nbrecv += msg->len;
 		msgframe_delete(q, msg);
 	}
 	if (nbrecv > 0) {
@@ -226,6 +226,7 @@ void packet_recv(struct pktqueue *restrict q, struct server *s)
 		s->pkt.last_recv_time = ev_now(s->loop);
 	}
 	q->mq_recv_len = 0;
+	return nbrecv;
 }
 
 bool packet_send(
@@ -269,8 +270,13 @@ bool packet_send(
 	msg->hdr.msg_namelen = getsocklen(msg->hdr.msg_name);
 	msg->iov.iov_len = msg->len;
 	q->mq_send[q->mq_send_len++] = msg;
-	if (q->mq_send_len == MQ_SEND_SIZE) {
-		pkt_notify_write(s);
+	if (q->mq_send_len < MQ_SEND_SIZE) {
+		struct ev_io *restrict w_write = &s->pkt.w_write;
+		if (!ev_is_active(w_write)) {
+			ev_io_start(s->loop, w_write);
+		}
+	} else {
+		pkt_flush(s);
 	}
 	return true;
 }

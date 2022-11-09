@@ -371,7 +371,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("tcp connect: %s", addr_str);
+		LOGI_F("obfs connect: %s", addr_str);
 	}
 
 	socklen_t len = sizeof(ctx->laddr);
@@ -411,6 +411,10 @@ static bool obfs_ctx_timeout_filt(
 		LOGD_F("obfs: timeout ctx %s <-> %s after %.1fs", laddr, raddr,
 		       not_seen);
 	}
+	if (obfs->client == ctx) {
+		obfs->client = NULL;
+		return true;
+	}
 	obfs_ctx_free(obfs->loop, ctx);
 	return false;
 }
@@ -435,7 +439,7 @@ static const char http_request[] = "GET /generate_204 HTTP/1.1\r\n"
 				   "User-Agent: curl/7.81.0\r\n"
 				   "Accept: */*\r\n\r\n";
 
-static const char http_reqpat[] =
+static const char http_pat204[] =
 	"^GET /generate_204 HTTP/[0-9][1-9]*(\\.[0-9][1-9]*)?\r\n"
 	"([a-zA-Z0-9\\-]+:\\s*\\S*\r\n)*\r\n$";
 
@@ -467,7 +471,7 @@ struct obfs *obfs_new(struct ev_loop *restrict loop, struct config *conf)
 			util_free(obfs);
 			return NULL;
 		}
-		CHECK(regcomp(&obfs->reqpat, http_reqpat, REG_EXTENDED) == 0);
+		CHECK(regcomp(&obfs->reqpat, http_pat204, REG_EXTENDED) == 0);
 	}
 	return obfs;
 }
@@ -1125,7 +1129,11 @@ void http_server_read_cb(
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
-	LOGD("obfs: request handled");
+	if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		char addr_str[64];
+		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+		LOGI_F("obfs: request handled from %s", addr_str);
+	}
 }
 
 void http_server_write_cb(

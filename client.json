@@ -3,8 +3,8 @@
     "kcp_connect": "[::1]:5555",
     "kcp": {
         "mtu": 1400,
-        "sndwnd": 512,
-        "rcvwnd": 512,
+        "sndwnd": 256,
+        "rcvwnd": 256,
         "nodelay": 0,
         "interval": 50,
         "resend": 3,

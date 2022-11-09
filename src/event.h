@@ -24,14 +24,16 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 
 int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
-bool kcp_send(struct session *ss, const unsigned char *buf, size_t len);
-bool kcp_dial(struct session *ss);
+bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg);
+void kcp_recv(struct session *restrict ss);
 void kcp_close(struct session *ss);
 void kcp_reset(struct session *ss);
 
-void tcp_notify_write(struct session *ss);
-void pkt_notify_write(struct server *s);
-void kcp_notify_write(struct session *ss);
-void kcp_notify_all(struct server *s);
+void tcp_flush(struct session *ss);
+void kcp_flush(struct session *ss);
+void pkt_flush(struct server *s);
+
+void kcp_notify_update(struct server *s);
+void kcp_notify_recv(struct server *s);
 
 #endif /* EVENT_H */

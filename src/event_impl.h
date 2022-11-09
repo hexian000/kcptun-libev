@@ -27,7 +27,4 @@
 #define LOG_RATELIMITED(level, loop, rate, message)                            \
 	LOG_RATELIMITEDF(level, loop, rate, "%s", message)
 
-/* reserve space to append control message */
-#define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
-
 #endif /* EVENT_IMPL_H */

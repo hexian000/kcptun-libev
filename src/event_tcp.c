@@ -27,14 +27,14 @@ static void accept_one(
 	uint32_t conv = conv_new(s, sa);
 	ss = session_new(s, sa, conv);
 	if (ss == NULL) {
-		LOGE("accept: out of memory");
+		LOGOOM();
 		if (close(fd) != 0) {
 			LOGW_PERROR("close");
 		}
 		return;
 	}
-	if (!kcp_dial(ss)) {
-		LOGE("kcp_dial: unexpected failure");
+	if (!kcp_sendmsg(ss, SMSG_DIAL)) {
+		LOGOOM();
 		if (close(fd) != 0) {
 			LOGW_PERROR("close");
 		}
@@ -100,19 +100,12 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
-void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+static bool tcp_recv(struct session *restrict ss)
 {
-	CHECK_EV_ERROR(revents);
-	UNUSED(loop);
-	struct session *restrict ss = (struct session *)watcher->data;
-	assert(watcher->fd == ss->tcp_fd);
-	assert(watcher == &ss->w_read);
-
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
 	if (cap == 0) {
-		/* KCP EAGAIN */
-		return;
+		return false;
 	}
 
 	unsigned char *buf = ss->rbuf + TLV_HEADER_SIZE + ss->rbuf_len;
@@ -133,14 +126,14 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			       ss->conv, ss->tcp_fd, err, strerror(err));
 			session_stop(ss);
 			kcp_reset(ss);
-			return;
+			return false;
 		}
 		if (nread == 0) {
 			tcp_eof = true;
 			break;
 		}
 		buf += nread, cap -= nread, len += nread;
-	} while (false);
+	} while (cap > 0);
 	ss->rbuf_len += len;
 
 	if (len > 0) {
@@ -157,15 +150,35 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		// Stop and free session if client socket is closing
 		session_stop(ss);
 		kcp_close(ss);
+		return false;
 	}
-	kcp_notify_write(ss);
+	return len > 0;
 }
 
-static size_t tcp_send(struct session *restrict ss)
+void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	const size_t navail = ss->wbuf_navail;
+	CHECK_EV_ERROR(revents);
+	UNUSED(loop);
+	struct session *restrict ss = (struct session *)watcher->data;
+	assert(watcher->fd == ss->tcp_fd);
+	assert(watcher == &ss->w_read);
+
+	if (ss->state == STATE_LINGER) {
+		if (ss->tcp_fd != -1 && ev_is_active(watcher)) {
+			ev_io_stop(loop, watcher);
+		}
+	}
+
+	do {
+		kcp_flush(ss);
+	} while (tcp_recv(ss));
+}
+
+static bool tcp_send(struct session *restrict ss)
+{
+	const size_t navail = ss->wbuf_next;
 	if (navail == 0) {
-		return 0;
+		return false;
 	}
 
 	unsigned char *raw = ss->wbuf + TLV_HEADER_SIZE;
@@ -185,17 +198,16 @@ static size_t tcp_send(struct session *restrict ss)
 		       ss->conv, ss->tcp_fd, err, strerror(err));
 		session_stop(ss);
 		kcp_reset(ss);
-		return 0;
-	}
-	if (nsend == 0) {
-		return 0;
+		return false;
+	} else if (nsend == 0) {
+		return false;
 	}
 	if ((size_t)nsend < len) {
 		ss->wbuf_flush += nsend;
 	} else {
 		const size_t msg_len = TLV_HEADER_SIZE + navail;
 		ss->wbuf_len -= msg_len;
-		ss->wbuf_navail = 0;
+		ss->wbuf_next = 0;
 		ss->wbuf_flush = 0;
 		memmove(ss->wbuf, next, ss->wbuf_len);
 	}
@@ -204,10 +216,10 @@ static size_t tcp_send(struct session *restrict ss)
 	ss->server->stats.tcp_tx += nsend;
 	LOGV_F("session [%08" PRIX32 "] tcp send: %zd bytes, remain: %zu bytes",
 	       ss->conv, nsend, len - (size_t)nsend + ss->wbuf_len);
-	return (size_t)nsend;
+	return true;
 }
 
-static void tcp_push(struct session *restrict ss)
+void tcp_flush(struct session *restrict ss)
 {
 	if (ss->tcp_fd == -1) {
 		return;
@@ -215,32 +227,19 @@ static void tcp_push(struct session *restrict ss)
 	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
 		return;
 	}
-	const size_t navail = ss->wbuf_navail;
-	if (navail > 0) {
-		if (tcp_send(ss) == navail) {
-			return;
+	(void)tcp_send(ss);
+	if (ss->wbuf_next == 0) {
+		if (ss->state == STATE_LINGER) {
+			session_stop(ss);
 		}
-	}
-	if (ss->tcp_fd == -1) {
 		return;
 	}
-	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
-		return;
-	}
-	if (ss->wbuf_navail > 0) {
+	if (ss->tcp_fd != -1) {
 		struct ev_io *restrict w_write = &ss->w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(ss->server->loop, w_write);
 		}
-	} else if (ss->state == STATE_LINGER) {
-		session_stop(ss);
 	}
-	return;
-}
-
-void tcp_notify_write(struct session *restrict ss)
-{
-	(void)tcp_push(ss);
 }
 
 void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -258,9 +257,13 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->conv);
 	}
 
-	tcp_push(ss);
+	while (kcp_recv(ss), session_parse(ss), tcp_send(ss)) {
+	}
+
 	/* no more data */
-	if (ss->tcp_fd != -1 && ss->wbuf_navail == 0) {
-		ev_io_stop(loop, watcher);
+	if (ss->wbuf_next == 0) {
+		if (ss->tcp_fd != -1 && ev_is_active(watcher)) {
+			ev_io_stop(loop, watcher);
+		}
 	}
 }
