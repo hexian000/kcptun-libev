@@ -37,9 +37,9 @@ static bool print_session_iter(
 	char addr_str[64];
 	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
 	LOGD_F("session [%08" PRIX32 "] "
-	       "peer=%s state=%d age=%.0fs tx=%zu rx=%zu "
+	       "peer=%s state=%d seen=%.0fs tx=%zu rx=%zu "
 	       "rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d",
-	       ss->conv, addr_str, ss->state, stat->now - ss->created,
+	       ss->conv, addr_str, ss->state, stat->now - ss->last_recv,
 	       ss->stats.tcp_rx, ss->stats.tcp_tx, ss->kcp->rx_srtt,
 	       ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp));
 	return true;

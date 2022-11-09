@@ -161,6 +161,7 @@ static void kcp_update(struct session *restrict ss)
 	const ev_tstamp now = ev_now(s->loop);
 	const uint32_t now_ms = tstamp2ms(now);
 	ikcp_update(ss->kcp, now_ms);
+	kcp_recv(ss), session_parse(ss), tcp_flush(ss);
 	if (ss->state != STATE_LINGER && ss->tcp_fd != -1) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
@@ -190,7 +191,7 @@ void kcp_flush(struct session *restrict ss)
 		session_stop(ss);
 		return;
 	}
-	if (ss->kcp_flush) {
+	if (ss->kcp_flush >= 1) {
 		ikcp_flush(ss->kcp);
 	}
 }
@@ -227,13 +228,13 @@ static bool kcp_recv_iter(
 	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = value;
-	if (ss->kcp_arrived) {
+	if (ss->pkt_arrived) {
 		kcp_recv(ss), session_parse(ss), tcp_flush(ss);
-		if (ss->kcp_flush) {
+		if (ss->kcp_flush >= 2) {
 			/* flush acks */
 			ikcp_flush(ss->kcp);
 		}
-		ss->kcp_arrived = false;
+		ss->pkt_arrived = false;
 	}
 	return true;
 }

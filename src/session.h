@@ -82,8 +82,8 @@ struct session {
 	double last_send, last_recv;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
-	bool kcp_flush;
-	bool kcp_arrived;
+	int kcp_flush;
+	bool pkt_arrived;
 	bool is_accepted;
 	size_t rbuf_len;
 	size_t wbuf_flush, wbuf_next, wbuf_len;

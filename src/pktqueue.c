@@ -183,9 +183,9 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
-	ss->kcp_arrived = true;
-	s->stats.kcp_rx += msg->len;
+	ss->pkt_arrived = true;
 	ss->stats.kcp_rx += msg->len;
+	s->stats.kcp_rx += msg->len;
 }
 
 size_t packet_recv(struct pktqueue *restrict q, struct server *s)

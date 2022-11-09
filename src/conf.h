@@ -28,7 +28,7 @@ struct config {
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
 	/* enable for lower latency, disable for better thoughput */
-	bool kcp_flush;
+	int kcp_flush;
 
 	/* socket options */
 	bool tcp_reuseport, tcp_keepalive, tcp_nodelay;

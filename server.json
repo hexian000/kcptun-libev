@@ -5,7 +5,7 @@
         "mtu": 1400,
         "sndwnd": 256,
         "rcvwnd": 256,
-        "nodelay": 0,
+        "nodelay": 1,
         "interval": 50,
         "resend": 3,
         "nc": 1
@@ -16,7 +16,6 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
-    "loglevel": 2,
     "obfs": "dpi/tcp-wnd",
-    "user": "nobody"
+    "loglevel": 2
 }
