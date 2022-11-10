@@ -4,6 +4,7 @@
 #include "pktqueue.h"
 
 #include <inttypes.h>
+#include <stddef.h>
 
 static void udp_reset(struct server *restrict s)
 {
@@ -155,6 +156,16 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	kcp_notify_recv(s);
 }
 
+static size_t pkt_send_drop(struct pktqueue *restrict q)
+{
+	const size_t count = q->mq_send_len;
+	for (size_t i = 0; i < count; i++) {
+		msgframe_delete(q, q->mq_send[i]);
+	}
+	q->mq_send_len = 0;
+	return count;
+}
+
 #if HAVE_SENDMMSG
 
 static size_t pkt_send(const int fd, struct server *restrict s)
@@ -164,6 +175,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	if (navail == 0) {
 		return 0;
 	}
+	bool drop = false;
 	size_t nsend = 0, nbsend = 0;
 	size_t nbatch;
 	do {
@@ -182,6 +194,8 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 				break;
 			}
 			LOGE_PERROR("sendmmsg");
+			/* drop packets to prevent infinite error loop */
+			drop = true;
 			break;
 		} else if (ret == 0) {
 			break;
@@ -210,6 +224,9 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	q->mq_send_len = navail;
 	s->stats.pkt_tx += nbsend;
 	s->pkt.last_send_time = ev_now(s->loop);
+	if (drop) {
+		nsend += pkt_send_drop(q);
+	}
 	return nsend;
 }
 
@@ -222,19 +239,22 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	if (count == 0) {
 		return 0;
 	}
-	size_t nsend = 0;
+	bool drop = false;
+	size_t nsend = 0, nbsend = 0;
 	for (size_t i = 0; i < count; i++) {
 		struct msgframe *msg = q->mq_send[i];
-		const ssize_t nbsend = sendmsg(fd, &msg->hdr, MSG_DONTWAIT);
-		if (nbsend < 0) {
+		const ssize_t ret = sendmsg(fd, &msg->hdr, MSG_DONTWAIT);
+		if (ret < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK ||
 			    errno == EINTR || errno == ENOMEM) {
 				break;
 			}
 			LOGE_PERROR("sendmsg");
+			/* drop packets to prevent infinite error loop */
+			drop = true;
 			break;
 		}
-		nsend++;
+		nsend++, nbsend += ret;
 	}
 	if (nsend == 0) {
 		return 0;
@@ -255,6 +275,11 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		q->mq_send[i] = q->mq_send[nsend + i];
 	}
 	q->mq_send_len = remain;
+	s->stats.pkt_tx += nbsend;
+	s->pkt.last_send_time = ev_now(s->loop);
+	if (drop) {
+		nsend += pkt_send_drop(q);
+	}
 	return nsend;
 }
 

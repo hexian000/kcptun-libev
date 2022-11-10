@@ -41,6 +41,16 @@ case "$1" in
     cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"
     ;;
+"posix")
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DPOSIX=1 \
+        -S "." -B "build"
+    cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
+    ;;
 "s")
     # rebuild statically linked executable
     rm -rf "build" && mkdir "build"

@@ -540,7 +540,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 			LOGE_PERROR("fcntl");
 			return false;
 		}
-		socket_set_reuseport(obfs->fd, true);
+		socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
 		obfs_tcp_setup(obfs->fd);
 		if (bind(obfs->fd, sa, getsocklen(sa))) {
 			LOGE_PERROR("obfs tcp bind");
