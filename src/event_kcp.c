@@ -229,11 +229,11 @@ static bool kcp_recv_iter(
 	UNUSED(user);
 	struct session *restrict ss = value;
 	if (ss->pkt_arrived) {
-		kcp_recv(ss), session_parse(ss), tcp_flush(ss);
 		if (ss->kcp_flush >= 2) {
 			/* flush acks */
 			ikcp_flush(ss->kcp);
 		}
+		kcp_recv(ss), session_parse(ss), tcp_flush(ss);
 		ss->pkt_arrived = false;
 	}
 	return true;
