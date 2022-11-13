@@ -29,7 +29,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Secure: For proper integration of the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
 - Proper: KCP will be flushed on demand, no mechanistic lag introduced.
-- Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder. Thus we won't add FEC.
+- Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder.
 - Morden: Full IPv6 support.
 - DDNS aware: Dynamic IP addresses are automatically resolved.
 - Configurable: If you want to be unecrypted or plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
@@ -183,14 +183,16 @@ Let's explain some common fields in server.json/client.json:
 
 ## Tunables
 
-Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here is some hints:
+Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here are some hints:
 
 - "kcp.sndwnd", "kcp.rcvwnd":
 	1. Should be tuned according to RTT.
-	2. For enthusiasts, start an idle client with loglevel > 5 and wait 1 minute to check the theoretical bandwidth of current window values.
+	2. For enthusiasts, you can start an idle client with loglevel > 5 and wait 1 minute to check the theoretical bandwidth of current window values.
 	3. On systems with very little memory, you may need to reduce it to save memory.
 - "kcp.nodelay": Default to 1.
-- "kcp.interval": Since we have "kcp.flush", you can set this relatively longer than other implementations.
+- "kcp.interval":
+	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
+	2. This option is not intended for traffic shaping. For Linux, check out [CAKE](https://www.bufferbloat.net/projects/codel/wiki/Cake/) and [sqm-scripts](https://github.com/tohojo/sqm-scripts) instead.
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
 
@@ -199,12 +201,12 @@ Again, there is some kcptun-libev specific options:
 - "kcp.flush": 0 - periodic only, 1 - flush after sending (default), 2 - also flush acks
 - "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
 	1. Normally, default value just works.
-	2. Sometimes there are performance benefits to setting the udp buffer relatively large (e.g. 1048576). But since kcptun-libev handles packets effectively, a socket buffer that is too large doesn't make sense.
+	2. Sometimes setting the udp buffer relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a socket buffer that is too large doesn't make sense.
 	3. All buffers should not be too small, e.g. less than 16384 (16 KiB), otherwise you may experience performance degradation.
 - "obfs": obfuscator, disabled by default. currently only one implemented: "dpi/tcp-wnd"
 - "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
 
-*kcptun-libev works out of the box, the default options are also the recommends.*
+*kcptun-libev works out of the box. In most cases, the default options are recommended.*
 
 ## Credits
 
