@@ -32,7 +32,7 @@ extern FILE *slog_file;
 #define PATH_SEPARATOR '/'
 #endif
 
-#define LOGLEVEL(x) ((x) < slog_level)
+#define LOGLEVEL(x) ((x) <= slog_level)
 
 #define LOG_INTERNAL(level, path, line, format, ...)                           \
 	do {                                                                   \
