@@ -44,16 +44,16 @@ struct pktqueue {
 
 struct server;
 
-struct pktqueue *pktqueue_new(struct server *s);
-void pktqueue_free(struct pktqueue *q);
+struct pktqueue *queue_new(struct server *s);
+void queue_free(struct pktqueue *q);
 
 struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa);
 void msgframe_delete(struct pktqueue *q, struct msgframe *msg);
 
 /* process mq_recv */
-size_t packet_recv(struct pktqueue *q, struct server *s);
+size_t queue_recv(struct pktqueue *q, struct server *s);
 
 /* send a plain packet */
-bool packet_send(struct pktqueue *q, struct server *s, struct msgframe *msg);
+bool queue_send(struct pktqueue *q, struct server *s, struct msgframe *msg);
 
 #endif /* PACKET_H */

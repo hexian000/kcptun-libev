@@ -320,7 +320,7 @@ bool ss0_send(
 			});
 	memcpy(packet + SESSION0_HEADER_SIZE, b, n);
 	msg->len = SESSION0_HEADER_SIZE + n;
-	return packet_send(q, s, msg);
+	return queue_send(q, s, msg);
 }
 
 static void

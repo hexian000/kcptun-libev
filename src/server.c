@@ -218,7 +218,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		server_free(s);
 		return NULL;
 	}
-	s->pkt.queue = pktqueue_new(s);
+	s->pkt.queue = queue_new(s);
 	if (s->pkt.queue == NULL) {
 		LOGE("failed creating packet queue");
 		server_free(s);
@@ -275,7 +275,7 @@ static void udp_free(struct pktconn *restrict conn)
 		return;
 	}
 	if (conn->queue != NULL) {
-		pktqueue_free(conn->queue);
+		queue_free(conn->queue);
 		conn->queue = NULL;
 	}
 }

@@ -151,8 +151,9 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct server *restrict s = (struct server *)watcher->data;
 	struct pktqueue *restrict q = s->pkt.queue;
 	while (pkt_recv(watcher->fd, s) > 0) {
-		(void)packet_recv(q, s);
-		kcp_notify_recv(s);
+		if (queue_recv(q, s) > 0) {
+			kcp_notify_recv(s);
+		}
 	}
 }
 

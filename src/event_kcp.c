@@ -30,7 +30,7 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	msg->len = len;
 	s->stats.kcp_tx += len;
 	ss->stats.kcp_tx += len;
-	return packet_send(q, s, msg) ? len : -1;
+	return queue_send(q, s, msg) ? len : -1;
 }
 
 void kcp_reset(struct session *ss)

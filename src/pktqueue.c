@@ -128,7 +128,7 @@ void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
 }
 
 static void
-packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
+queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 {
 	unsigned char *kcp_packet = msg->buf + msg->off;
 	uint32_t conv = ikcp_getconv(kcp_packet);
@@ -188,7 +188,7 @@ packet_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	s->stats.kcp_rx += msg->len;
 }
 
-size_t packet_recv(struct pktqueue *restrict q, struct server *s)
+size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 {
 	if (q->mq_recv_len == 0) {
 		return 0;
@@ -217,7 +217,7 @@ size_t packet_recv(struct pktqueue *restrict q, struct server *s)
 			msg->len = len;
 		}
 #endif
-		packet_recv_one(s, msg);
+		queue_recv_one(s, msg);
 		nbrecv += msg->len;
 		msgframe_delete(q, msg);
 	}
@@ -229,7 +229,7 @@ size_t packet_recv(struct pktqueue *restrict q, struct server *s)
 	return nbrecv;
 }
 
-bool packet_send(
+bool queue_send(
 	struct pktqueue *restrict q, struct server *s,
 	struct msgframe *restrict msg)
 {
@@ -283,7 +283,7 @@ bool packet_send(
 
 #if WITH_CRYPTO
 static bool
-packet_create_crypto(struct pktqueue *restrict q, struct config *restrict cfg)
+queue_new_crypto(struct pktqueue *restrict q, struct config *restrict cfg)
 {
 	if (cfg->method == NULL) {
 		return true;
@@ -315,7 +315,7 @@ packet_create_crypto(struct pktqueue *restrict q, struct config *restrict cfg)
 }
 #endif
 
-struct pktqueue *pktqueue_new(struct server *restrict s)
+struct pktqueue *queue_new(struct server *restrict s)
 {
 	struct config *restrict conf = s->conf;
 	struct pktqueue *q = util_malloc(sizeof(struct pktqueue));
@@ -333,13 +333,13 @@ struct pktqueue *pktqueue_new(struct server *restrict s)
 	};
 	if (q->mq_send == NULL || q->mq_recv == NULL ||
 	    q->msgpool.pool == NULL) {
-		pktqueue_free(q);
+		queue_free(q);
 		return NULL;
 	}
 	q->pkt_offset = 0;
 #if WITH_CRYPTO
-	if (!packet_create_crypto(q, conf)) {
-		pktqueue_free(q);
+	if (!queue_new_crypto(q, conf)) {
+		queue_free(q);
 		return NULL;
 	}
 	if (q->crypto == NULL) {
@@ -351,7 +351,7 @@ struct pktqueue *pktqueue_new(struct server *restrict s)
 	if (conf->obfs != NULL) {
 		if (q->crypto == NULL) {
 			LOGE("encryption must be enabled to use obfs");
-			pktqueue_free(q);
+			queue_free(q);
 			return NULL;
 		}
 		q->obfs = obfs_new(s->loop, conf);
@@ -363,7 +363,7 @@ struct pktqueue *pktqueue_new(struct server *restrict s)
 	return q;
 }
 
-void pktqueue_free(struct pktqueue *restrict q)
+void queue_free(struct pktqueue *restrict q)
 {
 	if (q->mq_send != NULL) {
 		for (; q->mq_send_len > 0; q->mq_send_len--) {
