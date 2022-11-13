@@ -29,7 +29,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Secure: For proper integration of the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
 - Proper: KCP will be flushed on demand, no mechanistic lag introduced.
-- Simple: Behave as a transport layer forwarder. Do one thing well.
+- Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder. Thus we won't add FEC.
 - Morden: Full IPv6 support.
 - DDNS aware: Dynamic IP addresses are automatically resolved.
 - Configurable: If you want to be unecrypted or plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
@@ -39,7 +39,7 @@ There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) 
 
 Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100~200KiB on most platforms\* and it also have a much lower cpu/mem footprint.
 
-*\* Some required libraries are dynamically linked, see runtime dependencies below.*
+*\* Some required libraries are dynamically linked, see runtime dependencies below. Statically linked executable can be larger due to these libraries.*
 
 For your convenience, some statically-linked executables are also provided in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section.
 
@@ -87,7 +87,7 @@ Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
 ### Version Compatibility
 
-For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implements.
+For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implementations.
 
 kcptun-libev uses [semantic versioning](https://semver.org/).
 
@@ -181,22 +181,30 @@ Let's explain some common fields in server.json/client.json:
 - Set a "password" or "psk" is strongly suggested when using in public networks.
 - "loglevel": 0-6, the default is 4 (INFO)
 
-Some options are same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here is some hints:
+## Tunables
 
-- "kcp.sndwnd", "kcp.rcvwnd": Must be tuned based on RTT. For enthusiasts, start an idle client with loglevel > 5 and wait 1 minute to read the theoretical bandwidth of current window values. Make it slightly larger than real transfer speed.
-- "kcp.nodelay": Enabled mode 1 by default.
-- "kcp.interval": Since we have "kcp.flush", you can set this relatively larger than other implements.
+Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here is some hints:
+
+- "kcp.sndwnd", "kcp.rcvwnd":
+	1. Should be tuned according to RTT.
+	2. For enthusiasts, start an idle client with loglevel > 5 and wait 1 minute to check the theoretical bandwidth of current window values.
+	3. On systems with very little memory, you may need to reduce it to save memory.
+- "kcp.nodelay": Default to 1.
+- "kcp.interval": Since we have "kcp.flush", you can set this relatively longer than other implementations.
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
 
-Again, there is some kcptun-libev only options:
+Again, there is some kcptun-libev specific options:
 
-- "kcp.flush": 0 - periodic only, 1 - flush after message (default), 2 - also flush acks
-- "tcp.\*", "udp.\*": socket options, read your OS manual for further information
+- "kcp.flush": 0 - periodic only, 1 - flush after sending (default), 2 - also flush acks
+- "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
+	1. Normally, default value just works.
+	2. Sometimes there are performance benefits to setting the udp buffer relatively large (e.g. 1048576). But since kcptun-libev handles packets effectively, a socket buffer that is too large doesn't make sense.
+	3. All buffers should not be too small, e.g. less than 16384 (16 KiB), otherwise you may experience performance degradation.
 - "obfs": obfuscator, disabled by default. currently only one implemented: "dpi/tcp-wnd"
-- "user": if running as root, switch to this user to drop privileges
+- "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
 
-*kcptun-libev works out of the box, thus the default options are also the recommends.*
+*kcptun-libev works out of the box, the default options are also the recommends.*
 
 ## Credits
 
