@@ -152,8 +152,8 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct pktqueue *restrict q = s->pkt.queue;
 	while (pkt_recv(watcher->fd, s) > 0) {
 		(void)packet_recv(q, s);
+		kcp_notify_recv(s);
 	}
-	kcp_notify_recv(s);
 }
 
 static size_t pkt_send_drop(struct pktqueue *restrict q)
