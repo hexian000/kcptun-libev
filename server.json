@@ -7,7 +7,7 @@
         "rcvwnd": 256,
         "nodelay": 1,
         "interval": 50,
-        "resend": 3,
+        "resend": 0,
         "nc": 1
     },
     "udp": {
@@ -17,5 +17,6 @@
     "method": "xchacha20poly1305_ietf",
     "password": "k",
     "obfs": "dpi/tcp-wnd",
-    "loglevel": 2
+    "user": "nobody",
+    "loglevel": 5
 }

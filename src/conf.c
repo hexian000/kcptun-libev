@@ -213,9 +213,9 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		if (!parse_int_json(&l, value)) {
 			return false;
 		}
-		if (l < LOG_LEVEL_VERBOSE || l > LOG_LEVEL_SILENCE) {
+		if (l < LOG_LEVEL_SILENCE || l > LOG_LEVEL_VERBOSE) {
 			LOGE_F("log level out of range: %d - %d",
-			       LOG_LEVEL_VERBOSE, LOG_LEVEL_SILENCE);
+			       LOG_LEVEL_SILENCE, LOG_LEVEL_VERBOSE);
 			return false;
 		}
 		conf->log_level = l;
@@ -307,7 +307,7 @@ static struct config conf_default(void)
 		.kcp_rcvwnd = 256,
 		.kcp_nodelay = 1,
 		.kcp_interval = 50,
-		.kcp_resend = 3,
+		.kcp_resend = 0,
 		.kcp_nc = 1,
 		.kcp_flush = 1,
 		.password = NULL,

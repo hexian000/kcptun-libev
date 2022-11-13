@@ -26,15 +26,12 @@ struct msgframe {
 	unsigned char buf[MAX_PACKET_SIZE];
 };
 
-#define MQ_SEND_SIZE 256
-#define MQ_RECV_SIZE 256
-
 struct pktqueue {
 	struct leakypool msgpool;
-	struct msgframe *mq_send[MQ_SEND_SIZE];
-	size_t mq_send_len;
-	struct msgframe *mq_recv[MQ_RECV_SIZE];
-	size_t mq_recv_len;
+	struct msgframe **mq_send;
+	size_t mq_send_len, mq_send_cap;
+	struct msgframe **mq_recv;
+	size_t mq_recv_len, mq_recv_cap;
 	uint16_t pkt_offset;
 #if WITH_CRYPTO
 	struct aead *crypto;

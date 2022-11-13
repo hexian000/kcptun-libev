@@ -122,7 +122,8 @@ void drop_privileges(const char *user)
 		return;
 	}
 	if (user == NULL) {
-		user = "nobody";
+		LOGW("running as root, please consider set \"user\" field in config ");
+		return;
 	}
 	if (chdir("/") != 0) {
 		LOGW_PERROR("chdir");

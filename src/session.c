@@ -1,5 +1,6 @@
 #include "session.h"
 #include "aead.h"
+#include "conf.h"
 #include "event.h"
 #include "hashtable.h"
 #include "server.h"
@@ -351,7 +352,13 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	const uint32_t tstamp = read_uint32(msgbuf);
 	/*  print RTT */
 	const uint32_t now_ms = tstamp2ms(ev_time());
-	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms", now_ms - tstamp);
+	const double rtt = (now_ms - tstamp) * 1e-3;
+	const struct config *restrict conf = s->conf;
+	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / 1024.0 / rtt;
+	const double tx = conf->kcp_sndwnd * conf->kcp_mtu / 1024.0 / rtt;
+	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms, "
+	       "bandwidth rx/tx: %.0f/%.0f KiB/s",
+	       now_ms - tstamp, rx, tx);
 	s->pkt.inflight_ping = TSTAMP_NIL;
 }
 

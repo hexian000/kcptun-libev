@@ -258,7 +258,7 @@ bool packet_send(
 	}
 #endif
 
-	if (q->mq_send_len >= MQ_SEND_SIZE) {
+	if (q->mq_send_len >= q->mq_send_cap) {
 		LOG_RATELIMITEDF(
 			LOG_LEVEL_WARNING, s->loop, 1.0,
 			"* mq_send is full, %" PRIu16 " bytes discarded",
@@ -270,7 +270,7 @@ bool packet_send(
 	msg->hdr.msg_namelen = getsocklen(msg->hdr.msg_name);
 	msg->iov.iov_len = msg->len;
 	q->mq_send[q->mq_send_len++] = msg;
-	if (q->mq_send_len < MQ_SEND_SIZE) {
+	if (q->mq_send_len < q->mq_send_cap) {
 		struct ev_io *restrict w_write = &s->pkt.w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(s->loop, w_write);
@@ -317,20 +317,26 @@ packet_create_crypto(struct pktqueue *restrict q, struct config *restrict cfg)
 
 struct pktqueue *pktqueue_new(struct server *restrict s)
 {
+	struct config *restrict conf = s->conf;
 	struct pktqueue *q = util_malloc(sizeof(struct pktqueue));
 	if (q == NULL) {
 		return NULL;
 	}
+	const size_t send_cap = conf->kcp_sndwnd < 256 ? 256 : conf->kcp_sndwnd;
+	const size_t recv_cap = conf->kcp_rcvwnd < 256 ? 256 : conf->kcp_rcvwnd;
 	*q = (struct pktqueue){
-		.msgpool = pool_create(128, sizeof(struct msgframe)),
+		.msgpool = pool_create(256, sizeof(struct msgframe)),
+		.mq_send = util_malloc(send_cap * sizeof(struct msgframe *)),
+		.mq_send_cap = send_cap,
+		.mq_recv = util_malloc(recv_cap * sizeof(struct msgframe *)),
+		.mq_recv_cap = recv_cap,
 	};
-	if (q->msgpool.pool == NULL) {
+	if (q->mq_send == NULL || q->mq_recv == NULL ||
+	    q->msgpool.pool == NULL) {
 		pktqueue_free(q);
 		return NULL;
 	}
 	q->pkt_offset = 0;
-	struct config *restrict conf = s->conf;
-	UNUSED(conf);
 #if WITH_CRYPTO
 	if (!packet_create_crypto(q, conf)) {
 		pktqueue_free(q);
@@ -359,6 +365,20 @@ struct pktqueue *pktqueue_new(struct server *restrict s)
 
 void pktqueue_free(struct pktqueue *restrict q)
 {
+	if (q->mq_send != NULL) {
+		for (; q->mq_send_len > 0; q->mq_send_len--) {
+			msgframe_delete(q, q->mq_send[q->mq_send_len]);
+		}
+		util_free(q->mq_send);
+		q->mq_send = NULL;
+	}
+	if (q->mq_recv != NULL) {
+		for (; q->mq_recv_len > 0; q->mq_recv_len--) {
+			msgframe_delete(q, q->mq_recv[q->mq_recv_len]);
+		}
+		util_free(q->mq_recv);
+		q->mq_recv = NULL;
+	}
 	pool_free(&q->msgpool);
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {

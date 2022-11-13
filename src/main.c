@@ -123,7 +123,7 @@ int main(int argc, char **argv)
 		LOGE("failed to read config");
 		return EXIT_FAILURE;
 	}
-	slog_level = conf->log_level - app.verbosity;
+	slog_level = conf->log_level + app.verbosity;
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);

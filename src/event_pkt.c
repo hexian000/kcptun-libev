@@ -30,7 +30,7 @@ static void udp_reset(struct server *restrict s)
 static size_t pkt_recv(const int fd, struct server *restrict s)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
-	size_t navail = MQ_RECV_SIZE - q->mq_recv_len;
+	size_t navail = q->mq_recv_cap - q->mq_recv_len;
 	if (navail == 0) {
 		return 0;
 	}

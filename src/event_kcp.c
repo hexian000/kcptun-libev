@@ -205,7 +205,7 @@ static bool kcp_update_iter(
 	kcp_update(ss);
 	struct server *restrict s = user;
 	struct pktqueue *restrict q = s->pkt.queue;
-	return q->mq_send_len < MQ_SEND_SIZE;
+	return q->mq_send_len < q->mq_send_cap;
 }
 
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)

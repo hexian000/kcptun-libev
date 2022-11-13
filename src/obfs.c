@@ -66,6 +66,7 @@ struct obfs_ctx {
 	int fd;
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
+	bool cap_ecn, cap_ece;
 	bool captured;
 	ev_tstamp last_seen;
 };
@@ -86,6 +87,12 @@ struct pseudo_ip6hdr {
 	uint8_t zero[3];
 	uint8_t nxt;
 };
+
+/* RFC 3168 */
+#define ECN_MASK (0x3u)
+#define ECN_ECT1 (0x1u)
+#define ECN_ECT0 (0x2u)
+#define ECN_CE (0x3u)
 
 static void
 http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
@@ -483,7 +490,27 @@ bool obfs_resolve(struct obfs *obfs)
 	return true;
 }
 
-void obfs_stats(struct obfs *obfs)
+static bool print_ctx_iter(
+	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	struct obfs *restrict obfs = user;
+	struct obfs_ctx *restrict ctx = value;
+	const ev_tstamp now = ev_now(obfs->loop);
+	char addr_str[64];
+	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+	if (ctx->captured) {
+		LOGD_F("obfs context peer=%s seen=%.0fs ecn=%d ece=%d", addr_str,
+		       now - ctx->last_seen, ctx->cap_ecn, ctx->cap_ece);
+	} else {
+		LOGD_F("obfs context peer=%s seen=%.0fs", addr_str,
+		       now - ctx->last_seen);
+	}
+	return true;
+}
+
+void obfs_stats(struct obfs *restrict obfs)
 {
 	const ev_tstamp now = ev_now(obfs->loop);
 	static struct obfs_stats last_stats = { 0 };
@@ -496,6 +523,7 @@ void obfs_stats(struct obfs *obfs)
 	if (now - last_print_time < 30.0) {
 		return;
 	}
+	table_iterate(obfs->contexts, print_ctx_iter, obfs);
 
 	const double dt = now - last_print_time;
 	struct obfs_stats dstats = (struct obfs_stats){
@@ -704,15 +732,18 @@ static inline uint16_t in_cksum_fin(uint32_t sum, const void *data, size_t n)
 }
 
 static void obfs_capture(
-	struct obfs_ctx *ctx, const uint32_t flow, const uint32_t seq,
-	const uint32_t ack_seq)
+	struct obfs_ctx *ctx, const uint32_t flow, const uint8_t ecn,
+	const struct tcphdr *restrict tcp)
 {
+	ctx->cap_ecn = (ecn == ECN_CE);
+	/* RFC 3168: Section 6.1 */
+	ctx->cap_ece = !!(tcp->res2 & 0x1u);
 	if (ctx->captured) {
 		return;
 	}
 	ctx->cap_flow = flow;
-	ctx->cap_seq = seq;
-	ctx->cap_ack_seq = ack_seq;
+	ctx->cap_seq = ntohl(tcp->seq);
+	ctx->cap_ack_seq = ntohl(tcp->ack_seq);
 	ctx->captured = true;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
@@ -735,6 +766,7 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 	if (ip.protocol != IPPROTO_TCP) {
 		return false;
 	}
+	const uint8_t ecn = (ip.tos & ECN_MASK);
 	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
 		return false;
 	}
@@ -796,7 +828,7 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 			addr_str);
 		return false;
 	}
-	obfs_capture(ctx, UINT32_C(0), ntohl(tcp.seq), ntohl(tcp.ack_seq));
+	obfs_capture(ctx, UINT32_C(0), ecn, &tcp);
 	ctx->last_seen = msg->ts;
 	msg->off = ehl + ihl + doff;
 	msg->len = plen - doff;
@@ -817,6 +849,7 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 	if (ip6.ip6_nxt != IPPROTO_TCP) {
 		return false;
 	}
+	const uint8_t ecn = ((ip6.ip6_flow >> 20u) & ECN_MASK);
 	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
 		return false;
 	}
@@ -879,7 +912,7 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 		return false;
 	}
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
-	obfs_capture(ctx, flow, ntohl(tcp.seq), ntohl(tcp.ack_seq));
+	obfs_capture(ctx, flow, ecn, &tcp);
 	ctx->last_seen = msg->ts;
 	msg->off = ehl + ihl + doff;
 	msg->len = plen - doff;
@@ -912,6 +945,7 @@ bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
 	struct iphdr ip = (struct iphdr){
 		.version = IPVERSION,
 		.ihl = sizeof(struct iphdr) / 4u,
+		.tos = ECN_ECT0,
 		.tot_len = htons(sizeof(struct iphdr) + plen),
 		.id = (uint16_t)rand32(),
 		.frag_off = htons(UINT16_C(0x4000)),
@@ -927,6 +961,7 @@ bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
 		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
 		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
 		.doff = sizeof(struct tcphdr) / 4u,
+		.res2 = ctx->cap_ecn ? 0x1u : 0x0u,
 		.psh = 1,
 		.ack = 1,
 		.window = htons(32767),
@@ -957,8 +992,10 @@ bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
 	const struct sockaddr_in6 *restrict dst = &msg->addr.in6;
 	assert(dst->sin6_family == AF_INET6);
 	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
+	const uint32_t flow =
+		(UINT32_C(6) << 28u) | (ECN_ECT0 << 20u) | ctx->cap_flow;
 	struct ip6_hdr ip6 = (struct ip6_hdr){
-		.ip6_flow = htonl((6u << 28u) | (0u << 20u) | ctx->cap_flow),
+		.ip6_flow = htonl(flow),
 		.ip6_plen = htons(plen),
 		.ip6_nxt = IPPROTO_TCP,
 		.ip6_hops = UINT8_C(64),
@@ -972,6 +1009,7 @@ bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
 		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
 		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
 		.doff = sizeof(struct tcphdr) / 4u,
+		.res2 = ctx->cap_ecn ? 0x1u : 0x0u,
 		.psh = 1,
 		.ack = 1,
 		.window = htons(32767),

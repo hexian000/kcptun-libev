@@ -7,21 +7,21 @@
 #include <time.h>
 
 enum {
-	LOG_LEVEL_VERBOSE,
-	LOG_LEVEL_DEBUG,
-	LOG_LEVEL_INFO,
-	LOG_LEVEL_WARNING,
-	LOG_LEVEL_ERROR,
-	LOG_LEVEL_FATAL,
 	LOG_LEVEL_SILENCE,
+	LOG_LEVEL_FATAL,
+	LOG_LEVEL_ERROR,
+	LOG_LEVEL_WARNING,
+	LOG_LEVEL_INFO,
+	LOG_LEVEL_DEBUG,
+	LOG_LEVEL_VERBOSE,
 };
 
-#define LOG_LEVEL_VERBOSE_STR "V"
-#define LOG_LEVEL_DEBUG_STR "D"
-#define LOG_LEVEL_INFO_STR "I"
-#define LOG_LEVEL_WARNING_STR "W"
-#define LOG_LEVEL_ERROR_STR "E"
 #define LOG_LEVEL_FATAL_STR "F"
+#define LOG_LEVEL_ERROR_STR "E"
+#define LOG_LEVEL_WARNING_STR "W"
+#define LOG_LEVEL_INFO_STR "I"
+#define LOG_LEVEL_DEBUG_STR "D"
+#define LOG_LEVEL_VERBOSE_STR "V"
 
 extern int slog_level;
 extern FILE *slog_file;
@@ -32,7 +32,7 @@ extern FILE *slog_file;
 #define PATH_SEPARATOR '/'
 #endif
 
-#define LOGLEVEL(x) ((x) >= slog_level)
+#define LOGLEVEL(x) ((x) < slog_level)
 
 #define LOG_INTERNAL(level, path, line, format, ...)                           \
 	do {                                                                   \
