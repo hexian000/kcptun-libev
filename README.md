@@ -69,7 +69,7 @@ With obfuscator enabled, kcptun-libev will directly send IP packets over raw soc
 # run as root and drop privileges after necessary setup
 sudo ./kcptun-libev -u nobody -c server.json
 # or grant the capability and run as a normal user
-sudo setcap cap_bind_raw+ep kcptun-libev
+sudo setcap cap_net_raw+ep kcptun-libev
 ./kcptun-libev -c server.json
 ```
 
@@ -183,7 +183,7 @@ Let's explain some common fields in server.json/client.json:
 
 Some options are same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here is some hints:
 
-- "kcp.sndwnd", "kcp.rcvwnd": Must be tuned based on RTT. For enthusiasts, start a idle client with loglevel > 5 and wait 1 minute to read the theoretical bandwidth of current window values. Make it slightly larger than real transfer speed.
+- "kcp.sndwnd", "kcp.rcvwnd": Must be tuned based on RTT. For enthusiasts, start an idle client with loglevel > 5 and wait 1 minute to read the theoretical bandwidth of current window values. Make it slightly larger than real transfer speed.
 - "kcp.nodelay": Enabled mode 1 by default.
 - "kcp.interval": Since we have "kcp.flush", you can set this relatively larger than other implements.
 - "kcp.resend": Disabled by default.
