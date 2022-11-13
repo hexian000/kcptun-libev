@@ -24,7 +24,6 @@ void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
 
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
-uint32_t conv_get(const hashkey_t *key);
 
 socklen_t getsocklen(const struct sockaddr *sa);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);

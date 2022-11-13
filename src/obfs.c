@@ -7,6 +7,7 @@
 #include "conf.h"
 #include "hashtable.h"
 #include "pktqueue.h"
+#include "session.h"
 #include "slog.h"
 #include "sockutil.h"
 #include "util.h"
@@ -46,6 +47,7 @@ struct obfs_stats {
 struct obfs {
 	struct config *conf;
 	struct ev_loop *loop;
+	struct hashtable *sessions;
 	struct hashtable *contexts;
 	regex_t reqpat;
 	struct ev_io w_accept;
@@ -285,8 +287,24 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 	util_free(ctx);
 }
 
+static bool ctx_del_filter(
+	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+{
+	UNUSED(t);
+	struct {
+		sockaddr_max_t sa;
+		uint32_t conv;
+	} *ep = (void *)key;
+	if (sa_equals(&ep->sa.sa, user)) {
+		session_free(value);
+		return false;
+	}
+	return true;
+}
+
 static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 {
+	table_filter(obfs->sessions, ctx_del_filter, &ctx->raddr.sa);
 	hashkey_t key;
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	(void)table_del(obfs->contexts, &key, NULL);
@@ -456,10 +474,10 @@ static const char http_reply_204[] = "HTTP/1.1 204 No Content\r\n"
 				     "Content-Length: 0\r\n"
 				     "Connection: keep-alive\r\n\r\n";
 
-struct obfs *obfs_new(struct ev_loop *restrict loop, struct config *conf)
+struct obfs *obfs_new(struct server *restrict s)
 {
 	struct obfs *obfs = NULL;
-	const char *method = conf->obfs;
+	const char *method = s->conf->obfs;
 	if (strcmp(method, "dpi/tcp-wnd") == 0) {
 		obfs = util_malloc(sizeof(struct obfs));
 		if (obfs == NULL) {
@@ -467,8 +485,9 @@ struct obfs *obfs_new(struct ev_loop *restrict loop, struct config *conf)
 			return NULL;
 		}
 		*obfs = (struct obfs){
-			.loop = loop,
-			.conf = conf,
+			.loop = s->loop,
+			.conf = s->conf,
+			.sessions = s->sessions,
 			.contexts = table_create(),
 			.cap_fd = -1,
 			.raw_fd = -1,
@@ -501,8 +520,9 @@ static bool print_ctx_iter(
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
 	if (ctx->captured) {
-		LOGD_F("obfs context peer=%s seen=%.0fs ecn=%d ece=%d", addr_str,
-		       now - ctx->last_seen, ctx->cap_ecn, ctx->cap_ece);
+		LOGD_F("obfs context peer=%s seen=%.0fs ecn=%d ece=%d",
+		       addr_str, now - ctx->last_seen, ctx->cap_ecn,
+		       ctx->cap_ece);
 	} else {
 		LOGD_F("obfs context peer=%s seen=%.0fs", addr_str,
 		       now - ctx->last_seen);

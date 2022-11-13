@@ -92,15 +92,6 @@ void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)
 	ep->conv = conv;
 }
 
-uint32_t conv_get(const hashkey_t *key)
-{
-	struct {
-		sockaddr_max_t sa;
-		uint32_t conv;
-	} *ep = (void *)key;
-	return ep->conv;
-}
-
 socklen_t getsocklen(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {

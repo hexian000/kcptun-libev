@@ -354,7 +354,7 @@ struct pktqueue *queue_new(struct server *restrict s)
 			queue_free(q);
 			return NULL;
 		}
-		q->obfs = obfs_new(s->loop, conf);
+		q->obfs = obfs_new(s);
 		if (q->obfs == NULL) {
 			LOGW_F("obfs init failed: %s", conf->obfs);
 		}
