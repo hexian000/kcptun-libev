@@ -183,20 +183,20 @@ Let's explain some common fields in server.json/client.json:
 
 Some options are same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here is some hints:
 
-- "kcp.sndwnd", "kcp.rcvwnd": must be tuned based on RTT. start a idle server with loglevel>5 and wait <1min to read the theoretical bandwidth of current window values.
-- "kcp.nodelay": enabled mode 1 by default.
-- "kcp.interval": since we have "kcp.flush", you can set this relatively larger than other implements.
-- "kcp.resend": disabled by default.
-- "kcp.nc": enabled by default.
+- "kcp.sndwnd", "kcp.rcvwnd": Must be tuned based on RTT. For enthusiasts, start a idle client with loglevel > 5 and wait 1 minute to read the theoretical bandwidth of current window values. Make it slightly larger than real transfer speed.
+- "kcp.nodelay": Enabled mode 1 by default.
+- "kcp.interval": Since we have "kcp.flush", you can set this relatively larger than other implements.
+- "kcp.resend": Disabled by default.
+- "kcp.nc": Enabled by default.
 
 Again, there is some kcptun-libev only options:
 
-- "kcp.flush": 0 - periodic only, 1 - flush after push (default), 2 - also flush acks
+- "kcp.flush": 0 - periodic only, 1 - flush after message (default), 2 - also flush acks
 - "tcp.\*", "udp.\*": socket options, read your OS manual for further information
 - "obfs": obfuscator, disabled by default. currently only one implemented: "dpi/tcp-wnd"
 - "user": if running as root, switch to this user to drop privileges
 
-kcptun-libev works out of the box, thus the default options are also the recommends.
+*kcptun-libev works out of the box, thus the default options are also the recommends.*
 
 ## Credits
 
