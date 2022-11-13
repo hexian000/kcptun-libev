@@ -3,12 +3,12 @@
 
 #include "kcp/ikcp.h"
 #include "slog.h"
-#include <stdbool.h>
 
 #define b64_malloc(ptr) util_malloc(ptr)
 #define b64_realloc(ptr, size) util_realloc(ptr, size)
 #include "b64/b64.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
