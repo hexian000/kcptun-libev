@@ -20,7 +20,7 @@
 
 static bool listener_start(struct server *restrict s, struct netaddr *addr)
 {
-	struct config *restrict cfg = s->conf;
+	struct config *restrict conf = s->conf;
 	struct listener *restrict l = &(s->listener);
 	if (!resolve_netaddr(addr, RESOLVE_TCP | RESOLVE_PASSIVE)) {
 		return false;
@@ -39,9 +39,9 @@ static bool listener_start(struct server *restrict s, struct netaddr *addr)
 		}
 		return false;
 	}
-	socket_set_reuseport(fd, cfg->tcp_reuseport);
-	socket_set_tcp(fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
-	socket_set_buffer(fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
+	socket_set_reuseport(fd, conf->tcp_reuseport);
+	socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
+	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 
 	// Bind socket to address
 	if (bind(fd, sa, getsocklen(sa)) != 0) {

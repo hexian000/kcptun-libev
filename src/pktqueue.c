@@ -44,16 +44,16 @@ static bool crypto_open_inplace(
 		return false;
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
-	if (!noncegen_verify(q->noncegen, nonce)) {
-		LOGV("nonce reuse detected");
-		return false;
-	}
 	const size_t cipher_len = src_len - nonce_size;
 	const size_t dst_len = aead_open(
 		crypto, data, size, nonce, data, cipher_len,
 		(const unsigned char *)crypto_tag, crypto_tag_size);
 	if (dst_len + overhead + nonce_size != src_len) {
 		LOGV("failed to open packet");
+		return false;
+	}
+	if (!noncegen_verify(q->noncegen, nonce)) {
+		LOGV("nonce reuse detected");
 		return false;
 	}
 	*len = dst_len;
@@ -283,30 +283,31 @@ bool queue_send(
 
 #if WITH_CRYPTO
 static bool
-queue_new_crypto(struct pktqueue *restrict q, struct config *restrict cfg)
+queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 {
-	if (cfg->method == NULL) {
+	if (conf->method == NULL) {
 		return true;
 	}
-	q->crypto = aead_create(cfg->method);
+	q->crypto = aead_create(conf->method);
 	if (q->crypto == NULL) {
 		return false;
 	}
-	if (cfg->psk) {
-		if (cfg->psklen != q->crypto->key_size) {
+	if (conf->psk) {
+		if (conf->psklen != q->crypto->key_size) {
 			LOGE("wrong psk length");
 			aead_free(q->crypto);
 			q->crypto = NULL;
 			return false;
 		}
-		aead_psk(q->crypto, cfg->psk);
-		UTIL_SAFE_FREE(cfg->psk);
-	} else if (cfg->password) {
-		aead_password(q->crypto, cfg->password);
-		UTIL_SAFE_FREE(cfg->password);
+		aead_psk(q->crypto, conf->psk);
+		UTIL_SAFE_FREE(conf->psk);
+	} else if (conf->password) {
+		aead_password(q->crypto, conf->password);
+		UTIL_SAFE_FREE(conf->password);
 	}
 	q->noncegen = noncegen_create(
-		q->crypto->noncegen_method, q->crypto->nonce_size);
+		q->crypto->noncegen_method, q->crypto->nonce_size,
+		!!(conf->mode & MODE_SERVER));
 	if (q->noncegen == NULL) {
 		aead_free(q->crypto);
 		return false;

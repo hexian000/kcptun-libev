@@ -60,7 +60,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct server *restrict s = watcher->data;
-	struct config *restrict cfg = s->conf;
+	struct config *restrict conf = s->conf;
 	sockaddr_max_t m_sa;
 	socklen_t sa_len = sizeof(m_sa);
 	int client_fd;
@@ -93,8 +93,8 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			}
 			return;
 		}
-		socket_set_tcp(client_fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
-		socket_set_buffer(client_fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
+		socket_set_tcp(client_fd, conf->tcp_nodelay, conf->tcp_keepalive);
+		socket_set_buffer(client_fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 
 		accept_one((struct server *)watcher->data, client_fd, &m_sa.sa);
 	}

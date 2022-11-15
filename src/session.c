@@ -20,14 +20,15 @@
 #include <stdint.h>
 
 static ikcpcb *
-kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
+kcp_new(struct session *restrict ss, struct config *restrict conf,
+	uint32_t conv)
 {
 	ikcpcb *restrict kcp = ikcp_create(conv, ss);
 	if (kcp == NULL) {
 		return NULL;
 	}
-	ikcp_wndsize(kcp, cfg->kcp_sndwnd, cfg->kcp_rcvwnd);
-	int mtu = cfg->kcp_mtu;
+	ikcp_wndsize(kcp, conf->kcp_sndwnd, conf->kcp_rcvwnd);
+	int mtu = conf->kcp_mtu;
 #if WITH_CRYPTO
 	struct aead *restrict crypto = ss->server->pkt.queue->crypto;
 	if (crypto != NULL) {
@@ -36,8 +37,8 @@ kcp_new(struct session *restrict ss, struct config *restrict cfg, uint32_t conv)
 #endif
 	ikcp_setmtu(kcp, mtu);
 	ikcp_nodelay(
-		kcp, cfg->kcp_nodelay, cfg->kcp_interval, cfg->kcp_resend,
-		cfg->kcp_nc);
+		kcp, conf->kcp_nodelay, conf->kcp_interval, conf->kcp_resend,
+		conf->kcp_nc);
 	ikcp_setoutput(kcp, udp_output);
 	return kcp;
 }
@@ -143,9 +144,9 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 		return false;
 	}
 	{
-		struct config *restrict cfg = ss->server->conf;
-		socket_set_tcp(fd, cfg->tcp_nodelay, cfg->tcp_keepalive);
-		socket_set_buffer(fd, cfg->tcp_sndbuf, cfg->tcp_rcvbuf);
+		struct config *restrict conf = ss->server->conf;
+		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
+		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	}
 
 	// Connect to address
