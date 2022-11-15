@@ -3,12 +3,12 @@
 #include "slog.h"
 #include "util.h"
 
-#include <netinet/in.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netdb.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 
 #include <stddef.h>

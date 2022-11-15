@@ -1,11 +1,7 @@
 #ifndef PACKET_H
 #define PACKET_H
 
-#include "aead.h"
-#include "nonce.h"
-#include "conf.h"
 #include "leakypool.h"
-#include "slog.h"
 #include "sockutil.h"
 
 #include <ev.h>

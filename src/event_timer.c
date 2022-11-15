@@ -4,16 +4,15 @@
 #include "server.h"
 #include "pktqueue.h"
 #include "serialize.h"
+#include "nonce.h"
 #include "obfs.h"
 
 #include "kcp/ikcp.h"
 #include <ev.h>
 
-#include <math.h>
-#include <sys/socket.h>
-
 #include <assert.h>
 #include <inttypes.h>
+#include <math.h>
 
 struct session_stats {
 	size_t data[STATE_MAX];

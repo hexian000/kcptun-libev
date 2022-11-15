@@ -31,11 +31,11 @@ static int
 kdf(const size_t key_size, unsigned char *restrict key,
     const char *restrict password)
 {
-	const char salt_str[] = "kcptun-libev";
+	static const char salt_str[] = "kcptun-libev";
 	unsigned char salt[crypto_pwhash_argon2id_SALTBYTES];
 	int r = crypto_generichash(
 		salt, crypto_pwhash_argon2id_SALTBYTES,
-		(unsigned char *)salt_str, strlen(salt_str), NULL, 0);
+		(unsigned char *)salt_str, sizeof(salt_str) - 1, NULL, 0);
 	if (r) {
 		return r;
 	}
@@ -213,7 +213,7 @@ struct aead *aead_create(const char *method)
 		};
 	} break;
 	default:
-		abort();
+		CHECK_FAILED();
 	}
 	return aead;
 }

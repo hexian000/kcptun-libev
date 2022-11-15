@@ -1,12 +1,18 @@
 #include "util.h"
 #include "aead.h"
+#include "slog.h"
 
 #include "kcp/ikcp.h"
-#include "slog.h"
 
 #define b64_malloc(ptr) util_malloc(ptr)
 #define b64_realloc(ptr, size) util_realloc(ptr, size)
 #include "b64/b64.h"
+
+#include <unistd.h>
+#include <pwd.h>
+#if _BSD_SOURCE || _GNU_SOURCE
+#include <grp.h>
+#endif
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,13 +20,6 @@
 #include <inttypes.h>
 #include <string.h>
 #include <time.h>
-
-#include <sys/types.h>
-#include <unistd.h>
-#include <pwd.h>
-#if _BSD_SOURCE || _GNU_SOURCE
-#include <grp.h>
-#endif
 
 void print_bin(const void *b, const size_t n)
 {

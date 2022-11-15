@@ -1,7 +1,6 @@
 #include "server.h"
 #include "conf.h"
 #include "event.h"
-
 #include "hashtable.h"
 #include "pktqueue.h"
 #include "obfs.h"
@@ -11,14 +10,13 @@
 
 #include <ev.h>
 
-#include <netinet/in.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <sys/socket.h>
 #include <unistd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #include <stdbool.h>
-#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 static bool listener_start(struct server *restrict s, struct netaddr *addr)
 {

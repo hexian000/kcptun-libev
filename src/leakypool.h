@@ -2,6 +2,7 @@
 #define LEAKYPOOL_H
 
 #include "util.h"
+
 #include <stdlib.h>
 
 struct leakypool {

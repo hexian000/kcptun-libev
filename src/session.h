@@ -9,8 +9,6 @@
 
 #include <ev.h>
 
-#include <sys/socket.h>
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

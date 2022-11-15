@@ -4,9 +4,9 @@
 #include "sockutil.h"
 #include "jsonutil.h"
 
-#include <assert.h>
 #include <sys/socket.h>
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -236,7 +236,7 @@ const char *runmode_str(const int mode)
 		[MODE_CLIENT] = "client",
 	};
 	assert(mode >= 0);
-	assert((size_t)mode < countof(str));
+	assert((size_t)mode < ARRAY_SIZE(str));
 	return str[mode];
 }
 

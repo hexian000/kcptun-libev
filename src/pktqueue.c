@@ -3,28 +3,28 @@
 #include "event.h"
 #include "event_impl.h"
 #include "hashtable.h"
-#include "kcp/ikcp.h"
 #include "leakypool.h"
 #include "aead.h"
 #include "nonce.h"
 #include "obfs.h"
-#include "serialize.h"
 #include "server.h"
 #include "session.h"
 #include "slog.h"
 #include "util.h"
 #include "sockutil.h"
 
-#include <assert.h>
+#include "kcp/ikcp.h"
 #include <ev.h>
 
-#include <stddef.h>
-#include <stdbool.h>
-#include <inttypes.h>
-#include <stdint.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+
+#include <assert.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+#include <inttypes.h>
 
 static const char crypto_tag[] = PROJECT_NAME;
 static const size_t crypto_tag_size = sizeof(crypto_tag);

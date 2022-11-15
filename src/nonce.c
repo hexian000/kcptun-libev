@@ -1,14 +1,14 @@
 #include "nonce.h"
+
+#if WITH_SODIUM
 #include "aead.h"
 #include "serialize.h"
 #include "util.h"
 
-#if WITH_SODIUM
-#include <sodium.h>
-
-#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <sodium.h>
 
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
@@ -72,7 +72,7 @@ void noncegen_init(struct noncegen *restrict g)
 
 static void noncegen_fill_counter(struct noncegen *restrict g)
 {
-	for (size_t i = 0; i < countof(g->src); i++) {
+	for (size_t i = 0; i < ARRAY_SIZE(g->src); i++) {
 		if (g->src[i] != UINT32_MAX) {
 			g->src[i]++;
 			break;
@@ -80,8 +80,8 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 		g->src[i] = 0;
 	}
 	size_t n = g->nonce_len / sizeof(uint32_t);
-	if (n > countof(g->src)) {
-		n = countof(g->src);
+	if (n > ARRAY_SIZE(g->src)) {
+		n = ARRAY_SIZE(g->src);
 	}
 	for (size_t i = 0; i < n; i++) {
 		write_uint32(g->nonce_buf + i * sizeof(uint32_t), g->src[i]);

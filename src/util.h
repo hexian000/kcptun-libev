@@ -27,22 +27,11 @@
 		}                                                              \
 	} while (0)
 
-#define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)
-
 #define CHECK(cond) CHECKMSGF(cond, "\"%s\"", #cond)
-
-#define CHECKERR(cond, msg)                                                    \
-	do {                                                                   \
-		if (!(cond)) {                                                 \
-			const int err = errno;                                 \
-			CHECKMSGF("%s, [%d] %s", msg, err, strerror(err));     \
-			CHECK_FAILED();                                        \
-		}                                                              \
-	} while (0)
 
 #define LOGOOM() LOGE("out of memory")
 
-#define countof(array) (sizeof(array) / sizeof((array)[0]))
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
 #define TSTAMP_NIL (-1.0)
 
@@ -86,7 +75,7 @@ void print_bin(const void *b, size_t n);
 
 uint32_t rand32(void);
 
-uint32_t tstamp2ms(const ev_tstamp t);
+uint32_t tstamp2ms(ev_tstamp t);
 
 void init(void);
 

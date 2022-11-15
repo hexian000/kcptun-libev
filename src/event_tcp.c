@@ -8,13 +8,13 @@
 #include "util.h"
 #include "sockutil.h"
 
-#include <assert.h>
 #include <ev.h>
 
-#include <stdbool.h>
-#include <stddef.h>
 #include <unistd.h>
 
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <inttypes.h>
 
 static void accept_one(

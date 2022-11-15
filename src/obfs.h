@@ -3,8 +3,6 @@
 
 #include "pktqueue.h"
 
-#include <ev.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -22,7 +20,5 @@ void obfs_free(struct obfs *obfs);
 bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg);
 uint16_t obfs_offset(struct obfs *obfs);
 bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg);
-
-bool obfs_ctx_timeout(struct obfs_ctx *ctx, ev_tstamp now);
 
 #endif /* OBFS_H */

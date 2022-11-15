@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 struct server;
 struct session;
@@ -24,7 +25,7 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 
 int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
-bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg);
+bool kcp_sendmsg(struct session *restrict ss, uint16_t msg);
 void kcp_recv(struct session *restrict ss);
 void kcp_close(struct session *ss);
 void kcp_reset(struct session *ss);

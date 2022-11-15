@@ -143,7 +143,6 @@ void kcp_recv(struct session *restrict ss)
 		       ss->conv, nrecv, cap);
 		ss->last_recv = ev_now(ss->server->loop);
 	}
-	return;
 }
 
 static void kcp_update(struct session *restrict ss)

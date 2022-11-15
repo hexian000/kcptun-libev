@@ -33,7 +33,6 @@
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
 #if USE_SOCK_FILTER
 #include <linux/filter.h>
@@ -69,7 +68,8 @@ struct obfs_ctx {
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
 	bool cap_ecn, cap_ece;
-	bool captured;
+	bool established;
+	size_t num_ecn, num_ece;
 	ev_tstamp last_seen;
 };
 
@@ -143,13 +143,13 @@ static struct sock_fprog filter_compile(const int domain, const uint16_t port)
 	case AF_INET:
 		tcp4[8].k = (uint32_t)port;
 		return (struct sock_fprog){
-			.len = countof(tcp4),
+			.len = ARRAY_SIZE(tcp4),
 			.filter = tcp4,
 		};
 	case AF_INET6:
 		tcp6[5].k = (uint32_t)port;
 		return (struct sock_fprog){
-			.len = countof(tcp6),
+			.len = ARRAY_SIZE(tcp6),
 			.filter = tcp6,
 		};
 	default:
@@ -264,7 +264,7 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	}
 	*ctx = (struct obfs_ctx){
 		.obfs = obfs,
-		.captured = false,
+		.established = false,
 	};
 	return ctx;
 }
@@ -519,10 +519,10 @@ static bool print_ctx_iter(
 	const ev_tstamp now = ev_now(obfs->loop);
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-	if (ctx->captured) {
-		LOGD_F("obfs context peer=%s seen=%.0fs ecn=%d ece=%d",
-		       addr_str, now - ctx->last_seen, ctx->cap_ecn,
-		       ctx->cap_ece);
+	if (ctx->established) {
+		LOGD_F("obfs context peer=%s seen=%.0fs ecn(rx/tx)=%zu/%zu",
+		       addr_str, now - ctx->last_seen, ctx->num_ecn,
+		       ctx->num_ece);
 	} else {
 		LOGD_F("obfs context peer=%s seen=%.0fs", addr_str,
 		       now - ctx->last_seen);
@@ -756,15 +756,21 @@ static void obfs_capture(
 	const struct tcphdr *restrict tcp)
 {
 	ctx->cap_ecn = (ecn == ECN_CE);
+	if (ctx->cap_ecn) {
+		ctx->num_ecn++;
+	}
 	/* RFC 3168: Section 6.1 */
 	ctx->cap_ece = !!(tcp->res2 & 0x1u);
-	if (ctx->captured) {
+	if (ctx->cap_ece) {
+		ctx->num_ece++;
+	}
+	if (ctx->established) {
 		return;
 	}
 	ctx->cap_flow = flow;
 	ctx->cap_seq = ntohl(tcp->seq);
 	ctx->cap_ack_seq = ntohl(tcp->ack_seq);
-	ctx->captured = true;
+	ctx->established = true;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
@@ -791,7 +797,7 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 		return false;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
-	if ((ip.saddr >> IN_CLASSA_NSHIFT) != IN_LOOPBACKNET) {
+	if ((ntohl(ip.saddr) >> IN_CLASSA_NSHIFT) != IN_LOOPBACKNET) {
 		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
 			.saddr = ip.saddr,
 			.daddr = ip.daddr,
@@ -827,7 +833,6 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 	hashkey_t key;
 	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
 	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
-		/* IP spoofing is not handled */
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
@@ -910,7 +915,6 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 	hashkey_t key;
 	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
 	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
-		/* IP spoofing is not handled */
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
@@ -1066,7 +1070,7 @@ bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
 			msg->len, addr_str);
 		return false;
 	}
-	if (!ctx->captured) {
+	if (!ctx->established) {
 		return false;
 	}
 	bool ok = false;

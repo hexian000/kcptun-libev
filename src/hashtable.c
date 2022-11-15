@@ -4,7 +4,6 @@
 
 #include <assert.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <limits.h>
 
 #ifndef NDEBUG
@@ -24,7 +23,7 @@ static const int prime_list[] = {
 
 static inline int get_capacity(int x)
 {
-	const int last_prime = prime_list[countof(prime_list) - 1];
+	const int last_prime = prime_list[ARRAY_SIZE(prime_list) - 1];
 	if (x > last_prime) {
 		/* huge hashtable */
 		return x | 1;
@@ -56,7 +55,7 @@ struct hashtable {
 static inline bool
 key_equals(const hashkey_t *restrict a, const hashkey_t *restrict b)
 {
-	for (int i = 0; i < (int)countof(a->b); i++) {
+	for (int i = 0; i < (int)ARRAY_SIZE(a->b); i++) {
 		if (a->b[i] != b->b[i]) {
 			return false;
 		}
@@ -155,7 +154,7 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 
 static inline void table_grow(struct hashtable *restrict table)
 {
-	const int last_prime = prime_list[countof(prime_list) - 1];
+	const int last_prime = prime_list[ARRAY_SIZE(prime_list) - 1];
 	if (table->size < last_prime) {
 		/* will fit next number in prime_list */
 		table_reserve(table, table->size + 1);

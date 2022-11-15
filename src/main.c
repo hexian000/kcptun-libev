@@ -4,13 +4,11 @@
 #include "conf.h"
 #include "server.h"
 
-#include <assert.h>
 #include <ev.h>
 
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-
 #include <signal.h>
 
 static struct {
