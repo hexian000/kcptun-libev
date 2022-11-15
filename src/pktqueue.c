@@ -26,10 +26,10 @@
 #include <string.h>
 #include <inttypes.h>
 
+#if WITH_CRYPTO
 static const char crypto_tag[] = PROJECT_NAME;
 static const size_t crypto_tag_size = sizeof(crypto_tag);
 
-#if WITH_CRYPTO
 static bool crypto_open_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
 	const size_t size)

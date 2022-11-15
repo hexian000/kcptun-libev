@@ -310,8 +310,6 @@ static struct config conf_default(void)
 		.kcp_resend = 0,
 		.kcp_nc = 1,
 		.kcp_flush = 1,
-		.password = NULL,
-		.psk = NULL,
 		.timeout = 600,
 		.linger = 30,
 		.keepalive = 25,
@@ -320,7 +318,6 @@ static struct config conf_default(void)
 		.tcp_keepalive = false,
 		.tcp_nodelay = true,
 		.log_level = LOG_LEVEL_INFO,
-		.user = NULL,
 	};
 }
 
@@ -340,11 +337,13 @@ static bool conf_check(struct config *restrict conf)
 	}
 	conf->mode = mode;
 
-	/* 2. crypto check */
+/* 2. crypto check */
+#if WITH_CRYPTO
 	if (conf->psk != NULL && conf->password != NULL) {
 		LOGF("config: psk and password cannot be specified at the same time");
 		return false;
 	}
+#endif
 
 	/* 3. range check */
 	if (conf->kcp_interval < 10 || conf->kcp_interval > 500) {
