@@ -161,20 +161,20 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return walk_json_object(conf, value, tcp_scope_cb);
 	}
 	if (strcmp(name, "listen") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->listen.str = str) != NULL;
+		conf->listen.str = parse_string_json(value);
+		return conf->listen.str != NULL;
 	}
 	if (strcmp(name, "connect") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->connect.str = str) != NULL;
+		conf->connect.str = parse_string_json(value);
+		return conf->connect.str != NULL;
 	}
 	if (strcmp(name, "kcp_bind") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->pkt_bind.str = str) != NULL;
+		conf->kcp_bind.str = parse_string_json(value);
+		return conf->kcp_bind.str != NULL;
 	}
 	if (strcmp(name, "kcp_connect") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->pkt_connect.str = str) != NULL;
+		conf->kcp_connect.str = parse_string_json(value);
+		return conf->kcp_connect.str != NULL;
 	}
 #if WITH_CRYPTO
 	if (strcmp(name, "method") == 0) {
@@ -209,17 +209,7 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return parse_int_json(&conf->time_wait, value);
 	}
 	if (strcmp(name, "loglevel") == 0) {
-		int l;
-		if (!parse_int_json(&l, value)) {
-			return false;
-		}
-		if (l < LOG_LEVEL_SILENCE || l > LOG_LEVEL_VERBOSE) {
-			LOGE_F("log level out of range: %d - %d",
-			       LOG_LEVEL_SILENCE, LOG_LEVEL_VERBOSE);
-			return false;
-		}
-		conf->log_level = l;
-		return true;
+		return parse_int_json(&conf->log_level, value);
 	}
 	if (strcmp(name, "user") == 0) {
 		conf->user = parse_string_json(value);
@@ -321,18 +311,28 @@ static struct config conf_default(void)
 	};
 }
 
+static bool
+conf_check_range(const char *key, const int value, const int min, const int max)
+{
+	if (value < min || value > max) {
+		LOGE_F("config: %s is out of range (%d - %d)", key, min, max);
+		return false;
+	}
+	return true;
+}
+
 static bool conf_check(struct config *restrict conf)
 {
 	/* 1. network address check */
 	int mode = 0;
-	if (conf->pkt_bind.str != NULL && conf->connect.str != NULL) {
+	if (conf->kcp_bind.str != NULL && conf->connect.str != NULL) {
 		mode |= MODE_SERVER;
 	}
-	if (conf->listen.str != NULL && conf->pkt_connect.str != NULL) {
+	if (conf->listen.str != NULL && conf->kcp_connect.str != NULL) {
 		mode |= MODE_CLIENT;
 	}
 	if (mode != MODE_SERVER && mode != MODE_CLIENT) {
-		LOGF("config: no forward could be provided (are you missing some address field?)");
+		LOGE("config: no forward could be provided (are you missing some address field?)");
 		return false;
 	}
 	conf->mode = mode;
@@ -346,32 +346,24 @@ static bool conf_check(struct config *restrict conf)
 #endif
 
 	/* 3. range check */
-	if (conf->kcp_interval < 10 || conf->kcp_interval > 500) {
-		conf->kcp_interval = 50;
-		LOGW_F("config: %s is out of range, using default: %d",
-		       "kcp.interval", conf->kcp_interval);
+	const bool range_ok =
+		conf_check_range("kcp.mtu", conf->kcp_mtu, 300, 1400) &&
+		conf_check_range("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
+		conf_check_range("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
+		conf_check_range("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&
+		conf_check_range("kcp.interval", conf->kcp_interval, 10, 500) &&
+		conf_check_range("kcp.resend", conf->kcp_resend, 0, 100) &&
+		conf_check_range("kcp.nc", conf->kcp_nc, 0, 1) &&
+		conf_check_range("kcp.flush", conf->kcp_flush, 0, 2) &&
+		conf_check_range("timeout", conf->timeout, 60, 86400) &&
+		conf_check_range("linger", conf->linger, 5, 600) &&
+		conf_check_range("keepalive", conf->keepalive, 0, 7200) &&
+		conf_check_range("time_wait", conf->time_wait, 5, 3600) &&
+		conf_check_range("log_level", conf->log_level, 0, 6);
+	if (!range_ok) {
+		return false;
 	}
-	if (conf->linger < 5 || conf->linger > 600) {
-		conf->linger = 60;
-		LOGW_F("config: %s is out of range, using default: %d",
-		       "linger", conf->linger);
-	}
-	if (conf->timeout < 60 || conf->timeout > 86400) {
-		conf->timeout = 600;
-		LOGW_F("config: %s is out of range, using default: %d",
-		       "timeout", conf->timeout);
-	}
-	if (conf->keepalive < 0 || conf->keepalive > 7200) {
-		conf->keepalive = 25;
-		LOGW_F("config: %s is out of range, using default: %d",
-		       "keepalive", conf->timeout);
-	}
-	if (conf->time_wait < 5 || conf->time_wait > 3600 ||
-	    conf->time_wait <= conf->linger) {
-		conf->time_wait = conf->linger * 4;
-		LOGW_F("config: %s is out of range, using default: %d",
-		       "time_wait", conf->time_wait);
-	}
+
 	return true;
 }
 
@@ -411,8 +403,8 @@ void conf_free(struct config *conf)
 {
 	netaddr_safe_free(&conf->listen);
 	netaddr_safe_free(&conf->connect);
-	netaddr_safe_free(&conf->pkt_bind);
-	netaddr_safe_free(&conf->pkt_connect);
+	netaddr_safe_free(&conf->kcp_bind);
+	netaddr_safe_free(&conf->kcp_connect);
 	UTIL_SAFE_FREE(conf->user);
 #if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);

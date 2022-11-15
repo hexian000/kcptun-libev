@@ -21,8 +21,8 @@ const char *runmode_str(int mode);
 struct config {
 	struct netaddr listen;
 	struct netaddr connect;
-	struct netaddr pkt_bind;
-	struct netaddr pkt_connect;
+	struct netaddr kcp_bind;
+	struct netaddr kcp_connect;
 
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;

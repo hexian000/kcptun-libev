@@ -118,7 +118,7 @@ int main(int argc, char **argv)
 
 	struct config *conf = conf_read(app.conf_path);
 	if (conf == NULL) {
-		LOGE("failed to read config");
+		LOGF("failed to read config");
 		return EXIT_FAILURE;
 	}
 	slog_level = conf->log_level + app.verbosity;

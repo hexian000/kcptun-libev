@@ -230,7 +230,7 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	const uint32_t tstamp = tstamp2ms(ping_ts);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	ss0_send(s, s->conf->pkt_connect.sa, S0MSG_PING, b, sizeof(b));
+	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));
 	pkt_flush(s);
 	s->pkt.inflight_ping = ping_ts;
 }

@@ -453,7 +453,7 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
 	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 	if ((obfs->conf->mode & MODE_CLIENT) && obfs->client == NULL) {
-		struct netaddr *addr = &obfs->conf->pkt_connect;
+		struct netaddr *addr = &obfs->conf->kcp_connect;
 		if (resolve_netaddr(addr, RESOLVE_TCP)) {
 			(void)obfs_ctx_dial(obfs, addr->sa);
 		}
@@ -568,7 +568,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	struct config *restrict conf = obfs->conf;
 	struct pktconn *restrict pkt = &s->pkt;
 	if (conf->mode & MODE_SERVER) {
-		struct netaddr *restrict addr = &conf->pkt_bind;
+		struct netaddr *restrict addr = &conf->kcp_bind;
 		if (!resolve_netaddr(addr, RESOLVE_TCP | RESOLVE_PASSIVE)) {
 			return false;
 		}
@@ -605,10 +605,10 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 	}
 	if (conf->mode & MODE_CLIENT) {
-		if (!resolve_netaddr(&obfs->conf->pkt_connect, RESOLVE_TCP)) {
+		if (!resolve_netaddr(&obfs->conf->kcp_connect, RESOLVE_TCP)) {
 			return false;
 		}
-		const struct sockaddr *sa = obfs->conf->pkt_connect.sa;
+		const struct sockaddr *sa = obfs->conf->kcp_connect.sa;
 		obfs->domain = sa->sa_family;
 		obfs_raw_start(obfs);
 		if (!obfs_ctx_dial(obfs, sa)) {

@@ -23,7 +23,7 @@ static void accept_one(
 {
 	/* Initialize and start watcher to read client requests */
 	struct session *restrict ss;
-	const struct sockaddr *sa = s->conf->pkt_connect.sa;
+	const struct sockaddr *sa = s->conf->kcp_connect.sa;
 	uint32_t conv = conv_new(s, sa);
 	ss = session_new(s, sa, conv);
 	if (ss == NULL) {

@@ -78,14 +78,14 @@ static bool listener_start(struct server *restrict s, struct netaddr *addr)
 
 static bool udp_resolve(struct config *restrict conf)
 {
-	if (conf->pkt_bind.str != NULL) {
+	if (conf->kcp_bind.str != NULL) {
 		if (!resolve_netaddr(
-			    &conf->pkt_bind, RESOLVE_UDP | RESOLVE_PASSIVE)) {
+			    &conf->kcp_bind, RESOLVE_UDP | RESOLVE_PASSIVE)) {
 			return false;
 		}
 	}
-	if (conf->pkt_connect.str != NULL) {
-		if (!resolve_netaddr(&conf->pkt_connect, RESOLVE_UDP)) {
+	if (conf->kcp_connect.str != NULL) {
+		if (!resolve_netaddr(&conf->kcp_connect, RESOLVE_UDP)) {
 			return false;
 		}
 	}
@@ -94,8 +94,8 @@ static bool udp_resolve(struct config *restrict conf)
 
 static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 {
-	if (conf->pkt_bind.sa != NULL) {
-		const struct sockaddr *sa = conf->pkt_bind.sa;
+	if (conf->kcp_bind.sa != NULL) {
+		const struct sockaddr *sa = conf->kcp_bind.sa;
 		if (bind(udp->fd, sa, getsocklen(sa))) {
 			LOGE_PERROR("udp bind");
 			return false;
@@ -104,8 +104,8 @@ static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGI_F("udp bind: %s", addr_str);
 	}
-	if (conf->pkt_connect.sa != NULL) {
-		const struct sockaddr *sa = conf->pkt_connect.sa;
+	if (conf->kcp_connect.sa != NULL) {
+		const struct sockaddr *sa = conf->kcp_connect.sa;
 		if (connect(udp->fd, sa, getsocklen(sa))) {
 			LOGE_PERROR("udp connect");
 			return false;
@@ -146,9 +146,9 @@ static bool udp_start(struct server *restrict s)
 	struct pktconn *restrict udp = &s->pkt;
 
 	// Setup a udp socket.
-	const int udp_af = conf->pkt_bind.sa != NULL ?
-				   conf->pkt_bind.sa->sa_family :
-				   conf->pkt_connect.sa->sa_family;
+	const int udp_af = conf->kcp_bind.sa != NULL ?
+				   conf->kcp_bind.sa->sa_family :
+				   conf->kcp_connect.sa->sa_family;
 	if ((udp->fd = socket(udp_af, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
 		LOGE_PERROR("udp socket");
 		return false;
