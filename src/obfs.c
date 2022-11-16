@@ -1200,6 +1200,7 @@ void http_server_read_cb(
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
 		LOGI_F("obfs: request handled from %s", addr_str);
 	}
+	ev_io_stop(loop, watcher);
 }
 
 void http_server_write_cb(

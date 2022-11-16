@@ -99,8 +99,9 @@ void kcp_close(struct session *restrict ss)
 		kcp_reset(ss);
 		return;
 	}
-	/* always flush EOF message */
-	ikcp_flush(ss->kcp);
+	if (ss->kcp_flush >= 1) {
+		ikcp_flush(ss->kcp);
+	}
 	LOGD_F("session [%08" PRIX32 "] send: eof", ss->conv);
 	ss->state = STATE_LINGER;
 }
