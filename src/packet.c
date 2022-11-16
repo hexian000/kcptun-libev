@@ -44,16 +44,16 @@ static bool packet_open_inplace(
 		return false;
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
-	if (!noncegen_verify(p->noncegen, nonce)) {
-		LOGD("nonce reuse detected");
-		return false;
-	}
 	const size_t cipher_len = src_len - nonce_size;
 	const size_t dst_len = aead_open(
 		crypto, data, size, nonce, data, cipher_len,
 		(const unsigned char *)crypto_tag, crypto_tag_size);
 	if (dst_len + overhead + nonce_size != src_len) {
 		LOGD("failed to open packet (wrong password?)");
+		return false;
+	}
+	if (!noncegen_verify(p->noncegen, nonce)) {
+		LOGD("nonce reuse detected");
 		return false;
 	}
 	*len = dst_len;
