@@ -337,8 +337,8 @@ static bool conf_check(struct config *restrict conf)
 	}
 	conf->mode = mode;
 
-/* 2. crypto check */
 #if WITH_CRYPTO
+	/* 2. crypto check */
 	if (conf->psk != NULL && conf->password != NULL) {
 		LOGF("config: psk and password cannot be specified at the same time");
 		return false;

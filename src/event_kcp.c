@@ -162,6 +162,7 @@ static void kcp_update(struct session *restrict ss)
 	const uint32_t now_ms = tstamp2ms(now);
 	ikcp_update(ss->kcp, now_ms);
 	kcp_recv(ss), session_parse(ss), tcp_flush(ss);
+	ss->pkt_arrived = false;
 	if (ss->state != STATE_LINGER && ss->tcp_fd != -1) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
@@ -203,8 +204,7 @@ static bool kcp_update_iter(
 	UNUSED(key);
 	struct session *restrict ss = value;
 	kcp_update(ss);
-	struct server *restrict s = user;
-	struct pktqueue *restrict q = s->pkt.queue;
+	struct pktqueue *restrict q = user;
 	return q->mq_send_len < q->mq_send_cap;
 }
 
@@ -213,12 +213,12 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = watcher->data;
-	table_iterate(s->sessions, kcp_update_iter, s);
+	table_iterate(s->sessions, kcp_update_iter, s->pkt.queue);
 }
 
 void kcp_notify_update(struct server *restrict s)
 {
-	table_iterate(s->sessions, kcp_update_iter, s);
+	table_iterate(s->sessions, kcp_update_iter, s->pkt.queue);
 }
 
 static bool kcp_recv_iter(
@@ -226,7 +226,6 @@ static bool kcp_recv_iter(
 {
 	UNUSED(t);
 	UNUSED(key);
-	UNUSED(user);
 	struct session *restrict ss = value;
 	if (ss->pkt_arrived) {
 		if (ss->kcp_flush >= 2) {
@@ -236,10 +235,11 @@ static bool kcp_recv_iter(
 		kcp_recv(ss), session_parse(ss), tcp_flush(ss);
 		ss->pkt_arrived = false;
 	}
-	return true;
+	struct pktqueue *restrict q = user;
+	return q->mq_send_len < q->mq_send_cap;
 }
 
 void kcp_notify_recv(struct server *restrict s)
 {
-	table_iterate(s->sessions, kcp_recv_iter, NULL);
+	table_iterate(s->sessions, kcp_recv_iter, s->pkt.queue);
 }

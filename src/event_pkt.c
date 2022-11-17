@@ -291,10 +291,12 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
-	while (pkt_send(watcher->fd, s) > 0) {
-		kcp_notify_update(s);
-	}
 	struct pktqueue *restrict q = s->pkt.queue;
+	while (pkt_send(watcher->fd, s) > 0) {
+		if (q->mq_send_len == 0) {
+			kcp_notify_update(s);
+		}
+	}
 	if (q->mq_send_len == 0) {
 		ev_io_stop(loop, watcher);
 	}
