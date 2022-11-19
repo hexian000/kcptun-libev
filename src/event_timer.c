@@ -1,20 +1,17 @@
-#include "conf.h"
 #include "event.h"
 #include "event_impl.h"
-#include "hashtable.h"
-#include "kcp/ikcp.h"
-#include "packet.h"
-#include "serialize.h"
-#include "server.h"
-#include "session.h"
-#include "slog.h"
-#include "sockutil.h"
 #include "util.h"
+#include "server.h"
+#include "pktqueue.h"
+#include "serialize.h"
+#include "nonce.h"
+#include "obfs.h"
 
+#include "kcp/ikcp.h"
 #include <ev.h>
-#include <stdint.h>
-#include <sys/socket.h>
 
+#include <assert.h>
+#include <inttypes.h>
 #include <math.h>
 
 struct session_stats {
@@ -30,36 +27,31 @@ static bool print_session_iter(
 	struct session *restrict ss = value;
 	struct session_stats *restrict stat = user;
 	stat->data[ss->state]++;
+	switch (ss->state) {
+	case STATE_TIME_WAIT:
+		return true;
+	default:
+		break;
+	}
 	char addr_str[64];
-	format_sa(
-		(struct sockaddr *)&ss->udp_remote, addr_str, sizeof(addr_str));
-	LOGD_F("session [%08" PRIX32
-	       "] peer=%s state=%d age=%.0fs tx=%zu rx=%zu rtt=%" PRId32
-	       " rto=%" PRId32 " waitsnd=%d",
-	       ss->conv, addr_str, ss->state, stat->now - ss->created,
-	       ss->stats.tcp_in, ss->stats.tcp_out, ss->kcp->rx_srtt,
+	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
+	LOGD_F("session [%08" PRIX32 "] "
+	       "peer=%s state=%d seen=%.0fs tx=%zu rx=%zu "
+	       "rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d",
+	       ss->conv, addr_str, ss->state, stat->now - ss->last_recv,
+	       ss->stats.tcp_rx, ss->stats.tcp_tx, ss->kcp->rx_srtt,
 	       ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp));
 	return true;
 }
 
-static void print_debug_info(struct server *restrict s, const ev_tstamp now)
+static void print_session_table(struct server *restrict s, const ev_tstamp now)
 {
-	static struct link_stats last_stats = { 0 };
-	static double last_print_time = NAN;
-	if (!isfinite(last_print_time)) {
-		last_print_time = now;
-		last_stats = s->stats;
-		return;
-	}
-	if (now - last_print_time < 30.0) {
-		return;
-	}
+	struct session_stats stats = (struct session_stats){
+		.data = { 0 },
+		.now = now,
+	};
 	const size_t n_sessions = table_size(s->sessions);
 	if (n_sessions > 0) {
-		struct session_stats stats = (struct session_stats){
-			.data = { 0 },
-			.now = now,
-		};
 		table_iterate(s->sessions, &print_session_iter, &stats);
 		LOGD_F("=== %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait",
 		       n_sessions,
@@ -67,28 +59,50 @@ static void print_debug_info(struct server *restrict s, const ev_tstamp now)
 		       stats.data[STATE_CONNECTED], stats.data[STATE_LINGER],
 		       stats.data[STATE_TIME_WAIT]);
 	}
+}
 
+static void print_server_stats(struct server *restrict s, const ev_tstamp now)
+{
+	static struct link_stats last_stats = { 0 };
+	static double last_print_time = TSTAMP_NIL;
+	if (last_print_time == TSTAMP_NIL) {
+		last_print_time = now;
+		last_stats = s->stats;
+		return;
+	}
+	if (now - last_print_time < 30.0) {
+		return;
+	}
+	if (table_size(s->sessions) > 0) {
+		print_session_table(s, now);
+	}
+
+	struct link_stats *restrict stats = &s->stats;
 	const double dt = now - last_print_time;
 	struct link_stats dstats = (struct link_stats){
-		.udp_in = s->stats.udp_in - last_stats.udp_in,
-		.udp_out = s->stats.udp_out - last_stats.udp_out,
-		.kcp_in = s->stats.kcp_in - last_stats.kcp_in,
-		.kcp_out = s->stats.kcp_out - last_stats.kcp_out,
-		.tcp_in = s->stats.tcp_in - last_stats.tcp_in,
-		.tcp_out = s->stats.tcp_out - last_stats.tcp_out,
+		.pkt_rx = stats->pkt_rx - last_stats.pkt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats.pkt_tx,
+		.kcp_rx = stats->kcp_rx - last_stats.kcp_rx,
+		.kcp_tx = stats->kcp_tx - last_stats.kcp_tx,
+		.tcp_rx = stats->tcp_rx - last_stats.tcp_rx,
+		.tcp_tx = stats->tcp_tx - last_stats.tcp_tx,
 	};
-	double udp_up, udp_down, tcp_up, tcp_down;
-	udp_up = (double)(dstats.udp_out >> 10u) / dt;
-	udp_down = (double)(dstats.udp_in >> 10u) / dt;
-	tcp_up = (double)(dstats.tcp_in >> 10u) / dt;
-	tcp_down = (double)(dstats.tcp_out >> 10u) / dt;
-	LOGD_F("traffic(KiB/s) udp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
-	       udp_up, udp_down, tcp_up, tcp_down, tcp_up / udp_up * 100.0,
-	       tcp_down / udp_down * 100.0);
-	LOGD_F("total udp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
-	       s->stats.udp_out, s->stats.udp_in, s->stats.tcp_in,
-	       s->stats.tcp_out, s->stats.tcp_in * 100.0 / s->stats.udp_out,
-	       s->stats.tcp_out * 100.0 / s->stats.udp_in);
+
+	if (dstats.kcp_rx || dstats.kcp_tx || dstats.tcp_rx || dstats.tcp_tx) {
+		double kcp_tx, kcp_rx, tcp_tx, tcp_rx;
+		kcp_tx = (double)(dstats.kcp_tx >> 10u) / dt;
+		kcp_rx = (double)(dstats.kcp_rx >> 10u) / dt;
+		tcp_tx = (double)(dstats.tcp_rx >> 10u) / dt;
+		tcp_rx = (double)(dstats.tcp_tx >> 10u) / dt;
+		LOGD_F("traffic(KiB/s) kcp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
+		       kcp_tx, kcp_rx, tcp_tx, tcp_rx, tcp_tx / kcp_tx * 100.0,
+		       tcp_rx / kcp_rx * 100.0);
+		LOGD_F("total kcp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
+		       stats->kcp_tx, stats->kcp_rx, stats->tcp_rx,
+		       stats->tcp_tx, stats->tcp_rx * 100.0 / stats->kcp_tx,
+		       stats->tcp_tx * 100.0 / stats->kcp_rx);
+	}
+
 	last_print_time = now;
 	last_stats = s->stats;
 }
@@ -98,42 +112,38 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
+	struct server *restrict s = user;
+	const ev_tstamp now = ev_now(s->loop);
 	struct session *restrict ss = value;
-	struct server *restrict s = ss->server;
-	UTIL_ASSERT(ss->state < STATE_MAX);
-	const ev_tstamp *restrict now = user;
+	assert(ss->state < STATE_MAX);
 	const double last_seen =
 		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
-	const double not_seen = *now - last_seen;
+	const double not_seen = now - last_seen;
 	switch (ss->state) {
 	case STATE_HALFOPEN:
 		if (not_seen > s->dial_timeout) {
-			LOGW_F("session [%08" PRIX32 "] dial timed out",
+			LOGW_F("session [%08" PRIX32 "] close: "
+			       "kcp dial timed out",
 			       ss->conv);
-			session_shutdown(ss);
-			kcp_close(ss);
+			session_stop(ss);
+			kcp_reset(ss);
 			return true;
 		}
 		break;
 	case STATE_CONNECT:
 	case STATE_CONNECTED:
 		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] state %d timed out",
+			LOGW_F("session [%08" PRIX32 "] close: "
+			       "timed out in state %d",
 			       ss->conv, ss->state);
-			session_shutdown(ss);
+			session_stop(ss);
 			kcp_close(ss);
 			return true;
 		}
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
-			unsigned char buf[TLV_HEADER_SIZE];
-			struct tlv_header header = (struct tlv_header){
-				.msg = SMSG_KEEPALIVE,
-				.len = TLV_HEADER_SIZE,
-			};
-			tlv_header_write(buf, header);
-			(void)kcp_send(ss, buf, TLV_HEADER_SIZE);
 			LOGD_F("session [%08" PRIX32 "] send: keepalive",
 			       ss->conv);
+			kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		break;
 	case STATE_LINGER:
@@ -151,7 +161,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		return true;
 	default:
 		LOGW_F("unexpected session state: %d (bug?)", ss->state);
-		UTIL_ASSERT(0);
+		assert(0);
 		session_free(ss);
 		return false;
 	}
@@ -161,14 +171,14 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 static void timeout_check(struct server *restrict s, const ev_tstamp now)
 {
 	const double check_interval = 10.0;
-	static ev_tstamp last_check = NAN;
-	if (isfinite(last_check) && now - last_check < check_interval) {
+	static ev_tstamp last_check = TSTAMP_NIL;
+	if (last_check != TSTAMP_NIL && now - last_check < check_interval) {
 		return;
 	}
 	last_check = now;
 	const size_t n_sessions = table_size(s->sessions);
 	if (n_sessions > 0) {
-		table_filter(s->sessions, timeout_filt, (void *)&now);
+		table_filter(s->sessions, timeout_filt, s);
 	}
 }
 
@@ -181,7 +191,12 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	timeout_check(s, now);
 
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		print_debug_info(s, now);
+		print_server_stats(s, now);
+#if WITH_OBFS
+		if (s->pkt.queue->obfs != NULL) {
+			obfs_stats(s->pkt.queue->obfs);
+		}
+#endif
 	}
 
 	if ((s->conf->mode & MODE_CLIENT) == 0) {
@@ -190,30 +205,32 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (!(s->keepalive > 0.0)) {
 		return;
 	}
-	if (isfinite(s->udp.inflight_ping) &&
-	    now - s->udp.inflight_ping > 4.0) {
+	if (s->pkt.inflight_ping != TSTAMP_NIL) {
+		if (now - s->pkt.inflight_ping < 4.0) {
+			return;
+		}
 		LOGD("ping timeout");
-		s->udp.inflight_ping = NAN;
+		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
-	const double timeout = s->keepalive * 3.0;
-	if (now - s->udp.last_recv_time > timeout &&
+	const double timeout = fmax(s->keepalive * 3.0, 60.0);
+	if (now - s->pkt.last_recv_time > timeout &&
 	    now - s->last_resolve_time > timeout) {
 		LOGD_F("remote not seen for %.0fs, try resolve addresses",
-		       now - s->udp.last_recv_time);
-		conf_resolve(s->conf);
+		       now - s->pkt.last_recv_time);
+		(void)server_resolve(s);
 #if WITH_CRYPTO
-		noncegen_init(s->udp.packets->noncegen);
+		noncegen_init(s->pkt.queue->noncegen);
 #endif
 		s->last_resolve_time = now;
 	}
-	if (now - s->udp.last_send_time < s->keepalive) {
+	if (now - s->pkt.last_send_time < s->keepalive) {
 		return;
 	}
 	const ev_tstamp ping_ts = ev_time();
 	const uint32_t tstamp = tstamp2ms(ping_ts);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	ss0_send(s, s->conf->udp_connect.sa, S0MSG_PING, b, sizeof(b));
-	udp_notify_write(s);
-	s->udp.inflight_ping = ping_ts;
+	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));
+	pkt_flush(s);
+	s->pkt.inflight_ping = ping_ts;
 }

@@ -1,6 +1,8 @@
 #include "aead.h"
+#include "slog.h"
 #include "util.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,11 +31,11 @@ static int
 kdf(const size_t key_size, unsigned char *restrict key,
     const char *restrict password)
 {
-	const char salt_str[] = "kcptun-libev";
+	static const char salt_str[] = "kcptun-libev";
 	unsigned char salt[crypto_pwhash_argon2id_SALTBYTES];
 	int r = crypto_generichash(
 		salt, crypto_pwhash_argon2id_SALTBYTES,
-		(unsigned char *)salt_str, strlen(salt_str), NULL, 0);
+		(unsigned char *)salt_str, sizeof(salt_str) - 1, NULL, 0);
 	if (r) {
 		return r;
 	}
@@ -70,7 +72,7 @@ size_t aead_seal(
 	const unsigned char *nonce, const unsigned char *plain,
 	size_t plain_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size >= plain_size + aead->overhead);
+	assert(dst_size >= plain_size + aead->overhead);
 	struct aead_impl *restrict impl = aead->impl;
 	unsigned long long r_len = dst_size;
 	int r = impl->seal(
@@ -88,7 +90,7 @@ size_t aead_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size, const unsigned char *tag, size_t tag_size)
 {
-	UTIL_ASSERT(dst_size + aead->overhead >= cipher_size);
+	assert(dst_size + aead->overhead >= cipher_size);
 	struct aead_impl *restrict impl = aead->impl;
 	unsigned long long r_len = dst_size;
 	int r = impl->open(
@@ -123,9 +125,9 @@ static inline char *strmethod(const enum aead_method m)
 	return NULL;
 }
 
-static inline void list_methods(void)
+void aead_list_methods(void)
 {
-	fprintf(stderr, "methods available:\n");
+	fprintf(stderr, "supported methods:\n");
 	for (int i = 0; i < method_MAX; i++) {
 		fprintf(stderr, "  %s\n", strmethod(i));
 	}
@@ -155,7 +157,7 @@ struct aead *aead_create(const char *method)
 		key_size = crypto_aead_aes256gcm_keybytes();
 	} else {
 		LOGW_F("unsupported crypto method: %s", method);
-		list_methods();
+		aead_list_methods();
 		return NULL;
 	}
 	struct aead *aead = util_malloc(sizeof(struct aead));
@@ -172,10 +174,13 @@ struct aead *aead_create(const char *method)
 	}
 	unsigned char *key = sodium_malloc(key_size);
 	if (key == NULL) {
+		LOGE("failed allocating secure memory");
 		aead_free(aead);
 		return NULL;
 	}
-	sodium_mlock(key, key_size);
+	if (sodium_mlock(key, key_size)) {
+		LOGW("failed locking secure memory");
+	}
 	switch (m) {
 	case method_chacha20poly1305_ietf: {
 		*(enum noncegen_method *)&aead->noncegen_method =
@@ -208,7 +213,7 @@ struct aead *aead_create(const char *method)
 		};
 	} break;
 	default:
-		abort();
+		CHECK_FAILED();
 	}
 	return aead;
 }
@@ -219,8 +224,7 @@ static void aead_free_key(struct aead_impl *impl, const size_t key_size)
 		return;
 	}
 	if (impl->key != NULL) {
-		sodium_memzero(impl->key, key_size);
-		sodium_munlock(impl->key, key_size);
+		(void)sodium_munlock(impl->key, key_size);
 		sodium_free(impl->key);
 		impl->key = NULL;
 	}
@@ -245,13 +249,6 @@ void aead_keygen(struct aead *restrict aead, unsigned char *key)
 
 void aead_free(struct aead *restrict aead)
 {
-	struct aead_impl *restrict impl = aead->impl;
-	if (impl != NULL && impl->key != NULL) {
-		sodium_memzero(impl->key, aead->key_size);
-		sodium_munlock(impl->key, aead->key_size);
-		sodium_free(impl->key);
-		impl->key = NULL;
-	}
 	aead_free_key(aead->impl, aead->key_size);
 	UTIL_SAFE_FREE(aead->impl);
 	util_free(aead);

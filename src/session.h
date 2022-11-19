@@ -9,13 +9,12 @@
 
 #include <ev.h>
 
-#include <sys/socket.h>
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 struct server;
+struct msgframe;
 
 struct tlv_header {
 	uint16_t msg;
@@ -23,6 +22,8 @@ struct tlv_header {
 };
 
 #define TLV_HEADER_SIZE (sizeof(struct tlv_header))
+/* reserve space for one more kcp segment */
+#define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
 
 static inline struct tlv_header tlv_header_read(const unsigned char *d)
 {
@@ -59,9 +60,9 @@ enum session_state {
 };
 
 struct link_stats {
-	size_t tcp_in, tcp_out;
-	size_t kcp_in, kcp_out;
-	size_t udp_in, udp_out;
+	size_t tcp_rx, tcp_tx;
+	size_t kcp_rx, kcp_tx;
+	size_t pkt_rx, pkt_tx;
 };
 
 struct IKCPCB;
@@ -69,32 +70,53 @@ struct IKCPCB;
 #define SESSION_BUF_SIZE 16384
 
 struct session {
-	bool is_accepted;
 	ev_tstamp created;
 	int state;
 	int tcp_fd;
 	struct ev_io w_read, w_write;
 	struct server *server;
-	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
-	size_t rbuf_len;
-	size_t wbuf_len, wbuf_navail, wbuf_flush;
-	sockaddr_max_t udp_remote;
+	sockaddr_max_t raddr;
 	uint32_t conv;
 	double last_send, last_recv;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
-	bool kcp_checked;
-	uint32_t kcp_next;
+	int kcp_flush;
+	bool pkt_arrived;
+	bool is_accepted;
+	size_t rbuf_len;
+	size_t wbuf_flush, wbuf_next, wbuf_len;
+	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
 };
 
 struct session *
-session_new(struct server *s, struct sockaddr *addr, uint32_t conv);
+session_new(struct server *s, const struct sockaddr *addr, uint32_t conv);
 void session_free(struct session *ss);
 
 void session_start(struct session *ss, int fd);
-void session_shutdown(struct session *ss);
-void session_on_msg(struct session *ss, struct tlv_header *hdr);
+void session_stop(struct session *ss);
+void session_parse(struct session *ss);
 
 void session_close_all(struct hashtable *t);
+
+/* session 0 messages */
+enum session0_messages {
+	S0MSG_PING = 0x0000,
+	S0MSG_PONG = 0x0001,
+	S0MSG_RESET = 0x0002,
+};
+
+struct session0_header {
+	uint32_t zero;
+	uint16_t what;
+};
+
+#define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
+
+bool ss0_send(
+	struct server *s, struct sockaddr *sa, uint16_t what,
+	const unsigned char *b, size_t n);
+void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv);
+
+void session0(struct server *restrict s, struct msgframe *restrict msg);
 
 #endif /* SESSION_H */

@@ -1,7 +1,44 @@
 #include "jsonutil.h"
 #include "util.h"
 
+#include "json/json.h"
+
+#define b64_malloc(ptr) util_malloc(ptr)
+#define b64_realloc(ptr, size) util_realloc(ptr, size)
 #include "b64/b64.h"
+
+#include <string.h>
+
+static void *json_alloc(size_t n, int zero, void *user_data)
+{
+	(void)user_data;
+	void *p = util_malloc(n);
+	if (p && zero) {
+		memset(p, 0, n);
+	}
+	return p;
+}
+
+static void json_free(void *p, void *user_data)
+{
+	(void)user_data;
+	util_free(p);
+}
+
+json_value *parse_json(const json_char *json, size_t length)
+{
+	json_settings settings = {
+		.mem_alloc = &json_alloc,
+		.mem_free = &json_free,
+		.user_data = NULL,
+	};
+	char error_msg[json_error_max];
+	json_value *obj = json_parse_ex(&settings, json, length, error_msg);
+	if (obj == NULL) {
+		LOGE_F("failed parsing json: %s", error_msg);
+	}
+	return obj;
+}
 
 bool walk_json_object(void *ud, const json_value *obj, walk_json_object_cb cb)
 {
@@ -71,6 +108,6 @@ unsigned char *parse_b64_json(const json_value *value, size_t *restrict outlen)
 	}
 	unsigned char *data = util_malloc(*outlen);
 	memcpy(data, b, *outlen);
-	free(b);
+	util_free(b);
 	return data;
 }

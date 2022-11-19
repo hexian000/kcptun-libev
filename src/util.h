@@ -5,6 +5,7 @@
 
 #include <ev.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -12,19 +13,27 @@
 
 #define UNUSED(x) (void)(x)
 
-#ifndef NDEBUG
-#define UTIL_ASSERT(cond)                                                      \
+#ifdef NDEBUG
+#define CHECK_FAILED() exit(EXIT_FAILURE)
+#else
+#define CHECK_FAILED() abort()
+#endif
+
+#define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
 		if (!(cond)) {                                                 \
-			LOGF("assertion failed: " #cond);                      \
-			abort();                                               \
+			LOGF_F("runtime check failed: " format, __VA_ARGS__);  \
+			CHECK_FAILED();                                        \
 		}                                                              \
 	} while (0)
-#else
-#define UTIL_ASSERT(cond) (void)(cond)
-#endif /* NDEBUG */
 
-#define countof(array) (sizeof(array) / sizeof((array)[0]))
+#define CHECK(cond) CHECKMSGF(cond, "\"%s\"", #cond)
+
+#define LOGOOM() LOGE("out of memory")
+
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
+#define TSTAMP_NIL (-1.0)
 
 static inline void *util_malloc(size_t n)
 {
@@ -36,11 +45,16 @@ static inline void util_free(void *p)
 	free(p);
 }
 
+static inline void *util_realloc(void *p, size_t n)
+{
+	return realloc(p, n);
+}
+
 static inline void *must_malloc(size_t n)
 {
 	void *p = util_malloc(n);
 	if (p == NULL) {
-		LOGF("fatal: out of memory");
+		LOGOOM();
 		exit(EXIT_FAILURE);
 	}
 	return p;
@@ -59,20 +73,14 @@ char *util_strdup(const char *);
 
 void print_bin(const void *b, size_t n);
 
-/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
-static inline uint32_t xorshift32(uint32_t x)
-{
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	return x;
-}
-
 uint32_t rand32(void);
 
-static inline uint32_t tstamp2ms(const ev_tstamp t)
-{
-	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
-}
+uint32_t tstamp2ms(ev_tstamp t);
+
+void init(void);
+
+void drop_privileges(const char *user);
+
+void genpsk(const char *method);
 
 #endif /* UTIL_H */

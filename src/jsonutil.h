@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+json_value *parse_json(const json_char *json, size_t length);
+
 typedef bool (*walk_json_object_cb)(void *, const json_object_entry *);
 bool walk_json_object(void *ud, const json_value *obj, walk_json_object_cb cb);
 

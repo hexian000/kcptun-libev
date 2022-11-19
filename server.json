@@ -1,13 +1,13 @@
 {
+    "kcp_bind": ":5555",
     "connect": "[::1]:5201",
-    "udp_bind": ":5555",
     "kcp": {
         "mtu": 1400,
         "sndwnd": 256,
         "rcvwnd": 256,
-        "nodelay": 0,
-        "interval": 10,
-        "resend": 3,
+        "nodelay": 1,
+        "interval": 50,
+        "resend": 0,
         "nc": 1
     },
     "udp": {
@@ -16,5 +16,6 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
-    "loglevel": 2
+    "loglevel": 5,
+    "user": "nobody"
 }

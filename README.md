@@ -4,6 +4,7 @@ A lightweight alternative implementation to kcptun
 [Just take me to setup guide](#runtime)
 
 ## What's this?
+
 kcptun-libev is a TCP port forwarder which converts the actual transferring protocol into a UDP based one, called [KCP](https://github.com/skywind3000/kcp).
 KCP is more configurable and usually has a much better performance in a lossy network. This project can help you to get better bandwidth in such situation.
 
@@ -28,25 +29,25 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Secure: For proper integration of the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
 - Proper: KCP will be flushed on demand, no mechanistic lag introduced.
-- Simple: Without FEC craps.
+- Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder.
 - Morden: Full IPv6 support.
-- DDNS aware: Dynamic IP addresses are supported.
+- DDNS aware: Dynamic IP addresses are automatically resolved.
 - Configurable: If you want to be unecrypted or plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
-- Compatible: Compliant with ISO C standard. Support both GNU/Linux and POSIX APIs.
+- Portable: Compliant with ISO C standard. Support both GNU/Linux and POSIX APIs.
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
 
-Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100KiB on most platforms\* and it also have a much lower cpu/mem footprint.
+Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100~200KiB on most platforms\* and it also have a much lower cpu/mem footprint.
 
-*\* Some required libraries are dynamically linked, see runtime dependencies below.*
+*\* Some required libraries are dynamically linked, see runtime dependencies below. Statically linked executable can be larger due to these libraries.*
 
 For your convenience, some statically-linked executables are also provided in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section.
 
 ## Security
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. With encryption enabled, the integrity and privacy is guaranteed. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed.
+If the encryption is not enabled or not even compiled, no packet overhead is consumed. Therefore, please note that exposing an unencrypted instance on the public networks is considered insecure.
 
 In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 
@@ -58,10 +59,24 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 
 kcptun-libev will not provide known practically vulnerable encryption method in latest release.
 
+## Obfuscator
+
+Obfuscator is a tool to fool eavesdroppers. This feature is only available on Linux.
+
+With obfuscator enabled, kcptun-libev will directly send IP packets over raw sockets. Therefore, Linux capability [CAP_NET_RAW](https://man7.org/linux/man-pages/man7/capabilities.7.html) is required. For example, the following command may works on some Linux distributions:
+
+```sh
+# run as root and drop privileges after necessary setup
+sudo ./kcptun-libev -u nobody -c server.json
+# or grant the capability and run as a normal user
+sudo setcap cap_net_raw+ep kcptun-libev
+./kcptun-libev -c server.json
+```
+
 ## Compatibility
 ### System
 
-Theoretically all systems that support ISO C11.
+Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
 | System       | Level     | Notes |
 | ------------ | --------- | ----- |
@@ -72,7 +87,7 @@ Theoretically all systems that support ISO C11.
 
 ### Version Compatibility
 
-For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implements.
+For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implementations.
 
 kcptun-libev uses [semantic versioning](https://semver.org/).
 
@@ -89,7 +104,7 @@ kcptun-libev uses [semantic versioning](https://semver.org/).
 sudo apt install -y libev-dev libsodium-dev
 ```
 
-### Build on UNIX-like systems
+### Build on Unix-like systems
 
 ```sh
 git clone https://github.com/hexian000/kcptun-libev.git
@@ -126,7 +141,7 @@ opkg install libev libsodium
 
 ```json
 {
-    "udp_bind": "0.0.0.0:12345",
+    "kcp_bind": "0.0.0.0:12345",
     "connect": "127.0.0.1:1080",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
@@ -144,7 +159,7 @@ opkg install libev libsodium
 ```json
 {
     "listen": "127.0.0.1:1080",
-    "udp_connect": "203.0.113.1:12345",
+    "kcp_connect": "203.0.113.1:12345",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
 }
@@ -160,11 +175,38 @@ Now 127.0.0.1:1080 on client is forwarded to server by kcptun-libev.
 
 See [server.json](server.json)/[client.json](client.json) in the source repo for more tunables.
 
-Let's explain some fields in server.json/client.json:
-- The client side "listen" TCP ports and send data to "udp_connect".
-- The server side receive data from "udp_bind" and forward the connections to "connect".
-- Set a password or PSK is strongly suggested when using in public networks.
-- Log level: 0-6, the default is 2 (INFO)
+Let's explain some common fields in server.json/client.json:
+- The client side "listen" TCP ports and send data to "kcp_connect".
+- The server side receive data from "kcp_bind" and forward the connections to "connect".
+- Set a "password" or "psk" is strongly suggested when using in public networks.
+- "loglevel": 0-6, the default is 4 (INFO)
+
+## Tunables
+
+Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here are some hints:
+
+- "kcp.sndwnd", "kcp.rcvwnd":
+	1. Should be tuned according to RTT.
+	2. For enthusiasts, you can start an idle client with loglevel > 5 and wait 1 minute to check the theoretical bandwidth of current window values.
+	3. On systems with very little memory, you may need to reduce it to save memory.
+- "kcp.nodelay": Default to 1.
+- "kcp.interval":
+	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
+	2. This option is not intended for traffic shaping. For Linux, check out [CAKE](https://www.bufferbloat.net/projects/codel/wiki/Cake/) and [sqm-scripts](https://github.com/tohojo/sqm-scripts) instead.
+- "kcp.resend": Disabled by default.
+- "kcp.nc": Enabled by default.
+
+Again, there is some kcptun-libev specific options:
+
+- "kcp.flush": 0 - periodic only, 1 - flush after sending (default), 2 - also flush acks
+- "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
+	1. Normally, default value just works.
+	2. Sometimes setting the udp buffer relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a socket buffer that is too large doesn't make sense.
+	3. All buffers should not be too small, e.g. less than 16384 (16 KiB), otherwise you may experience performance degradation.
+- "obfs": obfuscator, disabled by default. currently only one implemented: "dpi/tcp-wnd"
+- "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
+
+*kcptun-libev works out of the box. In most cases, the default options are recommended.*
 
 ## Credits
 

@@ -10,25 +10,26 @@ add_executable(kcptun-libev main.c
     sockutil.c sockutil.h
     conf.c conf.h
     jsonutil.c jsonutil.h
-    packet.c packet.h
+    pktqueue.c pktqueue.h
     session.c session.h
-    proxy.c proxy.h
     server.c server.h
     serialize.h leakypool.h
     slog.c slog.h
     hashtable.c hashtable.h
     nonce.c nonce.h
-    event.h event_impl.h event_tcp.c event_kcp.c event_udp.c event_timer.c)
+    obfs.c obfs.h
+    event.h event_impl.h event_tcp.c event_kcp.c event_pkt.c event_timer.c)
 
-include(CheckSymbolExists)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+option(POSIX "Use POSIX API" OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT POSIX)
     list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
     target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
 else()
     message(STATUS "POSIX System: ${CMAKE_SYSTEM_NAME}")
-    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_POSIX_C_SOURCE=199309L")
-    target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=199309L)
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_POSIX_C_SOURCE=200809L")
+    target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=200809L)
 endif()
+include(CheckSymbolExists)
 check_symbol_exists(sendmmsg "sys/socket.h" HAVE_API_SENDMMSG)
 check_symbol_exists(SYS_sendmmsg "sys/syscall.h" HAVE_SYS_SENDMMSG)
 check_symbol_exists(recvmmsg "sys/socket.h" HAVE_API_RECVMMSG)

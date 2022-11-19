@@ -9,25 +9,17 @@
 
 #include "murmurhash3.h"
 #include "../serialize.h"
+#include <stdint.h>
 
-static uint32_t rotl32(uint32_t x, int8_t r)
+static inline uint32_t rotl32(uint32_t x, int8_t r)
 {
 	return (x << r) | (x >> (32 - r));
 }
 
 //-----------------------------------------------------------------------------
-// Block read - if your platform needs to do endian-swapping or can only
-// handle aligned reads, do the conversion here
-
-static uint32_t getblock32(const uint32_t *p, int i)
-{
-	return read_uint32((const unsigned char *)&p[i]);
-}
-
-//-----------------------------------------------------------------------------
 // Finalization mix - force all bits of a hash block to avalanche
 
-static uint32_t fmix32(uint32_t h)
+static inline uint32_t fmix32(uint32_t h)
 {
 	h ^= h >> 16;
 	h *= 0x85ebca6b;
@@ -53,10 +45,10 @@ uint32_t murmurhash3(const void *key, int len, uint32_t seed)
 	//----------
 	// body
 
-	const uint32_t *blocks = (const uint32_t *)(data + nblocks * 4);
+	const uint8_t *blocks = data + nblocks * 4;
 
 	for (int i = -nblocks; i; i++) {
-		uint32_t k1 = getblock32(blocks, i);
+		uint32_t k1 = read_uint32(blocks + (i * 4));
 
 		k1 *= c1;
 		k1 = rotl32(k1, 15);

@@ -1,16 +1,14 @@
 #include "nonce.h"
+
+#if WITH_SODIUM
 #include "aead.h"
 #include "serialize.h"
 #include "util.h"
 
-#if WITH_SODIUM
-#include <sodium.h>
-#endif
-
 #include <stddef.h>
 #include <stdint.h>
 
-#if WITH_CRYPTO
+#include <sodium.h>
 
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
@@ -28,14 +26,16 @@ ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 	return ret;
 }
 
-struct noncegen *noncegen_create(enum noncegen_method method, size_t nonce_len)
+struct noncegen *noncegen_create(
+	const enum noncegen_method method, const size_t nonce_len,
+	const bool strict)
 {
 	struct noncegen *restrict g = util_malloc(sizeof(struct noncegen));
 	if (g == NULL) {
 		return NULL;
 	}
 
-	const size_t entries = (size_t)1 << 20u;
+	const size_t entries = strict ? 1u << 20u : 1u << 14u;
 	const double error = 0x1p-20;
 	*g = (struct noncegen){
 		.method = method,
@@ -66,18 +66,15 @@ struct noncegen *noncegen_create(enum noncegen_method method, size_t nonce_len)
 
 void noncegen_init(struct noncegen *restrict g)
 {
-	if (g->method != noncegen_counter) {
-		return;
-	}
 	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
-	for (size_t i = 0; i < countof(g->src); i++) {
-		g->src[i] = rand32();
+	if (g->method == noncegen_counter) {
+		randombytes_buf(g->src, sizeof(g->src));
 	}
 }
 
 static void noncegen_fill_counter(struct noncegen *restrict g)
 {
-	for (size_t i = 0; i < countof(g->src); i++) {
+	for (size_t i = 0; i < ARRAY_SIZE(g->src); i++) {
 		if (g->src[i] != UINT32_MAX) {
 			g->src[i]++;
 			break;
@@ -85,8 +82,8 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 		g->src[i] = 0;
 	}
 	size_t n = g->nonce_len / sizeof(uint32_t);
-	if (n > countof(g->src)) {
-		n = countof(g->src);
+	if (n > ARRAY_SIZE(g->src)) {
+		n = ARRAY_SIZE(g->src);
 	}
 	for (size_t i = 0; i < n; i++) {
 		write_uint32(g->nonce_buf + i * sizeof(uint32_t), g->src[i]);
@@ -99,12 +96,7 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 /* higher packet entropy */
 static void noncegen_fill_random(struct noncegen *restrict g)
 {
-#if WITH_SODIUM
 	randombytes_buf(g->nonce_buf, g->nonce_len);
-#else
-	UTIL_ASSERT(0);
-	noncegen_fill_counter(g);
-#endif
 }
 
 const unsigned char *noncegen_next(struct noncegen *restrict g)
@@ -136,4 +128,4 @@ void noncegen_free(struct noncegen *g)
 	util_free(g);
 }
 
-#endif /* WITH_CRYPTO */
+#endif /* WITH_SODIUM */

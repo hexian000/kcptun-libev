@@ -6,21 +6,22 @@
 #include <string.h>
 #include <time.h>
 
-enum { LOG_LEVEL_VERBOSE,
-       LOG_LEVEL_DEBUG,
-       LOG_LEVEL_INFO,
-       LOG_LEVEL_WARNING,
-       LOG_LEVEL_ERROR,
-       LOG_LEVEL_FATAL,
-       LOG_LEVEL_SILENCE,
+enum {
+	LOG_LEVEL_SILENCE,
+	LOG_LEVEL_FATAL,
+	LOG_LEVEL_ERROR,
+	LOG_LEVEL_WARNING,
+	LOG_LEVEL_INFO,
+	LOG_LEVEL_DEBUG,
+	LOG_LEVEL_VERBOSE,
 };
 
-#define LOG_LEVEL_VERBOSE_STR "V"
-#define LOG_LEVEL_DEBUG_STR "D"
-#define LOG_LEVEL_INFO_STR "I"
-#define LOG_LEVEL_WARNING_STR "W"
-#define LOG_LEVEL_ERROR_STR "E"
 #define LOG_LEVEL_FATAL_STR "F"
+#define LOG_LEVEL_ERROR_STR "E"
+#define LOG_LEVEL_WARNING_STR "W"
+#define LOG_LEVEL_INFO_STR "I"
+#define LOG_LEVEL_DEBUG_STR "D"
+#define LOG_LEVEL_VERBOSE_STR "V"
 
 extern int slog_level;
 extern FILE *slog_file;
@@ -31,7 +32,7 @@ extern FILE *slog_file;
 #define PATH_SEPARATOR '/'
 #endif
 
-#define LOGLEVEL(x) ((x) >= slog_level)
+#define LOGLEVEL(x) ((x) <= slog_level)
 
 #define LOG_INTERNAL(level, path, line, format, ...)                           \
 	do {                                                                   \
@@ -87,15 +88,20 @@ extern FILE *slog_file;
 	LOG_INTERNAL(LOG_LEVEL_VERBOSE, __FILE__, __LINE__, format, __VA_ARGS__)
 #define LOGV(message) LOGV_F("%s", message)
 
-/* perror: Log an error message with last system error message. */
-#define LOGW_PERROR(message)                                                   \
-	LOG_INTERNAL(                                                          \
-		LOG_LEVEL_WARNING, __FILE__, __LINE__, "%s: [%d] %s", message, \
-		errno, strerror(errno))
+/* perror: Log last system error message. */
+#define LOG_PERROR(level, message)                                             \
+	do {                                                                   \
+		const int err = errno;                                         \
+		LOG_INTERNAL(                                                  \
+			level, __FILE__, __LINE__, "%s: [%d] %s", message,     \
+			err, strerror(err));                                   \
+	} while (0)
 
-#define LOGE_PERROR(message)                                                   \
-	LOG_INTERNAL(                                                          \
-		LOG_LEVEL_ERROR, __FILE__, __LINE__, "%s: [%d] %s", message,   \
-		errno, strerror(errno))
+#define LOGV_PERROR(message) LOG_PERROR(LOG_LEVEL_VERBOSE, message)
+#define LOGD_PERROR(message) LOG_PERROR(LOG_LEVEL_DEBUG, message)
+#define LOGI_PERROR(message) LOG_PERROR(LOG_LEVEL_INFO, message)
+#define LOGW_PERROR(message) LOG_PERROR(LOG_LEVEL_WARNING, message)
+#define LOGE_PERROR(message) LOG_PERROR(LOG_LEVEL_ERROR, message)
+#define LOGF_PERROR(message) LOG_PERROR(LOG_LEVEL_FATAL, message)
 
 #endif /* SLOG_H */

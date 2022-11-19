@@ -6,69 +6,61 @@
 
 #include <sys/socket.h>
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #define MAX_CONF_SIZE 65536
 
-static json_value *parse_json(const char *file)
+static json_value *conf_parse(const char *filename)
 {
-	json_value *obj = NULL;
-	char *buf = NULL;
-
-	FILE *f = fopen(file, "r");
+	FILE *f = fopen(filename, "r");
 	if (f == NULL) {
-		LOGE_PERROR("cannot open config file");
-		goto cleanup;
+		LOGE_PERROR("unable to open config file");
+		return NULL;
 	}
-
-	fseek(f, 0, SEEK_END);
-	long len = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	if (len < 0) {
-		LOGE_PERROR("cannot seek config file");
-		goto cleanup;
-	}
-
-	if (len >= MAX_CONF_SIZE) {
-		LOGE("too large config file");
-		goto cleanup;
-	}
-
-	buf = util_malloc(len + 1);
-	if (buf == NULL) {
-		LOGF("parse_json: out of memory");
-		goto cleanup;
-	}
-
-	size_t nread = fread(buf, sizeof(char), len, f);
-	if (!nread) {
-		LOGE("failed to read the config file");
-		goto cleanup;
-	}
-	fclose(f);
-	f = NULL;
-
-	buf[nread] = '\0'; // end of string
-
-	json_settings settings = { 0 };
-	{
-		char error_buf[512];
-		obj = json_parse_ex(&settings, buf, len, error_buf);
-		if (obj == NULL) {
-			LOGE_F("failed parsing json: %s", error_buf);
-			goto cleanup;
-		}
-	}
-
-cleanup:
-	if (f != NULL) {
+	if (fseek(f, 0, SEEK_END)) {
+		LOGE_PERROR("unable to seek config file");
 		fclose(f);
+		return NULL;
 	}
-	if (buf != NULL) {
+	const long len = ftell(f);
+	if (len < 0) {
+		LOGE_PERROR("unable to tell config file length");
+		fclose(f);
+		return NULL;
+	}
+	if (len >= MAX_CONF_SIZE) {
+		LOGE("config file is too large");
+		fclose(f);
+		return NULL;
+	}
+	if (fseek(f, 0, SEEK_SET)) {
+		LOGE_PERROR("unable to seek config file");
+		fclose(f);
+		return NULL;
+	}
+	char *buf = util_malloc(len + 1);
+	if (buf == NULL) {
+		LOGF("conf_parse: out of memory");
+		fclose(f);
+		return NULL;
+	}
+	const size_t nread = fread(buf, sizeof(char), (size_t)len, f);
+	fclose(f);
+	if (nread != (size_t)len) {
+		LOGE("unable to read the config file");
 		util_free(buf);
+		return NULL;
+	}
+	buf[nread] = '\0'; // end of string
+	json_value *obj = parse_json(buf, nread);
+	util_free(buf);
+	if (obj == NULL) {
+		LOGF("conf_parse: json parse failed");
+		return NULL;
 	}
 	return obj;
 }
@@ -83,8 +75,8 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 		if (!parse_int_json(&mtu, value)) {
 			return false;
 		}
-		if (mtu < 300 || mtu > 1500) {
-			LOGE_F("kcp.mtu out of range: %d - %d", 300, 1500);
+		if (mtu < 300 || mtu > 1400) {
+			LOGE("kcp.mtu out of range");
 			return false;
 		}
 		conf->kcp_mtu = mtu;
@@ -109,7 +101,7 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 		return parse_int_json(&conf->kcp_nc, value);
 	}
 	if (strcmp(name, "flush") == 0) {
-		return parse_bool_json(&conf->kcp_flush, value);
+		return parse_int_json(&conf->kcp_flush, value);
 	}
 	LOGW_F("unknown config: \"kcp.%s\"", name);
 	return true;
@@ -169,20 +161,20 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return walk_json_object(conf, value, tcp_scope_cb);
 	}
 	if (strcmp(name, "listen") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->listen.str = str) != NULL;
+		conf->listen.str = parse_string_json(value);
+		return conf->listen.str != NULL;
 	}
 	if (strcmp(name, "connect") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->connect.str = str) != NULL;
+		conf->connect.str = parse_string_json(value);
+		return conf->connect.str != NULL;
 	}
-	if (strcmp(name, "udp_bind") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->udp_bind.str = str) != NULL;
+	if (strcmp(name, "kcp_bind") == 0) {
+		conf->kcp_bind.str = parse_string_json(value);
+		return conf->kcp_bind.str != NULL;
 	}
-	if (strcmp(name, "udp_connect") == 0) {
-		char *str = parse_string_json(value);
-		return (conf->udp_connect.str = str) != NULL;
+	if (strcmp(name, "kcp_connect") == 0) {
+		conf->kcp_connect.str = parse_string_json(value);
+		return conf->kcp_connect.str != NULL;
 	}
 #if WITH_CRYPTO
 	if (strcmp(name, "method") == 0) {
@@ -198,6 +190,12 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
+#if WITH_OBFS
+	if (strcmp(name, "obfs") == 0) {
+		conf->obfs = parse_string_json(value);
+		return conf->obfs != NULL;
+	}
+#endif /* WITH_OBFS */
 	if (strcmp(name, "linger") == 0) {
 		return parse_int_json(&conf->linger, value);
 	}
@@ -211,17 +209,11 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return parse_int_json(&conf->time_wait, value);
 	}
 	if (strcmp(name, "loglevel") == 0) {
-		int l;
-		if (!parse_int_json(&l, value)) {
-			return false;
-		}
-		if (l < LOG_LEVEL_VERBOSE || l > LOG_LEVEL_SILENCE) {
-			LOGE_F("log level out of range: %d - %d",
-			       LOG_LEVEL_VERBOSE, LOG_LEVEL_SILENCE);
-			return false;
-		}
-		conf->log_level = l;
-		return true;
+		return parse_int_json(&conf->log_level, value);
+	}
+	if (strcmp(name, "user") == 0) {
+		conf->user = parse_string_json(value);
+		return conf->user != NULL;
 	}
 	LOGW_F("unknown config: \"%s\"", name);
 	return true;
@@ -232,23 +224,18 @@ const char *runmode_str(const int mode)
 	static const char *str[] = {
 		[MODE_SERVER] = "server",
 		[MODE_CLIENT] = "client",
-		[MODE_PEER] = "peer",
 	};
-	UTIL_ASSERT(mode >= 0);
-	UTIL_ASSERT((size_t)mode < (sizeof(str) / sizeof(str[0])));
+	assert(mode >= 0);
+	assert((size_t)mode < ARRAY_SIZE(str));
 	return str[mode];
 }
 
-static char *splithostport(const char *addr, char **hostname, char **service)
+static bool splithostport(char *str, char **hostname, char **service)
 {
-	char *str = util_strdup(addr);
-	if (str == NULL) {
-		return NULL;
-	}
 	char *port = strrchr(str, ':');
 	if (port == NULL) {
 		util_free(str);
-		return NULL;
+		return false;
 	}
 	*port = '\0';
 	port++;
@@ -269,28 +256,28 @@ static char *splithostport(const char *addr, char **hostname, char **service)
 	if (service != NULL) {
 		*service = port;
 	}
-	return str;
+	return true;
 }
 
-static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
+bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 {
-	if (addr->str == NULL) {
-		/* there's nothing to do */
-		return true;
-	}
 	char *hostname = NULL;
 	char *service = NULL;
-	char *str = splithostport(addr->str, &hostname, &service);
+	char *str = util_strdup(addr->str);
 	if (str == NULL) {
-		LOGE_F("failed resolving address: %s", addr->str);
-		return false;
+		return NULL;
 	}
-	struct sockaddr *sa = resolve(hostname, service, socktype);
-	if (sa == NULL) {
+	if (!splithostport(str, &hostname, &service)) {
+		LOGE_F("failed splitting address: \"%s\"", addr->str);
 		util_free(str);
 		return false;
 	}
-	UTIL_SAFE_FREE(str);
+	struct sockaddr *sa = resolve(hostname, service, flags);
+	if (sa == NULL) {
+		LOGE_F("failed resolving address: \"%s\"", addr->str);
+		util_free(str);
+		return false;
+	}
 	UTIL_SAFE_FREE(addr->sa);
 	addr->sa = sa;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
@@ -298,15 +285,8 @@ static bool resolve_netaddr(struct netaddr *restrict addr, const int socktype)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
 	}
+	util_free(str);
 	return true;
-}
-
-void conf_resolve(struct config *conf)
-{
-	resolve_netaddr(&conf->listen, SOCK_STREAM);
-	resolve_netaddr(&conf->connect, SOCK_STREAM);
-	resolve_netaddr(&conf->udp_bind, SOCK_DGRAM);
-	resolve_netaddr(&conf->udp_connect, SOCK_DGRAM);
 }
 
 static struct config conf_default(void)
@@ -315,13 +295,11 @@ static struct config conf_default(void)
 		.kcp_mtu = 1400,
 		.kcp_sndwnd = 256,
 		.kcp_rcvwnd = 256,
-		.kcp_nodelay = 0,
-		.kcp_interval = 10,
-		.kcp_resend = 3,
+		.kcp_nodelay = 1,
+		.kcp_interval = 50,
+		.kcp_resend = 0,
 		.kcp_nc = 1,
-		.kcp_flush = false,
-		.password = NULL,
-		.psk = NULL,
+		.kcp_flush = 1,
 		.timeout = 600,
 		.linger = 30,
 		.keepalive = 25,
@@ -333,84 +311,70 @@ static struct config conf_default(void)
 	};
 }
 
+static bool
+conf_check_range(const char *key, const int value, const int min, const int max)
+{
+	if (value < min || value > max) {
+		LOGE_F("config: %s is out of range (%d - %d)", key, min, max);
+		return false;
+	}
+	return true;
+}
+
 static bool conf_check(struct config *restrict conf)
 {
 	/* 1. network address check */
-	conf_resolve(conf);
-	const struct sockaddr *sa = NULL;
-	if (conf->udp_bind.sa != NULL) {
-		sa = conf->udp_bind.sa;
-	}
-	if (conf->udp_connect.sa != NULL) {
-		if (sa != NULL) {
-			if (conf->udp_connect.sa->sa_family != sa->sa_family) {
-				LOGE("config: udp address must be in same network");
-				return false;
-			}
-		} else {
-			sa = conf->udp_connect.sa;
-		}
-	}
-	if (sa == NULL) {
-		LOGF("config: udp address is missing");
-		return false;
-	}
-	conf->udp_af = sa->sa_family;
 	int mode = 0;
-	if (conf->udp_bind.str != NULL && conf->connect.str != NULL) {
+	if (conf->kcp_bind.str != NULL && conf->connect.str != NULL) {
 		mode |= MODE_SERVER;
 	}
-	if (conf->listen.str != NULL && conf->udp_connect.str != NULL) {
+	if (conf->listen.str != NULL && conf->kcp_connect.str != NULL) {
 		mode |= MODE_CLIENT;
 	}
-	if (mode == 0) {
-		LOGF("config: no forward could be provided (are you missing some address field?)");
+	if (mode != MODE_SERVER && mode != MODE_CLIENT) {
+		LOGE("config: no forward could be provided (are you missing some address field?)");
 		return false;
 	}
 	conf->mode = mode;
 
+#if WITH_CRYPTO
 	/* 2. crypto check */
 	if (conf->psk != NULL && conf->password != NULL) {
 		LOGF("config: psk and password cannot be specified at the same time");
 		return false;
 	}
+#endif
 
 	/* 3. range check */
-	if (conf->kcp_interval < 10 || conf->kcp_interval > 500) {
-		conf->kcp_interval = 50;
-		LOGW_F("config: invalid kcp.interval, using default: %d",
-		       conf->kcp_interval);
+	const bool range_ok =
+		conf_check_range("kcp.mtu", conf->kcp_mtu, 300, 1400) &&
+		conf_check_range("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
+		conf_check_range("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
+		conf_check_range("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&
+		conf_check_range("kcp.interval", conf->kcp_interval, 10, 500) &&
+		conf_check_range("kcp.resend", conf->kcp_resend, 0, 100) &&
+		conf_check_range("kcp.nc", conf->kcp_nc, 0, 1) &&
+		conf_check_range("kcp.flush", conf->kcp_flush, 0, 2) &&
+		conf_check_range("timeout", conf->timeout, 60, 86400) &&
+		conf_check_range("linger", conf->linger, 5, 600) &&
+		conf_check_range("keepalive", conf->keepalive, 0, 7200) &&
+		conf_check_range("time_wait", conf->time_wait, 5, 3600) &&
+		conf_check_range("log_level", conf->log_level, 0, 6);
+	if (!range_ok) {
+		return false;
 	}
-	if (conf->linger < 5 || conf->linger > 600) {
-		conf->linger = 60;
-		LOGW_F("config: invalid kcp.interval, using default: %d",
-		       conf->linger);
-	}
-	if (conf->timeout < 60 || conf->timeout > 86400) {
-		conf->timeout = 600;
-		LOGW_F("config: invalid timeout, using default: %d",
-		       conf->timeout);
-	}
-	if (conf->keepalive < 0 || conf->keepalive > 7200) {
-		conf->keepalive = 25;
-		LOGW_F("config: invalid keepalive, using default: %d",
-		       conf->timeout);
-	}
-	if (conf->time_wait < 5 || conf->time_wait > 3600 ||
-	    conf->time_wait <= conf->linger) {
-		conf->time_wait = conf->linger * 4;
-		LOGW_F("config: invalid keepalive, using default: %d",
-		       conf->time_wait);
-	}
+
 	return true;
 }
 
-struct config *conf_read(const char *file)
+struct config *conf_read(const char *filename)
 {
 	struct config *conf = util_malloc(sizeof(struct config));
-	UTIL_ASSERT(conf);
+	if (conf == NULL) {
+		return NULL;
+	}
 	*conf = conf_default();
-	json_value *obj = parse_json(file);
+	json_value *obj = conf_parse(filename);
 	if (obj == NULL) {
 		conf_free(conf);
 		return NULL;
@@ -439,10 +403,16 @@ void conf_free(struct config *conf)
 {
 	netaddr_safe_free(&conf->listen);
 	netaddr_safe_free(&conf->connect);
-	netaddr_safe_free(&conf->udp_bind);
-	netaddr_safe_free(&conf->udp_connect);
+	netaddr_safe_free(&conf->kcp_bind);
+	netaddr_safe_free(&conf->kcp_connect);
+	UTIL_SAFE_FREE(conf->user);
+#if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);
 	UTIL_SAFE_FREE(conf->password);
 	UTIL_SAFE_FREE(conf->psk);
+#endif
+#if WITH_OBFS
+	UTIL_SAFE_FREE(conf->obfs);
+#endif
 	util_free(conf);
 }

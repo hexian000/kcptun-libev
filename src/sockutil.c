@@ -3,15 +3,16 @@
 #include "slog.h"
 #include "util.h"
 
-#include <stddef.h>
 #include <fcntl.h>
-#include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netdb.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,9 +100,17 @@ socklen_t getsocklen(const struct sockaddr *sa)
 	case AF_INET6:
 		return sizeof(struct sockaddr_in6);
 	default:
-		LOGF("only IPv4/IPv6 addresses are supported");
-		abort();
+		break;
 	}
+	LOGF("only IPv4/IPv6 addresses are supported");
+	abort();
+}
+
+bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
+{
+	const socklen_t na = getsocklen(a);
+	const socklen_t nb = getsocklen(b);
+	return na == nb && memcmp(a, b, na) == 0;
 }
 
 struct sockaddr *clonesockaddr(const struct sockaddr *src)
@@ -129,11 +138,11 @@ static int
 format_sa_inet6(const struct sockaddr_in6 *addr, char *s, const size_t buf_size)
 {
 	char buf[INET6_ADDRSTRLEN];
-	if (inet_ntop(AF_INET, &(addr->sin6_addr), buf, sizeof(buf)) == NULL) {
+	if (inet_ntop(AF_INET6, &(addr->sin6_addr), buf, sizeof(buf)) == NULL) {
 		return -1;
 	}
 	const uint16_t port = ntohs(addr->sin6_port);
-	return snprintf(s, buf_size, "%s:%" PRIu16, buf, port);
+	return snprintf(s, buf_size, "[%s]:%" PRIu16, buf, port);
 }
 
 void format_sa(const struct sockaddr *sa, char *s, const size_t buf_size)
@@ -153,13 +162,21 @@ void format_sa(const struct sockaddr *sa, char *s, const size_t buf_size)
 }
 
 struct sockaddr *
-resolve(const char *hostname, const char *service, const int socktype)
+resolve(const char *hostname, const char *service, const int flags)
 {
 	struct addrinfo hints = {
 		.ai_family = PF_UNSPEC,
-		.ai_socktype = socktype,
-		.ai_flags = 0,
+		.ai_socktype = SOCK_STREAM,
+		.ai_protocol = IPPROTO_TCP,
+		.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG,
 	};
+	if (flags & RESOLVE_UDP) {
+		hints.ai_socktype = SOCK_DGRAM;
+		hints.ai_protocol = IPPROTO_UDP;
+	}
+	if (flags & RESOLVE_PASSIVE) {
+		hints.ai_flags |= AI_PASSIVE;
+	}
 	struct addrinfo *result = NULL;
 	if (getaddrinfo(hostname, service, &hints, &result) != 0) {
 		LOGE_PERROR("resolve");
