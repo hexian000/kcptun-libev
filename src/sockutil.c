@@ -37,8 +37,9 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 	}
 #else
 	UNUSED(fd);
-	UNUSED(reuseport);
-	LOGW("reuseport not supported on this platform");
+	if (reuseport) {
+		LOGW("reuseport not supported on this platform");
+	}
 #endif
 }
 

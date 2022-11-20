@@ -97,11 +97,11 @@ extern FILE *slog_file;
 			err, strerror(err));                                   \
 	} while (0)
 
-#define LOGV_PERROR(message) LOG_PERROR(LOG_LEVEL_VERBOSE, message)
-#define LOGD_PERROR(message) LOG_PERROR(LOG_LEVEL_DEBUG, message)
-#define LOGI_PERROR(message) LOG_PERROR(LOG_LEVEL_INFO, message)
-#define LOGW_PERROR(message) LOG_PERROR(LOG_LEVEL_WARNING, message)
-#define LOGE_PERROR(message) LOG_PERROR(LOG_LEVEL_ERROR, message)
 #define LOGF_PERROR(message) LOG_PERROR(LOG_LEVEL_FATAL, message)
+#define LOGE_PERROR(message) LOG_PERROR(LOG_LEVEL_ERROR, message)
+#define LOGW_PERROR(message) LOG_PERROR(LOG_LEVEL_WARNING, message)
+#define LOGI_PERROR(message) LOG_PERROR(LOG_LEVEL_INFO, message)
+#define LOGD_PERROR(message) LOG_PERROR(LOG_LEVEL_DEBUG, message)
+#define LOGV_PERROR(message) LOG_PERROR(LOG_LEVEL_VERBOSE, message)
 
 #endif /* SLOG_H */

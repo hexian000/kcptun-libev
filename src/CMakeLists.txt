@@ -45,7 +45,7 @@ target_link_libraries(kcptun-libev kcp json b64 bloom murmur3)
 
 find_library(LIBM m)
 if(LIBM)
-target_link_libraries(kcptun-libev ${LIBM})
+    target_link_libraries(kcptun-libev ${LIBM})
 endif()
 
 # find libev
