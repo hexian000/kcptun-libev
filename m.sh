@@ -13,6 +13,7 @@ case "$1" in
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -S "." -B "xbuild"
     cmake --build "xbuild" --parallel
@@ -25,6 +26,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-static" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DLINK_STATIC_LIBS=TRUE \
         -S "." -B "xbuild"

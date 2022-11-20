@@ -113,8 +113,7 @@ static bool tcp_recv(struct session *restrict ss)
 	bool tcp_eof = false;
 	do {
 		/* Receive message from client socket */
-		const ssize_t nread =
-			recv(ss->tcp_fd, buf, cap, MSG_DONTWAIT | MSG_NOSIGNAL);
+		const ssize_t nread = recv(ss->tcp_fd, buf, cap, 0);
 		if (nread < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK ||
 			    errno == EINTR || errno == ENOMEM) {
@@ -187,7 +186,7 @@ static bool tcp_send(struct session *restrict ss)
 	unsigned char *buf = raw + ss->wbuf_flush;
 	size_t len = next - buf;
 
-	ssize_t nsend = send(ss->tcp_fd, buf, len, MSG_DONTWAIT | MSG_NOSIGNAL);
+	ssize_t nsend = send(ss->tcp_fd, buf, len, 0);
 	if (nsend < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
 		    errno == ENOMEM) {

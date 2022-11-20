@@ -55,7 +55,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			};
 		}
 
-		const int ret = recvmmsg(fd, msgs, nbatch, MSG_DONTWAIT, NULL);
+		const int ret = recvmmsg(fd, msgs, nbatch, 0, NULL);
 		if (ret < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK ||
 			    errno == EINTR || errno == ENOMEM) {
@@ -108,7 +108,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		if (msg == NULL) {
 			return 0;
 		}
-		const ssize_t nbrecv = recvmsg(fd, &msg->hdr, MSG_DONTWAIT);
+		const ssize_t nbrecv = recvmsg(fd, &msg->hdr, 0);
 		if (nbrecv < 0) {
 			msgframe_delete(q, msg);
 			if (errno == EAGAIN || errno == EWOULDBLOCK ||
@@ -188,7 +188,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 				.msg_hdr = msg->hdr,
 			};
 		}
-		const int ret = sendmmsg(fd, msgs, nbatch, MSG_DONTWAIT);
+		const int ret = sendmmsg(fd, msgs, nbatch, 0);
 		if (ret < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK ||
 			    errno == EINTR || errno == ENOMEM) {
@@ -244,7 +244,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	size_t nsend = 0, nbsend = 0;
 	for (size_t i = 0; i < count; i++) {
 		struct msgframe *msg = q->mq_send[i];
-		const ssize_t ret = sendmsg(fd, &msg->hdr, MSG_DONTWAIT);
+		const ssize_t ret = sendmsg(fd, &msg->hdr, 0);
 		if (ret < 0) {
 			if (errno == EAGAIN || errno == EWOULDBLOCK ||
 			    errno == EINTR || errno == ENOMEM) {

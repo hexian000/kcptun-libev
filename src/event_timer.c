@@ -35,12 +35,15 @@ static bool print_session_iter(
 	}
 	char addr_str[64];
 	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
+	const double last_seen =
+		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
+	const double not_seen = stat->now - last_seen;
 	LOGD_F("session [%08" PRIX32 "] "
 	       "peer=%s state=%d seen=%.0fs tx=%zu rx=%zu "
 	       "rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d",
-	       ss->conv, addr_str, ss->state, stat->now - ss->last_recv,
-	       ss->stats.tcp_rx, ss->stats.tcp_tx, ss->kcp->rx_srtt,
-	       ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp));
+	       ss->conv, addr_str, ss->state, not_seen, ss->stats.tcp_rx,
+	       ss->stats.tcp_tx, ss->kcp->rx_srtt, ss->kcp->rx_rto,
+	       ikcp_waitsnd(ss->kcp));
 	return true;
 }
 

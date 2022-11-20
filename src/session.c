@@ -11,13 +11,13 @@
 
 #include <ev.h>
 
-#include <stddef.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <stddef.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <string.h>
 
 static ikcpcb *
 kcp_new(struct session *restrict ss, struct config *restrict conf,

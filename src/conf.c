@@ -234,7 +234,6 @@ static bool splithostport(char *str, char **hostname, char **service)
 {
 	char *port = strrchr(str, ':');
 	if (port == NULL) {
-		util_free(str);
 		return false;
 	}
 	*port = '\0';

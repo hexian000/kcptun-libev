@@ -78,12 +78,12 @@ sudo setcap cap_net_raw+ep kcptun-libev
 
 Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
-| System       | Level     | Notes |
-| ------------ | --------- | ----- |
-| Ubuntu       | developed |       |
-| OpenWRT      | tested    |       |
-| Unix-like    | supported |       |
-| Cygwin/MinGW | supported |       |
+| System          | Level     | Notes |
+| --------------- | --------- | ----- |
+| Ubuntu          | developed |       |
+| OpenWRT         | tested    |       |
+| macOS           | supported |       |
+| Windows (MSYS2) | supported |       |
 
 ### Version Compatibility
 
