@@ -201,8 +201,8 @@ Again, there is some kcptun-libev specific options:
 - "kcp.flush": 0 - periodic only, 1 - flush after sending (default), 2 - also flush acks
 - "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
 	1. Normally, default value just works.
-	2. Sometimes setting the udp buffer relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a socket buffer that is too large doesn't make sense.
-	3. All buffers should not be too small, e.g. less than 16384 (16 KiB), otherwise you may experience performance degradation.
+	2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
+	3. All buffers should not be too small, otherwise you may experience performance degradation.
 - "obfs": obfuscator, disabled by default. currently only one implemented: "dpi/tcp-wnd"
 - "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
 

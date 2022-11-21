@@ -140,7 +140,8 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	struct sockaddr *sa = &msg->addr.sa;
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
-	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
+	const bool is_accept = !table_find(s->sessions, &sskey, (void **)&ss);
+	if (is_accept) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOGW_F("session [%08" PRIX32 "] not found", conv);
 			ss0_reset(s, sa, conv);
@@ -157,7 +158,8 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGD_F("session accepted from: %s", addr_str);
+			LOGD_F("session [%08" PRIX32 "] accepted from: %s",
+			       conv, addr_str);
 		}
 	}
 	if (!sa_equals(sa, &ss->raddr.sa)) {
@@ -183,9 +185,16 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
-	ss->pkt_arrived = true;
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
+	if (is_accept) {
+		return;
+	}
+	ss->pkt_arrived++;
+	if (ss->kcp_flush >= 2 || ss->pkt_arrived >= ss->kcp->rcv_wnd) {
+		/* flush acks */
+		kcp_flush(ss);
+	}
 }
 
 size_t queue_recv(struct pktqueue *restrict q, struct server *s)

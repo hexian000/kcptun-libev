@@ -14,6 +14,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <inttypes.h>
 #include <stdint.h>
@@ -62,6 +64,7 @@ struct session *session_new(
 		.kcp_flush = s->conf->kcp_flush,
 		.last_send = now,
 		.last_recv = now,
+		.last_reset = TSTAMP_NIL,
 	};
 	ss->kcp = kcp_new(ss, s->conf, conv);
 	if (ss->kcp == NULL) {
@@ -70,14 +73,12 @@ struct session *session_new(
 	}
 	memset(&ss->raddr, 0, sizeof(ss->raddr));
 	memcpy(&ss->raddr, addr, getsocklen(addr));
-	LOGD_F("session [%08" PRIX32 "] new: %p", conv, (void *)ss);
 	return ss;
 }
 
 void session_free(struct session *restrict ss)
 {
 	session_stop(ss);
-	LOGD_F("session [%08" PRIX32 "] free: %p", ss->conv, (void *)ss);
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
@@ -101,6 +102,10 @@ void session_start(struct session *restrict ss, const int fd)
 	ev_io_init(w_write, write_cb, fd, EV_WRITE);
 	w_write->data = ss;
 	ev_io_start(loop, w_write);
+
+	const ev_tstamp now = ev_now(loop);
+	const uint32_t now_ms = tstamp2ms(now);
+	ikcp_update(ss->kcp, now_ms);
 }
 
 void session_stop(struct session *restrict ss)
@@ -120,12 +125,16 @@ void session_stop(struct session *restrict ss)
 	ss->tcp_fd = -1;
 }
 
-static void consume_wbuf(struct session *restrict ss, size_t len)
+static void consume_wbuf(struct session *restrict ss, const size_t len)
 {
+	LOGV_F("consume_wbuf: %zu", len);
+	assert(len <= ss->wbuf_len);
 	ss->wbuf_len -= len;
 	if (ss->wbuf_len > 0) {
 		memmove(ss->wbuf, ss->wbuf + len, ss->wbuf_len);
 	}
+	ss->wbuf_flush = 0;
+	ss->wbuf_next = 0;
 }
 
 static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
@@ -175,7 +184,7 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	return true;
 }
 
-static void
+static bool
 session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 {
 	switch (hdr->msg) {
@@ -184,7 +193,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 			break;
 		}
 		LOGD_F("session [%08" PRIX32 "] msg: dial", ss->conv);
-		if (ss->tcp_fd != -1) {
+		if (ss->tcp_fd != -1 || ss->state != STATE_HALFOPEN) {
 			break;
 		}
 		struct sockaddr *sa = ss->server->conf->connect.sa;
@@ -194,21 +203,22 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		if (!proxy_dial(ss, sa)) {
 			break;
 		}
-		consume_wbuf(ss, hdr->len);
-		return;
+		return true;
 	}
 	case SMSG_PUSH: {
-		/* tcp connection is lost, discard packet */
+		const size_t navail = (size_t)hdr->len - TLV_HEADER_SIZE;
+		LOGV_F("session [%08" PRIX32 "] msg: push, %zu bytes", ss->conv,
+		       navail);
+		/* tcp connection is lost, discard message */
 		if (ss->tcp_fd == -1) {
 			break;
 		}
-		const size_t navail = (size_t)hdr->len - TLV_HEADER_SIZE;
-		if (navail == 0) {
-			consume_wbuf(ss, hdr->len);
-			return;
+		if (navail > 0) {
+			ss->wbuf_flush = TLV_HEADER_SIZE;
+			ss->wbuf_next = TLV_HEADER_SIZE + navail;
+			tcp_flush(ss);
 		}
-		ss->wbuf_next = navail;
-		return;
+		return true;
 	}
 	case SMSG_EOF: {
 		if (hdr->len != TLV_HEADER_SIZE) {
@@ -221,15 +231,14 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 			ev_io_stop(ss->server->loop, w_read);
 		}
 		ss->state = STATE_LINGER;
-		return;
+		return true;
 	}
 	case SMSG_KEEPALIVE: {
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
 		LOGD_F("session [%08" PRIX32 "] msg: keepalive", ss->conv);
-		consume_wbuf(ss, hdr->len);
-		return;
+		return true;
 	}
 	}
 	LOGE_F("session [%08" PRIX32 "] error: %04" PRIX16 ", %04" PRIX16,
@@ -237,34 +246,74 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 	session_stop(ss);
 	kcp_reset(ss);
 	ss->state = STATE_TIME_WAIT;
+	return false;
 }
 
-void session_parse(struct session *restrict ss)
+static bool session_parse(struct session *restrict ss)
 {
-	switch (ss->state) {
-	case STATE_HALFOPEN:
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-		break;
-	default:
-		return;
+	if (ss->wbuf_next > ss->wbuf_flush) {
+		/* tcp flushing is in progress */
+		return false;
+	}
+	if (ss->wbuf_flush > 0) {
+		/* tcp flushing is done */
+		consume_wbuf(ss, ss->wbuf_flush);
 	}
 	if (ss->wbuf_len < TLV_HEADER_SIZE) {
-		/* no data available */
-		return;
+		/* no header available */
+		return false;
 	}
 	struct tlv_header header = tlv_header_read(ss->wbuf);
 	if (header.len < TLV_HEADER_SIZE && header.len > TLV_MAX_LENGTH) {
-		LOGE_F("unexpected packet length: %" PRIu16, header.len);
+		LOGE_F("unexpected message length: %" PRIu16, header.len);
 		session_stop(ss);
 		kcp_reset(ss);
-		return;
+		return false;
 	}
 	if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
-		/* incomplete data packet */
+		/* incomplete message */
+		return false;
+	}
+	if (!session_on_msg(ss, &header)) {
+		/* malformed message */
+		return false;
+	}
+	if (ss->wbuf_next == ss->wbuf_flush) {
+		/* nothing to flush */
+		consume_wbuf(ss, header.len);
+	}
+	return true;
+}
+
+void session_recv(struct session *ss)
+{
+	do {
+		kcp_recv(ss);
+		if (!session_parse(ss)) {
+			break;
+		}
+	} while (ss->wbuf_next == ss->wbuf_flush);
+	ss->pkt_arrived = 0;
+}
+
+void session_push(struct session *restrict ss)
+{
+	const int window_size = (int)ss->kcp->snd_wnd;
+	if (ikcp_waitsnd(ss->kcp) >= window_size) {
+		struct ev_io *restrict w_read = &ss->w_read;
+		if (ev_is_active(w_read)) {
+			ev_io_stop(ss->server->loop, w_read);
+		}
 		return;
 	}
-	session_on_msg(ss, &header);
+	if (!kcp_push(ss)) {
+		kcp_reset(ss);
+		session_stop(ss);
+		return;
+	}
+	if (ss->kcp_flush >= 1) {
+		kcp_flush(ss);
+	}
 }
 
 static bool

@@ -78,11 +78,13 @@ struct session {
 	sockaddr_max_t raddr;
 	uint32_t conv;
 	double last_send, last_recv;
+	double last_reset;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
 	int kcp_flush;
-	bool pkt_arrived;
 	bool is_accepted;
+	bool need_flush;
+	size_t pkt_arrived;
 	size_t rbuf_len;
 	size_t wbuf_flush, wbuf_next, wbuf_len;
 	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
@@ -94,7 +96,8 @@ void session_free(struct session *ss);
 
 void session_start(struct session *ss, int fd);
 void session_stop(struct session *ss);
-void session_parse(struct session *ss);
+void session_push(struct session *ss);
+void session_recv(struct session *ss);
 
 void session_close_all(struct hashtable *t);
 

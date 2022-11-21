@@ -25,7 +25,7 @@ struct noncegen {
 };
 
 struct noncegen *
-noncegen_create(enum noncegen_method method, size_t nonce_len, bool is_server);
+noncegen_create(enum noncegen_method method, size_t nonce_len, bool strict);
 void noncegen_init(struct noncegen *g);
 const unsigned char *noncegen_next(struct noncegen *g);
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce);
