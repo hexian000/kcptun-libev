@@ -59,6 +59,8 @@ enum session_state {
 	STATE_MAX,
 };
 
+extern const char session_state_char[STATE_MAX];
+
 struct link_stats {
 	size_t tcp_rx, tcp_tx;
 	size_t kcp_rx, kcp_tx;

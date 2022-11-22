@@ -179,7 +179,7 @@ Let's explain some common fields in server.json/client.json:
 - The client side "listen" TCP ports and send data to "kcp_connect".
 - The server side receive data from "kcp_bind" and forward the connections to "connect".
 - Set a "password" or "psk" is strongly suggested when using in public networks.
-- "loglevel": 1-6 are FATAL, ERROR, WARNING, INFO, DEBUG, VERBOSE respectively. The default is 4 (INFO).
+- "loglevel": 1-6 are FATAL, ERROR, WARNING, INFO, DEBUG, VERBOSE respectively. The default is 4 (INFO). High log levels can affect performance.
 
 ## Tunables
 

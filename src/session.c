@@ -21,6 +21,12 @@
 #include <stdint.h>
 #include <string.h>
 
+const char session_state_char[STATE_MAX] = {
+	[STATE_HALFOPEN] = '>',	 [STATE_CONNECT] = '>',
+	[STATE_CONNECTED] = '-', [STATE_LINGER] = '.',
+	[STATE_TIME_WAIT] = 'x',
+};
+
 static ikcpcb *
 kcp_new(struct session *restrict ss, struct config *restrict conf,
 	uint32_t conv)
@@ -407,7 +413,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / 1024.0 / rtt;
 	const double tx = conf->kcp_sndwnd * conf->kcp_mtu / 1024.0 / rtt;
 	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms, "
-	       "bandwidth rx/tx: %.0f/%.0f KiB/s",
+	       "bandwidth rx/tx: %.0lf/%.0lf KiB/s",
 	       now_ms - tstamp, rx, tx);
 	s->pkt.inflight_ping = TSTAMP_NIL;
 }

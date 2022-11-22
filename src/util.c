@@ -135,7 +135,7 @@ void drop_privileges(const char *user)
 	if (pwd->pw_uid == 0) {
 		return;
 	}
-	LOGD_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pwd->pw_uid,
+	LOGI_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pwd->pw_uid,
 	       (intmax_t)pwd->pw_gid);
 #if _BSD_SOURCE || _GNU_SOURCE
 	if (setgroups(0, NULL) != 0) {

@@ -1,6 +1,8 @@
 #include "event.h"
 #include "event_impl.h"
+#include "session.h"
 #include "util.h"
+#include "strbuilder.h"
 #include "server.h"
 #include "pktqueue.h"
 #include "serialize.h"
@@ -14,9 +16,10 @@
 #include <inttypes.h>
 #include <math.h>
 
-struct session_stats {
-	size_t data[STATE_MAX];
+struct print_session_ctx {
+	size_t num_in_state[STATE_MAX];
 	ev_tstamp now;
+	struct strbuilder sb;
 };
 
 static bool print_session_iter(
@@ -25,43 +28,44 @@ static bool print_session_iter(
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = value;
-	struct session_stats *restrict stat = user;
-	stat->data[ss->state]++;
-	switch (ss->state) {
-	case STATE_TIME_WAIT:
-		return true;
-	default:
-		break;
-	}
+	struct print_session_ctx *restrict ctx = user;
+	ctx->num_in_state[ss->state]++;
 	char addr_str[64];
 	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
 	const double last_seen =
 		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
-	const double not_seen = stat->now - last_seen;
-	LOGD_F("session [%08" PRIX32 "] "
-	       "peer=%s state=%d seen=%.0fs tx=%zu rx=%zu "
-	       "rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d",
-	       ss->conv, addr_str, ss->state, not_seen, ss->stats.tcp_rx,
-	       ss->stats.tcp_tx, ss->kcp->rx_srtt, ss->kcp->rx_rto,
-	       ikcp_waitsnd(ss->kcp));
+	const double not_seen = ctx->now - last_seen;
+	(void)strbuilder_appendf(
+		&ctx->sb, 4096,
+		"    [%08" PRIX32 "] "
+		"%c peer=%s seen=%.0lfs "
+		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
+		"up/down=%zu/%zu\n",
+		ss->conv, session_state_char[ss->state], addr_str, not_seen,
+		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
+		ss->stats.tcp_rx, ss->stats.tcp_tx);
 	return true;
 }
 
 static void print_session_table(struct server *restrict s, const ev_tstamp now)
 {
-	struct session_stats stats = (struct session_stats){
-		.data = { 0 },
+	const size_t n_sessions = table_size(s->sessions);
+	if (n_sessions == 0) {
+		return;
+	}
+	struct print_session_ctx ctx = (struct print_session_ctx){
 		.now = now,
 	};
-	const size_t n_sessions = table_size(s->sessions);
-	if (n_sessions > 0) {
-		table_iterate(s->sessions, &print_session_iter, &stats);
-		LOGD_F("=== %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait",
-		       n_sessions,
-		       stats.data[STATE_HALFOPEN] + stats.data[STATE_CONNECT],
-		       stats.data[STATE_CONNECTED], stats.data[STATE_LINGER],
-		       stats.data[STATE_TIME_WAIT]);
-	}
+	strbuilder_reserve(&ctx.sb, 16384);
+	table_iterate(s->sessions, &print_session_iter, &ctx);
+	LOGD_F("session table:\n%*s"
+	       "    ^ %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait",
+	       (int)ctx.sb.len, ctx.sb.buf, n_sessions,
+	       ctx.num_in_state[STATE_HALFOPEN] +
+		       ctx.num_in_state[STATE_CONNECT],
+	       ctx.num_in_state[STATE_CONNECTED],
+	       ctx.num_in_state[STATE_LINGER],
+	       ctx.num_in_state[STATE_TIME_WAIT]);
 }
 
 static void print_server_stats(struct server *restrict s, const ev_tstamp now)
@@ -92,18 +96,30 @@ static void print_server_stats(struct server *restrict s, const ev_tstamp now)
 	};
 
 	if (dstats.kcp_rx || dstats.kcp_tx || dstats.tcp_rx || dstats.tcp_tx) {
-		double kcp_tx, kcp_rx, tcp_tx, tcp_rx;
-		kcp_tx = (double)(dstats.kcp_tx >> 10u) / dt;
-		kcp_rx = (double)(dstats.kcp_rx >> 10u) / dt;
-		tcp_tx = (double)(dstats.tcp_rx >> 10u) / dt;
-		tcp_rx = (double)(dstats.tcp_tx >> 10u) / dt;
-		LOGD_F("traffic(KiB/s) kcp up/down: %.1f/%.1f; tcp up/down: %.1f/%.1f; efficiency: %.1f%%/%.1f%%",
-		       kcp_tx, kcp_rx, tcp_tx, tcp_rx, tcp_tx / kcp_tx * 100.0,
-		       tcp_rx / kcp_rx * 100.0);
-		LOGD_F("total kcp up/down: %zu/%zu; tcp up/down: %zu/%zu; efficiency: %.1f%%/%.1f%%",
-		       stats->kcp_tx, stats->kcp_rx, stats->tcp_rx,
-		       stats->tcp_tx, stats->tcp_rx * 100.0 / stats->kcp_tx,
-		       stats->tcp_tx * 100.0 / stats->kcp_rx);
+		const double dkcp_rx = (double)(dstats.kcp_rx >> 10u) / dt;
+		const double dkcp_tx = (double)(dstats.kcp_tx >> 10u) / dt;
+		const double dtcp_rx = (double)(dstats.tcp_tx >> 10u) / dt;
+		const double dtcp_tx = (double)(dstats.tcp_rx >> 10u) / dt;
+		const double deff_rx =
+			(double)dstats.tcp_tx / (double)dstats.kcp_rx;
+		const double deff_tx =
+			(double)dstats.tcp_rx / (double)dstats.kcp_tx;
+
+		const double kcp_rx = (double)(stats->kcp_rx >> 10u) / dt;
+		const double kcp_tx = (double)(stats->kcp_tx >> 10u) / dt;
+		const double tcp_rx = (double)(stats->tcp_tx >> 10u) / dt;
+		const double tcp_tx = (double)(stats->tcp_rx >> 10u) / dt;
+		const double eff_rx =
+			(double)stats->tcp_tx / (double)stats->kcp_rx;
+		const double eff_tx =
+			(double)stats->tcp_rx / (double)stats->kcp_tx;
+
+		LOGD_F("traffic stats (rx/tx, in KiB)\n"
+		       "    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
+		       "    total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%",
+		       dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx * 100.0,
+		       deff_tx * 100.0, kcp_rx, kcp_tx, tcp_rx, tcp_tx,
+		       eff_rx * 100.0, eff_tx * 100.0);
 	}
 
 	last_print_time = now;
@@ -218,7 +234,7 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	const double timeout = fmax(s->keepalive * 3.0, 60.0);
 	if (now - s->pkt.last_recv_time > timeout &&
 	    now - s->last_resolve_time > timeout) {
-		LOGD_F("remote not seen for %.0fs, try resolve addresses",
+		LOGD_F("remote not seen for %.0lfs, try resolve addresses",
 		       now - s->pkt.last_recv_time);
 		(void)server_resolve(s);
 #if WITH_CRYPTO

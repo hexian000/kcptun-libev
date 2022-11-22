@@ -39,8 +39,8 @@
 #endif
 
 struct obfs_stats {
-	size_t pkt_rx, pkt_tx;
-	size_t byt_rx, byt_tx;
+	size_t pkt_cap, pkt_rx, pkt_tx;
+	size_t byt_cap, byt_rx, byt_tx;
 };
 
 struct obfs {
@@ -67,7 +67,7 @@ struct obfs_ctx {
 	int fd;
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
-	bool cap_ecn, cap_ece;
+	bool cap_ecn;
 	bool established;
 	size_t num_ecn, num_ece;
 	ev_tstamp last_seen;
@@ -434,7 +434,7 @@ static bool obfs_ctx_timeout_filt(
 		char laddr[64], raddr[64];
 		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
 		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
-		LOGD_F("obfs: timeout ctx %s <-> %s after %.1fs", laddr, raddr,
+		LOGD_F("obfs: timeout ctx %s <-> %s after %.1lfs", laddr, raddr,
 		       not_seen);
 	}
 	if (obfs->client == ctx) {
@@ -520,11 +520,11 @@ static bool print_ctx_iter(
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
 	if (ctx->established) {
-		LOGD_F("obfs context peer=%s seen=%.0fs ecn(rx/tx)=%zu/%zu",
+		LOGD_F("obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%zu/%zu",
 		       addr_str, now - ctx->last_seen, ctx->num_ecn,
 		       ctx->num_ece);
 	} else {
-		LOGD_F("obfs context peer=%s seen=%.0fs", addr_str,
+		LOGD_F("obfs context peer=%s seen=%.0lfs", addr_str,
 		       now - ctx->last_seen);
 	}
 	return true;
@@ -533,11 +533,12 @@ static bool print_ctx_iter(
 void obfs_stats(struct obfs *restrict obfs)
 {
 	const ev_tstamp now = ev_now(obfs->loop);
+	struct obfs_stats *restrict stats = &obfs->stats;
 	static struct obfs_stats last_stats = { 0 };
 	static double last_print_time = TSTAMP_NIL;
 	if (last_print_time == TSTAMP_NIL) {
 		last_print_time = now;
-		last_stats = obfs->stats;
+		last_stats = *stats;
 		return;
 	}
 	if (now - last_print_time < 30.0) {
@@ -547,17 +548,23 @@ void obfs_stats(struct obfs *restrict obfs)
 
 	const double dt = now - last_print_time;
 	struct obfs_stats dstats = (struct obfs_stats){
-		.pkt_rx = obfs->stats.pkt_rx - last_stats.pkt_rx,
-		.byt_rx = obfs->stats.byt_rx - last_stats.byt_rx,
+		.pkt_cap = stats->pkt_cap - last_stats.pkt_cap,
+		.byt_cap = stats->byt_cap - last_stats.byt_cap,
+		.pkt_rx = stats->pkt_rx - last_stats.pkt_rx,
+		.byt_rx = stats->byt_rx - last_stats.byt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats.pkt_tx,
+		.byt_tx = stats->byt_tx - last_stats.byt_tx,
 	};
 
-	if (dstats.pkt_rx) {
-		double pkt_rate, byte_rate;
-		pkt_rate = (double)(dstats.pkt_rx) / dt;
-		byte_rate = (double)(dstats.byt_rx >> 10u) / dt;
-		LOGD_F("obfs: %d contexts, capture %.1f pkt/s, %.1f KiB/s, total %zu pkts",
-		       table_size(obfs->contexts), pkt_rate, byte_rate,
-		       obfs->stats.pkt_rx);
+	if (dstats.pkt_cap > 0) {
+		const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
+		const double dbyt_rx = (double)(dstats.byt_rx >> 10u) / dt;
+		const double dbyt_tx = (double)(dstats.byt_tx >> 10u) / dt;
+		const double eff_cap =
+			(double)(stats->pkt_rx) / (double)(stats->pkt_cap);
+		LOGD_F("obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%",
+		       table_size(obfs->contexts), dpkt_cap, dbyt_rx, dbyt_tx,
+		       eff_cap * 100.0);
 	}
 	last_print_time = now;
 	last_stats = obfs->stats;
@@ -755,13 +762,12 @@ static void obfs_capture(
 	struct obfs_ctx *ctx, const uint32_t flow, const uint8_t ecn,
 	const struct tcphdr *restrict tcp)
 {
-	ctx->cap_ecn = (ecn == ECN_CE);
-	if (ctx->cap_ecn) {
+	if (ecn == ECN_CE) {
+		ctx->cap_ecn = true;
 		ctx->num_ecn++;
 	}
 	/* RFC 3168: Section 6.1 */
-	ctx->cap_ece = !!(tcp->res2 & 0x1u);
-	if (ctx->cap_ece) {
+	if (tcp->res2 & 0x1u) {
 		ctx->num_ece++;
 	}
 	if (ctx->established) {
@@ -874,7 +880,6 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 	if (ip6.ip6_nxt != IPPROTO_TCP) {
 		return false;
 	}
-	const uint8_t ecn = ((ip6.ip6_flow >> 20u) & ECN_MASK);
 	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
 		return false;
 	}
@@ -936,6 +941,7 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 		return false;
 	}
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
+	const uint8_t ecn = ((flow >> 20u) & ECN_MASK);
 	obfs_capture(ctx, flow, ecn, &tcp);
 	ctx->last_seen = msg->ts;
 	msg->off = ehl + ihl + doff;
@@ -945,17 +951,22 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 
 bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 {
-	obfs->stats.pkt_rx++;
-	obfs->stats.byt_rx += msg->len;
+	obfs->stats.pkt_cap++;
+	obfs->stats.byt_cap += msg->len;
+	bool ok = false;
 	switch (obfs->domain) {
 	case AF_INET:
-		return obfs_open_ipv4(obfs, msg);
+		ok = obfs_open_ipv4(obfs, msg);
+		break;
 	case AF_INET6:
-		return obfs_open_ipv6(obfs, msg);
-	default:
+		ok = obfs_open_ipv6(obfs, msg);
 		break;
 	}
-	return false;
+	if (ok) {
+		obfs->stats.pkt_rx++;
+		obfs->stats.byt_rx += msg->len;
+	}
+	return ok;
 }
 
 bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
@@ -979,13 +990,17 @@ bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
 		.daddr = dst->sin_addr.s_addr,
 	};
 	memcpy(msg->buf, &ip, sizeof(struct iphdr));
+	const bool ecn = ctx->cap_ecn;
+	if (ecn) {
+		ctx->cap_ecn = false;
+	}
 	struct tcphdr tcp = (struct tcphdr){
 		.source = src->sin_port,
 		.dest = dst->sin_port,
 		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
 		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
 		.doff = sizeof(struct tcphdr) / 4u,
-		.res2 = ctx->cap_ecn ? 0x1u : 0x0u,
+		.res2 = ecn ? 0x1u : 0x0u,
 		.psh = 1,
 		.ack = 1,
 		.window = htons(32767),
@@ -1027,13 +1042,17 @@ bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
 		.ip6_dst = dst->sin6_addr,
 	};
 	memcpy(msg->buf, &ip6, sizeof(ip6));
+	const bool ecn = ctx->cap_ecn;
+	if (ecn) {
+		ctx->cap_ecn = false;
+	}
 	struct tcphdr tcp = (struct tcphdr){
 		.source = src->sin6_port,
 		.dest = dst->sin6_port,
 		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
 		.ack_seq = htonl(ctx->cap_seq + UINT32_C(1)),
 		.doff = sizeof(struct tcphdr) / 4u,
-		.res2 = ctx->cap_ecn ? 0x1u : 0x0u,
+		.res2 = ecn ? 0x1u : 0x0u,
 		.psh = 1,
 		.ack = 1,
 		.window = htons(32767),
