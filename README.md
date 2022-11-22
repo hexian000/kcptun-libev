@@ -187,7 +187,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 
 - "kcp.sndwnd", "kcp.rcvwnd":
 	1. Should be tuned according to RTT.
-	2. For enthusiasts, you can start an idle client with loglevel > 5 and wait 1 minute to check the theoretical bandwidth of current window values.
+	2. For enthusiasts, you can start an idle client with loglevel >= 5 and wait 1 minute to check the theoretical bandwidth of current window values.
 	3. On systems with very little memory, you may need to reduce it to save memory.
 - "kcp.nodelay": Default to 1.
 - "kcp.interval":
