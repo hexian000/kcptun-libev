@@ -28,6 +28,9 @@ static bool print_session_iter(
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = value;
+	if (ss->state == STATE_TIME_WAIT) {
+		return true;
+	}
 	struct print_session_ctx *restrict ctx = user;
 	ctx->num_in_state[ss->state]++;
 	char addr_str[64];
@@ -40,10 +43,10 @@ static bool print_session_iter(
 		"    [%08" PRIX32 "] "
 		"%c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
-		"up/down=%zu/%zu\n",
+		"rx/tx=%zu/%zu\n",
 		ss->conv, session_state_char[ss->state], addr_str, not_seen,
 		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
-		ss->stats.tcp_rx, ss->stats.tcp_tx);
+		ss->stats.tcp_tx, ss->stats.tcp_rx);
 	return true;
 }
 
@@ -66,6 +69,7 @@ static void print_session_table(struct server *restrict s, const ev_tstamp now)
 	       ctx.num_in_state[STATE_CONNECTED],
 	       ctx.num_in_state[STATE_LINGER],
 	       ctx.num_in_state[STATE_TIME_WAIT]);
+	strbuilder_free(&ctx.sb);
 }
 
 static void print_server_stats(struct server *restrict s, const ev_tstamp now)
@@ -114,7 +118,7 @@ static void print_server_stats(struct server *restrict s, const ev_tstamp now)
 		const double eff_tx =
 			(double)stats->tcp_rx / (double)stats->kcp_tx;
 
-		LOGD_F("traffic stats (rx/tx, in KiB)\n"
+		LOGD_F("traffic stats (rx/tx, in KiB):\n"
 		       "    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
 		       "    total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%",
 		       dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx * 100.0,
