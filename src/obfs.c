@@ -617,12 +617,9 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 	};
 
 	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
-	const double dbyt_rx = (double)(dstats.byt_rx >> 10u) / dt;
-	const double dbyt_tx = (double)(dstats.byt_tx >> 10u) / dt;
-	const double eff_cap =
-		stats->pkt_cap > 0 ?
-			(double)(stats->pkt_rx) / (double)(stats->pkt_cap) :
-			0.0;
+	const double dbyt_rx = (double)(dstats.byt_rx) * 0x1p-10 / dt;
+	const double dbyt_tx = (double)(dstats.byt_tx) * 0x1p-10 / dt;
+	const double eff_cap = (double)stats->pkt_rx / (double)stats->pkt_cap;
 	strbuilder_appendf(
 		sb, 4096,
 		"obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%",

@@ -468,17 +468,17 @@ void server_stats(struct server *s, struct strbuilder *sb)
 		.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
 	};
 
-	const double dkcp_rx = (double)(dstats.kcp_rx >> 10u) / dt;
-	const double dkcp_tx = (double)(dstats.kcp_tx >> 10u) / dt;
-	const double dtcp_rx = (double)(dstats.tcp_tx >> 10u) / dt;
-	const double dtcp_tx = (double)(dstats.tcp_rx >> 10u) / dt;
+	const double dkcp_rx = (double)(dstats.kcp_rx) * 0x1p-10 / dt;
+	const double dkcp_tx = (double)(dstats.kcp_tx) * 0x1p-10 / dt;
+	const double dtcp_rx = (double)(dstats.tcp_rx) * 0x1p-10 / dt;
+	const double dtcp_tx = (double)(dstats.tcp_tx) * 0x1p-10 / dt;
 	const double deff_rx = (double)dstats.tcp_tx / (double)dstats.kcp_rx;
 	const double deff_tx = (double)dstats.tcp_rx / (double)dstats.kcp_tx;
 
-	const double kcp_rx = (double)(stats->kcp_rx >> 10u) / dt;
-	const double kcp_tx = (double)(stats->kcp_tx >> 10u) / dt;
-	const double tcp_rx = (double)(stats->tcp_tx >> 10u) / dt;
-	const double tcp_tx = (double)(stats->tcp_rx >> 10u) / dt;
+	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10 / dt;
+	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10 / dt;
+	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10 / dt;
+	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10 / dt;
 	const double eff_rx = (double)stats->tcp_tx / (double)stats->kcp_rx;
 	const double eff_tx = (double)stats->tcp_rx / (double)stats->kcp_tx;
 

@@ -92,15 +92,13 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	struct server *restrict s = (struct server *)watcher->data;
 	timeout_check(s);
 
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		server_sample(s);
+	server_sample(s);
 #if WITH_OBFS
-		struct obfs *obfs = s->pkt.queue->obfs;
-		if (obfs != NULL) {
-			obfs_sample(obfs);
-		}
-#endif
+	struct obfs *obfs = s->pkt.queue->obfs;
+	if (obfs != NULL) {
+		obfs_sample(obfs);
 	}
+#endif
 
 	/* ping */
 	if ((s->conf->mode & MODE_CLIENT) == 0) {
