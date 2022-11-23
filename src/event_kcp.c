@@ -106,6 +106,7 @@ void kcp_close(struct session *restrict ss)
 		kcp_flush(ss);
 	}
 	LOGD_F("session [%08" PRIX32 "] send: eof", ss->conv);
+	ss->last_reset = ss->last_send;
 	ss->state = STATE_LINGER;
 }
 

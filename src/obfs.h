@@ -1,6 +1,7 @@
 #ifndef OBFS_H
 #define OBFS_H
 
+#include "strbuilder.h"
 #include "pktqueue.h"
 
 #include <stdbool.h>
@@ -12,7 +13,8 @@ struct obfs_ctx;
 
 struct obfs *obfs_new(struct server *restrict s);
 bool obfs_resolve(struct obfs *obfs);
-void obfs_stats(struct obfs *obfs);
+void obfs_sample(struct obfs *obfs);
+void obfs_stats(struct obfs *obfs, struct strbuilder *sb);
 bool obfs_start(struct obfs *obfs, struct server *s);
 void obfs_stop(struct obfs *obfs, struct server *s);
 void obfs_free(struct obfs *obfs);

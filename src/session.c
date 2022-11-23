@@ -96,7 +96,7 @@ void session_start(struct session *restrict ss, const int fd)
 {
 	LOGD_F("session [%08" PRIX32 "] start, fd: %d", ss->conv, fd);
 	ss->tcp_fd = fd;
-	// Initialize and start watchers to transfer data
+	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_init(w_read, read_cb, fd, EV_READ);
@@ -257,6 +257,14 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 
 static bool session_parse(struct session *restrict ss)
 {
+	switch (ss->state) {
+	case STATE_HALFOPEN:
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
+		return false;
+	}
 	if (ss->wbuf_next > ss->wbuf_flush) {
 		/* tcp flushing is in progress */
 		return false;

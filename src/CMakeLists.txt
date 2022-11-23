@@ -12,13 +12,14 @@ add_executable(kcptun-libev main.c
     jsonutil.c jsonutil.h
     pktqueue.c pktqueue.h
     session.c session.h
+    http.c http.h
     server.c server.h
     serialize.h leakypool.h
     slog.c slog.h
     hashtable.c hashtable.h
     nonce.c nonce.h
     obfs.c obfs.h
-    event.h event_impl.h event_tcp.c event_kcp.c event_pkt.c event_timer.c)
+    event.h event_impl.h event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c)
 
 option(POSIX "Use POSIX API" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT POSIX)

@@ -4,7 +4,9 @@
 #include "hashtable.h"
 #include "pktqueue.h"
 #include "obfs.h"
+#include "session.h"
 #include "slog.h"
+#include "strbuilder.h"
 #include "util.h"
 #include "sockutil.h"
 
@@ -16,63 +18,92 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdlib.h>
 
-static bool listener_start(struct server *restrict s, struct netaddr *addr)
+static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 {
-	struct config *restrict conf = s->conf;
-	struct listener *restrict l = &(s->listener);
 	if (!resolve_netaddr(addr, RESOLVE_TCP | RESOLVE_PASSIVE)) {
 		return false;
 	}
 	const struct sockaddr *sa = addr->sa;
-	// Create server socket
+	/* Create server socket */
 	const int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
 		LOGE_PERROR("socket error");
-		return false;
+		return -1;
 	}
 	if (socket_setup(fd)) {
 		LOGE_PERROR("fcntl");
 		if (close(fd) != 0) {
 			LOGW_PERROR("close");
 		}
-		return false;
+		return -1;
 	}
 	socket_set_reuseport(fd, conf->tcp_reuseport);
 	socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
 	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
-
-	// Bind socket to address
+	/* Bind socket to address */
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
 		LOGE_PERROR("bind error");
 		if (close(fd) != 0) {
 			LOGW_PERROR("close");
 		}
-		return false;
+		return -1;
 	}
-
-	// Start listing on the socket
+	/* Start listing on the socket */
 	if (listen(fd, 16)) {
 		LOGE_PERROR("listen error");
 		if (close(fd) != 0) {
 			LOGW_PERROR("close");
 		}
-		return false;
+		return -1;
+	}
+	return fd;
+}
+
+static bool listener_start(struct server *restrict s)
+{
+	struct config *restrict conf = s->conf;
+	struct listener *restrict l = &(s->listener);
+
+	if (conf->listen.str) {
+		const int fd = tcp_listen(conf, &conf->listen);
+		if (fd == -1) {
+			return false;
+		}
+		/* Initialize and start a watcher to accepts client requests */
+		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io_init(w_accept, accept_cb, fd, EV_READ);
+		w_accept->data = s;
+		ev_io_start(s->loop, w_accept);
+		l->fd = fd;
+		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+			char addr_str[64];
+			format_sa(conf->listen.sa, addr_str, sizeof(addr_str));
+			LOGI_F("listen at: %s", addr_str);
+		}
 	}
 
-	// Initialize and start a watcher to accepts client requests
-	struct ev_io *restrict w_accept = &l->w_accept;
-	ev_io_init(w_accept, accept_cb, fd, EV_READ);
-	w_accept->data = s;
-	ev_io_start(s->loop, w_accept);
-
-	if (LOGLEVEL(LOG_LEVEL_INFO)) {
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("listen at: %s", addr_str);
+	if (conf->http_listen.str) {
+		const int fd = tcp_listen(conf, &conf->http_listen);
+		if (fd == -1) {
+			return false;
+		}
+		struct ev_io *restrict w_accept = &l->w_accept_http;
+		ev_io_init(w_accept, http_accept_cb, fd, EV_READ);
+		w_accept->data = s;
+		ev_io_start(s->loop, w_accept);
+		l->fd_http = fd;
+		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+			char addr_str[64];
+			format_sa(
+				conf->http_listen.sa, addr_str,
+				sizeof(addr_str));
+			LOGI_F("http listen at: %s", addr_str);
+		}
 	}
-	l->fd = fd;
+
 	return true;
 }
 
@@ -208,7 +239,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	ev_timer_init(w_kcp_update, kcp_update_cb, s->interval, s->interval);
 	w_kcp_update->data = s;
 	struct ev_timer *restrict w_timer = &s->w_timer;
-	ev_timer_init(w_timer, timer_cb, 1.0, 1.0);
+	ev_timer_init(w_timer, timer_cb, 2.0, 2.0);
 	w_timer->data = s;
 
 	s->sessions = table_create();
@@ -229,10 +260,8 @@ bool server_start(struct server *s)
 {
 	struct ev_loop *loop = s->loop;
 	struct config *restrict conf = s->conf;
-	if (conf->listen.str) {
-		if (!listener_start(s, &conf->listen)) {
-			return false;
-		}
+	if (!listener_start(s)) {
+		return false;
 	}
 	if (conf->connect.str != NULL &&
 	    !resolve_netaddr(&conf->connect, RESOLVE_TCP)) {
@@ -352,4 +381,113 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 	}
 	s->m_conv = conv;
 	return conv;
+}
+
+void server_sample(struct server *restrict s)
+{
+	const ev_tstamp now = ev_now(s->loop);
+	if (s->last_stats_time != TSTAMP_NIL &&
+	    now - s->last_stats_time < 10.0) {
+		return;
+	}
+	s->last_stats = s->stats;
+	s->last_stats_time = now;
+}
+
+struct server_stats_ctx {
+	size_t num_in_state[STATE_MAX];
+	ev_tstamp now;
+	struct strbuilder *restrict sb;
+};
+
+static bool print_session_iter(
+	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	struct session *restrict ss = value;
+	if (ss->state == STATE_TIME_WAIT) {
+		return true;
+	}
+	struct server_stats_ctx *restrict ctx = user;
+	ctx->num_in_state[ss->state]++;
+	char addr_str[64];
+	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
+	const double last_seen =
+		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
+	const double not_seen = ctx->now - last_seen;
+	(void)strbuilder_appendf(
+		ctx->sb, 4096,
+		"    [%08" PRIX32 "] "
+		"%c peer=%s seen=%.0lfs "
+		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
+		"rx/tx=%zu/%zu\n",
+		ss->conv, session_state_char[ss->state], addr_str, not_seen,
+		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
+		ss->stats.tcp_tx, ss->stats.tcp_rx);
+	return true;
+}
+
+static void
+print_session_table(struct server *restrict s, struct strbuilder *sb)
+{
+	const size_t n_sessions = table_size(s->sessions);
+	if (n_sessions == 0) {
+		return;
+	}
+	struct server_stats_ctx ctx = (struct server_stats_ctx){
+		.now = ev_now(s->loop),
+		.sb = sb,
+	};
+	strbuilder_append(sb, "session table:\n");
+	table_iterate(s->sessions, &print_session_iter, &ctx);
+	strbuilder_appendf(
+		sb, 4096,
+		"    ^ %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n",
+		n_sessions,
+		ctx.num_in_state[STATE_HALFOPEN] +
+			ctx.num_in_state[STATE_CONNECT],
+		ctx.num_in_state[STATE_CONNECTED],
+		ctx.num_in_state[STATE_LINGER],
+		ctx.num_in_state[STATE_TIME_WAIT]);
+}
+
+void server_stats(struct server *s, struct strbuilder *sb)
+{
+	print_session_table(s, sb);
+
+	struct link_stats *restrict stats = &s->stats;
+	struct link_stats *restrict last_stats = &s->last_stats;
+	const double dt = ev_now(s->loop) - s->last_stats_time;
+	struct link_stats dstats = (struct link_stats){
+		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
+		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
+		.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
+		.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
+		.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
+	};
+
+	const double dkcp_rx = (double)(dstats.kcp_rx >> 10u) / dt;
+	const double dkcp_tx = (double)(dstats.kcp_tx >> 10u) / dt;
+	const double dtcp_rx = (double)(dstats.tcp_tx >> 10u) / dt;
+	const double dtcp_tx = (double)(dstats.tcp_rx >> 10u) / dt;
+	const double deff_rx = (double)dstats.tcp_tx / (double)dstats.kcp_rx;
+	const double deff_tx = (double)dstats.tcp_rx / (double)dstats.kcp_tx;
+
+	const double kcp_rx = (double)(stats->kcp_rx >> 10u) / dt;
+	const double kcp_tx = (double)(stats->kcp_tx >> 10u) / dt;
+	const double tcp_rx = (double)(stats->tcp_tx >> 10u) / dt;
+	const double tcp_tx = (double)(stats->tcp_rx >> 10u) / dt;
+	const double eff_rx = (double)stats->tcp_tx / (double)stats->kcp_rx;
+	const double eff_tx = (double)stats->tcp_rx / (double)stats->kcp_tx;
+
+	strbuilder_appendf(
+		sb, 4096,
+		"traffic stats (rx/tx, in KiB):\n"
+		"    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
+		"    total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n",
+		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx * 100.0,
+		deff_tx * 100.0, kcp_rx, kcp_tx, tcp_rx, tcp_tx, eff_rx * 100.0,
+		eff_tx * 100.0);
 }

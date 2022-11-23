@@ -10,6 +10,8 @@
 #include "session.h"
 #include "slog.h"
 #include "sockutil.h"
+#include "strbuilder.h"
+#include "http.h"
 #include "util.h"
 #include "server.h"
 #include "event.h"
@@ -25,8 +27,8 @@
 #include <string.h>
 #include <inttypes.h>
 
-#include <regex.h>
 #include <unistd.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <netinet/if_ether.h>
 #include <netinet/in.h>
@@ -48,11 +50,11 @@ struct obfs {
 	struct ev_loop *loop;
 	struct hashtable *sessions;
 	struct hashtable *contexts;
-	regex_t reqpat;
 	struct ev_io w_accept;
 	struct ev_timer w_timer;
 	struct obfs_ctx *client;
-	struct obfs_stats stats;
+	struct obfs_stats stats, last_stats;
+	ev_tstamp last_stats_time;
 	uint16_t bind_port;
 	bool cap_eth;
 	int cap_fd, raw_fd;
@@ -60,11 +62,17 @@ struct obfs {
 	int domain;
 };
 
+#define OBFS_MAX_REQUEST 256
+
 struct obfs_ctx {
 	struct obfs *obfs;
 	struct ev_io w_read, w_write;
 	sockaddr_max_t laddr, raddr;
 	int fd;
+	unsigned char rbuf[OBFS_MAX_REQUEST];
+	size_t rlen, rcap;
+	unsigned char wbuf[OBFS_MAX_REQUEST];
+	size_t wlen, wcap;
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
 	bool cap_ecn;
@@ -97,15 +105,13 @@ struct pseudo_ip6hdr {
 #define ECN_CE (0x3u)
 
 static void
-http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
-http_server_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+obfs_server_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
-http_server_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+obfs_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
-http_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-static void
-http_client_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 
 static void obfs_tcp_setup(const int fd)
 {
@@ -256,19 +262,6 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 	return true;
 }
 
-static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
-{
-	struct obfs_ctx *restrict ctx = util_malloc(sizeof(struct obfs_ctx));
-	if (ctx == NULL) {
-		return NULL;
-	}
-	*ctx = (struct obfs_ctx){
-		.obfs = obfs,
-		.established = false,
-	};
-	return ctx;
-}
-
 static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 {
 	if (ctx == NULL) {
@@ -285,6 +278,21 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		ctx->fd = -1;
 	}
 	util_free(ctx);
+}
+
+static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
+{
+	struct obfs_ctx *restrict ctx = util_malloc(sizeof(struct obfs_ctx));
+	if (ctx == NULL) {
+		return NULL;
+	}
+	*ctx = (struct obfs_ctx){
+		.obfs = obfs,
+		.established = false,
+		.rcap = OBFS_MAX_REQUEST,
+		.wcap = OBFS_MAX_REQUEST,
+	};
+	return ctx;
 }
 
 static bool ctx_del_filter(
@@ -308,6 +316,9 @@ static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 	hashkey_t key;
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	(void)table_del(obfs->contexts, &key, NULL);
+	if (obfs->client == ctx) {
+		obfs->client = NULL;
+	}
 }
 
 static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
@@ -322,6 +333,41 @@ static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 	}
 }
 
+static void obfs_ctx_write(struct obfs_ctx *restrict ctx)
+{
+	struct obfs *restrict obfs = ctx->obfs;
+	unsigned char *buf = ctx->wbuf;
+	size_t nbsend = 0;
+	size_t len = ctx->wlen;
+	while (len > 0) {
+		const ssize_t nsend = send(ctx->fd, buf, len, 0);
+		if (nsend < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK ||
+			    errno == EINTR || errno == ENOMEM) {
+				break;
+			}
+			LOGE_PERROR("obfs");
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(obfs->loop, ctx);
+			return;
+		}
+		len -= nsend;
+		nbsend += nsend;
+	}
+	ctx->wlen = len;
+	struct ev_io *restrict w_write = &ctx->w_write;
+	if (len > 0) {
+		memmove(buf, buf + nbsend, len);
+		if (!ev_is_active(w_write)) {
+			ev_io_start(obfs->loop, w_write);
+		}
+		return;
+	}
+	if (ev_is_active(w_write)) {
+		ev_io_stop(obfs->loop, w_write);
+	}
+}
+
 static bool obfs_ctx_start(
 	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
 {
@@ -329,22 +375,20 @@ static bool obfs_ctx_start(
 	struct ev_loop *loop = obfs->loop;
 	if (obfs->conf->mode & MODE_CLIENT) {
 		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, http_client_read_cb, fd, EV_READ);
+		ev_io_init(w_read, obfs_client_read_cb, fd, EV_READ);
 		w_read->data = ctx;
 		ev_io_start(loop, w_read);
 		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, http_client_write_cb, fd, EV_WRITE);
+		ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
 		w_write->data = ctx;
-		ev_io_start(loop, w_write);
 	} else {
 		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, http_server_read_cb, fd, EV_READ);
+		ev_io_init(w_read, obfs_server_read_cb, fd, EV_READ);
 		w_read->data = ctx;
 		ev_io_start(loop, w_read);
 		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, http_server_write_cb, fd, EV_WRITE);
+		ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
 		w_write->data = ctx;
-		/* w_write is not used on the server side */
 	}
 	ctx->last_seen = ev_now(loop);
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
@@ -413,6 +457,19 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		obfs_ctx_free(obfs->loop, ctx);
 		return false;
 	}
+	if (obfs->conf->mode & MODE_CLIENT) {
+		/* send the request */
+		char addr_str[64];
+		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+		ctx->wlen = snprintf(
+			(char *)ctx->wbuf, ctx->wcap,
+			"GET /generate_204 HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"User-Agent: curl/7.81.0\r\n"
+			"Accept: */*\r\n\r\n",
+			addr_str);
+		obfs_ctx_write(ctx);
+	}
 	obfs->client = ctx;
 	return true;
 }
@@ -460,20 +517,6 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	}
 }
 
-static const char http_request[] = "GET /generate_204 HTTP/1.1\r\n"
-				   "Host: %s\r\n"
-				   "User-Agent: curl/7.81.0\r\n"
-				   "Accept: */*\r\n\r\n";
-
-static const char http_pat204[] =
-	"^GET /generate_204 HTTP/[0-9][1-9]*(\\.[0-9][1-9]*)?\r\n"
-	"([a-zA-Z0-9\\-]+:\\s*\\S*\r\n)*\r\n$";
-
-static const char http_reply_204[] = "HTTP/1.1 204 No Content\r\n"
-				     "Date: %s\r\n"
-				     "Content-Length: 0\r\n"
-				     "Connection: keep-alive\r\n\r\n";
-
 struct obfs *obfs_new(struct server *restrict s)
 {
 	struct obfs *obfs = NULL;
@@ -498,7 +541,6 @@ struct obfs *obfs_new(struct server *restrict s)
 			util_free(obfs);
 			return NULL;
 		}
-		CHECK(regcomp(&obfs->reqpat, http_pat204, REG_EXTENDED) == 0);
 	}
 	return obfs;
 }
@@ -509,65 +551,83 @@ bool obfs_resolve(struct obfs *obfs)
 	return true;
 }
 
+void obfs_sample(struct obfs *restrict obfs)
+{
+	const ev_tstamp now = ev_now(obfs->loop);
+	if (obfs->last_stats_time != TSTAMP_NIL &&
+	    now - obfs->last_stats_time < 10.0) {
+		return;
+	}
+	obfs->last_stats = obfs->stats;
+	obfs->last_stats_time = now;
+}
+
+struct obfs_stats_ctx {
+	ev_tstamp now;
+	struct strbuilder *restrict sb;
+};
+
 static bool print_ctx_iter(
 	struct hashtable *t, const hashkey_t *key, void *value, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
-	struct obfs *restrict obfs = user;
+	struct obfs_stats_ctx *restrict stats_ctx = user;
 	struct obfs_ctx *restrict ctx = value;
-	const ev_tstamp now = ev_now(obfs->loop);
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
 	if (ctx->established) {
-		LOGD_F("obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%zu/%zu",
-		       addr_str, now - ctx->last_seen, ctx->num_ecn,
-		       ctx->num_ece);
+		strbuilder_appendf(
+			stats_ctx->sb, 4096,
+			"obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%zu/%zu\n",
+			addr_str, stats_ctx->now - ctx->last_seen, ctx->num_ecn,
+			ctx->num_ece);
 	} else {
-		LOGD_F("obfs context peer=%s seen=%.0lfs", addr_str,
-		       now - ctx->last_seen);
+		strbuilder_appendf(
+			stats_ctx->sb, 4096,
+			"obfs context peer=%s seen=%.0lfs\n", addr_str,
+			stats_ctx->now - ctx->last_seen);
 	}
 	return true;
 }
 
-void obfs_stats(struct obfs *restrict obfs)
+void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 {
+	if (obfs->last_stats_time == TSTAMP_NIL) {
+		return;
+	}
 	const ev_tstamp now = ev_now(obfs->loop);
 	struct obfs_stats *restrict stats = &obfs->stats;
-	static struct obfs_stats last_stats = { 0 };
-	static double last_print_time = TSTAMP_NIL;
-	if (last_print_time == TSTAMP_NIL) {
-		last_print_time = now;
-		last_stats = *stats;
-		return;
-	}
-	if (now - last_print_time < 30.0) {
-		return;
-	}
-	table_iterate(obfs->contexts, print_ctx_iter, obfs);
+	struct obfs_stats *restrict last_stats = &obfs->last_stats;
 
-	const double dt = now - last_print_time;
+	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
+		.now = now,
+		.sb = sb,
+	};
+	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
+
+	const double dt = now - obfs->last_stats_time;
 	struct obfs_stats dstats = (struct obfs_stats){
-		.pkt_cap = stats->pkt_cap - last_stats.pkt_cap,
-		.byt_cap = stats->byt_cap - last_stats.byt_cap,
-		.pkt_rx = stats->pkt_rx - last_stats.pkt_rx,
-		.byt_rx = stats->byt_rx - last_stats.byt_rx,
-		.pkt_tx = stats->pkt_tx - last_stats.pkt_tx,
-		.byt_tx = stats->byt_tx - last_stats.byt_tx,
+		.pkt_cap = stats->pkt_cap - last_stats->pkt_cap,
+		.byt_cap = stats->byt_cap - last_stats->byt_cap,
+		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
+		.byt_rx = stats->byt_rx - last_stats->byt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
+		.byt_tx = stats->byt_tx - last_stats->byt_tx,
 	};
 
-	if (dstats.pkt_cap > 0) {
-		const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
-		const double dbyt_rx = (double)(dstats.byt_rx >> 10u) / dt;
-		const double dbyt_tx = (double)(dstats.byt_tx >> 10u) / dt;
-		const double eff_cap =
-			(double)(stats->pkt_rx) / (double)(stats->pkt_cap);
-		LOGD_F("obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%",
-		       table_size(obfs->contexts), dpkt_cap, dbyt_rx, dbyt_tx,
-		       eff_cap * 100.0);
-	}
-	last_print_time = now;
-	last_stats = obfs->stats;
+	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
+	const double dbyt_rx = (double)(dstats.byt_rx >> 10u) / dt;
+	const double dbyt_tx = (double)(dstats.byt_tx >> 10u) / dt;
+	const double eff_cap =
+		stats->pkt_cap > 0 ?
+			(double)(stats->pkt_rx) / (double)(stats->pkt_cap) :
+			0.0;
+	strbuilder_appendf(
+		sb, 4096,
+		"obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%",
+		table_size(obfs->contexts), dpkt_cap, dbyt_rx, dbyt_tx,
+		eff_cap * 100.0);
 }
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
@@ -638,7 +698,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 
 	if (obfs->fd != -1) {
 		struct ev_io *restrict w_accept = &obfs->w_accept;
-		ev_io_init(w_accept, &http_accept_cb, obfs->fd, EV_READ);
+		ev_io_init(w_accept, obfs_accept_cb, obfs->fd, EV_READ);
 		w_accept->data = obfs;
 		ev_io_start(obfs->loop, w_accept);
 	}
@@ -711,7 +771,6 @@ void obfs_free(struct obfs *obfs)
 		table_free(obfs->contexts);
 		obfs->contexts = NULL;
 	}
-	regfree(&obfs->reqpat);
 	util_free(obfs);
 }
 
@@ -1110,16 +1169,7 @@ bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
 	return ok;
 }
 
-static size_t http_server_date(char *buf, size_t buf_size)
-{
-	/* RFC 1123: Section 5.2.14 */
-	static const char fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
-	const time_t now = time(NULL);
-	const struct tm *gmt = gmtime(&now);
-	return strftime(buf, buf_size, fmt, gmt);
-}
-
-void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 
@@ -1153,7 +1203,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		return;
 	}
 	struct ev_io *restrict w_read = &ctx->w_read;
-	ev_io_init(w_read, http_server_read_cb, fd, EV_READ);
+	ev_io_init(w_read, obfs_server_read_cb, fd, EV_READ);
 	w_read->data = ctx;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
@@ -1165,7 +1215,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
-void http_server_read_cb(
+void obfs_server_read_cb(
 	struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
@@ -1173,71 +1223,83 @@ void http_server_read_cb(
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
 
-	char buf[256];
-	const ssize_t nbrecv = read(watcher->fd, buf, sizeof(buf) - 1);
+	unsigned char *buf = ctx->rbuf + ctx->rlen;
+	size_t cap = ctx->rcap - ctx->rlen - 1; /* for null-terminator */
+	const ssize_t nbrecv = recv(watcher->fd, buf, cap, 0);
 	if (nbrecv < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
 		    errno == ENOMEM) {
 			return;
 		}
-		LOGE_PERROR("read");
+		LOGE_PERROR("obfs");
 		/* harden for SYN flood */
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
 	} else if (nbrecv == 0) {
+		LOGE("obfs: eof");
+		obfs_ctx_stop(loop, ctx);
+		obfs_ctx_del(obfs, ctx);
+		return;
+	}
+	ctx->rlen += nbrecv;
+	cap -= nbrecv;
+	const size_t peek = http_peek((char *)ctx->rbuf, ctx->rlen);
+	if (peek == 0) {
+		if (cap == 0) {
+			LOGE("obfs: request too large");
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+		}
+		return;
+	}
+	struct http_header hdr;
+	const size_t parse = http_parse((char *)ctx->rbuf, &hdr, NULL, NULL);
+	if (parse == 0 || strncmp(hdr.field3, "HTTP/1.", 7) != 0) {
+		LOGE("obfs: failed parsing request");
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
-	buf[nbrecv] = '\0';
-	regex_t *pat = &obfs->reqpat;
-	regmatch_t m;
-	if (regexec(pat, buf, 1, &m, 0) != 0) {
-		/* bad request */
-		LOGD("http bad request");
-		/* harden for DDoS attack */
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
+	if (strcasecmp(hdr.field1, "GET") != 0) {
+		ev_io_stop(loop, watcher);
+		ctx->wlen = http_error(
+			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_IMPLEMENTED);
+		return;
+	}
+	if (strcmp(hdr.field2, "/generate_204") != 0) {
+		ev_io_stop(loop, watcher);
+		ctx->wlen = http_error(
+			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);
 		return;
 	}
 
-	char date_str[32];
-	CHECK(http_server_date(date_str, sizeof(date_str)) < sizeof(date_str));
-	const int n = snprintf(buf, sizeof(buf), http_reply_204, date_str);
-	CHECK(n > 0);
-	ssize_t nbsend = write(watcher->fd, buf, n);
-	if (nbsend != n) {
-		LOGE_PERROR("write");
-		/* harden for DDoS attack */
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
-		return;
-	}
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		LOGI_F("obfs: request handled from %s", addr_str);
+		LOGI_F("obfs: serving request from %s", addr_str);
 	}
-	ev_io_stop(loop, watcher);
+
+	char date_str[32];
+	const size_t date_len = http_date(date_str, sizeof(date_str));
+	ctx->wlen = snprintf(
+		(char *)ctx->wbuf, ctx->wcap,
+		"HTTP/1.1 204 No Content\r\n"
+		"Date: %*s\r\n"
+		"Content-Length: 0\r\n"
+		"Connection: keep-alive\r\n\r\n",
+		(int)date_len, date_str);
+	obfs_ctx_write(ctx);
 }
 
-void http_server_write_cb(
-	struct ev_loop *loop, struct ev_io *watcher, int revents)
-{
-	CHECK_EV_ERROR(revents);
-	ev_io_stop(loop, watcher);
-}
-
-void http_client_read_cb(
+void obfs_client_read_cb(
 	struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
 
-	char buf[256];
-	const ssize_t nbrecv = read(watcher->fd, buf, sizeof(buf));
+	const ssize_t nbrecv = recv(watcher->fd, ctx->rbuf, ctx->rcap, 0);
 	if (nbrecv < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
 		    errno == ENOMEM) {
@@ -1248,38 +1310,21 @@ void http_client_read_cb(
 		obfs->client = NULL;
 		return;
 	} else if (nbrecv == 0) {
-		LOGD("obfs: client eof");
+		LOGD("obfs: eof");
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
 		return;
 	}
 	/* discard */
-	LOGD("obfs: client ready");
+	LOGV_F("obfs: client recv %zu bytes", (size_t)nbrecv);
 }
 
-void http_client_write_cb(
-	struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
+	UNUSED(loop);
 	CHECK_EV_ERROR(revents);
-
 	struct obfs_ctx *restrict ctx = watcher->data;
-	struct obfs *restrict obfs = ctx->obfs;
-
-	char buf[256];
-	char addr_str[64];
-	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-	const int n = snprintf(buf, sizeof(buf), http_request, addr_str);
-	CHECK(n > 0);
-	const size_t len = n;
-	const ssize_t nbsend = write(watcher->fd, buf, len);
-	if (nbsend != (ssize_t)len) {
-		LOGE_PERROR("write");
-		obfs_ctx_stop(loop, ctx);
-		obfs->client = NULL;
-		return;
-	}
-	ev_io_stop(loop, watcher);
-	LOGD("obfs: request sent");
+	obfs_ctx_write(ctx);
 }
 
 #endif /* WITH_OBFS */

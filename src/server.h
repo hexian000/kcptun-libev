@@ -5,6 +5,7 @@
 #include "hashtable.h"
 #include "session.h"
 #include "util.h"
+#include "strbuilder.h"
 
 #include "kcp/ikcp.h"
 
@@ -17,6 +18,9 @@ struct aead;
 struct listener {
 	struct ev_io w_accept;
 	int fd;
+
+	struct ev_io w_accept_http;
+	int fd_http;
 };
 
 struct pktconn {
@@ -43,13 +47,16 @@ struct server {
 	double session_timeout, session_keepalive;
 	double linger, time_wait;
 	double keepalive;
-	struct link_stats stats;
+	struct link_stats stats, last_stats;
+	ev_tstamp last_stats_time;
 	uint32_t m_conv;
 	double last_resolve_time;
 };
 
 struct server *server_new(struct ev_loop *loop, struct config *conf);
 bool server_start(struct server *s);
+void server_sample(struct server *s);
+void server_stats(struct server *s, struct strbuilder *sb);
 bool server_resolve(struct server *s);
 void server_stop(struct server *s);
 void server_free(struct server *s);

@@ -23,6 +23,7 @@ struct config {
 	struct netaddr connect;
 	struct netaddr kcp_bind;
 	struct netaddr kcp_connect;
+	struct netaddr http_listen;
 
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;

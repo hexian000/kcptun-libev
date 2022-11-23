@@ -176,6 +176,10 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		conf->kcp_connect.str = parse_string_json(value);
 		return conf->kcp_connect.str != NULL;
 	}
+	if (strcmp(name, "http_listen") == 0) {
+		conf->http_listen.str = parse_string_json(value);
+		return conf->http_listen.str != NULL;
+	}
 #if WITH_CRYPTO
 	if (strcmp(name, "method") == 0) {
 		conf->method = parse_string_json(value);
@@ -404,6 +408,7 @@ void conf_free(struct config *conf)
 	netaddr_safe_free(&conf->connect);
 	netaddr_safe_free(&conf->kcp_bind);
 	netaddr_safe_free(&conf->kcp_connect);
+	netaddr_safe_free(&conf->http_listen);
 	UTIL_SAFE_FREE(conf->user);
 #if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);

@@ -23,6 +23,7 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
+void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 
 int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 void kcp_update(struct session *ss);
