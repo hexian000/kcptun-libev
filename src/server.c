@@ -406,11 +406,11 @@ static bool print_session_iter(
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = value;
+	struct server_stats_ctx *restrict ctx = user;
+	ctx->num_in_state[ss->state]++;
 	if (ss->state == STATE_TIME_WAIT) {
 		return true;
 	}
-	struct server_stats_ctx *restrict ctx = user;
-	ctx->num_in_state[ss->state]++;
 	char addr_str[64];
 	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
 	const double last_seen =
