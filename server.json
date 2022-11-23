@@ -1,6 +1,7 @@
 {
     "kcp_bind": ":5555",
     "connect": "[::1]:5201",
+    "http_listen": "[::1]:8081",
     "kcp": {
         "mtu": 1400,
         "sndwnd": 256,
@@ -16,6 +17,6 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
-    "loglevel": 5,
+    "loglevel": 3,
     "user": "nobody"
 }

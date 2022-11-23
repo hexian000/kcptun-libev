@@ -208,6 +208,23 @@ Again, there is some kcptun-libev specific options:
 
 *kcptun-libev works out of the box. In most cases, the default options are recommended.*
 
+## Observability
+
+There is a builtin HTTP server.
+
+In config file, add:
+
+```json
+"http_listen": "127.0.1.1:8081"
+```
+
+Run from shell:
+
+```sh
+watch curl -s http://127.0.1.1:8081/stats
+```
+
+
 ## Credits
 
 Thanks to:
