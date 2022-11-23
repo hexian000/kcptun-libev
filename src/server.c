@@ -475,10 +475,10 @@ void server_stats(struct server *s, struct strbuilder *sb)
 	const double deff_rx = (double)dstats.tcp_tx / (double)dstats.kcp_rx;
 	const double deff_tx = (double)dstats.tcp_rx / (double)dstats.kcp_tx;
 
-	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10 / dt;
-	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10 / dt;
-	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10 / dt;
-	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10 / dt;
+	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10;
+	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10;
+	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10;
+	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10;
 	const double eff_rx = (double)stats->tcp_tx / (double)stats->kcp_rx;
 	const double eff_tx = (double)stats->tcp_rx / (double)stats->kcp_tx;
 
