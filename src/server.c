@@ -215,6 +215,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	if (s == NULL) {
 		return NULL;
 	}
+	const ev_tstamp now = ev_now(loop);
 	*s = (struct server){
 		.loop = loop,
 		.conf = conf,
@@ -225,7 +226,8 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 				.fd = -1,
 				.inflight_ping = TSTAMP_NIL,
 			},
-		.last_resolve_time = ev_now(loop),
+		.last_resolve_time = now,
+		.last_stats_time = now,
 		.interval = conf->kcp_interval * 1e-3,
 		.linger = conf->linger,
 		.dial_timeout = 30.0,
@@ -385,13 +387,8 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 
 void server_sample(struct server *restrict s)
 {
-	const ev_tstamp now = ev_now(s->loop);
-	if (s->last_stats_time != TSTAMP_NIL &&
-	    now - s->last_stats_time < 10.0) {
-		return;
-	}
 	s->last_stats = s->stats;
-	s->last_stats_time = now;
+	s->last_stats_time = ev_now(s->loop);
 }
 
 struct server_stats_ctx {

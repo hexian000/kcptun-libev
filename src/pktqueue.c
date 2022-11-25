@@ -174,8 +174,11 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	if (ss->state == STATE_TIME_WAIT) {
-		if (ev_now(s->loop) - ss->last_send > 1.0) {
+		const ev_tstamp now = ev_now(s->loop);
+		if (ss->last_reset == TSTAMP_NIL ||
+		    now - ss->last_reset > 1.0) {
 			ss0_reset(s, sa, conv);
+			ss->last_reset = now;
 		}
 		return;
 	}
@@ -257,10 +260,6 @@ bool queue_send(
 	if (q->obfs != NULL) {
 		const bool obfs_seal_ok = obfs_seal_inplace(q->obfs, msg);
 		if (!obfs_seal_ok) {
-			LOG_RATELIMITEDF(
-				LOG_LEVEL_WARNING, s->loop, 1.0,
-				"* obfs not ready, %" PRIu16 " bytes discarded",
-				msg->len);
 			msgframe_delete(q, msg);
 			return false;
 		}

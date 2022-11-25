@@ -34,7 +34,8 @@ http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 #define HTTP_MAX_REQUEST 4096
 
 struct http_ctx {
-	struct server *server;
+	struct ev_loop *loop;
+	void *data;
 	int fd;
 	ev_tstamp created;
 	struct ev_io w_read, w_write;
@@ -43,11 +44,13 @@ struct http_ctx {
 	size_t rlen, rcap;
 	unsigned char *wbuf;
 	size_t wlen, wcap;
+	struct http_header http_hdr;
+	char *http_nxt;
 };
 
 static void http_ctx_free(struct http_ctx *restrict ctx)
 {
-	struct ev_loop *loop = ctx->server->loop;
+	struct ev_loop *loop = ctx->loop;
 	struct ev_io *restrict w_read = &ctx->w_read;
 	ev_io_stop(loop, w_read);
 	struct ev_io *restrict w_write = &ctx->w_write;
@@ -55,7 +58,7 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 	(void)close(ctx->fd);
 	struct ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_stop(loop, w_timeout);
-	util_free(ctx->wbuf);
+	UTIL_SAFE_FREE(ctx->wbuf);
 	util_free(ctx);
 }
 
@@ -83,7 +86,8 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		return;
 	}
 	*ctx = (struct http_ctx){
-		.server = s,
+		.loop = s->loop,
+		.data = s,
 		.fd = fd,
 		.created = ev_now(loop),
 		.rcap = HTTP_MAX_REQUEST,
@@ -131,25 +135,54 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ctx->rlen += nrecv;
 	cap -= nrecv;
 
-	const size_t peek = http_peek((char *)ctx->rbuf, ctx->rlen);
-	if (peek == 0) {
-		if (cap == 0) {
-			LOGE("http: request too large");
-			http_ctx_free(ctx);
-		}
-		return;
-	}
 	ctx->rbuf[ctx->rlen] = '\0';
-	struct http_header hdr;
-	const size_t n = http_parse((char *)ctx->rbuf, &hdr, NULL, NULL);
-	if (n == 0 || strncmp(hdr.field3, "HTTP/1.", 7) != 0) {
-		LOGE("http: failed parsing request");
-		http_ctx_free(ctx);
-		return;
+	char *next = ctx->http_nxt;
+	if (next == NULL) {
+		ctx->http_nxt = next = (char *)ctx->rbuf;
+	}
+	struct http_header *restrict hdr = &ctx->http_hdr;
+	if (hdr->field1 == NULL) {
+		next = http_parse(next, hdr);
+		if (next == NULL) {
+			LOGE("http: invalid request");
+			http_ctx_free(ctx);
+			return;
+		} else if (next == ctx->http_nxt) {
+			if (cap == 0) {
+				LOGE("http: request too large");
+				http_ctx_free(ctx);
+				return;
+			}
+			return;
+		}
+		if (strncmp(hdr->field3, "HTTP/1.", 7) != 0) {
+			LOGE_F("http: unsupported protocol %s", hdr->field3);
+			http_ctx_free(ctx);
+			return;
+		}
+		LOGV_F("http: request %s %s %s", hdr->field1, hdr->field2,
+		       hdr->field3);
+	}
+	ctx->http_nxt = next;
+	char *key, *value;
+	for (;;) {
+		next = http_parsehdr(ctx->http_nxt, &key, &value);
+		if (next == NULL) {
+			LOGE("http: invalid header");
+			http_ctx_free(ctx);
+			return;
+		} else if (next == ctx->http_nxt) {
+			return;
+		}
+		ctx->http_nxt = next;
+		if (key == NULL) {
+			break;
+		}
+		LOGV_F("http: header %s: %s", key, value);
 	}
 	/* HTTP/1.0 only, close after serve */
 	ev_io_stop(loop, watcher);
-	http_serve(ctx, &hdr);
+	http_serve(ctx, hdr);
 }
 
 static void http_ctx_write(struct http_ctx *restrict ctx)
@@ -176,7 +209,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 		memmove(buf, buf + nbsend, len);
 		struct ev_io *restrict w_write = &ctx->w_write;
 		if (!ev_is_active(w_write)) {
-			ev_io_start(ctx->server->loop, w_write);
+			ev_io_start(ctx->loop, w_write);
 		}
 		return;
 	}
@@ -200,7 +233,7 @@ void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents
 static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
 {
 	const size_t cap = 4096;
-	unsigned char *buf = util_malloc(4096);
+	unsigned char *buf = util_malloc(cap);
 	if (buf == NULL) {
 		http_ctx_free(ctx);
 		return;
@@ -212,10 +245,9 @@ static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
 	http_ctx_write(ctx);
 }
 
-static void http_serve_stats(struct http_ctx *restrict ctx)
+static struct strbuilder http_resp_txt(uint16_t code)
 {
 	struct strbuilder sb = { 0 };
-	strbuilder_reserve(&sb, 16384);
 	char date_str[32];
 	size_t date_len = http_date(date_str, sizeof(date_str));
 	strbuilder_appendf(
@@ -224,14 +256,22 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		"Date: %*s\r\n"
 		"Connection: close\r\n"
 		"Content-type: text/plain\r\n\r\n",
-		HTTP_OK, http_status(HTTP_OK), (int)date_len, date_str);
+		code, http_status(code), (int)date_len, date_str);
+	return sb;
+}
 
-	struct server *restrict s = ctx->server;
-	server_stats(ctx->server, &sb);
+static void http_serve_stats(struct http_ctx *restrict ctx)
+{
+	struct strbuilder sb = http_resp_txt(HTTP_OK);
+
+	struct server *restrict s = ctx->data;
+	server_stats(s, &sb);
+	server_sample(s);
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
 		obfs_stats(obfs, &sb);
+		obfs_sample(obfs);
 	}
 #endif
 	strbuilder_appendch(&sb, '\n');
@@ -249,21 +289,17 @@ void http_serve(struct http_ctx *restrict ctx, struct http_header *restrict hdr)
 		return;
 	}
 	if (strcmp(hdr->field2, "/stats") == 0) {
+		LOGV("http: serve /stats");
 		http_serve_stats(ctx);
 		return;
 	}
 	if (strcmp(hdr->field2, "/healthy") == 0) {
-		char date_str[32];
-		const size_t date_len = http_date(date_str, sizeof(date_str));
-		ctx->wlen = snprintf(
-			(char *)ctx->wbuf, ctx->wcap,
-			"HTTP/1.0 %" PRIu16 " %s\r\n"
-			"Date: %*s\r\n"
-			"Connection: close\r\n"
-			"Content-type: text/plain\r\n\r\n"
-			"%s",
-			HTTP_OK, http_status(HTTP_OK), (int)date_len, date_str,
-			"OK");
+		LOGV("http: serve /healthy");
+		struct strbuilder sb = http_resp_txt(HTTP_OK);
+		strbuilder_append(&sb, "OK");
+		ctx->wlen = sb.len;
+		ctx->wcap = sb.cap;
+		ctx->wbuf = (unsigned char *)sb.buf;
 		http_ctx_write(ctx);
 		return;
 	}

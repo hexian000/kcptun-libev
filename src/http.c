@@ -1,6 +1,7 @@
 #include "http.h"
 #include "util.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -56,28 +57,26 @@ static char *skip_whitespace(char *s)
 	return s;
 }
 
-size_t http_parse(
-	char *buf, struct http_header *restrict hdr, http_header_cb cb,
-	void *user)
+char *http_parse(char *buf, struct http_header *restrict hdr)
 {
-	char *line = strchr(buf, '\n');
-	if (line == NULL || line[-1] != '\r') {
-		return 0;
+	char *next = strstr(buf, "\r\n");
+	if (next == NULL) {
+		return buf;
 	}
-	line[-1] = line[0] = '\0';
-	line++;
+	next[0] = next[1] = '\0';
+	next += 2; /* skip crlf */
 
 	char *field1 = buf;
 
 	char *field2 = strchr(field1, ' ');
 	if (field2 == NULL) {
-		return 0;
+		return NULL;
 	}
 	field2++;
 
 	char *field3 = strchr(field2, ' ');
 	if (field3 == NULL) {
-		return 0;
+		return NULL;
 	}
 	field3++;
 
@@ -88,32 +87,32 @@ size_t http_parse(
 		.field2 = field2,
 		.field3 = field3,
 	};
+	return next;
+}
 
-	for (;;) {
-		if (line[0] == '\r' && line[1] == '\n') {
-			line[0] = line[1] = '\0';
-			line += 2;
-			break;
-		}
-		char *key = line;
-		line = strchr(line, '\n');
-		if (line == NULL || line[-1] != '\r') {
-			return 0;
-		}
-		line[-1] = line[0] = '\0';
-		line++;
-
-		char *value = strchr(key, ':');
-		if (value == NULL) {
-			return 0;
-		}
-		value[0] = '\0';
-		value = skip_whitespace(value + 1);
-		if (cb != NULL) {
-			cb(hdr, key, value, user);
-		}
+char *http_parsehdr(char *buf, char **key, char **value)
+{
+	char *next = strstr(buf, "\r\n");
+	if (next == NULL) {
+		return buf;
 	}
-	return line - buf;
+	next[0] = next[1] = '\0';
+	next += 2; /* skip crlf */
+
+	if (buf + 2 == next) {
+		/* EOF */
+		*key = *value = NULL;
+		return next;
+	}
+
+	char *v = strchr(buf, ':');
+	if (v == NULL) {
+		return NULL;
+	}
+	*v = '\0';
+	v = skip_whitespace(v + 1);
+	*key = buf, *value = v;
+	return next;
 }
 
 size_t http_date(char *buf, const size_t buf_size)

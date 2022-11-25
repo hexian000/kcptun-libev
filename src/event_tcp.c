@@ -126,7 +126,7 @@ static bool tcp_recv(struct session *restrict ss)
 			       "tcp recv error on fd %d: [%d] %s",
 			       ss->conv, ss->tcp_fd, err, strerror(err));
 			session_stop(ss);
-			kcp_reset(ss);
+			kcp_close(ss);
 			return false;
 		}
 		if (nread == 0) {

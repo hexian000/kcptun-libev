@@ -71,6 +71,8 @@ struct obfs_ctx {
 	int fd;
 	unsigned char rbuf[OBFS_MAX_REQUEST];
 	size_t rlen, rcap;
+	struct http_header http_hdr;
+	char *http_nxt;
 	unsigned char wbuf[OBFS_MAX_REQUEST];
 	size_t wlen, wcap;
 	uint32_t cap_flow;
@@ -535,6 +537,7 @@ struct obfs *obfs_new(struct server *restrict s)
 			.cap_fd = -1,
 			.raw_fd = -1,
 			.fd = -1,
+			.last_stats_time = ev_now(s->loop),
 		};
 		if (obfs->contexts == NULL) {
 			LOGOOM();
@@ -553,13 +556,8 @@ bool obfs_resolve(struct obfs *obfs)
 
 void obfs_sample(struct obfs *restrict obfs)
 {
-	const ev_tstamp now = ev_now(obfs->loop);
-	if (obfs->last_stats_time != TSTAMP_NIL &&
-	    now - obfs->last_stats_time < 10.0) {
-		return;
-	}
 	obfs->last_stats = obfs->stats;
-	obfs->last_stats_time = now;
+	obfs->last_stats_time = ev_now(obfs->loop);
 }
 
 struct obfs_stats_ctx {
@@ -593,9 +591,6 @@ static bool print_ctx_iter(
 
 void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 {
-	if (obfs->last_stats_time == TSTAMP_NIL) {
-		return;
-	}
 	const ev_tstamp now = ev_now(obfs->loop);
 	struct obfs_stats *restrict stats = &obfs->stats;
 	struct obfs_stats *restrict last_stats = &obfs->last_stats;
@@ -1241,30 +1236,62 @@ void obfs_server_read_cb(
 	}
 	ctx->rlen += nbrecv;
 	cap -= nbrecv;
-	const size_t peek = http_peek((char *)ctx->rbuf, ctx->rlen);
-	if (peek == 0) {
-		if (cap == 0) {
-			LOGE("obfs: request too large");
+
+	ctx->rbuf[ctx->rlen] = '\0';
+	char *next = ctx->http_nxt;
+	if (next == NULL) {
+		ctx->http_nxt = next = (char *)ctx->rbuf;
+	}
+	struct http_header *restrict hdr = &ctx->http_hdr;
+	if (hdr->field1 == NULL) {
+		next = http_parse(next, hdr);
+		if (next == NULL) {
+			LOGD("obfs: invalid request");
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
+			return;
+		} else if (next == ctx->http_nxt) {
+			if (cap == 0) {
+				LOGD("obfs: request too large");
+				obfs_ctx_del(obfs, ctx);
+				obfs_ctx_free(loop, ctx);
+				return;
+			}
+			return;
 		}
-		return;
+		if (strncmp(hdr->field3, "HTTP/1.", 7) != 0) {
+			LOGD_F("obfs: unsupported protocol %s", hdr->field3);
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+			return;
+		}
 	}
-	struct http_header hdr;
-	const size_t parse = http_parse((char *)ctx->rbuf, &hdr, NULL, NULL);
-	if (parse == 0 || strncmp(hdr.field3, "HTTP/1.", 7) != 0) {
-		LOGE("obfs: failed parsing request");
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
-		return;
+	ctx->http_nxt = next;
+	char *key, *value;
+	for (;;) {
+		next = http_parsehdr(ctx->http_nxt, &key, &value);
+		if (next == NULL) {
+			LOGD("obfs: invalid header");
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+			return;
+		} else if (next == ctx->http_nxt) {
+			return;
+		}
+		ctx->http_nxt = next;
+		if (key == NULL) {
+			break;
+		}
+		LOGV_F("http: header %s: %s", key, value);
 	}
-	if (strcasecmp(hdr.field1, "GET") != 0) {
+
+	if (strcasecmp(hdr->field1, "GET") != 0) {
 		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_IMPLEMENTED);
 		return;
 	}
-	if (strcmp(hdr.field2, "/generate_204") != 0) {
+	if (strcmp(hdr->field2, "/generate_204") != 0) {
 		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);
