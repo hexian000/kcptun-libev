@@ -9,7 +9,7 @@
 
 #include <string.h>
 
-static void *json_alloc(size_t n, int zero, void *user_data)
+static void *jsonutil_malloc(size_t n, int zero, void *user_data)
 {
 	(void)user_data;
 	void *p = util_malloc(n);
@@ -19,7 +19,7 @@ static void *json_alloc(size_t n, int zero, void *user_data)
 	return p;
 }
 
-static void json_free(void *p, void *user_data)
+static void jsonutil_free(void *p, void *user_data)
 {
 	(void)user_data;
 	util_free(p);
@@ -28,8 +28,8 @@ static void json_free(void *p, void *user_data)
 json_value *parse_json(const json_char *json, size_t length)
 {
 	json_settings settings = {
-		.mem_alloc = &json_alloc,
-		.mem_free = &json_free,
+		.mem_alloc = &jsonutil_malloc,
+		.mem_free = &jsonutil_free,
 		.user_data = NULL,
 	};
 	char error_msg[json_error_max];
