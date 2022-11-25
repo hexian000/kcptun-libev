@@ -1,7 +1,6 @@
 #include "http.h"
 #include "util.h"
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,7 +16,7 @@ static const struct {
 	{ HTTP_OK, "OK", "" },
 	{ HTTP_MOVED_TEMPORARILY, "Found", "" },
 	{ HTTP_REQUEST_TIMEOUT, "Request Timeout",
-	  "No request appeared within 60 seconds" },
+	  "No request appeared within timeout" },
 	{ HTTP_NOT_IMPLEMENTED, "Not Implemented",
 	  "The requested method is not recognized" },
 	{ HTTP_NOT_FOUND, "Not Found", "The requested URL was not found" },

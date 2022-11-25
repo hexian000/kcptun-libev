@@ -46,7 +46,7 @@ void kcp_reset(struct session *ss)
 	}
 	ss0_reset(ss->server, &ss->raddr.sa, ss->conv);
 	ss->last_send = now;
-	LOGD_F("session [%08" PRIX32 "] send: reset", ss->conv);
+	LOGD_F("session [%08" PRIX32 "] kcp: send reset", ss->conv);
 }
 
 static bool kcp_send(
@@ -56,7 +56,7 @@ static bool kcp_send(
 	if (r < 0) {
 		return false;
 	}
-	LOGV_F("session [%08" PRIX32 "] kcp send: %zu bytes", ss->conv, len);
+	LOGV_F("session [%08" PRIX32 "] kcp: send %zu bytes", ss->conv, len);
 	ss->last_send = ev_now(ss->server->loop);
 	return true;
 }
@@ -104,7 +104,7 @@ void kcp_close(struct session *restrict ss)
 	if (ss->kcp_flush >= 1) {
 		kcp_flush(ss);
 	}
-	LOGD_F("session [%08" PRIX32 "] send: eof", ss->conv);
+	LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
 	ss->kcp_state = STATE_LINGER;
 }
 
@@ -131,8 +131,8 @@ void kcp_recv(struct session *restrict ss)
 	}
 	if (nrecv > 0) {
 		ss->wbuf_len += nrecv;
-		LOGV_F("session [%08" PRIX32 "] kcp recv: "
-		       "%zu bytes, cap: %zu bytes",
+		LOGV_F("session [%08" PRIX32 "] kcp: "
+		       "recv %zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
 	}
 }

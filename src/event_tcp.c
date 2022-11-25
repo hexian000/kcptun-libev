@@ -10,6 +10,7 @@
 
 #include <ev.h>
 
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <assert.h>
@@ -49,9 +50,8 @@ static void accept_one(
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(client_sa, addr_str, sizeof(addr_str));
-		LOGI_F("session [%08" PRIX32 "] open: "
-		       "tcp accepted from %s",
-		       conv, addr_str);
+		LOGI_F("session [%08" PRIX32 "] tcp: accepted %s", conv,
+		       addr_str);
 	}
 	session_start(ss, fd);
 }
@@ -147,10 +147,12 @@ static bool tcp_recv(struct session *restrict ss)
 	}
 
 	if (tcp_eof) {
-		LOGI_F("session [%08" PRIX32 "] close: tcp closed by peer",
-		       ss->conv);
-		// Stop and free session if client socket is closing
-		session_stop(ss);
+		LOGD_F("session [%08" PRIX32 "] tcp: eof", ss->conv);
+		if (shutdown(ss->tcp_fd, SHUT_RD) != 0) {
+			LOGW_PERROR("shutdown");
+		}
+		ss->tcp_state = STATE_LINGER;
+		tcp_flush(ss);
 		kcp_close(ss);
 		return false;
 	}
@@ -209,7 +211,7 @@ static bool tcp_send(struct session *restrict ss)
 	ss->wbuf_flush += nsend;
 	ss->stats.tcp_tx += nsend;
 	ss->server->stats.tcp_tx += nsend;
-	LOGV_F("session [%08" PRIX32 "] tcp send: %zd/%zu bytes", ss->conv,
+	LOGV_F("session [%08" PRIX32 "] tcp: send %zd/%zu bytes", ss->conv,
 	       nsend, len);
 	return true;
 }
@@ -249,7 +251,7 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		ss->tcp_state = STATE_CONNECTED;
 		struct ev_io *restrict w_read = &ss->w_read;
 		ev_io_start(loop, w_read);
-		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->conv);
+		LOGD_F("session [%08" PRIX32 "] tcp: established", ss->conv);
 	}
 
 	tcp_flush(ss);

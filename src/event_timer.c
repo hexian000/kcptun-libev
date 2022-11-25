@@ -7,12 +7,10 @@
 #include "pktqueue.h"
 #include "serialize.h"
 #include "nonce.h"
-#include "obfs.h"
 
 #include "kcp/ikcp.h"
 #include <ev.h>
 
-#include <assert.h>
 #include <inttypes.h>
 #include <math.h>
 
@@ -35,8 +33,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 		if (not_seen > s->dial_timeout) {
-			LOGW_F("session [%08" PRIX32 "] close: "
-			       "kcp connect timeout",
+			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
 			       ss->conv);
 			session_stop(ss);
 			kcp_reset(ss);
@@ -45,21 +42,21 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		break;
 	case STATE_CONNECTED:
 		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] close: timeout",
+			LOGW_F("session [%08" PRIX32 "] timeout: keepalive",
 			       ss->conv);
 			session_stop(ss);
 			kcp_close(ss);
 			break;
 		}
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
-			LOGD_F("session [%08" PRIX32 "] send: keepalive",
+			LOGD_F("session [%08" PRIX32 "] kcp: send keepalive",
 			       ss->conv);
 			kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		break;
 	case STATE_LINGER:
 		if (not_seen > s->linger) {
-			LOGD_F("session [%08" PRIX32 "] linger timeout",
+			LOGD_F("session [%08" PRIX32 "] timeout: linger",
 			       ss->conv);
 			session_kcp_stop(ss);
 		}

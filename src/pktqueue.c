@@ -143,7 +143,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	const bool is_accept = !table_find(s->sessions, &sskey, (void **)&ss);
 	if (is_accept) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
-			LOGW_F("session [%08" PRIX32 "] not found", conv);
+			LOGW_F("session %08" PRIX32 " not found", conv);
 			ss0_reset(s, sa, conv);
 			return;
 		}
@@ -158,8 +158,8 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGD_F("session [%08" PRIX32 "] accepted from: %s",
-			       conv, addr_str);
+			LOGD_F("session [%08" PRIX32 "] kcp: accepted %s", conv,
+			       addr_str);
 		}
 		ss->kcp_state = STATE_CONNECT;
 	}
@@ -168,7 +168,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		format_sa(&ss->raddr.sa, oaddr_str, sizeof(oaddr_str));
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGW_F("session [%08" PRIX32 "] conv conflict: "
+		LOGW_F("session [%08" PRIX32 "] conflict: "
 		       "existing %s, refusing %s",
 		       conv, oaddr_str, addr_str);
 		ss0_reset(s, sa, conv);
@@ -321,7 +321,7 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 	}
 	q->noncegen = noncegen_create(
 		q->crypto->noncegen_method, q->crypto->nonce_size,
-		!!(conf->mode & MODE_SERVER));
+		(conf->mode & MODE_SERVER) != 0);
 	if (q->noncegen == NULL) {
 		aead_free(q->crypto);
 		return false;

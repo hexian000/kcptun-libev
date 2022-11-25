@@ -96,7 +96,7 @@ void session_free(struct session *restrict ss)
 
 void session_start(struct session *restrict ss, const int fd)
 {
-	LOGD_F("session [%08" PRIX32 "] start, fd: %d", ss->conv, fd);
+	LOGD_F("session [%08" PRIX32 "] tcp: start, fd=%d", ss->conv, fd);
 	ss->tcp_fd = fd;
 	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
@@ -122,7 +122,8 @@ void session_stop(struct session *restrict ss)
 	if (ss->tcp_fd == -1) {
 		return;
 	}
-	LOGD_F("session [%08" PRIX32 "] stop, fd: %d", ss->conv, ss->tcp_fd);
+	LOGD_F("session [%08" PRIX32 "] tcp: stop, fd=%d", ss->conv,
+	       ss->tcp_fd);
 	struct ev_loop *restrict loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_stop(loop, w_read);
@@ -190,15 +191,11 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	}
 
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
-		const struct sockaddr *remote_sa =
-			(const struct sockaddr *)&ss->raddr;
-		char raddr_str[64];
-		format_sa(remote_sa, raddr_str, sizeof(raddr_str));
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("session [%08" PRIX32 "] open: "
-		       "from %s to tcp %s",
-		       ss->conv, raddr_str, addr_str);
+		LOGI_F("session [%08" PRIX32 "] tcp: "
+		       "connect %s",
+		       ss->conv, addr_str);
 	}
 	session_start(ss, fd);
 	return true;
@@ -244,12 +241,14 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
-		LOGI_F("session [%08" PRIX32 "] close: kcp closed by peer",
-		       ss->conv);
+		LOGI_F("session [%08" PRIX32 "] kcp: closed by peer", ss->conv);
 		if (ss->tcp_fd != -1) {
 			struct ev_io *restrict w_read = &ss->w_read;
 			if (ev_is_active(w_read)) {
 				ev_io_stop(ss->server->loop, w_read);
+			}
+			if (shutdown(ss->tcp_fd, SHUT_RD) != 0) {
+				LOGW_PERROR("shutdown");
 			}
 		}
 		ss->kcp_state = STATE_LINGER;
@@ -265,7 +264,8 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		return true;
 	}
 	}
-	LOGE_F("session [%08" PRIX32 "] error: %04" PRIX16 ", %04" PRIX16,
+	LOGE_F("session [%08" PRIX32 "] msg: error "
+	       "msg=%04" PRIX16 ", len=%04" PRIX16,
 	       ss->conv, hdr->msg, hdr->len);
 	session_stop(ss);
 	kcp_reset(ss);
@@ -461,7 +461,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	if (ss->kcp_state == STATE_TIME_WAIT) {
 		return;
 	}
-	LOGI_F("session [%08" PRIX32 "] close: session reset by peer", conv);
+	LOGI_F("session [%08" PRIX32 "] kcp: reset by peer", conv);
 	session_stop(ss);
 	session_kcp_stop(ss);
 }

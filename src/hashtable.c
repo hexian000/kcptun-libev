@@ -4,9 +4,11 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 
-#ifndef NDEBUG
+#if HASHTABLE_LOG
 #include <stdio.h>
 #include <inttypes.h>
 #endif
@@ -52,15 +54,14 @@ struct hashtable {
 #endif
 };
 
-static inline bool
-key_equals(const hashkey_t *restrict a, const hashkey_t *restrict b)
+static inline bool key_equals(const hashkey_t *a, const hashkey_t *b)
 {
-	for (int i = 0; i < (int)ARRAY_SIZE(a->b); i++) {
-		if (a->b[i] != b->b[i]) {
-			return false;
-		}
-	}
-	return true;
+	return memcmp(a, b, sizeof(hashkey_t)) == 0;
+}
+
+static inline void key_set(hashkey_t *dst, const hashkey_t *src)
+{
+	memcpy(dst, src, sizeof(hashkey_t));
 }
 
 static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
@@ -96,7 +97,7 @@ static inline void table_compact(struct hashtable *restrict table)
 		if (r > w) {
 			struct hash_item *restrict q = &(table->p[w]);
 			q->hash = p->hash;
-			q->key = p->key;
+			key_set(&q->key, &p->key);
 			q->value = p->value;
 			p->hash = -1;
 		}
@@ -137,7 +138,7 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 	if (m == NULL) {
 		return;
 	}
-#ifndef NDEBUG
+#if HASHTABLE_LOG
 	if (table->p != NULL && table->p != m) {
 		fprintf(stderr, " * realloc moved memory from %p to %p\n",
 			(void *)table->p, (void *)m);
@@ -165,6 +166,17 @@ static inline void table_grow(struct hashtable *restrict table)
 	}
 }
 
+static inline void table_reseed(struct hashtable *restrict table)
+{
+	table->seed = rand32();
+#if HASHTABLE_LOG
+	fprintf(stderr, "table reseed: size=%d new_seed=%" PRIX32 "\n",
+		table->size, table->seed);
+#endif
+	table_compact(table);
+	table_rehash(table);
+}
+
 bool table_set(
 	struct hashtable *restrict table, const hashkey_t *key, void *value)
 {
@@ -179,6 +191,9 @@ bool table_set(
 #ifndef NDEBUG
 			table->version++;
 #endif
+			if (collision > COLLISION_THRESHOLD) {
+				table_reseed(table);
+			}
 			return true;
 		}
 		collision++;
@@ -204,7 +219,7 @@ bool table_set(
 	}
 
 	struct hash_item *restrict p = &(table->p[index]);
-	p->key = *key;
+	key_set(&p->key, key);
 	p->value = value;
 	p->hash = hash;
 	int *old_bucket = &(table->p[bucket].bucket);
@@ -215,13 +230,7 @@ bool table_set(
 #endif
 
 	if (collision > COLLISION_THRESHOLD) {
-		table->seed = rand32();
-#ifndef NDEBUG
-		fprintf(stderr, "table reseed: size=%d new_seed=%" PRIX32 "\n",
-			table->size, table->seed);
-#endif
-		table_compact(table);
-		table_rehash(table);
+		table_reseed(table);
 	}
 	return true;
 }
@@ -288,7 +297,7 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 	if (table->capacity == new_capacity) {
 		return;
 	}
-#ifndef NDEBUG
+#if HASHTABLE_LOG
 	fprintf(stderr, "table resize: size=%d capacity=%d new_capacity=%d\n",
 		table->size, table->capacity, new_capacity);
 #endif
@@ -328,7 +337,7 @@ int table_size(struct hashtable *restrict table)
 }
 
 void table_filter(
-	struct hashtable *restrict table, table_iterate_cb f, void *context)
+	struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
 #ifndef NDEBUG
 	const unsigned int version = table->version;
@@ -339,7 +348,7 @@ void table_filter(
 		for (int i = *last_next; i >= 0; i = *last_next) {
 			assert(version == table->version);
 			struct hash_item *restrict p = &(table->p[i]);
-			const bool ok = f(table, &p->key, p->value, context);
+			const bool ok = f(table, &p->key, p->value, data);
 			if (ok) {
 				last_next = &(p->next);
 				continue;
@@ -355,7 +364,7 @@ void table_filter(
 }
 
 void table_iterate(
-	struct hashtable *restrict table, table_iterate_cb f, void *context)
+	struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
 #ifndef NDEBUG
 	const unsigned int version = table->version;
@@ -367,7 +376,7 @@ void table_iterate(
 		if (p->hash < 0) {
 			continue;
 		}
-		if (!f(table, &p->key, p->value, context)) {
+		if (!f(table, &p->key, p->value, data)) {
 			return;
 		}
 	}

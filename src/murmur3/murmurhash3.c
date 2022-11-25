@@ -9,7 +9,6 @@
 
 #include "murmurhash3.h"
 #include "../serialize.h"
-#include <stdint.h>
 
 static inline uint32_t rotl32(uint32_t x, int8_t r)
 {
@@ -21,34 +20,33 @@ static inline uint32_t rotl32(uint32_t x, int8_t r)
 
 static inline uint32_t fmix32(uint32_t h)
 {
-	h ^= h >> 16;
-	h *= 0x85ebca6b;
-	h ^= h >> 13;
-	h *= 0xc2b2ae35;
-	h ^= h >> 16;
-
+	h ^= h >> 16u;
+	h *= UINT32_C(0x85ebca6b);
+	h ^= h >> 13u;
+	h *= UINT32_C(0xc2b2ae35);
+	h ^= h >> 16u;
 	return h;
 }
 
 //-----------------------------------------------------------------------------
 
-uint32_t murmurhash3(const void *key, int len, uint32_t seed)
+uint32_t murmurhash3(const void *key, size_t len, uint32_t seed)
 {
 	const uint8_t *data = (const uint8_t *)key;
-	const int nblocks = len / 4;
+	const size_t nblocks = len / sizeof(uint32_t);
 
 	uint32_t h1 = seed;
 
-	const uint32_t c1 = 0xcc9e2d51;
-	const uint32_t c2 = 0x1b873593;
+	const uint32_t c1 = UINT32_C(0xcc9e2d51);
+	const uint32_t c2 = UINT32_C(0x1b873593);
 
 	//----------
 	// body
 
-	const uint8_t *blocks = data + nblocks * 4;
+	const uint8_t *blocks = data + nblocks * sizeof(uint32_t);
 
-	for (int i = -nblocks; i; i++) {
-		uint32_t k1 = read_uint32(blocks + (i * 4));
+	for (size_t i = -nblocks; i; i++) {
+		uint32_t k1 = read_uint32(blocks + (i * sizeof(uint32_t)));
 
 		k1 *= c1;
 		k1 = rotl32(k1, 15);
@@ -56,13 +54,13 @@ uint32_t murmurhash3(const void *key, int len, uint32_t seed)
 
 		h1 ^= k1;
 		h1 = rotl32(h1, 13);
-		h1 = h1 * 5 + 0xe6546b64;
+		h1 = h1 * UINT32_C(5) + UINT32_C(0xe6546b64);
 	}
 
 	//----------
 	// tail
 
-	const uint8_t *tail = (const uint8_t *)(data + nblocks * 4);
+	const uint8_t *tail = blocks;
 
 	uint32_t k1 = 0;
 
@@ -77,7 +75,7 @@ uint32_t murmurhash3(const void *key, int len, uint32_t seed)
 		k1 = rotl32(k1, 15);
 		k1 *= c2;
 		h1 ^= k1;
-	};
+	}
 
 	//----------
 	// finalization

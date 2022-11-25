@@ -5,15 +5,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifndef HASHKEY_LEN
+#define HASHKEY_LEN 32
+#endif
+
 typedef struct {
-	uint32_t b[8];
+	unsigned char raw[HASHKEY_LEN];
 } hashkey_t;
 
 struct hashtable;
 
 typedef bool (*table_iterate_cb)(
-	struct hashtable *restrict table, const hashkey_t *key, void *value,
-	void *context);
+	struct hashtable *table, const hashkey_t *key, void *value, void *data);
 
 /**
  * @brief Create a new hash table.
@@ -25,7 +28,7 @@ struct hashtable *table_create(void);
  * @brief Free all memory used by a table.
  * @param table Pointer to the table.
  */
-void table_free(struct hashtable *restrict table);
+void table_free(struct hashtable *table);
 
 /**
  * @brief Explicitly reallocate memory for the table.
@@ -34,7 +37,7 @@ void table_free(struct hashtable *restrict table);
  * @param table Pointer to the table.
  * @param new_capacity Expected new table capacity.
  */
-void table_reserve(struct hashtable *restrict table, int new_capacity);
+void table_reserve(struct hashtable *table, int new_capacity);
 
 /**
  * @brief Insert or assign to an item in the table.
@@ -43,8 +46,7 @@ void table_reserve(struct hashtable *restrict table, int new_capacity);
  * @param value The new value.
  * @return false only if table size will exceed INT_MAX
  */
-bool table_set(
-	struct hashtable *restrict table, const hashkey_t *key, void *value);
+bool table_set(struct hashtable *table, const hashkey_t *key, void *value);
 
 /**
  * @brief Find an item by key.
@@ -54,8 +56,7 @@ bool table_set(
  * about the value. If the key can't be found, the value is unchanged.
  * @return true if the key can be found.
  */
-bool table_find(
-	struct hashtable *restrict table, const hashkey_t *key, void **value);
+bool table_find(struct hashtable *table, const hashkey_t *key, void **value);
 
 /**
  * @brief Delete an item by key.
@@ -65,32 +66,29 @@ bool table_find(
  * about the value. If the key can't be found, the value is unchanged.
  * @return true if the key can be found.
  */
-bool table_del(
-	struct hashtable *restrict table, const hashkey_t *key, void **value);
+bool table_del(struct hashtable *table, const hashkey_t *key, void **value);
 
 /**
  * @brief Delete items while iterating over the table.
  * @param table Pointer to the table.
  * @param f Callback function, return false to delete.
- * @param context Directly passed to f
+ * @param data Directly passed to f
  */
-void table_filter(
-	struct hashtable *restrict table, table_iterate_cb f, void *context);
+void table_filter(struct hashtable *table, table_iterate_cb f, void *data);
 
 /**
  * @brief Iterate over a table.
  * @param table Pointer to the table.
  * @param f Callback function, return true to continue.
- * @param context Directly passed to f
+ * @param data Directly passed to f
  */
-void table_iterate(
-	struct hashtable *restrict table, table_iterate_cb f, void *context);
+void table_iterate(struct hashtable *table, table_iterate_cb f, void *data);
 
 /**
  * @brief Get the item count in a table.
  * @param table Pointer to the table.
  * @return Number of items in the table.
  */
-int table_size(struct hashtable *restrict table);
+int table_size(struct hashtable *table);
 
 #endif /* HASHTABLE_H */

@@ -1,12 +1,10 @@
 #include "event.h"
 #include "event_impl.h"
-#include "session.h"
 #include "slog.h"
 #include "util.h"
 #include "strbuilder.h"
 #include "server.h"
 #include "pktqueue.h"
-#include "serialize.h"
 #include "nonce.h"
 #include "http.h"
 #include "obfs.h"
@@ -16,8 +14,6 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
-#include <assert.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -245,7 +241,7 @@ static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
 	http_ctx_write(ctx);
 }
 
-static struct strbuilder http_resp_txt(uint16_t code)
+static struct strbuilder http_resp_txt(const uint16_t code)
 {
 	struct strbuilder sb = { 0 };
 	char date_str[32];
