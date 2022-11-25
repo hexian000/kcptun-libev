@@ -39,7 +39,7 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 
 void kcp_reset(struct session *ss)
 {
-	ss->state = STATE_TIME_WAIT;
+	session_set_wait(ss);
 	const ev_tstamp now = ev_now(ss->server->loop);
 	if (ss->last_reset != TSTAMP_NIL && now - ss->last_reset < 1.0) {
 		return;

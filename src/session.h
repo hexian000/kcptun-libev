@@ -87,9 +87,10 @@ struct session {
 	bool is_accepted;
 	bool need_flush;
 	size_t pkt_arrived;
+	unsigned char *rbuf;
 	size_t rbuf_len;
+	unsigned char *wbuf;
 	size_t wbuf_flush, wbuf_next, wbuf_len;
-	unsigned char rbuf[SESSION_BUF_SIZE], wbuf[SESSION_BUF_SIZE];
 };
 
 struct session *
@@ -100,6 +101,7 @@ void session_start(struct session *ss, int fd);
 void session_stop(struct session *ss);
 void session_push(struct session *ss);
 void session_recv(struct session *ss);
+void session_set_wait(struct session *ss);
 
 void session_close_all(struct hashtable *t);
 

@@ -71,7 +71,13 @@ struct session *session_new(
 		.last_send = now,
 		.last_recv = now,
 		.last_reset = TSTAMP_NIL,
+		.rbuf = util_malloc(SESSION_BUF_SIZE),
+		.wbuf = util_malloc(SESSION_BUF_SIZE),
 	};
+	if (ss->rbuf == NULL || ss->wbuf == NULL) {
+		session_free(ss);
+		return NULL;
+	}
 	ss->kcp = kcp_new(ss, s->conf, conv);
 	if (ss->kcp == NULL) {
 		session_free(ss);
@@ -89,6 +95,8 @@ void session_free(struct session *restrict ss)
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
+	UTIL_SAFE_FREE(ss->rbuf);
+	UTIL_SAFE_FREE(ss->wbuf);
 	util_free(ss);
 }
 
@@ -129,6 +137,18 @@ void session_stop(struct session *restrict ss)
 		LOGW_PERROR("close");
 	}
 	ss->tcp_fd = -1;
+}
+
+void session_set_wait(struct session *ss)
+{
+	session_stop(ss);
+	if (ss->kcp != NULL) {
+		ikcp_release(ss->kcp);
+		ss->kcp = NULL;
+	}
+	UTIL_SAFE_FREE(ss->rbuf);
+	UTIL_SAFE_FREE(ss->wbuf);
+	ss->state = STATE_TIME_WAIT;
 }
 
 static void consume_wbuf(struct session *restrict ss, const size_t len)
@@ -251,7 +271,6 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 	       ss->conv, hdr->msg, hdr->len);
 	session_stop(ss);
 	kcp_reset(ss);
-	ss->state = STATE_TIME_WAIT;
 	return false;
 }
 
@@ -446,8 +465,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	LOGI_F("session [%08" PRIX32 "] close: session reset by peer", conv);
-	session_stop(ss);
-	ss->state = STATE_TIME_WAIT;
+	session_set_wait(ss);
 }
 
 void session0(struct server *restrict s, struct msgframe *restrict msg)

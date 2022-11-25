@@ -59,7 +59,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		if (not_seen > s->linger) {
 			LOGD_F("session [%08" PRIX32 "] linger timed out",
 			       ss->conv);
-			ss->state = STATE_TIME_WAIT;
+			session_set_wait(ss);
 		}
 		return true;
 	case STATE_TIME_WAIT:
