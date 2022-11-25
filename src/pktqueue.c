@@ -161,6 +161,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 			LOGD_F("session [%08" PRIX32 "] accepted from: %s",
 			       conv, addr_str);
 		}
+		ss->kcp_state = STATE_CONNECT;
 	}
 	if (!sa_equals(sa, &ss->raddr.sa)) {
 		char oaddr_str[64];
@@ -173,14 +174,18 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		ss0_reset(s, sa, conv);
 		return;
 	}
-	if (ss->state == STATE_TIME_WAIT) {
-		const ev_tstamp now = ev_now(s->loop);
-		if (ss->last_reset == TSTAMP_NIL ||
-		    now - ss->last_reset > 1.0) {
+	const ev_tstamp now = ev_now(s->loop);
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
+		ss->kcp_state = STATE_CONNECTED;
+		break;
+	case STATE_TIME_WAIT: {
+		if (ss->last_send == TSTAMP_NIL || now - ss->last_send > 1.0) {
 			ss0_reset(s, sa, conv);
-			ss->last_reset = now;
+			ss->last_send = now;
 		}
 		return;
+	}
 	}
 
 	int r = ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
@@ -188,6 +193,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
+	ss->last_recv = now;
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
 	if (is_accept) {

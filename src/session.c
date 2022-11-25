@@ -22,9 +22,8 @@
 #include <string.h>
 
 const char session_state_char[STATE_MAX] = {
-	[STATE_HALFOPEN] = '>',	 [STATE_CONNECT] = '>',
-	[STATE_CONNECTED] = '-', [STATE_LINGER] = '.',
-	[STATE_TIME_WAIT] = 'x',
+	[STATE_CLOSED] = ' ', [STATE_CONNECT] = '>',   [STATE_CONNECTED] = '-',
+	[STATE_LINGER] = '.', [STATE_TIME_WAIT] = 'x',
 };
 
 static ikcpcb *
@@ -63,14 +62,14 @@ struct session *session_new(
 	const ev_tstamp now = ev_now(s->loop);
 	*ss = (struct session){
 		.created = now,
-		.state = STATE_HALFOPEN,
+		.tcp_state = STATE_CLOSED,
+		.kcp_state = STATE_CLOSED,
 		.server = s,
 		.tcp_fd = -1,
 		.conv = conv,
 		.kcp_flush = s->conf->kcp_flush,
-		.last_send = now,
-		.last_recv = now,
-		.last_reset = TSTAMP_NIL,
+		.last_send = TSTAMP_NIL,
+		.last_recv = TSTAMP_NIL,
 		.rbuf = util_malloc(SESSION_BUF_SIZE),
 		.wbuf = util_malloc(SESSION_BUF_SIZE),
 	};
@@ -91,12 +90,7 @@ struct session *session_new(
 void session_free(struct session *restrict ss)
 {
 	session_stop(ss);
-	if (ss->kcp != NULL) {
-		ikcp_release(ss->kcp);
-		ss->kcp = NULL;
-	}
-	UTIL_SAFE_FREE(ss->rbuf);
-	UTIL_SAFE_FREE(ss->wbuf);
+	session_kcp_stop(ss);
 	util_free(ss);
 }
 
@@ -109,7 +103,7 @@ void session_start(struct session *restrict ss, const int fd)
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_init(w_read, read_cb, fd, EV_READ);
 	w_read->data = ss;
-	if (ss->state == STATE_CONNECTED) {
+	if (ss->tcp_state == STATE_CONNECTED) {
 		ev_io_start(loop, w_read);
 	}
 	struct ev_io *restrict w_write = &ss->w_write;
@@ -124,11 +118,12 @@ void session_start(struct session *restrict ss, const int fd)
 
 void session_stop(struct session *restrict ss)
 {
+	ss->tcp_state = STATE_TIME_WAIT;
 	if (ss->tcp_fd == -1) {
 		return;
 	}
 	LOGD_F("session [%08" PRIX32 "] stop, fd: %d", ss->conv, ss->tcp_fd);
-	struct ev_loop *loop = ss->server->loop;
+	struct ev_loop *restrict loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_stop(loop, w_read);
 	struct ev_io *restrict w_write = &ss->w_write;
@@ -139,16 +134,15 @@ void session_stop(struct session *restrict ss)
 	ss->tcp_fd = -1;
 }
 
-void session_set_wait(struct session *ss)
+void session_kcp_stop(struct session *restrict ss)
 {
-	session_stop(ss);
+	ss->kcp_state = STATE_TIME_WAIT;
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
 	UTIL_SAFE_FREE(ss->rbuf);
 	UTIL_SAFE_FREE(ss->wbuf);
-	ss->state = STATE_TIME_WAIT;
 }
 
 static void consume_wbuf(struct session *restrict ss, const size_t len)
@@ -190,9 +184,9 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 			LOGE_PERROR("connect");
 			return false;
 		}
-		ss->state = STATE_CONNECT;
+		ss->tcp_state = STATE_CONNECT;
 	} else {
-		ss->state = STATE_CONNECTED;
+		ss->tcp_state = STATE_CONNECTED;
 	}
 
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
@@ -219,7 +213,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 			break;
 		}
 		LOGD_F("session [%08" PRIX32 "] msg: dial", ss->conv);
-		if (ss->tcp_fd != -1 || ss->state != STATE_HALFOPEN) {
+		if (ss->tcp_state != STATE_CLOSED) {
 			break;
 		}
 		struct sockaddr *sa = ss->server->conf->connect.sa;
@@ -252,11 +246,15 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		}
 		LOGI_F("session [%08" PRIX32 "] close: kcp closed by peer",
 		       ss->conv);
-		struct ev_io *restrict w_read = &ss->w_read;
-		if (ss->tcp_fd != -1 && ev_is_active(w_read)) {
-			ev_io_stop(ss->server->loop, w_read);
+		if (ss->tcp_fd != -1) {
+			struct ev_io *restrict w_read = &ss->w_read;
+			if (ev_is_active(w_read)) {
+				ev_io_stop(ss->server->loop, w_read);
+			}
 		}
-		ss->state = STATE_LINGER;
+		ss->kcp_state = STATE_LINGER;
+		ss->tcp_state = STATE_LINGER;
+		tcp_flush(ss);
 		return true;
 	}
 	case SMSG_KEEPALIVE: {
@@ -276,8 +274,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 
 static bool session_parse(struct session *restrict ss)
 {
-	switch (ss->state) {
-	case STATE_HALFOPEN:
+	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 	case STATE_CONNECTED:
 		break;
@@ -461,11 +458,12 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	if (!table_find(s->sessions, &key, (void **)&ss)) {
 		return;
 	}
-	if (ss->state == STATE_TIME_WAIT) {
+	if (ss->kcp_state == STATE_TIME_WAIT) {
 		return;
 	}
 	LOGI_F("session [%08" PRIX32 "] close: session reset by peer", conv);
-	session_set_wait(ss);
+	session_stop(ss);
+	session_kcp_stop(ss);
 }
 
 void session0(struct server *restrict s, struct msgframe *restrict msg)

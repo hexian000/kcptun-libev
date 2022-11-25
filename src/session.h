@@ -50,7 +50,7 @@ enum session_messages {
 };
 
 enum session_state {
-	STATE_HALFOPEN,
+	STATE_CLOSED,
 	STATE_CONNECT,
 	STATE_CONNECTED,
 	STATE_LINGER,
@@ -73,14 +73,13 @@ struct IKCPCB;
 
 struct session {
 	ev_tstamp created;
-	int state;
+	ev_tstamp last_send, last_recv;
+	int tcp_state, kcp_state;
 	int tcp_fd;
 	struct ev_io w_read, w_write;
 	struct server *server;
 	sockaddr_max_t raddr;
 	uint32_t conv;
-	double last_send, last_recv;
-	double last_reset;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
 	int kcp_flush;
@@ -101,7 +100,7 @@ void session_start(struct session *ss, int fd);
 void session_stop(struct session *ss);
 void session_push(struct session *ss);
 void session_recv(struct session *ss);
-void session_set_wait(struct session *ss);
+void session_kcp_stop(struct session *ss);
 
 void session_close_all(struct hashtable *t);
 

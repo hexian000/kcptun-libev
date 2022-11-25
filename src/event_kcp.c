@@ -39,13 +39,13 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 
 void kcp_reset(struct session *ss)
 {
-	session_set_wait(ss);
+	session_kcp_stop(ss);
 	const ev_tstamp now = ev_now(ss->server->loop);
-	if (ss->last_reset != TSTAMP_NIL && now - ss->last_reset < 1.0) {
+	if (ss->last_send != TSTAMP_NIL && now - ss->last_send < 1.0) {
 		return;
 	}
 	ss0_reset(ss->server, &ss->raddr.sa, ss->conv);
-	ss->last_reset = now;
+	ss->last_send = now;
 	LOGD_F("session [%08" PRIX32 "] send: reset", ss->conv);
 }
 
@@ -90,8 +90,7 @@ bool kcp_push(struct session *restrict ss)
 
 void kcp_close(struct session *restrict ss)
 {
-	switch (ss->state) {
-	case STATE_HALFOPEN:
+	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 	case STATE_CONNECTED:
 		break;
@@ -106,25 +105,17 @@ void kcp_close(struct session *restrict ss)
 		kcp_flush(ss);
 	}
 	LOGD_F("session [%08" PRIX32 "] send: eof", ss->conv);
-	ss->last_reset = ss->last_send;
-	ss->state = STATE_LINGER;
+	ss->kcp_state = STATE_LINGER;
 }
 
 void kcp_recv(struct session *restrict ss)
 {
-	switch (ss->state) {
-	case STATE_HALFOPEN:
+	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 	case STATE_CONNECTED:
 		break;
-	default: {
-		const int r =
-			ikcp_recv(ss->kcp, (char *)ss->wbuf, SESSION_BUF_SIZE);
-		if (r > 0) {
-			kcp_reset(ss);
-		}
+	default:
 		return;
-	}
 	}
 	unsigned char *start = ss->wbuf + ss->wbuf_len;
 	size_t cap = SESSION_BUF_SIZE - ss->wbuf_len;
@@ -143,14 +134,12 @@ void kcp_recv(struct session *restrict ss)
 		LOGV_F("session [%08" PRIX32 "] kcp recv: "
 		       "%zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
-		ss->last_recv = ev_now(ss->server->loop);
 	}
 }
 
 void kcp_update(struct session *restrict ss)
 {
-	switch (ss->state) {
-	case STATE_HALFOPEN:
+	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 	case STATE_CONNECTED:
 	case STATE_LINGER:
@@ -168,7 +157,7 @@ void kcp_update(struct session *restrict ss)
 		ikcp_update(ss->kcp, now_ms);
 	}
 	session_recv(ss);
-	if (ss->state != STATE_LINGER && ss->tcp_fd != -1) {
+	if (ss->kcp_state == STATE_CONNECTED && ss->tcp_fd != -1) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		const int waitsnd = ikcp_waitsnd(ss->kcp);
 		const int window_size = (int)ss->kcp->snd_wnd;

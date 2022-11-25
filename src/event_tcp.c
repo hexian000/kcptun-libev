@@ -41,10 +41,11 @@ static void accept_one(
 		session_free(ss);
 		return;
 	}
+	ss->kcp_state = STATE_CONNECT;
+	ss->tcp_state = STATE_CONNECTED;
 	hashkey_t key;
 	conv_make_key(&key, sa, conv);
 	table_set(s->sessions, &key, ss);
-	ss->state = STATE_CONNECTED;
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(client_sa, addr_str, sizeof(addr_str));
@@ -161,11 +162,11 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct session *restrict ss = (struct session *)watcher->data;
-	assert(watcher->fd == ss->tcp_fd);
 	assert(watcher == &ss->w_read);
+	assert(watcher->fd == ss->tcp_fd);
 
-	if (ss->state == STATE_LINGER) {
-		if (ss->tcp_fd != -1 && ev_is_active(watcher)) {
+	if (ss->tcp_state == STATE_LINGER) {
+		if (ev_is_active(watcher)) {
 			ev_io_stop(loop, watcher);
 		}
 		return;
@@ -218,12 +219,12 @@ void tcp_flush(struct session *restrict ss)
 	if (ss->tcp_fd == -1) {
 		return;
 	}
-	if (ss->state != STATE_CONNECTED && ss->state != STATE_LINGER) {
+	if (ss->tcp_state != STATE_CONNECTED && ss->tcp_state != STATE_LINGER) {
 		return;
 	}
 	(void)tcp_send(ss);
 	if (ss->wbuf_next == ss->wbuf_flush) {
-		if (ss->state == STATE_LINGER) {
+		if (ss->tcp_state == STATE_LINGER) {
 			session_stop(ss);
 		}
 		return;
@@ -241,19 +242,25 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct session *restrict ss = (struct session *)watcher->data;
-	assert(watcher->fd == ss->tcp_fd);
 	assert(watcher == &ss->w_write);
+	assert(watcher->fd == ss->tcp_fd);
 
-	if (ss->state == STATE_CONNECT) {
-		ss->state = STATE_CONNECTED;
+	if (ss->tcp_state == STATE_CONNECT) {
+		ss->tcp_state = STATE_CONNECTED;
 		struct ev_io *restrict w_read = &ss->w_read;
 		ev_io_start(loop, w_read);
 		LOGD_F("session [%08" PRIX32 "] tcp connected", ss->conv);
 	}
 
 	tcp_flush(ss);
+	if (ss->tcp_state != STATE_CONNECTED) {
+		return;
+	}
 	if (ss->wbuf_next == ss->wbuf_flush) {
 		session_recv(ss);
+	}
+	if (ss->tcp_state != STATE_CONNECTED) {
+		return;
 	}
 
 	/* no more data */

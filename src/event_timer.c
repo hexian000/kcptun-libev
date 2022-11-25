@@ -24,30 +24,32 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
 	struct session *restrict ss = value;
-	assert(ss->state < STATE_MAX);
-	const double last_seen =
-		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
+	ev_tstamp last_seen = ss->created;
+	if (ss->last_send != TSTAMP_NIL && ss->last_send > last_seen) {
+		last_seen = ss->last_send;
+	}
+	if (ss->last_recv != TSTAMP_NIL && ss->last_recv > last_seen) {
+		last_seen = ss->last_recv;
+	}
 	const double not_seen = now - last_seen;
-	switch (ss->state) {
-	case STATE_HALFOPEN:
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
 		if (not_seen > s->dial_timeout) {
 			LOGW_F("session [%08" PRIX32 "] close: "
-			       "kcp dial timed out",
+			       "kcp connect timeout",
 			       ss->conv);
 			session_stop(ss);
 			kcp_reset(ss);
-			return true;
+			break;
 		}
 		break;
-	case STATE_CONNECT:
 	case STATE_CONNECTED:
 		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] close: "
-			       "timed out in state %d",
-			       ss->conv, ss->state);
+			LOGW_F("session [%08" PRIX32 "] close: timeout",
+			       ss->conv);
 			session_stop(ss);
 			kcp_close(ss);
-			return true;
+			break;
 		}
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
 			LOGD_F("session [%08" PRIX32 "] send: keepalive",
@@ -57,22 +59,17 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		break;
 	case STATE_LINGER:
 		if (not_seen > s->linger) {
-			LOGD_F("session [%08" PRIX32 "] linger timed out",
+			LOGD_F("session [%08" PRIX32 "] linger timeout",
 			       ss->conv);
-			session_set_wait(ss);
+			session_kcp_stop(ss);
 		}
-		return true;
+		break;
 	case STATE_TIME_WAIT:
 		if (not_seen > s->time_wait) {
 			session_free(ss);
 			return false;
 		}
-		return true;
-	default:
-		LOGW_F("unexpected session state: %d (bug?)", ss->state);
-		assert(0);
-		session_free(ss);
-		return false;
+		break;
 	}
 	return true;
 }

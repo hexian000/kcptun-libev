@@ -404,22 +404,29 @@ static bool print_session_iter(
 	UNUSED(key);
 	struct session *restrict ss = value;
 	struct server_stats_ctx *restrict ctx = user;
-	ctx->num_in_state[ss->state]++;
-	if (ss->state == STATE_TIME_WAIT) {
+	const int state = ss->kcp_state;
+	ctx->num_in_state[state]++;
+	if (state == STATE_TIME_WAIT) {
 		return true;
 	}
 	char addr_str[64];
 	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
-	const double last_seen =
-		ss->last_send > ss->last_recv ? ss->last_send : ss->last_recv;
-	const double not_seen = ctx->now - last_seen;
+	ev_tstamp last_seen = ss->created;
+	if (ss->last_send != TSTAMP_NIL && ss->last_send > last_seen) {
+		last_seen = ss->last_send;
+	}
+	if (ss->last_recv != TSTAMP_NIL && ss->last_recv > last_seen) {
+		last_seen = ss->last_recv;
+	}
+	const double not_seen =
+		last_seen != TSTAMP_NIL ? ctx->now - last_seen : TSTAMP_NIL;
 	(void)strbuilder_appendf(
 		ctx->sb, 4096,
 		"    [%08" PRIX32 "] "
 		"%c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
 		"rx/tx=%zu/%zu\n",
-		ss->conv, session_state_char[ss->state], addr_str, not_seen,
+		ss->conv, session_state_char[state], addr_str, not_seen,
 		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
 		ss->stats.tcp_tx, ss->stats.tcp_rx);
 	return true;
@@ -441,9 +448,7 @@ print_session_table(struct server *restrict s, struct strbuilder *sb)
 	strbuilder_appendf(
 		sb, 4096,
 		"    ^ %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n",
-		n_sessions,
-		ctx.num_in_state[STATE_HALFOPEN] +
-			ctx.num_in_state[STATE_CONNECT],
+		n_sessions, ctx.num_in_state[STATE_CONNECT],
 		ctx.num_in_state[STATE_CONNECTED],
 		ctx.num_in_state[STATE_LINGER],
 		ctx.num_in_state[STATE_TIME_WAIT]);
