@@ -131,7 +131,8 @@ void session_stop(struct session *restrict ss)
 	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_stop(loop, w_write);
 	if (close(ss->tcp_fd) != 0) {
-		LOGE_F("close: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("close: %s", strerror(err));
 	}
 	ss->tcp_fd = -1;
 }
@@ -164,13 +165,16 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	// Create socket
 	if (fd < 0) {
-		LOGE_F("socket: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("socket: %s", strerror(err));
 		return false;
 	}
 	if (socket_setup(fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {
-			LOGE_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("close: %s", strerror(err));
 		}
 		return false;
 	}
@@ -182,8 +186,9 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 
 	// Connect to address
 	if (connect(fd, sa, getsocklen(sa)) != 0) {
-		if (errno != EINPROGRESS) {
-			LOGE_F("connect: %s", strerror(errno));
+		const int err = errno;
+		if (err != EINPROGRESS) {
+			LOGE_F("connect: %s", strerror(err));
 			return false;
 		}
 		ss->tcp_state = STATE_CONNECT;

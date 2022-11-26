@@ -30,7 +30,8 @@ static void accept_one(
 	if (ss == NULL) {
 		LOGOOM();
 		if (close(fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		return;
 	}
@@ -39,7 +40,8 @@ static void accept_one(
 	if (!kcp_sendmsg(ss, SMSG_DIAL)) {
 		LOGOOM();
 		if (close(fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		session_free(ss);
 		return;
@@ -71,16 +73,18 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		// Accept client request
 		client_fd = accept(watcher->fd, &m_sa.sa, &sa_len);
 		if (client_fd < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EINTR || errno == ENOMEM) {
+			const int err = errno;
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_F("accept: %s", strerror(errno));
+			LOGE_F("accept: %s", strerror(err));
 			return;
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
 			if (close(client_fd) != 0) {
-				LOGW_F("close: %s", strerror(errno));
+				const int err = errno;
+				LOGW_F("close: %s", strerror(err));
 			}
 			LOG_RATELIMITED(
 				LOG_LEVEL_ERROR, loop, 1.0,
@@ -88,9 +92,11 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			return;
 		}
 		if (socket_setup(client_fd)) {
-			LOGE_F("fcntl: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("fcntl: %s", strerror(err));
 			if (close(client_fd) != 0) {
-				LOGW_F("close: %s", strerror(errno));
+				const int err = errno;
+				LOGW_F("close: %s", strerror(err));
 			}
 			return;
 		}

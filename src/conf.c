@@ -18,18 +18,20 @@ static json_value *conf_parse(const char *filename)
 {
 	FILE *f = fopen(filename, "r");
 	if (f == NULL) {
-		LOGE_F("unable to open config file: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("unable to open config file: %s", strerror(err));
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_END)) {
-		LOGE_F("unable to seek config file: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("unable to seek config file: %s", strerror(err));
 		fclose(f);
 		return NULL;
 	}
 	const long len = ftell(f);
 	if (len < 0) {
-		LOGE_F("unable to tell config file length: %s",
-		       strerror(errno));
+		const int err = errno;
+		LOGE_F("unable to tell config file length: %s", strerror(err));
 		fclose(f);
 		return NULL;
 	}
@@ -39,7 +41,8 @@ static json_value *conf_parse(const char *filename)
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_SET)) {
-		LOGE_F("unable to seek config file: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("unable to seek config file: %s", strerror(err));
 		fclose(f);
 		return NULL;
 	}

@@ -27,13 +27,15 @@ int socket_setup(int fd)
 void socket_set_reuseport(const int fd, const bool reuseport)
 {
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int))) {
-		LOGW_F("SO_REUSEADDR: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_REUSEADDR: %s", strerror(err));
 	}
 #ifdef SO_REUSEPORT
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_REUSEPORT, &(int){ reuseport ? 1 : 0 },
 		    sizeof(int))) {
-		LOGW_F("SO_REUSEPORT: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_REUSEPORT: %s", strerror(err));
 	}
 #else
 	UNUSED(fd);
@@ -48,12 +50,14 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 	if (setsockopt(
 		    fd, IPPROTO_TCP, TCP_NODELAY, &(int){ nodelay ? 1 : 0 },
 		    sizeof(int))) {
-		LOGW_F("TCP_NODELAY: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("TCP_NODELAY: %s", strerror(err));
 	}
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_KEEPALIVE, &(int){ keepalive ? 1 : 0 },
 		    sizeof(int))) {
-		LOGW_F("SO_KEEPALIVE: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_KEEPALIVE: %s", strerror(err));
 	}
 }
 
@@ -63,14 +67,16 @@ void socket_set_buffer(int fd, size_t send, size_t recv)
 		if (setsockopt(
 			    fd, SOL_SOCKET, SO_SNDBUF, &(int){ (int)send },
 			    sizeof(int))) {
-			LOGW_F("SO_SNDBUF: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("SO_SNDBUF: %s", strerror(err));
 		}
 	}
 	if (recv > 0) {
 		if (setsockopt(
 			    fd, SOL_SOCKET, SO_RCVBUF, &(int){ (int)recv },
 			    sizeof(int))) {
-			LOGW_F("SO_RCVBUF: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("SO_RCVBUF: %s", strerror(err));
 		}
 	}
 }
@@ -180,7 +186,8 @@ resolve(const char *hostname, const char *service, const int flags)
 	}
 	struct addrinfo *result = NULL;
 	if (getaddrinfo(hostname, service, &hints, &result) != 0) {
-		LOGE_F("resolve: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("resolve: %s", strerror(err));
 		return NULL;
 	}
 	struct sockaddr *sa = NULL;

@@ -9,7 +9,8 @@
 #define CHECK_EV_ERROR(revents)                                                \
 	do {                                                                   \
 		if ((unsigned)(revents) & (unsigned)EV_ERROR) {                \
-			LOGE_F("got error event: %s", strerror(errno));        \
+			const int err = errno;                                 \
+			LOGE_F("got error event: %s", strerror(err));          \
 			return;                                                \
 		}                                                              \
 	} while (0)

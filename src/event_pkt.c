@@ -57,15 +57,16 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 
 		const int ret = recvmmsg(fd, msgs, nbatch, 0, NULL);
 		if (ret < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EINTR || errno == ENOMEM) {
+			const int err = errno;
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
+			if ((err == ECONNREFUSED) || (err == ECONNRESET)) {
 				udp_reset(s);
 				break;
 			}
-			LOGE_F("recvmmsg: %s", strerror(errno));
+			LOGE_F("recvmmsg: %s", strerror(err));
 			break;
 		} else if (ret == 0) {
 			break;
@@ -110,17 +111,18 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		}
 		const ssize_t nbrecv = recvmsg(fd, &msg->hdr, 0);
 		if (nbrecv < 0) {
+			const int err = errno;
 			msgframe_delete(q, msg);
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EINTR || errno == ENOMEM) {
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			if ((errno == ECONNREFUSED) || (errno == ECONNRESET)) {
+			if ((err == ECONNREFUSED) || (err == ECONNRESET)) {
 				LOGW("udp connection refused, closing all sessions");
 				udp_reset(s);
 				break;
 			}
-			LOGE_F("recvmsg: %s", strerror(errno));
+			LOGE_F("recvmsg: %s", strerror(err));
 			break;
 		}
 		msg->len = (size_t)nbrecv;
@@ -188,11 +190,12 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		}
 		const int ret = sendmmsg(fd, msgs, nbatch, 0);
 		if (ret < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EINTR || errno == ENOMEM) {
+			const int err = errno;
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_F("sendmmsg: %s", strerror(errno));
+			LOGE_F("sendmmsg: %s", strerror(err));
 			/* drop packets to prevent infinite error loop */
 			drop = true;
 			break;
@@ -244,11 +247,12 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		struct msgframe *msg = q->mq_send[i];
 		const ssize_t ret = sendmsg(fd, &msg->hdr, 0);
 		if (ret < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EINTR || errno == ENOMEM) {
+			const int err = errno;
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_F("sendmsg: %s", strerror(errno));
+			LOGE_F("sendmsg: %s", strerror(err));
 			/* drop packets to prevent infinite error loop */
 			drop = true;
 			break;

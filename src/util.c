@@ -107,7 +107,8 @@ bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
 {
 	struct passwd *restrict pwd = getpwnam(name);
 	if (pwd == NULL) {
-		LOGW_F("getpwnam: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("getpwnam: %s", strerror(err));
 		return false;
 	}
 	*userid = pwd->pw_uid;
@@ -125,7 +126,8 @@ void drop_privileges(const char *user)
 		return;
 	}
 	if (chdir("/") != 0) {
-		LOGW_F("chdir: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("chdir: %s", strerror(err));
 	}
 	struct passwd *restrict pwd = getpwnam(user);
 	if (pwd == NULL) {
@@ -139,15 +141,18 @@ void drop_privileges(const char *user)
 	       (intmax_t)pwd->pw_gid);
 #if _BSD_SOURCE || _GNU_SOURCE
 	if (setgroups(0, NULL) != 0) {
+		const int err = errno;
 		LOGW_F("unable to drop supplementary group privileges: %s",
-		       strerror(errno));
+		       strerror(err));
 	}
 #endif
 	if (setgid(pwd->pw_gid) != 0 || setegid(pwd->pw_gid) != 0) {
-		LOGW_F("unable to drop group privileges: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("unable to drop group privileges: %s", strerror(err));
 	}
 	if (setuid(pwd->pw_uid) != 0 || seteuid(pwd->pw_uid) != 0) {
-		LOGW_F("unable to drop user privileges: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("unable to drop user privileges: %s", strerror(err));
 	}
 }
 

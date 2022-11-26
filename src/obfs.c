@@ -121,10 +121,12 @@ static void obfs_tcp_setup(const int fd)
 	if (setsockopt(
 		    fd, SOL_SOCKET, TCP_WINDOW_CLAMP, &(int){ 32768 },
 		    sizeof(int))) {
-		LOGW_F("obfs tcp window: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("TCP_WINDOW_CLAMP: %s", strerror(err));
 	}
 	if (setsockopt(fd, SOL_SOCKET, TCP_QUICKACK, &(int){ 0 }, sizeof(int))) {
-		LOGW_F("obfs tcp quickack: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("TCP_QUICKACK: %s", strerror(err));
 	}
 }
 
@@ -184,19 +186,20 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		if (setsockopt(
 			    obfs->cap_fd, SOL_SOCKET, SO_DETACH_FILTER, NULL,
 			    0)) {
-			LOGW_F("cap bind: %s", strerror(errno));
+			LOGW_F("cap bind: %s", strerror(err));
 		}
 		const struct sock_fprog bpf =
 			filter_compile(sa->sa_family, obfs->bind_port);
 		if (setsockopt(
 			    obfs->cap_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf,
 			    sizeof(bpf))) {
-			LOGW_F("cap bind: %s", strerror(errno));
+			LOGW_F("cap bind: %s", strerror(err));
 		}
 #endif
 	} else {
 		if (bind(obfs->cap_fd, sa, getsocklen(sa))) {
-			LOGW_F("cap bind: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("cap bind: %s", strerror(err));
 		}
 	}
 	LOGD_F("obfs: cap bind to port %" PRIu16, obfs->bind_port);
@@ -221,22 +224,26 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		return false;
 	}
 	if (obfs->cap_fd < 0) {
-		LOGE_F("obfs capture: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("obfs capture: %s", strerror(err));
 		return false;
 	}
 	if (socket_setup(obfs->cap_fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("fcntl: %s", strerror(err));
 		return false;
 	}
 	socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
 
 	obfs->raw_fd = socket(domain, SOCK_RAW, IPPROTO_RAW);
 	if (obfs->raw_fd < 0) {
-		LOGE_F("obfs raw: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("obfs raw: %s", strerror(err));
 		return false;
 	}
 	if (socket_setup(obfs->raw_fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("fcntl: %s", strerror(err));
 		return false;
 	}
 	switch (domain) {
@@ -244,7 +251,8 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		if (setsockopt(
 			    obfs->raw_fd, IPPROTO_IP, IP_HDRINCL, &(int){ 1 },
 			    sizeof(int))) {
-			LOGE_F("raw setup: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("raw setup: %s", strerror(err));
 			return false;
 		}
 		break;
@@ -252,7 +260,8 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		if (setsockopt(
 			    obfs->raw_fd, IPPROTO_IPV6, IPV6_HDRINCL,
 			    &(int){ 1 }, sizeof(int))) {
-			LOGE_F("raw setup: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("raw setup: %s", strerror(err));
 			return false;
 		}
 		break;
@@ -275,7 +284,8 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		struct ev_io *restrict w_write = &ctx->w_write;
 		ev_io_stop(loop, w_write);
 		if (close(ctx->fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		ctx->fd = -1;
 	}
@@ -344,11 +354,12 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx)
 	while (len > 0) {
 		const ssize_t nsend = send(ctx->fd, buf, len, 0);
 		if (nsend < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			    errno == EINTR || errno == ENOMEM) {
+			const int err = errno;
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			LOGE_F("obfs: %s", strerror(errno));
+			LOGE_F("obfs: %s", strerror(err));
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(obfs->loop, ctx);
 			return;
@@ -414,15 +425,18 @@ static bool obfs_ctx_start(
 
 static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	int fd = -1;
-	if ((fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP)) < 0) {
-		LOGE_F("obfs tcp: %s", strerror(errno));
+	int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
+	if (fd < 0) {
+		const int err = errno;
+		LOGE_F("obfs tcp: %s", strerror(err));
 		return false;
 	}
 	if (socket_setup(fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		return false;
 	}
@@ -433,8 +447,9 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	}
 
 	if (connect(fd, sa, getsocklen(sa))) {
-		if (errno != EINPROGRESS) {
-			LOGE_F("obfs tcp connect: %s", strerror(errno));
+		const int err = errno;
+		if (err != EINPROGRESS) {
+			LOGE_F("obfs tcp connect: %s", strerror(err));
 			obfs_ctx_free(obfs->loop, ctx);
 			return false;
 		}
@@ -448,7 +463,8 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 	socklen_t len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
-		LOGE_F("obfs client name: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("obfs client name: %s", strerror(err));
 		obfs_ctx_free(obfs->loop, ctx);
 		return false;
 	}
@@ -640,21 +656,25 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 		obfs->fd = socket(domain, SOCK_STREAM, IPPROTO_TCP);
 		if (obfs->fd < 0) {
-			LOGE_F("obfs tcp: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("obfs tcp: %s", strerror(err));
 			return false;
 		}
 		if (socket_setup(obfs->fd)) {
-			LOGE_F("fcntl: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("fcntl: %s", strerror(err));
 			return false;
 		}
 		socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
 		obfs_tcp_setup(obfs->fd);
 		if (bind(obfs->fd, sa, getsocklen(sa))) {
-			LOGE_F("obfs tcp bind: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("obfs tcp bind: %s", strerror(err));
 			return false;
 		}
 		if (listen(obfs->fd, 16)) {
-			LOGE_F("obfs tcp listen: %s", strerror(errno));
+			const int err = errno;
+			LOGE_F("obfs tcp listen: %s", strerror(err));
 			return false;
 		}
 		if (LOGLEVEL(LOG_LEVEL_INFO)) {
@@ -732,7 +752,8 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		struct ev_io *restrict w_accept = &obfs->w_accept;
 		ev_io_stop(loop, w_accept);
 		if (close(obfs->fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		obfs->fd = -1;
 	}
@@ -740,7 +761,8 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		struct ev_io *restrict w_read = &pkt->w_read;
 		ev_io_stop(loop, w_read);
 		if (close(obfs->cap_fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		obfs->cap_fd = -1;
 	}
@@ -748,7 +770,8 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		struct ev_io *restrict w_write = &pkt->w_write;
 		ev_io_stop(loop, w_write);
 		if (close(obfs->raw_fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		obfs->raw_fd = -1;
 	}
@@ -1170,9 +1193,11 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	socklen_t len = sizeof(m_sa);
 	const int fd = accept(watcher->fd, &m_sa.sa, &len);
 	if (socket_setup(fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		return;
 	}
@@ -1180,16 +1205,19 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (ctx == NULL) {
 		LOGOOM();
 		if (close(fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		return;
 	}
 	memcpy(&ctx->raddr.sa, &m_sa, len);
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
-		LOGE_F("obfs accept name: %s", strerror(errno));
+		const int err = errno;
+		LOGE_F("obfs accept name: %s", strerror(err));
 		if (close(fd) != 0) {
-			LOGW_F("close: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
 		}
 		obfs_ctx_free(loop, ctx);
 		return;
@@ -1219,11 +1247,12 @@ void obfs_server_read_cb(
 	size_t cap = ctx->rcap - ctx->rlen - 1; /* for null-terminator */
 	const ssize_t nbrecv = recv(watcher->fd, buf, cap, 0);
 	if (nbrecv < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
-		    errno == ENOMEM) {
+		const int err = errno;
+		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
+		    err == ENOMEM) {
 			return;
 		}
-		LOGE_F("obfs: %s", strerror(errno));
+		LOGE_F("obfs: %s", strerror(err));
 		/* harden for SYN flood */
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
@@ -1325,11 +1354,12 @@ void obfs_client_read_cb(
 
 	const ssize_t nbrecv = recv(watcher->fd, ctx->rbuf, ctx->rcap, 0);
 	if (nbrecv < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ||
-		    errno == ENOMEM) {
+		const int err = errno;
+		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
+		    err == ENOMEM) {
 			return;
 		}
-		LOGE_F("read: %s", strerror(errno));
+		LOGE_F("read: %s", strerror(err));
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
 		return;
