@@ -4,10 +4,12 @@
 
 #include <ev.h>
 
+#include <string.h>
+
 #define CHECK_EV_ERROR(revents)                                                \
 	do {                                                                   \
 		if ((unsigned)(revents) & (unsigned)EV_ERROR) {                \
-			LOGE_PERROR("got error event");                        \
+			LOGE_F("got error event: %s", strerror(errno));        \
 			return;                                                \
 		}                                                              \
 	} while (0)

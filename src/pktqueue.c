@@ -136,6 +136,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		session0(s, msg);
 		return;
 	}
+
 	hashkey_t sskey;
 	struct sockaddr *sa = &msg->addr.sa;
 	conv_make_key(&sskey, sa, conv);
@@ -163,29 +164,34 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		ss->kcp_state = STATE_CONNECT;
 	}
+
+	const ev_tstamp now = ev_now(s->loop);
 	if (!sa_equals(sa, &ss->raddr.sa)) {
-		char oaddr_str[64];
-		format_sa(&ss->raddr.sa, oaddr_str, sizeof(oaddr_str));
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGW_F("session [%08" PRIX32 "] conflict: "
-		       "existing %s, refusing %s",
-		       conv, oaddr_str, addr_str);
-		ss0_reset(s, sa, conv);
+		if (ss->last_reset == TSTAMP_NIL ||
+		    now - ss->last_reset > 1.0) {
+			char oaddr_str[64];
+			format_sa(&ss->raddr.sa, oaddr_str, sizeof(oaddr_str));
+			char addr_str[64];
+			format_sa(sa, addr_str, sizeof(addr_str));
+			LOGW_F("session [%08" PRIX32 "] conflict: "
+			       "existing %s, refusing %s",
+			       conv, oaddr_str, addr_str);
+			ss0_reset(s, sa, conv);
+			ss->last_reset = now;
+		}
 		return;
 	}
-	const ev_tstamp now = ev_now(s->loop);
 	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 		ss->kcp_state = STATE_CONNECTED;
 		break;
-	case STATE_TIME_WAIT: {
-		if (ss->last_send == TSTAMP_NIL || now - ss->last_send > 1.0) {
+	case STATE_TIME_WAIT:
+		if (ss->last_reset == TSTAMP_NIL ||
+		    now - ss->last_reset > 1.0) {
 			ss0_reset(s, sa, conv);
-			ss->last_send = now;
+			ss->last_reset = now;
 		}
 		return;
-	}
 	}
 
 	int r = ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
@@ -193,7 +199,6 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		LOGW_F("ikcp_input: %d", r);
 		return;
 	}
-	ss->last_recv = now;
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
 	if (is_accept) {

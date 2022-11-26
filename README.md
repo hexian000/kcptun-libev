@@ -192,7 +192,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 - "kcp.nodelay": Default to 1.
 - "kcp.interval":
 	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
-	2. This option is not intended for traffic shaping. For Linux, check out [CAKE](https://www.bufferbloat.net/projects/codel/wiki/Cake/) and [sqm-scripts](https://github.com/tohojo/sqm-scripts) instead.
+	2. This option is not intended for traffic shaping. For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://www.bufferbloat.net/projects/codel/wiki/Cake/).
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
 
@@ -210,7 +210,7 @@ Again, there is some kcptun-libev specific options:
 
 ## Observability
 
-There is a builtin HTTP server.
+There is a builtin HTTP server for monitoring.
 
 In config file, add:
 

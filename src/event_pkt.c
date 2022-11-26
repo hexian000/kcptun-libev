@@ -65,7 +65,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 				udp_reset(s);
 				break;
 			}
-			LOGE_PERROR("recvmmsg");
+			LOGE_F("recvmmsg: %s", strerror(errno));
 			break;
 		} else if (ret == 0) {
 			break;
@@ -120,7 +120,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 				udp_reset(s);
 				break;
 			}
-			LOGE_PERROR("recvmsg");
+			LOGE_F("recvmsg: %s", strerror(errno));
 			break;
 		}
 		msg->len = (size_t)nbrecv;
@@ -192,7 +192,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 			    errno == EINTR || errno == ENOMEM) {
 				break;
 			}
-			LOGE_PERROR("sendmmsg");
+			LOGE_F("sendmmsg: %s", strerror(errno));
 			/* drop packets to prevent infinite error loop */
 			drop = true;
 			break;
@@ -248,7 +248,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 			    errno == EINTR || errno == ENOMEM) {
 				break;
 			}
-			LOGE_PERROR("sendmsg");
+			LOGE_F("sendmsg: %s", strerror(errno));
 			/* drop packets to prevent infinite error loop */
 			drop = true;
 			break;

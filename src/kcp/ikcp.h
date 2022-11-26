@@ -241,7 +241,7 @@ int ikcp_setmtu(ikcpcb *kcp, int mtu);
 int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd);
 
 // get how many packet is waiting to be sent
-int ikcp_waitsnd(const ikcpcb *kcp);
+uint32_t ikcp_waitsnd(const ikcpcb *kcp);
 
 // fastest: ikcp_nodelay(kcp, 1, 20, 2, 1)
 // nodelay: 0:disable(default), 1:enable

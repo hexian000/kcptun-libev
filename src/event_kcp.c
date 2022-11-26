@@ -7,6 +7,7 @@
 #include "pktqueue.h"
 
 #include "kcp/ikcp.h"
+#include <ev.h>
 
 #include <assert.h>
 #include <inttypes.h>
@@ -39,13 +40,16 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 
 void kcp_reset(struct session *ss)
 {
-	session_kcp_stop(ss);
-	const ev_tstamp now = ev_now(ss->server->loop);
-	if (ss->last_send != TSTAMP_NIL && now - ss->last_send < 1.0) {
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
 		return;
 	}
+	session_kcp_stop(ss);
 	ss0_reset(ss->server, &ss->raddr.sa, ss->conv);
-	ss->last_send = now;
+	ss->last_reset = ev_now(ss->server->loop);
 	LOGD_F("session [%08" PRIX32 "] kcp: send reset", ss->conv);
 }
 
@@ -74,9 +78,6 @@ bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg)
 
 bool kcp_push(struct session *restrict ss)
 {
-	if (ss->rbuf_len == 0) {
-		return true;
-	}
 	assert(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf_len;
 	struct tlv_header header = (struct tlv_header){
@@ -88,35 +89,8 @@ bool kcp_push(struct session *restrict ss)
 	return kcp_send(ss, ss->rbuf, len);
 }
 
-void kcp_close(struct session *restrict ss)
+bool kcp_recv(struct session *restrict ss)
 {
-	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-		break;
-	default:
-		return;
-	}
-	if (!kcp_push(ss) || !kcp_sendmsg(ss, SMSG_EOF)) {
-		kcp_reset(ss);
-		return;
-	}
-	if (ss->kcp_flush >= 1) {
-		kcp_flush(ss);
-	}
-	LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
-	ss->kcp_state = STATE_LINGER;
-}
-
-void kcp_recv(struct session *restrict ss)
-{
-	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-		break;
-	default:
-		return;
-	}
 	unsigned char *start = ss->wbuf + ss->wbuf_len;
 	size_t cap = SESSION_BUF_SIZE - ss->wbuf_len;
 	size_t nrecv = 0;
@@ -131,10 +105,12 @@ void kcp_recv(struct session *restrict ss)
 	}
 	if (nrecv > 0) {
 		ss->wbuf_len += nrecv;
+		ss->last_recv = ev_now(ss->server->loop);
 		LOGV_F("session [%08" PRIX32 "] kcp: "
 		       "recv %zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
 	}
+	return true;
 }
 
 void kcp_update(struct session *restrict ss)
@@ -156,12 +132,12 @@ void kcp_update(struct session *restrict ss)
 		const uint32_t now_ms = tstamp2ms(now);
 		ikcp_update(ss->kcp, now_ms);
 	}
-	session_recv(ss);
-	if (ss->kcp_state == STATE_CONNECTED && ss->tcp_fd != -1) {
+	session_read_cb(ss);
+	if (ss->kcp != NULL && ss->tcp_fd != -1 &&
+	    ss->tcp_state != STATE_LINGER) {
 		struct ev_io *restrict w_read = &ss->w_read;
-		const int waitsnd = ikcp_waitsnd(ss->kcp);
-		const int window_size = (int)ss->kcp->snd_wnd;
-		if (waitsnd < window_size && !ev_is_active(w_read)) {
+		if (!ev_is_active(w_read) &&
+		    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
 			ev_io_start(s->loop, w_read);
 		}
 	}

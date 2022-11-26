@@ -22,15 +22,9 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
 	struct session *restrict ss = value;
-	ev_tstamp last_seen = ss->created;
-	if (ss->last_send != TSTAMP_NIL && ss->last_send > last_seen) {
-		last_seen = ss->last_send;
-	}
-	if (ss->last_recv != TSTAMP_NIL && ss->last_recv > last_seen) {
-		last_seen = ss->last_recv;
-	}
-	const double not_seen = now - last_seen;
+	ev_tstamp not_seen = now - ss->created;
 	switch (ss->kcp_state) {
+	case STATE_INIT:
 	case STATE_CONNECT:
 		if (not_seen > s->dial_timeout) {
 			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
@@ -41,11 +35,14 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		}
 		break;
 	case STATE_CONNECTED:
+		if (ss->last_recv != TSTAMP_NIL) {
+			not_seen = now - ss->last_recv;
+		}
 		if (not_seen > s->session_timeout) {
 			LOGW_F("session [%08" PRIX32 "] timeout: keepalive",
 			       ss->conv);
 			session_stop(ss);
-			kcp_close(ss);
+			session_kcp_stop(ss);
 			break;
 		}
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
@@ -55,6 +52,9 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		}
 		break;
 	case STATE_LINGER:
+		if (ss->last_send != TSTAMP_NIL) {
+			not_seen = now - ss->last_send;
+		}
 		if (not_seen > s->linger) {
 			LOGD_F("session [%08" PRIX32 "] timeout: linger",
 			       ss->conv);
@@ -62,6 +62,9 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		}
 		break;
 	case STATE_TIME_WAIT:
+		if (ss->last_reset != TSTAMP_NIL) {
+			not_seen = now - ss->last_reset;
+		}
 		if (not_seen > s->time_wait) {
 			session_free(ss);
 			return false;
@@ -120,6 +123,5 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));
-	pkt_flush(s);
 	s->pkt.inflight_ping = ping_ts;
 }

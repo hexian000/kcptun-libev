@@ -29,12 +29,11 @@ int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 void kcp_update(struct session *ss);
 bool kcp_sendmsg(struct session *ss, uint16_t msg);
 bool kcp_push(struct session *ss);
-void kcp_recv(struct session *ss);
-void kcp_close(struct session *ss);
+bool kcp_recv(struct session *ss);
 void kcp_reset(struct session *ss);
-
-void tcp_flush(struct session *ss);
 void kcp_flush(struct session *ss);
+
+bool tcp_send(struct session *ss);
 void pkt_flush(struct server *s);
 
 void kcp_notify_update(struct server *s);

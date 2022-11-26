@@ -30,13 +30,13 @@ static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 	/* Create server socket */
 	const int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
-		LOGE_PERROR("socket error");
+		LOGE_F("socket: %s", strerror(errno));
 		return -1;
 	}
 	if (socket_setup(fd)) {
-		LOGE_PERROR("fcntl");
+		LOGE_F("fcntl: %s", strerror(errno));
 		if (close(fd) != 0) {
-			LOGW_PERROR("close");
+			LOGW_F("close: %s", strerror(errno));
 		}
 		return -1;
 	}
@@ -45,17 +45,17 @@ static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	/* Bind socket to address */
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
-		LOGE_PERROR("bind error");
+		LOGE_F("bind error: %s", strerror(errno));
 		if (close(fd) != 0) {
-			LOGW_PERROR("close");
+			LOGW_F("close: %s", strerror(errno));
 		}
 		return -1;
 	}
 	/* Start listing on the socket */
 	if (listen(fd, 16)) {
-		LOGE_PERROR("listen error");
+		LOGE_F("listen error: %s", strerror(errno));
 		if (close(fd) != 0) {
-			LOGW_PERROR("close");
+			LOGW_F("close: %s", strerror(errno));
 		}
 		return -1;
 	}
@@ -128,7 +128,7 @@ static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 	if (conf->kcp_bind.sa != NULL) {
 		const struct sockaddr *sa = conf->kcp_bind.sa;
 		if (bind(udp->fd, sa, getsocklen(sa))) {
-			LOGE_PERROR("udp bind");
+			LOGE_F("udp bind: %s", strerror(errno));
 			return false;
 		}
 		char addr_str[64];
@@ -138,7 +138,7 @@ static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 	if (conf->kcp_connect.sa != NULL) {
 		const struct sockaddr *sa = conf->kcp_connect.sa;
 		if (connect(udp->fd, sa, getsocklen(sa))) {
-			LOGE_PERROR("udp connect");
+			LOGE_F("udp connect: %s", strerror(errno));
 			return false;
 		}
 		char addr_str[64];
@@ -181,11 +181,11 @@ static bool udp_start(struct server *restrict s)
 				   conf->kcp_bind.sa->sa_family :
 				   conf->kcp_connect.sa->sa_family;
 	if ((udp->fd = socket(udp_af, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-		LOGE_PERROR("udp socket");
+		LOGE_F("udp socket: %s", strerror(errno));
 		return false;
 	}
 	if (socket_setup(udp->fd)) {
-		LOGE_PERROR("fcntl");
+		LOGE_F("fcntl: %s", strerror(errno));
 		return false;
 	}
 	socket_set_buffer(udp->fd, conf->udp_sndbuf, conf->udp_rcvbuf);
@@ -293,7 +293,7 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	struct ev_io *restrict w_write = &conn->w_write;
 	ev_io_stop(loop, w_write);
 	if (close(conn->fd) != 0) {
-		LOGW_PERROR("close");
+		LOGW_F("close: %s", strerror(errno));
 	}
 	conn->fd = -1;
 }
@@ -318,7 +318,7 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 	struct ev_io *restrict w_accept = &l->w_accept;
 	ev_io_stop(loop, w_accept);
 	if (close(l->fd) != 0) {
-		LOGW_PERROR("close");
+		LOGW_F("close: %s", strerror(errno));
 	}
 	l->fd = -1;
 }
@@ -406,7 +406,12 @@ static bool print_session_iter(
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;
-	if (state == STATE_TIME_WAIT) {
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
 		return true;
 	}
 	char addr_str[64];

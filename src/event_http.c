@@ -67,9 +67,9 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	socklen_t len = sizeof(m_sa);
 	const int fd = accept(watcher->fd, &m_sa.sa, &len);
 	if (socket_setup(fd)) {
-		LOGE_PERROR("fcntl");
+		LOGE_F("fcntl: %s", strerror(errno));
 		if (close(fd) != 0) {
-			LOGW_PERROR("close");
+			LOGE_F("close: %s", strerror(errno));
 		}
 		return;
 	}
@@ -77,7 +77,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (ctx == NULL) {
 		LOGOOM();
 		if (close(fd) != 0) {
-			LOGW_PERROR("close");
+			LOGE_F("close: %s", strerror(errno));
 		}
 		return;
 	}
@@ -121,7 +121,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		    errno == ENOMEM) {
 			return;
 		}
-		LOGE_PERROR("http");
+		LOGE_F("recv: %s", strerror(errno));
 		http_ctx_free(ctx);
 		return;
 	} else if (nrecv == 0) {
@@ -193,7 +193,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 			    errno == EINTR || errno == ENOMEM) {
 				break;
 			}
-			LOGE_PERROR("http");
+			LOGE_F("send: %s", strerror(errno));
 			http_ctx_free(ctx);
 			return;
 		}

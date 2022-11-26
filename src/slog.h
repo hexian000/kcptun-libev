@@ -88,20 +88,4 @@ extern FILE *slog_file;
 	LOG_INTERNAL(LOG_LEVEL_VERBOSE, __FILE__, __LINE__, format, __VA_ARGS__)
 #define LOGV(message) LOGV_F("%s", message)
 
-/* perror: Log last system error message. */
-#define LOG_PERROR(level, message)                                             \
-	do {                                                                   \
-		const int err = errno;                                         \
-		LOG_INTERNAL(                                                  \
-			level, __FILE__, __LINE__, "%s: [%d] %s", message,     \
-			err, strerror(err));                                   \
-	} while (0)
-
-#define LOGF_PERROR(message) LOG_PERROR(LOG_LEVEL_FATAL, message)
-#define LOGE_PERROR(message) LOG_PERROR(LOG_LEVEL_ERROR, message)
-#define LOGW_PERROR(message) LOG_PERROR(LOG_LEVEL_WARNING, message)
-#define LOGI_PERROR(message) LOG_PERROR(LOG_LEVEL_INFO, message)
-#define LOGD_PERROR(message) LOG_PERROR(LOG_LEVEL_DEBUG, message)
-#define LOGV_PERROR(message) LOG_PERROR(LOG_LEVEL_VERBOSE, message)
-
 #endif /* SLOG_H */

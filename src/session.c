@@ -22,7 +22,7 @@
 #include <string.h>
 
 const char session_state_char[STATE_MAX] = {
-	[STATE_CLOSED] = ' ', [STATE_CONNECT] = '>',   [STATE_CONNECTED] = '-',
+	[STATE_INIT] = ' ',   [STATE_CONNECT] = '>',   [STATE_CONNECTED] = '-',
 	[STATE_LINGER] = '.', [STATE_TIME_WAIT] = 'x',
 };
 
@@ -62,14 +62,15 @@ struct session *session_new(
 	const ev_tstamp now = ev_now(s->loop);
 	*ss = (struct session){
 		.created = now,
-		.tcp_state = STATE_CLOSED,
-		.kcp_state = STATE_CLOSED,
+		.tcp_state = STATE_INIT,
+		.kcp_state = STATE_INIT,
 		.server = s,
 		.tcp_fd = -1,
 		.conv = conv,
 		.kcp_flush = s->conf->kcp_flush,
 		.last_send = TSTAMP_NIL,
 		.last_recv = TSTAMP_NIL,
+		.last_reset = TSTAMP_NIL,
 		.rbuf = util_malloc(SESSION_BUF_SIZE),
 		.wbuf = util_malloc(SESSION_BUF_SIZE),
 	};
@@ -130,7 +131,7 @@ void session_stop(struct session *restrict ss)
 	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_stop(loop, w_write);
 	if (close(ss->tcp_fd) != 0) {
-		LOGW_PERROR("close");
+		LOGE_F("close: %s", strerror(errno));
 	}
 	ss->tcp_fd = -1;
 }
@@ -163,13 +164,13 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	// Create socket
 	if (fd < 0) {
-		LOGE_PERROR("socket");
+		LOGE_F("socket: %s", strerror(errno));
 		return false;
 	}
 	if (socket_setup(fd)) {
-		LOGE_PERROR("fcntl");
+		LOGE_F("fcntl: %s", strerror(errno));
 		if (close(fd) != 0) {
-			LOGW_PERROR("close");
+			LOGE_F("close: %s", strerror(errno));
 		}
 		return false;
 	}
@@ -182,7 +183,7 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	// Connect to address
 	if (connect(fd, sa, getsocklen(sa)) != 0) {
 		if (errno != EINPROGRESS) {
-			LOGE_PERROR("connect");
+			LOGE_F("connect: %s", strerror(errno));
 			return false;
 		}
 		ss->tcp_state = STATE_CONNECT;
@@ -210,7 +211,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 			break;
 		}
 		LOGD_F("session [%08" PRIX32 "] msg: dial", ss->conv);
-		if (ss->tcp_state != STATE_CLOSED) {
+		if (ss->tcp_state != STATE_INIT) {
 			break;
 		}
 		struct sockaddr *sa = ss->server->conf->connect.sa;
@@ -233,7 +234,9 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		if (navail > 0) {
 			ss->wbuf_flush = TLV_HEADER_SIZE;
 			ss->wbuf_next = TLV_HEADER_SIZE + navail;
-			tcp_flush(ss);
+			if (!tcp_send(ss)) {
+				return false;
+			}
 		}
 		return true;
 	}
@@ -241,19 +244,17 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
-		LOGI_F("session [%08" PRIX32 "] kcp: closed by peer", ss->conv);
-		if (ss->tcp_fd != -1) {
-			struct ev_io *restrict w_read = &ss->w_read;
-			if (ev_is_active(w_read)) {
-				ev_io_stop(ss->server->loop, w_read);
-			}
-			if (shutdown(ss->tcp_fd, SHUT_RD) != 0) {
-				LOGW_PERROR("shutdown");
-			}
-		}
+		LOGI_F("session [%08" PRIX32 "] kcp: "
+		       "connection closed by peer",
+		       ss->conv);
 		ss->kcp_state = STATE_LINGER;
 		ss->tcp_state = STATE_LINGER;
-		tcp_flush(ss);
+		/* pass eof */
+		if (ss->tcp_fd != -1) {
+			if (!tcp_send(ss)) {
+				return false;
+			}
+		}
 		return true;
 	}
 	case SMSG_KEEPALIVE: {
@@ -261,6 +262,11 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 			break;
 		}
 		LOGD_F("session [%08" PRIX32 "] msg: keepalive", ss->conv);
+		if (ss->is_accepted) {
+			if (!kcp_sendmsg(ss, SMSG_KEEPALIVE)) {
+				return false;
+			}
+		}
 		return true;
 	}
 	}
@@ -272,7 +278,66 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 	return false;
 }
 
-static bool session_parse(struct session *restrict ss)
+void session_read_cb(struct session *ss)
+{
+	ss->pkt_arrived = 0;
+	for (;;) {
+		switch (ss->kcp_state) {
+		case STATE_CONNECT:
+		case STATE_CONNECTED:
+			break;
+		default:
+			return;
+		}
+		if (!kcp_recv(ss)) {
+			session_stop(ss);
+			kcp_reset(ss);
+			return;
+		}
+		if (ss->wbuf_next > ss->wbuf_flush) {
+			/* tcp flushing is in progress */
+			break;
+		}
+		if (ss->wbuf_len < TLV_HEADER_SIZE) {
+			/* no header available */
+			break;
+		}
+		if (ss->wbuf_flush > 0) {
+			/* tcp flushing is done */
+			consume_wbuf(ss, ss->wbuf_flush);
+		}
+		struct tlv_header header = tlv_header_read(ss->wbuf);
+		if (header.len < TLV_HEADER_SIZE &&
+		    header.len > TLV_MAX_LENGTH) {
+			LOGE_F("unexpected message length: %" PRIu16,
+			       header.len);
+			session_stop(ss);
+			kcp_reset(ss);
+			return;
+		}
+		if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
+			/* incomplete message */
+			break;
+		}
+		if (!session_on_msg(ss, &header)) {
+			/* malformed message */
+			session_stop(ss);
+			kcp_reset(ss);
+			return;
+		}
+		if (ss->wbuf_next != ss->wbuf_flush) {
+			/* set write_cb */
+			struct ev_io *restrict w_write = &ss->w_write;
+			if (!ev_is_active(w_write)) {
+				ev_io_start(ss->server->loop, w_write);
+			}
+		} else {
+			consume_wbuf(ss, header.len);
+		}
+	}
+}
+
+bool session_send(struct session *restrict ss)
 {
 	switch (ss->kcp_state) {
 	case STATE_CONNECT:
@@ -281,69 +346,23 @@ static bool session_parse(struct session *restrict ss)
 	default:
 		return false;
 	}
-	if (ss->wbuf_next > ss->wbuf_flush) {
-		/* tcp flushing is in progress */
-		return false;
-	}
-	if (ss->wbuf_flush > 0) {
-		/* tcp flushing is done */
-		consume_wbuf(ss, ss->wbuf_flush);
-	}
-	if (ss->wbuf_len < TLV_HEADER_SIZE) {
-		/* no header available */
-		return false;
-	}
-	struct tlv_header header = tlv_header_read(ss->wbuf);
-	if (header.len < TLV_HEADER_SIZE && header.len > TLV_MAX_LENGTH) {
-		LOGE_F("unexpected message length: %" PRIu16, header.len);
-		session_stop(ss);
-		kcp_reset(ss);
-		return false;
-	}
-	if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
-		/* incomplete message */
-		return false;
-	}
-	if (!session_on_msg(ss, &header)) {
-		/* malformed message */
-		return false;
-	}
-	if (ss->wbuf_next == ss->wbuf_flush) {
-		/* nothing to flush */
-		consume_wbuf(ss, header.len);
-	}
-	return true;
-}
-
-void session_recv(struct session *ss)
-{
-	do {
-		kcp_recv(ss);
-		if (!session_parse(ss)) {
-			break;
+	if (ss->rbuf_len > 0) {
+		if (!kcp_push(ss)) {
+			return false;
 		}
-	} while (ss->wbuf_next == ss->wbuf_flush);
-	ss->pkt_arrived = 0;
-}
-
-void session_push(struct session *restrict ss)
-{
-	const int window_size = (int)ss->kcp->snd_wnd;
-	if (ikcp_waitsnd(ss->kcp) >= window_size) {
-		struct ev_io *restrict w_read = &ss->w_read;
-		if (ev_is_active(w_read)) {
-			ev_io_stop(ss->server->loop, w_read);
-		}
-		return;
 	}
-	if (!kcp_push(ss)) {
-		kcp_reset(ss);
-		session_stop(ss);
-		return;
+	/* pass eof */
+	if (ss->tcp_state == STATE_LINGER || ss->tcp_state == STATE_TIME_WAIT) {
+		if (!kcp_sendmsg(ss, SMSG_EOF)) {
+			return false;
+		}
+		LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
+		ss->kcp_state = STATE_LINGER;
 	}
 	if (ss->kcp_flush >= 1) {
 		kcp_flush(ss);
 	}
+	return true;
 }
 
 static bool
