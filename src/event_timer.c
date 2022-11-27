@@ -1,3 +1,6 @@
+/* kcptun-libev (c) 2019-2022 He Xian <hexian000@outlook.com>
+ * This code is licensed under MIT license (see LICENSE for details) */
+
 #include "event.h"
 #include "event_impl.h"
 #include "utils/serialize.h"
@@ -74,20 +77,23 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	return true;
 }
 
-static void timeout_check(struct server *restrict s)
-{
-	const size_t n_sessions = table_size(s->sessions);
-	if (n_sessions > 0) {
-		table_filter(s->sessions, timeout_filt, s);
-	}
-}
-
 void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 
 	struct server *restrict s = (struct server *)watcher->data;
-	timeout_check(s);
+
+	/* check & restart accept watchers */
+	struct ev_io *restrict w_accept = &s->listener.w_accept;
+	if (s->listener.fd != -1 && !ev_is_active(w_accept)) {
+		ev_io_start(loop, w_accept);
+	}
+
+	/* timeout check */
+	const size_t n_sessions = table_size(s->sessions);
+	if (n_sessions > 0) {
+		table_filter(s->sessions, timeout_filt, s);
+	}
 
 	/* ping */
 	if ((s->conf->mode & MODE_CLIENT) == 0) {

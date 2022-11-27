@@ -1,3 +1,6 @@
+/* kcptun-libev (c) 2019-2022 He Xian <hexian000@outlook.com>
+ * This code is licensed under MIT license (see LICENSE for details) */
+
 
 #ifndef EVENT_IMPL_H
 #define EVENT_IMPL_H

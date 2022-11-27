@@ -1,3 +1,6 @@
+/* kcptun-libev (c) 2019-2022 He Xian <hexian000@outlook.com>
+ * This code is licensed under MIT license (see LICENSE for details) */
+
 #ifndef JSONUTIL_H
 #define JSONUTIL_H
 

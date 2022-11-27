@@ -1,3 +1,6 @@
+/* csnippets (c) 2019-2022 He Xian <hexian000@outlook.com>
+ * This code is licensed under MIT license (see LICENSE for details) */
+
 #ifndef MCACHE_H
 #define MCACHE_H
 
@@ -9,7 +12,7 @@ struct mcache {
 	void **p;
 	size_t cache_size, elem_size;
 	size_t n;
-#ifdef MCACHE_STATS
+#if MCACHE_STATS
 	size_t query, hit;
 #endif
 };
@@ -36,11 +39,11 @@ static inline void mcache_free(struct mcache *restrict p)
 
 static inline void *mcache_get(struct mcache *restrict p)
 {
-#ifdef MCACHE_STATS
+#if MCACHE_STATS
 	p->query++;
 #endif
 	if (LIKELY(p->n > 0)) {
-#ifdef MCACHE_STATS
+#if MCACHE_STATS
 		p->hit++;
 #endif
 		return p->p[--p->n];

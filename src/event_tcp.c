@@ -1,3 +1,6 @@
+/* kcptun-libev (c) 2019-2022 He Xian <hexian000@outlook.com>
+ * This code is licensed under MIT license (see LICENSE for details) */
+
 #include "event.h"
 #include "event_impl.h"
 #include "utils/hashtable.h"
@@ -68,9 +71,9 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	socklen_t sa_len = sizeof(m_sa);
 	int client_fd;
 
-	while (true) {
+	for (;;) {
 		sa_len = sizeof(m_sa);
-		// Accept client request
+		/* accept client request */
 		client_fd = accept(watcher->fd, &m_sa.sa, &sa_len);
 		if (client_fd < 0) {
 			const int err = errno;
@@ -79,6 +82,8 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				break;
 			}
 			LOGE_F("accept: %s", strerror(err));
+			/* sleep until next timer, see timer_cb */
+			ev_io_stop(loop, watcher);
 			return;
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {

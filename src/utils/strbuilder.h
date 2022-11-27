@@ -1,3 +1,6 @@
+/* csnippets (c) 2019-2022 He Xian <hexian000@outlook.com>
+ * This code is licensed under MIT license (see LICENSE for details) */
+
 #ifndef STRBUILDER_H
 #define STRBUILDER_H
 
