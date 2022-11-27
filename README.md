@@ -4,14 +4,24 @@
 [![Build](https://github.com/hexian000/kcptun-libev/actions/workflows/build.yml/badge.svg)](https://github.com/hexian000/kcptun-libev/actions)
 [![Release](https://img.shields.io/github/release/hexian000/kcptun-libev.svg?style=flat)](https://github.com/hexian000/kcptun-libev/releases)
 
-A lightweight alternative implementation to kcptun
+A powerful and extremely lightweight encrypted port forwarder based on a reliable UDP protocol.
 
-[Just take me to setup guide](#runtime)
+## Index
 
-## What's this?
+- [Introduction](#introduction)
+- [Features](#features)
+- [Security](#security)
+- [Compatibility](#compatibility)
+- [Build](#build)
+- [Runtime (setup guide here)](#runtime)
+- [Tunables](#tunables)
+- [Observability](#observability)
+- [Credits](#credits)
+
+## Introduction
 
 kcptun-libev is a TCP port forwarder which converts the actual transferring protocol into a UDP based one, called [KCP](https://github.com/skywind3000/kcp).
-KCP is more configurable and usually has a much better performance in a lossy network. This project can help you to get better bandwidth in such situation.
+KCP is more configurable and usually has a much better performance in a lossy but not really congested network. This project can help you to get better bandwidth in such situation.
 
 For example, wrap your server to use KCP instead of TCP:
 ```
@@ -50,9 +60,11 @@ For your convenience, some statically-linked executables are also provided in th
 
 ## Security
 
+### Encryption
+
 kcptun-libev can optionally encrypt KCP packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed. Therefore, please note that exposing an unencrypted instance on the public networks is considered insecure.
+If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets may crash the server since authenticate tag is not added too.
 
 In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 
@@ -64,7 +76,7 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 
 kcptun-libev will not provide known practically vulnerable encryption method in latest release.
 
-## Obfuscator
+### Obfuscator
 
 Obfuscator is a tool to fool eavesdroppers. This feature is only available on Linux.
 
@@ -217,18 +229,17 @@ Again, there is some kcptun-libev specific options:
 
 There is a builtin HTTP server for monitoring.
 
-In config file, add:
+Add this line to your config file:
 
 ```json
 "http_listen": "127.0.1.1:8081"
 ```
 
-Run from shell:
+Then run the commands below from shell:
 
 ```sh
 watch curl -s http://127.0.1.1:8081/stats
 ```
-
 
 ## Credits
 
