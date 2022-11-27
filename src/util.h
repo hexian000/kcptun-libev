@@ -52,7 +52,7 @@ static inline void *must_malloc(size_t n)
 	return p;
 }
 
-extern struct mcache msgcache;
+extern struct mcache msgpool;
 
 #define UTIL_SAFE_FREE(x)                                                      \
 	do {                                                                   \

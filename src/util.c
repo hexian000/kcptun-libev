@@ -91,7 +91,7 @@ static void *ev_realloc(void *p, long n)
 	return realloc(p, n);
 }
 
-struct mcache msgcache;
+struct mcache msgpool;
 
 void init(void)
 {
@@ -100,14 +100,14 @@ void init(void)
 	if (size < sizeof(struct msgframe)) {
 		size = sizeof(struct msgframe);
 	}
-	msgcache = mcache_new(256, size);
-	CHECKOOM(msgcache.p);
-	ikcp_segment_pool = &msgcache;
+	msgpool = mcache_new(256, size);
+	CHECKOOM(msgpool.p);
+	ikcp_segment_pool = &msgpool;
 }
 
 void uninit(void)
 {
-	mcache_free(&msgcache);
+	mcache_free(&msgpool);
 }
 
 bool getuserid(const char *name, uid_t *userid, gid_t *groupid)

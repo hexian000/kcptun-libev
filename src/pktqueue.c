@@ -88,7 +88,7 @@ static bool crypto_seal_inplace(
 struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 {
 	UNUSED(q);
-	struct msgframe *restrict msg = mcache_get(&msgcache);
+	struct msgframe *restrict msg = mcache_get(&msgpool);
 	if (msg == NULL) {
 		LOGE("out of memory");
 		return NULL;
@@ -124,7 +124,7 @@ struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
 {
 	UNUSED(q);
-	mcache_put(&msgcache, msg);
+	mcache_put(&msgpool, msg);
 }
 
 static void
