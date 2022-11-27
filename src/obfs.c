@@ -633,7 +633,7 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 	const double eff_cap = (double)stats->pkt_rx / (double)stats->pkt_cap;
 	strbuilder_appendf(
 		sb, 4096,
-		"obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%",
+		"obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%\n",
 		table_size(obfs->contexts), dpkt_cap, dbyt_rx, dbyt_tx,
 		eff_cap * 100.0);
 }

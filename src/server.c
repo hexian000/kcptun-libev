@@ -506,7 +506,7 @@ void server_stats(struct server *s, struct strbuilder *sb)
 		sb, 4096,
 		"traffic stats (rx/tx, in KiB):\n"
 		"    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
-		"    total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n",
+		"      total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n",
 		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx * 100.0,
 		deff_tx * 100.0, kcp_rx, kcp_tx, tcp_rx, tcp_tx, eff_rx * 100.0,
 		eff_tx * 100.0);
