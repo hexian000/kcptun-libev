@@ -284,7 +284,7 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 			&sb, 256,
 			"msgpool: %zu hit, %zu miss, %.1lf%% hit; %zu hit, %zu miss, %.1lf%% hit in total\n",
 			hit, query - hit, (double)hit / ((double)query) * 100.0,
-			hit, msgpool.query - msgpool.hit,
+			msgpool.hit, msgpool.query - msgpool.hit,
 			(double)msgpool.hit / ((double)msgpool.query) * 100.0);
 		last_hit = msgpool.hit;
 		last_query = msgpool.query;
