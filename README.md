@@ -4,7 +4,7 @@
 [![Build](https://github.com/hexian000/kcptun-libev/actions/workflows/build.yml/badge.svg)](https://github.com/hexian000/kcptun-libev/actions)
 [![Release](https://img.shields.io/github/release/hexian000/kcptun-libev.svg?style=flat)](https://github.com/hexian000/kcptun-libev/releases)
 
-A powerful and extremely lightweight encrypted port forwarder based on a reliable UDP protocol.
+A powerful and extremely lightweight encrypted port forwarder based on reliable UDP protocol.
 
 ## Index
 
@@ -62,7 +62,13 @@ For your convenience, some statically-linked executables are also provided in th
 
 ### Encryption
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
+kcptun-libev can optionally encrypt packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://doc.libsodium.org/).
+
+In config file:
+
+```json
+"method": "// name here"
+```
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets may crash the server since authenticate tag is not added too.
 
@@ -76,9 +82,15 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 
 kcptun-libev will not provide known practically vulnerable encryption method in latest release.
 
-### Obfuscator
+### Obfuscation
 
-Obfuscator is a tool to fool eavesdroppers. This feature is only available on Linux.
+The obfuscator is a tool to fool eavesdroppers. This feature is only available on Linux.
+
+In config file:
+
+```json
+"obfs": "// name here"
+```
 
 With obfuscator enabled, kcptun-libev will directly send IP packets over raw sockets. Therefore, Linux capability [CAP_NET_RAW](https://man7.org/linux/man-pages/man7/capabilities.7.html) is required. For example, the following command may works on some Linux distributions:
 
@@ -89,6 +101,8 @@ sudo ./kcptun-libev -u nobody -c server.json
 sudo setcap cap_net_raw+ep kcptun-libev
 ./kcptun-libev -c server.json
 ```
+
+Currently only one obfuscator implemented: "dpi/tcp-wnd"
 
 ## Compatibility
 ### System
@@ -220,7 +234,6 @@ Again, there is some kcptun-libev specific options:
 	1. Normally, default value just works.
 	2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
 	3. All buffers should not be too small, otherwise you may experience performance degradation.
-- "obfs": obfuscator, disabled by default. currently only one implemented: "dpi/tcp-wnd"
 - "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
 
 *kcptun-libev works out of the box. In most cases, the default options are recommended.*
