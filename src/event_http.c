@@ -282,7 +282,7 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		const size_t query = msgpool.query - last_query;
 		strbuilder_appendf(
 			&sb, 256,
-			"msgpool: %zu/%zu, %zu hit, %zu hit, %zu miss, %.1lf%% hit; total %zu hit, %zu miss, %.1lf%% hit\n",
+			"msgpool: %zu/%zu, %zu hit, %zu miss, %.0lf%%; total %zu hit, %zu miss, %.1lf%%\n",
 			msgpool.n, msgpool.cache_size, hit, query - hit,
 			(double)hit / ((double)query) * 100.0, msgpool.hit,
 			msgpool.query - msgpool.hit,
