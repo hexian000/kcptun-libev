@@ -1368,7 +1368,11 @@ void obfs_client_read_cb(
 		obfs->client = NULL;
 		return;
 	} else if (nbrecv == 0) {
-		LOGD("obfs: eof");
+		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+			char addr_str[64];
+			format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+			LOGI_F("obfs: eof %s", addr_str);
+		}
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
 		return;
