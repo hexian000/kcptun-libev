@@ -3,8 +3,8 @@
 
 #include "json/json.h"
 
-#define b64_malloc(ptr) util_malloc(ptr)
-#define b64_realloc(ptr, size) util_realloc(ptr, size)
+#define b64_malloc(ptr) malloc(ptr)
+#define b64_realloc(ptr, size) realloc(ptr, size)
 #include "b64/b64.h"
 
 #include <string.h>
@@ -12,7 +12,7 @@
 static void *jsonutil_malloc(size_t n, int zero, void *user_data)
 {
 	(void)user_data;
-	void *p = util_malloc(n);
+	void *p = malloc(n);
 	if (p && zero) {
 		memset(p, 0, n);
 	}
@@ -22,7 +22,7 @@ static void *jsonutil_malloc(size_t n, int zero, void *user_data)
 static void jsonutil_free(void *p, void *user_data)
 {
 	(void)user_data;
-	util_free(p);
+	free(p);
 }
 
 json_value *parse_json(const json_char *json, size_t length)
@@ -106,8 +106,8 @@ unsigned char *parse_b64_json(const json_value *value, size_t *restrict outlen)
 	if (b == NULL) {
 		return NULL;
 	}
-	unsigned char *data = util_malloc(*outlen);
+	unsigned char *data = malloc(*outlen);
 	memcpy(data, b, *outlen);
-	util_free(b);
+	free(b);
 	return data;
 }

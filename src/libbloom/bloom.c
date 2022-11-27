@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 #include "bloom.h"
-#include "../murmur3/murmurhash3.h"
+#include "../utils/murmurhash3.h"
 
 #define MAKESTRING(n) STRING(n)
 #define STRING(n) #n

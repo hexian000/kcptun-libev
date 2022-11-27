@@ -11,6 +11,8 @@
 //=====================================================================
 #include "ikcp.h"
 
+#include "../utils/leakypool.h"
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +49,7 @@ const uint32_t IKCP_FASTACK_LIMIT = 5; // max times to trigger fastack
 // encode / decode
 //---------------------------------------------------------------------
 
-#include "../serialize.h"
+#include "../utils/serialize.h"
 
 /* encode 8 bits unsigned int */
 static inline char *ikcp_encode8u(char *p, uint8_t c)
@@ -122,43 +124,37 @@ static inline long _itimediff(uint32_t later, uint32_t earlier)
 //---------------------------------------------------------------------
 typedef struct IKCPSEG IKCPSEG;
 
-static void *(*ikcp_malloc_hook)(size_t) = NULL;
-static void (*ikcp_free_hook)(void *) = NULL;
-
 // internal malloc
 static void *ikcp_malloc(size_t size)
 {
-	if (ikcp_malloc_hook)
-		return ikcp_malloc_hook(size);
 	return malloc(size);
 }
 
 // internal free
 static void ikcp_free(void *ptr)
 {
-	if (ikcp_free_hook) {
-		ikcp_free_hook(ptr);
-	} else {
-		free(ptr);
-	}
+	free(ptr);
 }
 
-// redefine allocator
-void ikcp_allocator(void *(*new_malloc)(size_t), void (*new_free)(void *))
-{
-	ikcp_malloc_hook = new_malloc;
-	ikcp_free_hook = new_free;
-}
+struct leakypool *ikcp_segment_pool = NULL;
 
 // allocate a new kcp segment
 static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 {
+	struct leakypool *restrict p = ikcp_segment_pool;
+	if (p) {
+		return pool_get(p);
+	}
 	return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
 }
 
 // delete a segment
 static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
 {
+	struct leakypool *restrict p = ikcp_segment_pool;
+	if (p) {
+		return pool_put(p, seg);
+	}
 	ikcp_free(seg);
 }
 

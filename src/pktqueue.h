@@ -1,7 +1,7 @@
 #ifndef PACKET_H
 #define PACKET_H
 
-#include "leakypool.h"
+#include "utils/leakypool.h"
 #include "sockutil.h"
 
 #include <ev.h>
@@ -23,7 +23,6 @@ struct msgframe {
 };
 
 struct pktqueue {
-	struct leakypool msgpool;
 	struct msgframe **mq_send;
 	size_t mq_send_len, mq_send_cap;
 	struct msgframe **mq_recv;

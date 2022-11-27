@@ -1,7 +1,7 @@
 #ifndef OBFS_H
 #define OBFS_H
 
-#include "strbuilder.h"
+#include "utils/strbuilder.h"
 #include "pktqueue.h"
 
 #include <stdbool.h>

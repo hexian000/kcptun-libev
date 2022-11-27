@@ -4,14 +4,14 @@
 
 #if WITH_OBFS
 
+#include "utils/slog.h"
+#include "utils/hashtable.h"
+#include "utils/strbuilder.h"
+#include "net/http.h"
 #include "conf.h"
-#include "hashtable.h"
 #include "pktqueue.h"
 #include "session.h"
-#include "slog.h"
 #include "sockutil.h"
-#include "strbuilder.h"
-#include "http.h"
 #include "util.h"
 #include "server.h"
 #include "event.h"
@@ -289,12 +289,12 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		}
 		ctx->fd = -1;
 	}
-	util_free(ctx);
+	free(ctx);
 }
 
 static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 {
-	struct obfs_ctx *restrict ctx = util_malloc(sizeof(struct obfs_ctx));
+	struct obfs_ctx *restrict ctx = malloc(sizeof(struct obfs_ctx));
 	if (ctx == NULL) {
 		return NULL;
 	}
@@ -540,7 +540,7 @@ struct obfs *obfs_new(struct server *restrict s)
 	struct obfs *obfs = NULL;
 	const char *method = s->conf->obfs;
 	if (strcmp(method, "dpi/tcp-wnd") == 0) {
-		obfs = util_malloc(sizeof(struct obfs));
+		obfs = malloc(sizeof(struct obfs));
 		if (obfs == NULL) {
 			LOGOOM();
 			return NULL;
@@ -557,7 +557,7 @@ struct obfs *obfs_new(struct server *restrict s)
 		};
 		if (obfs->contexts == NULL) {
 			LOGOOM();
-			util_free(obfs);
+			free(obfs);
 			return NULL;
 		}
 	}
@@ -786,7 +786,7 @@ void obfs_free(struct obfs *obfs)
 		table_free(obfs->contexts);
 		obfs->contexts = NULL;
 	}
-	util_free(obfs);
+	free(obfs);
 }
 
 uint16_t obfs_offset(struct obfs *obfs)

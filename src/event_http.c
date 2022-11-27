@@ -1,12 +1,12 @@
 #include "event.h"
 #include "event_impl.h"
-#include "slog.h"
+#include "utils/slog.h"
+#include "utils/strbuilder.h"
+#include "net/http.h"
 #include "util.h"
-#include "strbuilder.h"
 #include "server.h"
 #include "pktqueue.h"
 #include "nonce.h"
-#include "http.h"
 #include "obfs.h"
 
 #include <ev.h>
@@ -55,7 +55,7 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 	struct ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_stop(loop, w_timeout);
 	UTIL_SAFE_FREE(ctx->wbuf);
-	util_free(ctx);
+	free(ctx);
 }
 
 void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -75,7 +75,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		return;
 	}
-	struct http_ctx *restrict ctx = util_malloc(sizeof(struct http_ctx));
+	struct http_ctx *restrict ctx = malloc(sizeof(struct http_ctx));
 	if (ctx == NULL) {
 		LOGOOM();
 		if (close(fd) != 0) {
@@ -234,7 +234,7 @@ void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents
 static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
 {
 	const size_t cap = 4096;
-	unsigned char *buf = util_malloc(cap);
+	unsigned char *buf = malloc(cap);
 	if (buf == NULL) {
 		http_ctx_free(ctx);
 		return;
@@ -275,6 +275,18 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		obfs_sample(obfs);
 	}
 #endif
+	{
+		static size_t last_hit = 0;
+		static size_t last_query = 0;
+		const size_t hit = msgpool.hit - last_hit;
+		const size_t query = msgpool.query - last_query;
+		strbuilder_appendf(
+			&sb, 256,
+			"msgpool: %zu hit, %zu miss, %.1lf%% hitrate\n", hit,
+			query - hit, (double)hit / ((double)query) * 100.0);
+		last_hit = msgpool.hit;
+		last_query = msgpool.query;
+	}
 	strbuilder_appendch(&sb, '\n');
 
 	ctx->wlen = sb.len;

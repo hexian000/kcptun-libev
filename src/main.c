@@ -1,5 +1,5 @@
+#include "utils/slog.h"
 #include "aead.h"
-#include "slog.h"
 #include "util.h"
 #include "conf.h"
 #include "server.h"
@@ -171,6 +171,7 @@ int main(int argc, char **argv)
 	LOGI_F("%s shutdown", runmode_str(conf->mode));
 	conf_free(conf);
 	LOGI("program terminated normally.");
+	uninit();
 	return EXIT_SUCCESS;
 }
 

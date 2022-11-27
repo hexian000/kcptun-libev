@@ -1,6 +1,6 @@
 #include "sockutil.h"
-#include "hashtable.h"
-#include "slog.h"
+#include "utils/slog.h"
+#include "utils/hashtable.h"
 #include "util.h"
 
 #include <fcntl.h>
@@ -123,7 +123,7 @@ bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
 struct sockaddr *clonesockaddr(const struct sockaddr *src)
 {
 	const socklen_t len = getsocklen(src);
-	struct sockaddr *dst = util_malloc(len);
+	struct sockaddr *dst = malloc(len);
 	if (dst != NULL) {
 		memcpy(dst, src, len);
 	}

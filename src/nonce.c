@@ -1,8 +1,8 @@
 #include "nonce.h"
 
 #if WITH_SODIUM
+#include "utils/serialize.h"
 #include "aead.h"
-#include "serialize.h"
 #include "util.h"
 
 #include <stddef.h>
@@ -30,7 +30,7 @@ struct noncegen *noncegen_create(
 	const enum noncegen_method method, const size_t nonce_len,
 	const bool strict)
 {
-	struct noncegen *restrict g = util_malloc(sizeof(struct noncegen));
+	struct noncegen *restrict g = malloc(sizeof(struct noncegen));
 	if (g == NULL) {
 		return NULL;
 	}
@@ -45,7 +45,7 @@ struct noncegen *noncegen_create(
 				.current = 0,
 				.entries = entries,
 			},
-		.nonce_buf = util_malloc(nonce_len),
+		.nonce_buf = malloc(nonce_len),
 		.nonce_len = nonce_len,
 	};
 	if (g->nonce_buf == NULL) {
@@ -125,7 +125,7 @@ void noncegen_free(struct noncegen *g)
 	bloom_free(&g->ppbloom.bloom[0]);
 	bloom_free(&g->ppbloom.bloom[1]);
 	UTIL_SAFE_FREE(g->nonce_buf);
-	util_free(g);
+	free(g);
 }
 
 #endif /* WITH_SODIUM */

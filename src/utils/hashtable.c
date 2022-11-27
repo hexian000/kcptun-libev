@@ -1,6 +1,7 @@
 #include "hashtable.h"
-#include "util.h"
-#include "murmur3/murmurhash3.h"
+#include "arraysize.h"
+#include "xorshift.h"
+#include "murmurhash3.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -133,8 +134,7 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 	}
 	assert(new_capacity >= table->size);
 	const size_t item_size = new_capacity * sizeof(struct hash_item);
-	struct hash_item *m =
-		(struct hash_item *)util_realloc(table->p, item_size);
+	struct hash_item *m = (struct hash_item *)realloc(table->p, item_size);
 	if (m == NULL) {
 		return;
 	}
@@ -283,9 +283,9 @@ bool table_del(
 void table_free(struct hashtable *restrict table)
 {
 	if (table->p != NULL) {
-		util_free(table->p);
+		free(table->p);
 	}
-	util_free(table);
+	free(table);
 }
 
 void table_reserve(struct hashtable *restrict table, int new_capacity)
@@ -308,7 +308,7 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 
 struct hashtable *table_create(void)
 {
-	struct hashtable *table = util_malloc(sizeof(struct hashtable));
+	struct hashtable *table = malloc(sizeof(struct hashtable));
 	if (table == NULL) {
 		return NULL;
 	}
@@ -325,7 +325,7 @@ struct hashtable *table_create(void)
 	int capacity = INITIAL_CAPACITY;
 	table_realloc(table, capacity);
 	if (table->p == NULL) {
-		util_free(table);
+		free(table);
 		return NULL;
 	}
 	return table;

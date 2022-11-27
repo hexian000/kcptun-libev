@@ -1,10 +1,10 @@
 #include "event.h"
 #include "event_impl.h"
-#include "hashtable.h"
+#include "utils/hashtable.h"
+#include "utils/slog.h"
 #include "server.h"
 #include "pktqueue.h"
 #include "session.h"
-#include "slog.h"
 #include "util.h"
 #include "sockutil.h"
 

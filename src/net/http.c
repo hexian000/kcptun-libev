@@ -1,5 +1,5 @@
 #include "http.h"
-#include "util.h"
+#include "utils/arraysize.h"
 
 #include <stddef.h>
 #include <stdint.h>

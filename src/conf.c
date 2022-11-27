@@ -1,5 +1,5 @@
 #include "conf.h"
-#include "slog.h"
+#include "utils/slog.h"
 #include "util.h"
 #include "sockutil.h"
 #include "jsonutil.h"
@@ -46,7 +46,7 @@ static json_value *conf_parse(const char *filename)
 		fclose(f);
 		return NULL;
 	}
-	char *buf = util_malloc(len + 1);
+	char *buf = malloc(len + 1);
 	if (buf == NULL) {
 		LOGF("conf_parse: out of memory");
 		fclose(f);
@@ -56,12 +56,12 @@ static json_value *conf_parse(const char *filename)
 	fclose(f);
 	if (nread != (size_t)len) {
 		LOGE("unable to read the config file");
-		util_free(buf);
+		free(buf);
 		return NULL;
 	}
 	buf[nread] = '\0'; // end of string
 	json_value *obj = parse_json(buf, nread);
-	util_free(buf);
+	free(buf);
 	if (obj == NULL) {
 		LOGF("conf_parse: json parse failed");
 		return NULL;
@@ -276,13 +276,13 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 	}
 	if (!splithostport(str, &hostname, &service)) {
 		LOGE_F("failed splitting address: \"%s\"", addr->str);
-		util_free(str);
+		free(str);
 		return false;
 	}
 	struct sockaddr *sa = resolve(hostname, service, flags);
 	if (sa == NULL) {
 		LOGE_F("failed resolving address: \"%s\"", addr->str);
-		util_free(str);
+		free(str);
 		return false;
 	}
 	UTIL_SAFE_FREE(addr->sa);
@@ -292,7 +292,7 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
 	}
-	util_free(str);
+	free(str);
 	return true;
 }
 
@@ -376,7 +376,7 @@ static bool conf_check(struct config *restrict conf)
 
 struct config *conf_read(const char *filename)
 {
-	struct config *conf = util_malloc(sizeof(struct config));
+	struct config *conf = malloc(sizeof(struct config));
 	if (conf == NULL) {
 		return NULL;
 	}
@@ -422,5 +422,5 @@ void conf_free(struct config *conf)
 #if WITH_OBFS
 	UTIL_SAFE_FREE(conf->obfs);
 #endif
-	util_free(conf);
+	free(conf);
 }

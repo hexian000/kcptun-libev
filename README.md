@@ -1,4 +1,9 @@
 # kcptun-libev
+
+[![MIT License](https://img.shields.io/github/license/hexian000/kcptun-libev)](https://github.com/hexian000/kcptun-libev/blob/master/LICENSE)
+[![Build](https://github.com/hexian000/kcptun-libev/actions/workflows/build.yml/badge.svg)](https://github.com/hexian000/kcptun-libev/actions)
+[![Release](https://img.shields.io/github/release/hexian000/kcptun-libev.svg?style=flat)](https://github.com/hexian000/kcptun-libev/releases)
+
 A lightweight alternative implementation to kcptun
 
 [Just take me to setup guide](#runtime)

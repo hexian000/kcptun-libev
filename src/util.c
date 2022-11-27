@@ -1,11 +1,15 @@
 #include "util.h"
+#include "utils/slog.h"
+#include "utils/leakypool.h"
 #include "aead.h"
-#include "slog.h"
+#include "pktqueue.h"
 
 #include "kcp/ikcp.h"
 
-#define b64_malloc(ptr) util_malloc(ptr)
-#define b64_realloc(ptr, size) util_realloc(ptr, size)
+#include <stddef.h>
+
+#define b64_malloc(ptr) malloc(ptr)
+#define b64_realloc(ptr, size) realloc(ptr, size)
 #include "b64/b64.h"
 
 #include <unistd.h>
@@ -41,7 +45,7 @@ char *util_strndup(const char *str, size_t n)
 	if (str == NULL) {
 		return NULL;
 	}
-	char *s = util_malloc(n + 1);
+	char *s = malloc(n + 1);
 	if (s == NULL) {
 		return NULL;
 	}
@@ -82,25 +86,28 @@ uint32_t tstamp2ms(const ev_tstamp t)
 	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
 }
 
-static void *kcp_malloc(size_t n)
-{
-	return util_malloc(n);
-}
-
-static void kcp_free(void *p)
-{
-	util_free(p);
-}
-
 static void *ev_realloc(void *p, long n)
 {
-	return util_realloc(p, n);
+	return realloc(p, n);
 }
+
+struct leakypool msgpool;
 
 void init(void)
 {
 	ev_set_allocator(&ev_realloc);
-	ikcp_allocator(&kcp_malloc, &kcp_free);
+	size_t size = sizeof(struct IKCPSEG) + MAX_PACKET_SIZE;
+	if (size < sizeof(struct msgframe)) {
+		size = sizeof(struct msgframe);
+	}
+	msgpool = pool_create(256, size);
+	CHECKOOM(msgpool.pool);
+	ikcp_segment_pool = &msgpool;
+}
+
+void uninit(void)
+{
+	pool_free(&msgpool);
 }
 
 bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
@@ -169,8 +176,8 @@ void genpsk(const char *method)
 	aead_keygen(crypto, key);
 	char *keystr = b64_encode(key, crypto->key_size);
 	printf("%s\n", keystr);
-	util_free(key);
-	util_free(keystr);
+	free(key);
+	free(keystr);
 	aead_free(crypto);
 }
 #endif

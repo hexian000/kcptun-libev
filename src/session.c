@@ -1,11 +1,11 @@
 #include "session.h"
+#include "utils/slog.h"
+#include "utils/hashtable.h"
 #include "aead.h"
 #include "conf.h"
 #include "event.h"
-#include "hashtable.h"
 #include "server.h"
 #include "pktqueue.h"
-#include "slog.h"
 #include "sockutil.h"
 #include "util.h"
 
@@ -55,7 +55,7 @@ struct session *session_new(
 	const uint32_t conv)
 {
 	struct session *restrict ss =
-		(struct session *)util_malloc(sizeof(struct session));
+		(struct session *)malloc(sizeof(struct session));
 	if (ss == NULL) {
 		return NULL;
 	}
@@ -71,8 +71,8 @@ struct session *session_new(
 		.last_send = TSTAMP_NIL,
 		.last_recv = TSTAMP_NIL,
 		.last_reset = TSTAMP_NIL,
-		.rbuf = util_malloc(SESSION_BUF_SIZE),
-		.wbuf = util_malloc(SESSION_BUF_SIZE),
+		.rbuf = malloc(SESSION_BUF_SIZE),
+		.wbuf = malloc(SESSION_BUF_SIZE),
 	};
 	if (ss->rbuf == NULL || ss->wbuf == NULL) {
 		session_free(ss);
@@ -92,7 +92,7 @@ void session_free(struct session *restrict ss)
 {
 	session_stop(ss);
 	session_kcp_stop(ss);
-	util_free(ss);
+	free(ss);
 }
 
 void session_start(struct session *restrict ss, const int fd)

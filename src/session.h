@@ -2,8 +2,8 @@
 #define SESSION_H
 
 #include "conf.h"
-#include "serialize.h"
-#include "hashtable.h"
+#include "utils/serialize.h"
+#include "utils/hashtable.h"
 #include "sockutil.h"
 #include "util.h"
 

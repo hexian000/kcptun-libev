@@ -1,15 +1,15 @@
 #include "pktqueue.h"
+#include "utils/slog.h"
+#include "utils/hashtable.h"
+#include "utils/leakypool.h"
 #include "conf.h"
 #include "event.h"
 #include "event_impl.h"
-#include "hashtable.h"
-#include "leakypool.h"
 #include "aead.h"
 #include "nonce.h"
 #include "obfs.h"
 #include "server.h"
 #include "session.h"
-#include "slog.h"
 #include "util.h"
 #include "sockutil.h"
 
@@ -87,9 +87,10 @@ static bool crypto_seal_inplace(
 
 struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 {
-	struct msgframe *restrict msg = pool_get(&q->msgpool);
+	UNUSED(q);
+	struct msgframe *restrict msg = pool_get(&msgpool);
 	if (msg == NULL) {
-		LOGOOM();
+		LOGE("out of memory");
 		return NULL;
 	}
 	msg->hdr = (struct msghdr){
@@ -122,8 +123,9 @@ struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 
 void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
 {
+	UNUSED(q);
 	if (msg != NULL) {
-		pool_put(&q->msgpool, msg);
+		pool_put(&msgpool, msg);
 	}
 }
 
@@ -151,7 +153,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		/* serve new kcp session */
 		ss = session_new(s, sa, conv);
 		if (ss == NULL) {
-			LOGOOM();
+			LOGE("out of memory");
 			return;
 		}
 		ss->is_accepted = true;
@@ -338,21 +340,20 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 struct pktqueue *queue_new(struct server *restrict s)
 {
 	struct config *restrict conf = s->conf;
-	struct pktqueue *q = util_malloc(sizeof(struct pktqueue));
+	struct pktqueue *q = malloc(sizeof(struct pktqueue));
 	if (q == NULL) {
 		return NULL;
 	}
 	const size_t send_cap = conf->kcp_sndwnd < 256 ? 256 : conf->kcp_sndwnd;
 	const size_t recv_cap = conf->kcp_rcvwnd < 256 ? 256 : conf->kcp_rcvwnd;
 	*q = (struct pktqueue){
-		.msgpool = pool_create(256, sizeof(struct msgframe)),
-		.mq_send = util_malloc(send_cap * sizeof(struct msgframe *)),
+		.mq_send = malloc(send_cap * sizeof(struct msgframe *)),
 		.mq_send_cap = send_cap,
-		.mq_recv = util_malloc(recv_cap * sizeof(struct msgframe *)),
+		.mq_recv = malloc(recv_cap * sizeof(struct msgframe *)),
 		.mq_recv_cap = recv_cap,
 	};
-	if (q->mq_send == NULL || q->mq_recv == NULL ||
-	    q->msgpool.pool == NULL) {
+	if (q->mq_send == NULL || q->mq_recv == NULL) {
+		LOGOOM();
 		queue_free(q);
 		return NULL;
 	}
@@ -389,17 +390,16 @@ void queue_free(struct pktqueue *restrict q)
 		for (; q->mq_send_len > 0; q->mq_send_len--) {
 			msgframe_delete(q, q->mq_send[q->mq_send_len]);
 		}
-		util_free(q->mq_send);
+		free(q->mq_send);
 		q->mq_send = NULL;
 	}
 	if (q->mq_recv != NULL) {
 		for (; q->mq_recv_len > 0; q->mq_recv_len--) {
 			msgframe_delete(q, q->mq_recv[q->mq_recv_len]);
 		}
-		util_free(q->mq_recv);
+		free(q->mq_recv);
 		q->mq_recv = NULL;
 	}
-	pool_free(&q->msgpool);
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
 		aead_free(q->crypto);
@@ -416,5 +416,5 @@ void queue_free(struct pktqueue *restrict q)
 		q->obfs = NULL;
 	}
 #endif
-	util_free(q);
+	free(q);
 }

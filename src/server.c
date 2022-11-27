@@ -1,12 +1,12 @@
 #include "server.h"
+#include "utils/slog.h"
+#include "utils/strbuilder.h"
+#include "utils/hashtable.h"
 #include "conf.h"
 #include "event.h"
-#include "hashtable.h"
 #include "pktqueue.h"
 #include "obfs.h"
 #include "session.h"
-#include "slog.h"
-#include "strbuilder.h"
 #include "util.h"
 #include "sockutil.h"
 
@@ -222,7 +222,7 @@ static bool udp_start(struct server *restrict s)
 
 struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 {
-	struct server *s = util_malloc(sizeof(struct server));
+	struct server *s = malloc(sizeof(struct server));
 	if (s == NULL) {
 		return NULL;
 	}
@@ -366,7 +366,7 @@ void server_free(struct server *restrict s)
 		table_free(s->sessions);
 		s->sessions = NULL;
 	}
-	util_free(s);
+	free(s);
 }
 
 static uint32_t conv_next(uint32_t conv)

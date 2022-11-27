@@ -253,8 +253,8 @@ int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc);
 
 void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...);
 
-// setup allocator
-void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
+// setup segment allocator
+extern struct leakypool *ikcp_segment_pool;
 
 // read conv
 uint32_t ikcp_getconv(const void *ptr);

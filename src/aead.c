@@ -1,5 +1,5 @@
 #include "aead.h"
-#include "slog.h"
+#include "utils/slog.h"
 #include "util.h"
 
 #include <assert.h>
@@ -160,14 +160,14 @@ struct aead *aead_create(const char *method)
 		aead_list_methods();
 		return NULL;
 	}
-	struct aead *aead = util_malloc(sizeof(struct aead));
+	struct aead *aead = malloc(sizeof(struct aead));
 	if (aead == NULL) {
 		return NULL;
 	}
 	*(size_t *)&aead->nonce_size = nonce_size;
 	*(size_t *)&aead->overhead = overhead;
 	*(size_t *)&aead->key_size = key_size;
-	aead->impl = util_malloc(sizeof(struct aead_impl));
+	aead->impl = malloc(sizeof(struct aead_impl));
 	if (aead->impl == NULL) {
 		aead_free(aead);
 		return NULL;
@@ -251,7 +251,7 @@ void aead_free(struct aead *restrict aead)
 {
 	aead_free_key(aead->impl, aead->key_size);
 	UTIL_SAFE_FREE(aead->impl);
-	util_free(aead);
+	free(aead);
 }
 
 #endif

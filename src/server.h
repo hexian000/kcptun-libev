@@ -2,10 +2,10 @@
 #define SERVER_H
 
 #include "conf.h"
-#include "hashtable.h"
+#include "utils/hashtable.h"
 #include "session.h"
 #include "util.h"
-#include "strbuilder.h"
+#include "utils/strbuilder.h"
 
 #include "kcp/ikcp.h"
 

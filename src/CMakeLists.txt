@@ -2,9 +2,12 @@ add_subdirectory(kcp)
 add_subdirectory(json)
 add_subdirectory(b64)
 add_subdirectory(libbloom)
-add_subdirectory(murmur3)
+add_subdirectory(net)
+add_subdirectory(utils)
 
 add_executable(kcptun-libev main.c
+    utils/arraysize.h utils/likely.h
+    utils/serialize.h utils/leakypool.h
     aead.c aead.h
     util.c util.h
     sockutil.c sockutil.h
@@ -12,14 +15,11 @@ add_executable(kcptun-libev main.c
     jsonutil.c jsonutil.h
     pktqueue.c pktqueue.h
     session.c session.h
-    http.c http.h
     server.c server.h
-    serialize.h leakypool.h
-    slog.c slog.h
-    hashtable.c hashtable.h
     nonce.c nonce.h
     obfs.c obfs.h
-    event.h event_impl.h event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c)
+    event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
+target_compile_definitions(kcptun-libev PRIVATE LEAKYPOOL_STATS=1)
 
 option(POSIX "Use POSIX API" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT POSIX)
@@ -42,7 +42,7 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
-target_link_libraries(kcptun-libev kcp json b64 bloom murmur3)
+target_link_libraries(kcptun-libev kcp json b64 bloom net utils)
 
 find_library(LIBM m)
 if(LIBM)
