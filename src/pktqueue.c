@@ -1,7 +1,7 @@
 #include "pktqueue.h"
 #include "utils/slog.h"
 #include "utils/hashtable.h"
-#include "utils/leakypool.h"
+#include "utils/mcache.h"
 #include "conf.h"
 #include "event.h"
 #include "event_impl.h"
@@ -88,7 +88,7 @@ static bool crypto_seal_inplace(
 struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 {
 	UNUSED(q);
-	struct msgframe *restrict msg = pool_get(&msgpool);
+	struct msgframe *restrict msg = mcache_get(&msgcache);
 	if (msg == NULL) {
 		LOGE("out of memory");
 		return NULL;
@@ -124,9 +124,7 @@ struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
 void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
 {
 	UNUSED(q);
-	if (msg != NULL) {
-		pool_put(&msgpool, msg);
-	}
+	mcache_put(&msgcache, msg);
 }
 
 static void

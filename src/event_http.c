@@ -278,14 +278,14 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 	{
 		static size_t last_hit = 0;
 		static size_t last_query = 0;
-		const size_t hit = msgpool.hit - last_hit;
-		const size_t query = msgpool.query - last_query;
+		const size_t hit = msgcache.hit - last_hit;
+		const size_t query = msgcache.query - last_query;
 		strbuilder_appendf(
 			&sb, 256,
-			"msgpool: %zu hit, %zu miss, %.1lf%% hitrate\n", hit,
+			"msgcache: %zu hit, %zu miss, %.1lf%% hitrate\n", hit,
 			query - hit, (double)hit / ((double)query) * 100.0);
-		last_hit = msgpool.hit;
-		last_query = msgpool.query;
+		last_hit = msgcache.hit;
+		last_query = msgcache.query;
 	}
 	strbuilder_appendch(&sb, '\n');
 

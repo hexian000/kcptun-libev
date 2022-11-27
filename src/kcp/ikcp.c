@@ -11,7 +11,7 @@
 //=====================================================================
 #include "ikcp.h"
 
-#include "../utils/leakypool.h"
+#include "../utils/mcache.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -136,14 +136,14 @@ static void ikcp_free(void *ptr)
 	free(ptr);
 }
 
-struct leakypool *ikcp_segment_pool = NULL;
+struct mcache *ikcp_segment_pool = NULL;
 
 // allocate a new kcp segment
 static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 {
-	struct leakypool *restrict p = ikcp_segment_pool;
-	if (p) {
-		return pool_get(p);
+	struct mcache *restrict c = ikcp_segment_pool;
+	if (c) {
+		return mcache_get(c);
 	}
 	return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
 }
@@ -151,9 +151,9 @@ static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 // delete a segment
 static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
 {
-	struct leakypool *restrict p = ikcp_segment_pool;
-	if (p) {
-		return pool_put(p, seg);
+	struct mcache *restrict c = ikcp_segment_pool;
+	if (c) {
+		return mcache_put(c, seg);
 	}
 	ikcp_free(seg);
 }

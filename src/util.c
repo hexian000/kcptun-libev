@@ -1,6 +1,6 @@
 #include "util.h"
 #include "utils/slog.h"
-#include "utils/leakypool.h"
+#include "utils/mcache.h"
 #include "aead.h"
 #include "pktqueue.h"
 
@@ -91,7 +91,7 @@ static void *ev_realloc(void *p, long n)
 	return realloc(p, n);
 }
 
-struct leakypool msgpool;
+struct mcache msgcache;
 
 void init(void)
 {
@@ -100,14 +100,14 @@ void init(void)
 	if (size < sizeof(struct msgframe)) {
 		size = sizeof(struct msgframe);
 	}
-	msgpool = pool_create(256, size);
-	CHECKOOM(msgpool.pool);
-	ikcp_segment_pool = &msgpool;
+	msgcache = mcache_new(256, size);
+	CHECKOOM(msgcache.p);
+	ikcp_segment_pool = &msgcache;
 }
 
 void uninit(void)
 {
-	pool_free(&msgpool);
+	mcache_free(&msgcache);
 }
 
 bool getuserid(const char *name, uid_t *userid, gid_t *groupid)

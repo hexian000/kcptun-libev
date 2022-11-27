@@ -7,7 +7,7 @@ add_subdirectory(utils)
 
 add_executable(kcptun-libev main.c
     utils/arraysize.h utils/likely.h
-    utils/serialize.h utils/leakypool.h
+    utils/serialize.h utils/mcache.h
     aead.c aead.h
     util.c util.h
     sockutil.c sockutil.h
@@ -19,7 +19,7 @@ add_executable(kcptun-libev main.c
     nonce.c nonce.h
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
-target_compile_definitions(kcptun-libev PRIVATE LEAKYPOOL_STATS=1)
+target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=1)
 
 option(POSIX "Use POSIX API" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT POSIX)
