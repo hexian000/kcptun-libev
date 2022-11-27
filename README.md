@@ -62,7 +62,7 @@ For your convenience, some statically-linked executables are also provided in th
 
 ### Encryption
 
-kcptun-libev can optionally encrypt KCP packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. It uses the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
+kcptun-libev can optionally encrypt KCP packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) method provided by [libsodium](https://doc.libsodium.org/).
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets may crash the server since authenticate tag is not added too.
 
@@ -106,15 +106,15 @@ Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
 For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implementations.
 
-kcptun-libev uses [semantic versioning](https://semver.org/).
+We use [semantic versioning](https://semver.org/).
 
 ## Build
 ### Dependencies
 
-| Name      | Kind     | Related Feature       |
-| --------- | -------- | --------------------- |
-| libev     | required |                       |
-| libsodium | optional | Connection encrypting |
+| Name      | Required | Feature    |
+| --------- | -------- | ---------- |
+| libev     | yes      |            |
+| libsodium | no       | encryption |
 
 ```sh
 # Debian & Ubuntu
