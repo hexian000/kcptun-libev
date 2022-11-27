@@ -36,11 +36,11 @@ static inline void mcache_free(struct mcache *restrict p)
 
 static inline void *mcache_get(struct mcache *restrict p)
 {
-#ifdef LEAKYPOOL_STATS
+#ifdef MCACHE_STATS
 	p->query++;
 #endif
 	if (LIKELY(p->n > 0)) {
-#ifdef LEAKYPOOL_STATS
+#ifdef MCACHE_STATS
 		p->hit++;
 #endif
 		return p->p[--p->n];
