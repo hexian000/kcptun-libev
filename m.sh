@@ -31,21 +31,11 @@ case "$1" in
     ls -lh "xbuild/src/kcptun-libev"
     ;;
 "r")
-    # release
+    # rebuild release
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -S "." -B "build"
-    cmake --build "build" --parallel
-    ls -lh "build/src/kcptun-libev"
-    ;;
-"posix")
-    rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DPOSIX=1 \
         -S "." -B "build"
     cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"
@@ -71,6 +61,17 @@ case "$1" in
         -S "." -B "build"
     cmake --build "build" --parallel
     objdump -drwS "build/src/kcptun-libev" >"build/src/kcptun-libev.S"
+    ls -lh "build/src/kcptun-libev"
+    ;;
+"posix")
+    # force POSIX APIs
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DPOSIX=1 \
+        -S "." -B "build"
+    cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"
     ;;
 "clang")

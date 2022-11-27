@@ -12,6 +12,7 @@
 #include <ev.h>
 
 #include <unistd.h>
+#include <strings.h>
 #include <sys/socket.h>
 
 #include <stddef.h>
