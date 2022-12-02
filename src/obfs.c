@@ -1257,9 +1257,11 @@ void obfs_server_read_cb(
 			return;
 		}
 		LOGE_F("obfs: %s", strerror(err));
-		/* harden for SYN flood */
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
+		obfs_ctx_stop(loop, ctx);
+		if (!ctx->established) {
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+		}
 		return;
 	} else if (nbrecv == 0) {
 		if (LOGLEVEL(LOG_LEVEL_INFO)) {
@@ -1268,7 +1270,10 @@ void obfs_server_read_cb(
 			LOGI_F("obfs: eof %s", addr_str);
 		}
 		obfs_ctx_stop(loop, ctx);
-		obfs_ctx_del(obfs, ctx);
+		if (!ctx->established) {
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+		}
 		return;
 	}
 	ctx->rlen += nbrecv;
