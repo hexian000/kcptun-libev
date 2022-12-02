@@ -86,7 +86,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			ev_io_stop(loop, watcher);
 			return;
 		}
-		if (table_size(s->sessions) >= MAX_SESSIONS) {
+		if (table_size(s->sessions) + 1 >= MAX_SESSIONS) {
 			if (close(client_fd) != 0) {
 				const int err = errno;
 				LOGW_F("close: %s", strerror(err));

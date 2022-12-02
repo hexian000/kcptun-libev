@@ -68,6 +68,8 @@ struct obfs {
 
 #define OBFS_MAX_REQUEST 256
 
+#define OBFS_MAX_CONTEXTS 4096
+
 struct obfs_ctx {
 	struct obfs *obfs;
 	struct ev_io w_read, w_write;
@@ -530,7 +532,17 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
+
+	/* check & restart accept watcher */
+	struct ev_io *restrict w_accept = &obfs->w_accept;
+	if (obfs->fd != -1 && !ev_is_active(w_accept)) {
+		ev_io_start(loop, w_accept);
+	}
+
+	/* context timeout */
 	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
+
+	/* client redial */
 	if ((obfs->conf->mode & MODE_CLIENT) && obfs->client == NULL) {
 		struct netaddr *addr = &obfs->conf->kcp_connect;
 		if (resolve_netaddr(addr, RESOLVE_TCP)) {
@@ -1188,23 +1200,10 @@ bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
 	return ok;
 }
 
-void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+static void obfs_accept_one(
+	struct obfs *restrict obfs, const int fd, struct sockaddr *sa,
+	socklen_t len)
 {
-	CHECK_EV_ERROR(revents);
-
-	struct obfs *restrict obfs = watcher->data;
-	sockaddr_max_t m_sa;
-	socklen_t len = sizeof(m_sa);
-	const int fd = accept(watcher->fd, &m_sa.sa, &len);
-	if (socket_setup(fd)) {
-		const int err = errno;
-		LOGE_F("fcntl: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
-		return;
-	}
 	struct obfs_ctx *restrict ctx = obfs_ctx_new(obfs);
 	if (ctx == NULL) {
 		LOGOOM();
@@ -1214,7 +1213,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		return;
 	}
-	memcpy(&ctx->raddr.sa, &m_sa, len);
+	memcpy(&ctx->raddr.sa, sa, len);
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		const int err = errno;
@@ -1223,7 +1222,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			const int err = errno;
 			LOGW_F("close: %s", strerror(err));
 		}
-		obfs_ctx_free(loop, ctx);
+		obfs_ctx_free(obfs->loop, ctx);
 		return;
 	}
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -1231,11 +1230,56 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	w_read->data = ctx;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
-		format_sa(&m_sa.sa, addr_str, sizeof(addr_str));
+		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("obfs: accept %s", addr_str);
 	}
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
-		obfs_ctx_free(loop, ctx);
+		obfs_ctx_free(obfs->loop, ctx);
+	}
+}
+
+void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+
+	struct obfs *restrict obfs = watcher->data;
+	sockaddr_max_t m_sa;
+	socklen_t len = sizeof(m_sa);
+
+	for (;;) {
+		const int fd = accept(watcher->fd, &m_sa.sa, &len);
+		if (fd < 0) {
+			const int err = errno;
+			if (err == EAGAIN || err == EWOULDBLOCK ||
+			    err == EINTR || err == ENOMEM) {
+				break;
+			}
+			LOGE_F("accept: %s", strerror(err));
+			/* sleep until next timer, see obfs_timer_cb */
+			ev_io_stop(loop, watcher);
+			return;
+		}
+		if (table_size(obfs->contexts) + 1 >= OBFS_MAX_CONTEXTS) {
+			LOG_RATELIMITED(
+				LOG_LEVEL_ERROR, loop, 1.0,
+				"* obfs: max context count exceeded, new connections refused");
+			if (close(fd) != 0) {
+				const int err = errno;
+				LOGW_F("close: %s", strerror(err));
+			}
+			return;
+		}
+		if (socket_setup(fd)) {
+			const int err = errno;
+			LOGE_F("fcntl: %s", strerror(err));
+			if (close(fd) != 0) {
+				const int err = errno;
+				LOGW_F("close: %s", strerror(err));
+			}
+			return;
+		}
+
+		obfs_accept_one(obfs, fd, &m_sa.sa, len);
 	}
 }
 
