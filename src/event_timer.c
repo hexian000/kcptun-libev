@@ -90,10 +90,7 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	}
 
 	/* timeout check */
-	const size_t n_sessions = table_size(s->sessions);
-	if (n_sessions > 0) {
-		table_filter(s->sessions, timeout_filt, s);
-	}
+	table_filter(s->sessions, timeout_filt, s);
 
 	/* ping */
 	if ((s->conf->mode & MODE_CLIENT) == 0) {

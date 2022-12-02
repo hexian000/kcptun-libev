@@ -6,8 +6,6 @@ add_subdirectory(net)
 add_subdirectory(utils)
 
 add_executable(kcptun-libev main.c
-    utils/arraysize.h utils/likely.h
-    utils/serialize.h utils/mcache.h
     aead.c aead.h
     util.c util.h
     sockutil.c sockutil.h

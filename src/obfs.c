@@ -10,6 +10,7 @@
 #include "utils/slog.h"
 #include "utils/hashtable.h"
 #include "utils/strbuilder.h"
+#include "utils/xorshift.h"
 #include "net/http.h"
 #include "conf.h"
 #include "pktqueue.h"
@@ -74,7 +75,7 @@ struct obfs_ctx {
 	int fd;
 	unsigned char rbuf[OBFS_MAX_REQUEST];
 	size_t rlen, rcap;
-	struct http_header http_hdr;
+	struct http_message http_msg;
 	char *http_nxt;
 	unsigned char wbuf[OBFS_MAX_REQUEST];
 	size_t wlen, wcap;
@@ -552,7 +553,7 @@ struct obfs *obfs_new(struct server *restrict s)
 			.loop = s->loop,
 			.conf = s->conf,
 			.sessions = s->sessions,
-			.contexts = table_create(),
+			.contexts = table_new(),
 			.cap_fd = -1,
 			.raw_fd = -1,
 			.fd = -1,
@@ -802,7 +803,7 @@ uint16_t obfs_offset(struct obfs *obfs)
 	default:
 		break;
 	}
-	CHECK_FAILED();
+	CHECKMSG(false, "unknown af");
 }
 
 /* RFC 1071 */
@@ -1278,9 +1279,9 @@ void obfs_server_read_cb(
 	if (next == NULL) {
 		ctx->http_nxt = next = (char *)ctx->rbuf;
 	}
-	struct http_header *restrict hdr = &ctx->http_hdr;
-	if (hdr->field1 == NULL) {
-		next = http_parse(next, hdr);
+	struct http_message *restrict msg = &ctx->http_msg;
+	if (msg->any.field1 == NULL) {
+		next = http_parse(next, msg);
 		if (next == NULL) {
 			LOGD("obfs: invalid request");
 			obfs_ctx_del(obfs, ctx);
@@ -1295,8 +1296,9 @@ void obfs_server_read_cb(
 			}
 			return;
 		}
-		if (strncmp(hdr->field3, "HTTP/1.", 7) != 0) {
-			LOGD_F("obfs: unsupported protocol %s", hdr->field3);
+		if (strncmp(msg->req.version, "HTTP/1.", 7) != 0) {
+			LOGD_F("obfs: unsupported protocol %s",
+			       msg->req.version);
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
@@ -1321,13 +1323,14 @@ void obfs_server_read_cb(
 		LOGV_F("http: header %s: %s", key, value);
 	}
 
-	if (strcasecmp(hdr->field1, "GET") != 0) {
+	if (strcasecmp(msg->req.method, "GET") != 0) {
 		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
-			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_IMPLEMENTED);
+			(char *)ctx->wbuf, ctx->wcap, HTTP_BAD_REQUEST);
 		return;
 	}
-	if (strcmp(hdr->field2, "/generate_204") != 0) {
+	char *url = msg->req.url;
+	if (strcmp(url, "/generate_204") != 0) {
 		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);

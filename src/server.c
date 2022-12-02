@@ -5,6 +5,7 @@
 #include "utils/slog.h"
 #include "utils/strbuilder.h"
 #include "utils/hashtable.h"
+#include "utils/xorshift.h"
 #include "conf.h"
 #include "event.h"
 #include "pktqueue.h"
@@ -258,7 +259,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	ev_timer_init(w_timer, timer_cb, 2.0, 2.0);
 	w_timer->data = s;
 
-	s->sessions = table_create();
+	s->sessions = table_new();
 	if (s->sessions == NULL) {
 		server_free(s);
 		return NULL;

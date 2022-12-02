@@ -16,31 +16,17 @@
 
 #define UNUSED(x) (void)(x)
 
-#ifdef NDEBUG
-#define CHECK_FAILED() exit(EXIT_FAILURE)
-#else
-#define CHECK_FAILED() abort()
-#endif
-
 #define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
 		if (!(cond)) {                                                 \
 			LOGF_F(format, __VA_ARGS__);                           \
-			CHECK_FAILED();                                        \
+			exit(EXIT_FAILURE);                                    \
 		}                                                              \
 	} while (0)
 
 #define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)
 
 #define CHECK(cond) CHECKMSGF(cond, "runtime check failed: \"%s\"", #cond)
-
-#define CHECKOOM(ptr)                                                          \
-	do {                                                                   \
-		if (ptr == NULL) {                                             \
-			LOGF("out of memory");                                 \
-			CHECK_FAILED();                                        \
-		}                                                              \
-	} while (0)
 
 #define LOGOOM() LOGE("out of memory")
 
@@ -49,11 +35,11 @@
 static inline void *must_malloc(size_t n)
 {
 	void *p = malloc(n);
-	CHECKOOM(p);
+	CHECKMSG(p != NULL, "out of memory");
 	return p;
 }
 
-extern struct mcache msgpool;
+extern struct mcache *msgpool;
 
 #define UTIL_SAFE_FREE(x)                                                      \
 	do {                                                                   \
@@ -63,12 +49,7 @@ extern struct mcache msgpool;
 		}                                                              \
 	} while (0)
 
-char *util_strndup(const char *, size_t);
-char *util_strdup(const char *);
-
 void print_bin(const void *b, size_t n);
-
-uint32_t rand32(void);
 
 uint32_t tstamp2ms(ev_tstamp t);
 

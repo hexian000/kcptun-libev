@@ -44,7 +44,7 @@ struct http_ctx {
 	size_t rlen, rcap;
 	unsigned char *wbuf;
 	size_t wlen, wcap;
-	struct http_header http_hdr;
+	struct http_message http_msg;
 	char *http_nxt;
 };
 
@@ -113,7 +113,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
-static void http_serve(struct http_ctx *ctx, struct http_header *hdr);
+static void http_serve(struct http_ctx *ctx, struct http_message *hdr);
 
 void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
@@ -144,8 +144,8 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (next == NULL) {
 		ctx->http_nxt = next = (char *)ctx->rbuf;
 	}
-	struct http_header *restrict hdr = &ctx->http_hdr;
-	if (hdr->field1 == NULL) {
+	struct http_message *restrict hdr = &ctx->http_msg;
+	if (hdr->any.field1 == NULL) {
 		next = http_parse(next, hdr);
 		if (next == NULL) {
 			LOGE("http: invalid request");
@@ -159,13 +159,14 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			}
 			return;
 		}
-		if (strncmp(hdr->field3, "HTTP/1.", 7) != 0) {
-			LOGE_F("http: unsupported protocol %s", hdr->field3);
+		if (strncmp(hdr->req.version, "HTTP/1.", 7) != 0) {
+			LOGE_F("http: unsupported protocol %s",
+			       hdr->req.version);
 			http_ctx_free(ctx);
 			return;
 		}
-		LOGV_F("http: request %s %s %s", hdr->field1, hdr->field2,
-		       hdr->field3);
+		LOGV_F("http: request %s %s %s", hdr->req.method, hdr->req.url,
+		       hdr->req.version);
 	}
 	ctx->http_nxt = next;
 	char *key, *value;
@@ -279,20 +280,21 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		obfs_sample(obfs);
 	}
 #endif
-	{
+	if (msgpool != NULL) {
 		static size_t last_hit = 0;
 		static size_t last_query = 0;
-		const size_t hit = msgpool.hit - last_hit;
-		const size_t query = msgpool.query - last_query;
+		const size_t hit = msgpool->hit - last_hit;
+		const size_t query = msgpool->query - last_query;
 		strbuilder_appendf(
 			&sb, 256,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
-			msgpool.n, msgpool.cache_size, hit, query - hit,
-			(double)hit / ((double)query) * 100.0, msgpool.hit,
-			msgpool.query - msgpool.hit,
-			(double)msgpool.hit / ((double)msgpool.query) * 100.0);
-		last_hit = msgpool.hit;
-		last_query = msgpool.query;
+			msgpool->n, msgpool->cache_size, hit, query - hit,
+			(double)hit / ((double)query) * 100.0, msgpool->hit,
+			msgpool->query - msgpool->hit,
+			(double)msgpool->hit / ((double)msgpool->query) *
+				100.0);
+		last_hit = msgpool->hit;
+		last_query = msgpool->query;
 	}
 
 	ctx->wlen = sb.len;
@@ -301,18 +303,19 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 	http_ctx_write(ctx);
 }
 
-void http_serve(struct http_ctx *restrict ctx, struct http_header *restrict hdr)
+void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr)
 {
-	if (strcasecmp(hdr->field1, "GET") != 0) {
-		http_write_error(ctx, HTTP_NOT_IMPLEMENTED);
+	if (strcasecmp(hdr->req.method, "GET") != 0) {
+		http_write_error(ctx, HTTP_BAD_REQUEST);
 		return;
 	}
-	if (strcmp(hdr->field2, "/stats") == 0) {
+	char *url = hdr->req.url;
+	if (strcmp(url, "/stats") == 0) {
 		LOGV("http: serve /stats");
 		http_serve_stats(ctx);
 		return;
 	}
-	if (strcmp(hdr->field2, "/healthy") == 0) {
+	if (strcmp(url, "/healthy") == 0) {
 		LOGV("http: serve /healthy");
 		struct strbuilder sb = http_resp_txt(HTTP_OK);
 		strbuilder_append(&sb, "OK");

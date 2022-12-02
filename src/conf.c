@@ -3,6 +3,7 @@
 
 #include "conf.h"
 #include "utils/slog.h"
+#include "net/addr.h"
 #include "util.h"
 #include "sockutil.h"
 #include "jsonutil.h"
@@ -241,39 +242,11 @@ const char *runmode_str(const int mode)
 	return str[mode];
 }
 
-static bool splithostport(char *str, char **hostname, char **service)
-{
-	char *port = strrchr(str, ':');
-	if (port == NULL) {
-		return false;
-	}
-	*port = '\0';
-	port++;
-
-	char *host = str;
-	if (host[0] == '\0') {
-		/* default address */
-		host = "::";
-	} else if (host[0] == '[' && port[-2] == ']') {
-		/* remove brackets */
-		host++;
-		port[-2] = '\0';
-	}
-
-	if (hostname != NULL) {
-		*hostname = host;
-	}
-	if (service != NULL) {
-		*service = port;
-	}
-	return true;
-}
-
 bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 {
 	char *hostname = NULL;
 	char *service = NULL;
-	char *str = util_strdup(addr->str);
+	char *str = strdup(addr->str);
 	if (str == NULL) {
 		return NULL;
 	}
@@ -281,6 +254,9 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 		LOGE_F("failed splitting address: \"%s\"", addr->str);
 		free(str);
 		return false;
+	}
+	if (hostname == NULL) {
+		hostname = "::";
 	}
 	struct sockaddr *sa = resolve(hostname, service, flags);
 	if (sa == NULL) {

@@ -59,7 +59,7 @@ static char *skip_whitespace(char *s)
 	return s;
 }
 
-char *http_parse(char *buf, struct http_header *restrict hdr)
+char *http_parse(char *buf, struct http_message *restrict msg)
 {
 	char *next = strstr(buf, "\r\n");
 	if (next == NULL) {
@@ -84,11 +84,9 @@ char *http_parse(char *buf, struct http_header *restrict hdr)
 
 	/* break tokens */
 	field2[-1] = field3[-1] = '\0';
-	*hdr = (struct http_header){
-		.field1 = field1,
-		.field2 = field2,
-		.field3 = field3,
-	};
+	msg->any.field1 = field1;
+	msg->any.field2 = field2;
+	msg->any.field3 = field3;
 	return next;
 }
 

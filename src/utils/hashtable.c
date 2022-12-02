@@ -285,7 +285,7 @@ bool table_del(
 
 void table_free(struct hashtable *restrict table)
 {
-	if (table->p != NULL) {
+	if (table != NULL) {
 		free(table->p);
 	}
 	free(table);
@@ -309,7 +309,7 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 	table_rehash(table);
 }
 
-struct hashtable *table_create(void)
+struct hashtable *table_new(void)
 {
 	struct hashtable *table = malloc(sizeof(struct hashtable));
 	if (table == NULL) {
@@ -342,6 +342,9 @@ int table_size(struct hashtable *restrict table)
 void table_filter(
 	struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
+	if (table->size == 0) {
+		return;
+	}
 #ifndef NDEBUG
 	const unsigned int version = table->version;
 #endif
@@ -369,6 +372,9 @@ void table_filter(
 void table_iterate(
 	struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
+	if (table->size == 0) {
+		return;
+	}
 #ifndef NDEBUG
 	const unsigned int version = table->version;
 #endif

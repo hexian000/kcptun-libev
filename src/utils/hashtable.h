@@ -25,7 +25,7 @@ typedef bool (*table_iterate_cb)(
  * @brief Create a new hash table.
  * @return Pointer to the newly created table.
  */
-struct hashtable *table_create(void);
+struct hashtable *table_new(void);
 
 /**
  * @brief Free all memory used by a table.

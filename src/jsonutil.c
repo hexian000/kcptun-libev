@@ -95,7 +95,7 @@ char *parse_string_json(const json_value *value)
 		LOGE_F("unexpected json object type: %d", value->type);
 		return NULL;
 	}
-	return util_strndup(value->u.string.ptr, value->u.string.length);
+	return strndup(value->u.string.ptr, value->u.string.length);
 }
 
 unsigned char *parse_b64_json(const json_value *value, size_t *restrict outlen)
