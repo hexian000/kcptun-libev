@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "conf.h"
+#include "utils/arraysize.h"
 #include "utils/slog.h"
 #include "net/addr.h"
 #include "util.h"
@@ -255,7 +256,7 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 		free(str);
 		return false;
 	}
-	if (hostname == NULL) {
+	if (hostname[0] == '\0') {
 		hostname = "::";
 	}
 	struct sockaddr *sa = resolve(hostname, service, flags);

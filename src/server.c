@@ -78,7 +78,7 @@ static bool listener_start(struct server *restrict s)
 	struct config *restrict conf = s->conf;
 	struct listener *restrict l = &(s->listener);
 
-	if (conf->listen.str) {
+	if (conf->listen.str != NULL) {
 		const int fd = tcp_listen(conf, &conf->listen);
 		if (fd == -1) {
 			return false;
@@ -89,14 +89,14 @@ static bool listener_start(struct server *restrict s)
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd = fd;
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (conf->listen.sa != NULL && LOGLEVEL(LOG_LEVEL_INFO)) {
 			char addr_str[64];
 			format_sa(conf->listen.sa, addr_str, sizeof(addr_str));
 			LOGI_F("listen at: %s", addr_str);
 		}
 	}
 
-	if (conf->http_listen.str) {
+	if (conf->http_listen.str != NULL) {
 		const int fd = tcp_listen(conf, &conf->http_listen);
 		if (fd == -1) {
 			return false;
@@ -106,7 +106,7 @@ static bool listener_start(struct server *restrict s)
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd_http = fd;
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (conf->http_listen.sa != NULL && LOGLEVEL(LOG_LEVEL_INFO)) {
 			char addr_str[64];
 			format_sa(
 				conf->http_listen.sa, addr_str,
