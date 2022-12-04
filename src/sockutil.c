@@ -4,6 +4,7 @@
 #include "sockutil.h"
 #include "utils/slog.h"
 #include "utils/hashtable.h"
+#include "util.h"
 
 #include <fcntl.h>
 #include <sys/types.h>
