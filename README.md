@@ -117,6 +117,7 @@ Theoretically all systems that support ISO C11 and POSIX.1-2008.
 | --------------- | --------- | ----- |
 | Ubuntu          | developed |       |
 | OpenWRT         | tested    |       |
+| Other Linux     | supported |       |
 | macOS           | supported |       |
 | Windows (MSYS2) | supported |       |
 
@@ -218,6 +219,8 @@ Let's explain some common fields in server.json/client.json:
 
 ## Tunables
 
+*kcptun-libev works out of the box. In most cases, the default options are recommended.*
+
 Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here are some hints:
 
 - "kcp.sndwnd", "kcp.rcvwnd":
@@ -239,8 +242,6 @@ Again, there is some kcptun-libev specific options:
 	2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
 	3. All buffers should not be too small, otherwise you may experience performance degradation.
 - "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
-
-*kcptun-libev works out of the box. In most cases, the default options are recommended.*
 
 ## Observability
 
