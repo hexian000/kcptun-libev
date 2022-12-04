@@ -37,6 +37,8 @@ network access -> proxy client -> kcptun-libev client ->
 -> kcptun-libev server -> proxy server -> stable network
 ```
 
+Since KCP retransmits packets more aggressively. It is recommended to enable proper QoS at the NIC level when running on a public network.
+
 Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
 
 ## Features
@@ -103,6 +105,8 @@ sudo setcap cap_net_raw+ep kcptun-libev
 ```
 
 Currently only one obfuscator implemented: "dpi/tcp-wnd"
+
+Unnecessarily enabling obfuscators will generally reduce performance and increase the attack surface.
 
 ## Compatibility
 ### System
@@ -223,7 +227,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 - "kcp.nodelay": Default to 1.
 - "kcp.interval":
 	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
-	2. This option is not intended for traffic shaping. For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://www.bufferbloat.net/projects/codel/wiki/Cake/).
+	2. This option is not intended for [traffic shaping](https://www.bufferbloat.net/projects/codel/wiki/Cake/). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it.
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
 
@@ -240,7 +244,7 @@ Again, there is some kcptun-libev specific options:
 
 ## Observability
 
-There is a builtin HTTP server for monitoring.
+There is a builtin HTTP server for monitoring service status.
 
 Add this line to your config file:
 
