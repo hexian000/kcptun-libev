@@ -257,7 +257,7 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 		return false;
 	}
 	if (hostname[0] == '\0') {
-		hostname = "::";
+		hostname = "0.0.0.0";
 	}
 	struct sockaddr *sa = resolve(hostname, service, flags);
 	if (sa == NULL) {
