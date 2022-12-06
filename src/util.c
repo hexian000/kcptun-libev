@@ -56,8 +56,7 @@ void init(void)
 	if (size < sizeof(struct msgframe)) {
 		size = sizeof(struct msgframe);
 	}
-	msgpool = mcache_new(256, size);
-	CHECKMSG(msgpool->p != NULL, "out of memory");
+	msgpool = mcache_new(64, size);
 	ikcp_segment_pool = msgpool;
 }
 

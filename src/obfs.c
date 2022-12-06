@@ -89,6 +89,21 @@ struct obfs_ctx {
 	ev_tstamp last_seen;
 };
 
+#define OBFS_CTX_LOG_F(level, ctx, format, ...)                                \
+	do {                                                                   \
+		if (LOGLEVEL(level)) {                                         \
+			char addr_str[64];                                     \
+			format_sa(                                             \
+				&(ctx)->raddr.sa, addr_str, sizeof(addr_str)); \
+			LOG_WRITE(                                             \
+				level, __FILE__, __LINE__,                     \
+				"obfs: peer=%s " format, addr_str,             \
+				__VA_ARGS__);                                  \
+		}                                                              \
+	} while (0)
+#define OBFS_CTX_LOG(level, ctx, message)                                      \
+	OBFS_CTX_LOG_F(level, ctx, "%s", message)
+
 /* RFC 2460: Section 8.1 */
 struct pseudo_iphdr {
 	uint32_t saddr;
@@ -863,18 +878,22 @@ static void obfs_capture(
 	if (ctx->established) {
 		return;
 	}
+	if (!tcp->psh) {
+		return;
+	}
 	ctx->cap_flow = flow;
 	ctx->cap_seq = ntohl(tcp->seq);
 	ctx->cap_ack_seq = ntohl(tcp->ack_seq);
 	ctx->established = true;
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		LOGD_F("obfs: captured from %s", addr_str);
+		LOGI_F("obfs: captured from %s", addr_str);
 	}
 }
 
-static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
+static bool
+obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	const uint16_t ehl = obfs->cap_eth ? sizeof(struct ethhdr) : 0;
 	if (msg->len < ehl + sizeof(struct iphdr)) {
@@ -883,13 +902,20 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 	struct iphdr ip;
 	struct tcphdr tcp;
 	memcpy(&ip, msg->buf + ehl, sizeof(ip));
-	const uint16_t ihl = ip.ihl * UINT16_C(4);
-	const uint16_t plen = ntohs(ip.tot_len) - ihl;
 	if (ip.protocol != IPPROTO_TCP) {
 		return false;
 	}
+	const uint16_t ihl = ip.ihl * UINT16_C(4);
+	const uint16_t tot_len = ntohs(ip.tot_len);
+	if (tot_len < ihl) {
+		return false;
+	}
+	const uint16_t plen = tot_len - ihl;
+	if (plen < sizeof(struct tcphdr)) {
+		return false;
+	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
-	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
+	if (msg->len < ehl + ihl + plen) {
 		return false;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
@@ -913,7 +939,7 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 		}
 	}
 	const uint16_t doff = tcp.doff * UINT16_C(4);
-	if (msg->len < ehl + ihl + doff) {
+	if (plen < doff) {
 		return false;
 	}
 	if (ntohs(tcp.dest) != obfs->bind_port) {
@@ -956,21 +982,25 @@ static bool obfs_open_ipv4(struct obfs *obfs, struct msgframe *msg)
 	return true;
 }
 
-static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
+static bool
+obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	const uint16_t ehl = obfs->cap_eth ? sizeof(struct ethhdr) : 0;
-	if (ehl + sizeof(struct ip6_hdr) > msg->len) {
+	if (msg->len < ehl + sizeof(struct ip6_hdr)) {
 		return false;
 	}
 	struct ip6_hdr ip6;
 	struct tcphdr tcp;
 	memcpy(&ip6, msg->buf + ehl, sizeof(ip6));
-	const uint16_t ihl = sizeof(struct ip6_hdr);
-	const uint16_t plen = ntohs(ip6.ip6_plen);
 	if (ip6.ip6_nxt != IPPROTO_TCP) {
 		return false;
 	}
-	if (msg->len < ehl + ihl + plen || plen < sizeof(struct tcphdr)) {
+	const uint16_t ihl = sizeof(struct ip6_hdr);
+	const uint16_t plen = ntohs(ip6.ip6_plen);
+	if (plen < sizeof(struct tcphdr)) {
+		return false;
+	}
+	if (msg->len < ehl + ihl + plen) {
 		return false;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
@@ -994,7 +1024,7 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 		}
 	}
 	const uint16_t doff = tcp.doff * UINT16_C(4);
-	if (ehl + ihl + doff > msg->len) {
+	if (plen < doff) {
 		return false;
 	}
 	if (ntohs(tcp.dest) != obfs->bind_port) {
@@ -1039,7 +1069,7 @@ static bool obfs_open_ipv6(struct obfs *obfs, struct msgframe *msg)
 	return true;
 }
 
-bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
+bool obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	obfs->stats.pkt_cap++;
 	obfs->stats.byt_cap += msg->len;
@@ -1059,7 +1089,7 @@ bool obfs_open_inplace(struct obfs *obfs, struct msgframe *msg)
 	return ok;
 }
 
-bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
+bool obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 {
 	assert(msg->off == sizeof(struct iphdr) + sizeof(struct tcphdr));
 	const struct sockaddr_in *restrict src = &ctx->laddr.in;
@@ -1113,7 +1143,7 @@ bool obfs_seal_ipv4(struct obfs_ctx *ctx, struct msgframe *msg)
 	return true;
 }
 
-bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
+bool obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 {
 	assert(msg->off == sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
 	const struct sockaddr_in6 *restrict src = &ctx->laddr.in6;
@@ -1165,7 +1195,7 @@ bool obfs_seal_ipv6(struct obfs_ctx *ctx, struct msgframe *msg)
 	return true;
 }
 
-bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg)
+bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	hashkey_t key;
 	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
@@ -1300,7 +1330,7 @@ void obfs_server_read_cb(
 		    err == ENOMEM) {
 			return;
 		}
-		LOGE_F("obfs: %s", strerror(err));
+		OBFS_CTX_LOG_F(LOG_LEVEL_ERROR, ctx, "recv: %s", strerror(err));
 		obfs_ctx_stop(loop, ctx);
 		if (!ctx->established) {
 			obfs_ctx_del(obfs, ctx);
@@ -1308,11 +1338,9 @@ void obfs_server_read_cb(
 		}
 		return;
 	} else if (nbrecv == 0) {
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
-			char addr_str[64];
-			format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-			LOGI_F("obfs: eof %s", addr_str);
-		}
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_INFO, ctx, "early eof, %zu bytes discarded",
+			ctx->rlen);
 		obfs_ctx_stop(loop, ctx);
 		if (!ctx->established) {
 			obfs_ctx_del(obfs, ctx);
@@ -1332,13 +1360,16 @@ void obfs_server_read_cb(
 	if (msg->any.field1 == NULL) {
 		next = http_parse(next, msg);
 		if (next == NULL) {
+			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid request");
 			LOGD("obfs: invalid request");
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
 		} else if (next == ctx->http_nxt) {
 			if (cap == 0) {
-				LOGD("obfs: request too large");
+				OBFS_CTX_LOG(
+					LOG_LEVEL_DEBUG, ctx,
+					"request too large");
 				obfs_ctx_del(obfs, ctx);
 				obfs_ctx_free(loop, ctx);
 				return;
@@ -1346,8 +1377,9 @@ void obfs_server_read_cb(
 			return;
 		}
 		if (strncmp(msg->req.version, "HTTP/1.", 7) != 0) {
-			LOGD_F("obfs: unsupported protocol %s",
-			       msg->req.version);
+			OBFS_CTX_LOG_F(
+				LOG_LEVEL_DEBUG, ctx, "unsupported protocol %s",
+				msg->req.version);
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
@@ -1358,7 +1390,7 @@ void obfs_server_read_cb(
 	for (;;) {
 		next = http_parsehdr(ctx->http_nxt, &key, &value);
 		if (next == NULL) {
-			LOGD("obfs: invalid header");
+			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid header");
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
@@ -1376,6 +1408,7 @@ void obfs_server_read_cb(
 		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_BAD_REQUEST);
+		OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_NOT_FOUND);
 		return;
 	}
 	char *url = msg->req.url;
@@ -1383,13 +1416,14 @@ void obfs_server_read_cb(
 		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);
+		OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_NOT_FOUND);
 		return;
 	}
 
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		LOGI_F("obfs: serving request from %s", addr_str);
+		OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "serving request");
 	}
 
 	char date_str[32];

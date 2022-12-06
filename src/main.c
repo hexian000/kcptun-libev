@@ -142,9 +142,21 @@ int main(int argc, char **argv)
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
+	drop_privileges(app.user_name ? app.user_name : conf->user);
 
 	/* signal watchers */
-	signal(SIGPIPE, SIG_IGN);
+	if (sigaction(
+		    SIGPIPE,
+		    &(struct sigaction){
+			    .sa_handler = SIG_IGN,
+		    },
+		    NULL) != 0) {
+		const int err = errno;
+		LOGF(strerror(err));
+		server_free(s);
+		conf_free(conf);
+		return EXIT_FAILURE;
+	}
 	{
 		struct ev_signal *restrict w_sighup = &app.w_sighup;
 		ev_signal_init(w_sighup, signal_cb, SIGHUP);
@@ -160,8 +172,7 @@ int main(int argc, char **argv)
 		ev_signal_start(loop, w_sigterm);
 	}
 
-	// Start infinite loop
-	drop_privileges(app.user_name ? app.user_name : conf->user);
+	/* start event loop */
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 

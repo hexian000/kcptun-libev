@@ -88,7 +88,7 @@ static bool crypto_seal_inplace(
 }
 #endif /* WITH_CRYPTO */
 
-struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa)
+struct msgframe *msgframe_new(struct pktqueue *restrict q, struct sockaddr *sa)
 {
 	UNUSED(q);
 	struct msgframe *restrict msg = mcache_get(msgpool);
@@ -221,7 +221,7 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 	}
 	size_t nbrecv = 0;
 	for (size_t i = 0; i < q->mq_recv_len; i++) {
-		struct msgframe *msg = q->mq_recv[i];
+		struct msgframe *restrict msg = q->mq_recv[i];
 #if WITH_OBFS
 		if (q->obfs != NULL) {
 			if (!obfs_open_inplace(q->obfs, msg)) {
