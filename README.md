@@ -43,13 +43,13 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 ## Features
 
-- Secure: For proper integration of the cryptography methods.
+- Secure: For proper integration with the cryptography methods.
 - Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
 - Proper: KCP will be flushed on demand, no mechanistic lag introduced.
 - Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder.
 - Morden: Full IPv6 support.
 - DDNS aware: Dynamic IP addresses are automatically resolved.
-- Configurable: If you want to be unecrypted or plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
+- Configurable: If you plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
 - Portable: Compliant with ISO C standard. Support both GNU/Linux and POSIX APIs.
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
@@ -72,9 +72,9 @@ In config file:
 "method": "// name here"
 ```
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets may crash the server since authenticate tag is not added too.
+If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets could crash the server because no authenticate tag was added either. We are not responsible for such vulnerabilities.
 
-In practice, I strongly suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
+In practice, we suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 
 | Encryption Method      | Status    | Notes       |
 | ---------------------- | --------- | ----------- |
@@ -82,7 +82,7 @@ In practice, I strongly suggest user to use "--genpsk" command-line argument to 
 | chacha20poly1305_ietf  | supported | since v2.0  |
 | aes256gcm              | supported | since v2.0  |
 
-kcptun-libev will not provide known practically vulnerable encryption method in latest release.
+kcptun-libev will not include known practically vulnerable encryption method in latest release.
 
 ### Obfuscation
 
