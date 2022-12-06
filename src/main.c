@@ -27,6 +27,9 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents);
 
 static void print_usage(char *argv0)
 {
+	fprintf(stderr, "%s",
+		PROJECT_NAME " " PROJECT_VER "\n"
+			     "  " PROJECT_HOMEPAGE "\n\n");
 	fprintf(stderr, "usage: %s <option>... \n", argv0);
 	fprintf(stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
@@ -39,6 +42,7 @@ static void print_usage(char *argv0)
 		"  --genpsk <method>          generate random preshared key for specified method\n"
 #endif
 		"\n");
+	fflush(stderr);
 }
 
 static void parse_args(int argc, char **argv)
@@ -107,10 +111,6 @@ static void parse_args(int argc, char **argv)
 int main(int argc, char **argv)
 {
 	init();
-	fprintf(stderr, "%s",
-		PROJECT_NAME " " PROJECT_VER "\n"
-			     "  " PROJECT_HOMEPAGE "\n\n");
-	fflush(stderr);
 
 	parse_args(argc, argv);
 	if (app.conf_path == NULL) {
