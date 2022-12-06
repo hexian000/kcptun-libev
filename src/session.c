@@ -172,7 +172,7 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 		LOGE_F("socket: %s", strerror(err));
 		return false;
 	}
-	if (socket_setup(fd)) {
+	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {

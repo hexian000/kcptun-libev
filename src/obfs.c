@@ -249,7 +249,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		LOGE_F("obfs capture: %s", strerror(err));
 		return false;
 	}
-	if (socket_setup(obfs->cap_fd)) {
+	if (!socket_set_nonblock(obfs->cap_fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		return false;
@@ -262,7 +262,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		LOGE_F("obfs raw: %s", strerror(err));
 		return false;
 	}
-	if (socket_setup(obfs->raw_fd)) {
+	if (!socket_set_nonblock(obfs->raw_fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		return false;
@@ -452,7 +452,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		LOGE_F("obfs tcp: %s", strerror(err));
 		return false;
 	}
-	if (socket_setup(fd)) {
+	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {
@@ -691,7 +691,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 			LOGE_F("obfs tcp: %s", strerror(err));
 			return false;
 		}
-		if (socket_setup(obfs->fd)) {
+		if (!socket_set_nonblock(obfs->fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
 			return false;
@@ -1299,7 +1299,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			}
 			return;
 		}
-		if (socket_setup(fd)) {
+		if (!socket_set_nonblock(fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
 			if (close(fd) != 0) {

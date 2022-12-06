@@ -70,7 +70,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	sockaddr_max_t m_sa;
 	socklen_t len = sizeof(m_sa);
 	const int fd = accept(watcher->fd, &m_sa.sa, &len);
-	if (socket_setup(fd)) {
+	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {

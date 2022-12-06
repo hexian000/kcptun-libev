@@ -38,7 +38,7 @@ static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 		LOGE_F("socket: %s", strerror(err));
 		return -1;
 	}
-	if (socket_setup(fd)) {
+	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		if (close(fd) != 0) {
@@ -198,7 +198,7 @@ static bool udp_start(struct server *restrict s)
 		LOGE_F("udp socket: %s", strerror(err));
 		return false;
 	}
-	if (socket_setup(udp->fd)) {
+	if (!socket_set_nonblock(udp->fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
 		return false;

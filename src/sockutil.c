@@ -21,10 +21,10 @@
 #include <string.h>
 #include <inttypes.h>
 
-int socket_setup(int fd)
+bool socket_set_nonblock(int fd)
 {
 	const int flags = fcntl(fd, F_GETFL, 0);
-	return fcntl(fd, F_SETFL, flags | O_CLOEXEC | O_NONBLOCK);
+	return fcntl(fd, F_SETFL, flags | O_CLOEXEC | O_NONBLOCK) != -1;
 }
 
 void socket_set_reuseport(const int fd, const bool reuseport)

@@ -96,7 +96,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				"* max session count exceeded, new connections refused");
 			return;
 		}
-		if (socket_setup(client_fd)) {
+		if (!socket_set_nonblock(client_fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
 			if (close(client_fd) != 0) {

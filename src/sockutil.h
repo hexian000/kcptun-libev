@@ -21,7 +21,7 @@ _Static_assert(
 	sizeof(sockaddr_max_t) <= sizeof(uint32_t[7]),
 	"unexpected sockaddr size");
 
-int socket_setup(int fd);
+bool socket_set_nonblock(int fd);
 void socket_set_reuseport(int fd, bool reuseport);
 void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
