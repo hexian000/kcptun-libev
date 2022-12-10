@@ -4,7 +4,7 @@
 #include "hashtable.h"
 #include "arraysize.h"
 #include "xorshift.h"
-#include "murmurhash3.h"
+#include "murmurhash.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -70,7 +70,7 @@ static inline void key_set(hashkey_t *dst, const hashkey_t *src)
 
 static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
 {
-	const uint32_t h = murmurhash3(x, sizeof(hashkey_t), seed);
+	const uint32_t h = murmurhash3_32(x, sizeof(hashkey_t), seed);
 	return (int)(h & (uint32_t)INT_MAX);
 }
 
