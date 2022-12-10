@@ -64,11 +64,14 @@ struct obfs {
 	int cap_fd, raw_fd;
 	int fd;
 	int domain;
+	size_t unauthenticated;
 };
 
 #define OBFS_MAX_REQUEST 256
-
-#define OBFS_MAX_CONTEXTS 4096
+#define OBFS_MAX_CONTEXTS 4095
+#define OBFS_STARTUP_LIMIT_START 10
+#define OBFS_STARTUP_LIMIT_RATE 30
+#define OBFS_STARTUP_LIMIT_FULL 60
 
 struct obfs_ctx {
 	struct obfs *obfs;
@@ -85,7 +88,10 @@ struct obfs_ctx {
 	uint32_t cap_seq, cap_ack_seq;
 	bool cap_ecn;
 	bool established;
+	bool authenticated;
+	bool eof;
 	size_t num_ecn, num_ece;
+	ev_tstamp created;
 	ev_tstamp last_seen;
 };
 
@@ -345,12 +351,17 @@ static bool ctx_del_filter(
 
 static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 {
+	/* free all related sessions */
 	table_filter(obfs->sessions, ctx_del_filter, &ctx->raddr.sa);
 	hashkey_t key;
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	(void)table_del(obfs->contexts, &key, NULL);
 	if (obfs->client == ctx) {
 		obfs->client = NULL;
+	}
+	if (!ctx->authenticated) {
+		assert(obfs->unauthenticated > 0u);
+		obfs->unauthenticated--;
 	}
 }
 
@@ -424,7 +435,9 @@ static bool obfs_ctx_start(
 		ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
 		w_write->data = ctx;
 	}
-	ctx->last_seen = ev_now(loop);
+	const ev_tstamp now = ev_now(loop);
+	ctx->created = now;
+	ctx->last_seen = now;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char laddr[64], raddr[64];
 		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
@@ -441,6 +454,7 @@ static bool obfs_ctx_start(
 	if (!ok) {
 		obfs_ctx_stop(loop, ctx);
 	}
+	obfs->unauthenticated++;
 	return ok;
 }
 
@@ -476,11 +490,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		}
 	}
 	memcpy(&ctx->raddr, sa, getsocklen(sa));
-	if (LOGLEVEL(LOG_LEVEL_INFO)) {
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("obfs connect: %s", addr_str);
-	}
+	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "connect");
 
 	socklen_t len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
@@ -522,20 +532,31 @@ static bool obfs_ctx_timeout_filt(
 	struct obfs_ctx *restrict ctx = value;
 	const ev_tstamp now = ev_now(obfs->loop);
 	assert(now >= ctx->last_seen);
-	const double not_seen = now - ctx->last_seen;
-	if (not_seen < 60.0) {
-		return true;
+	double not_seen;
+	if (ctx->authenticated) {
+		not_seen = now - ctx->last_seen;
+		if (not_seen < 600.0) {
+			return true;
+		}
+	} else {
+		not_seen = now - ctx->created;
+		if (not_seen < 60.0) {
+			return true;
+		}
 	}
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char laddr[64], raddr[64];
 		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
 		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
-		LOGD_F("obfs: timeout ctx %s <-> %s after %.1lfs", laddr, raddr,
-		       not_seen);
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	}
 	if (obfs->client == ctx) {
 		obfs->client = NULL;
 		return true;
+	}
+	if (!ctx->authenticated) {
+		obfs->unauthenticated--;
 	}
 	obfs_ctx_free(obfs->loop, ctx);
 	return false;
@@ -664,8 +685,9 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 	const double eff_cap = (double)stats->pkt_rx / (double)stats->pkt_cap;
 	strbuilder_appendf(
 		sb, 4096,
-		"obfs: %d contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%\n",
-		table_size(obfs->contexts), dpkt_cap, dbyt_rx, dbyt_tx,
+		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%\n",
+		(size_t)table_size(obfs->contexts) - obfs->unauthenticated,
+		obfs->unauthenticated, dpkt_cap, dbyt_rx, dbyt_tx,
 		eff_cap * 100.0);
 }
 
@@ -751,10 +773,6 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		w_timer->data = obfs;
 		ev_timer_start(obfs->loop, w_timer);
 	}
-
-	const ev_tstamp now = ev_time();
-	pkt->last_send_time = now;
-	pkt->last_recv_time = now;
 	return true;
 }
 
@@ -885,38 +903,34 @@ static void obfs_capture(
 	ctx->cap_seq = ntohl(tcp->seq);
 	ctx->cap_ack_seq = ntohl(tcp->ack_seq);
 	ctx->established = true;
-	if (LOGLEVEL(LOG_LEVEL_INFO)) {
-		char addr_str[64];
-		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		LOGI_F("obfs: captured from %s", addr_str);
-	}
+	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "captured");
 }
 
-static bool
+static struct obfs_ctx *
 obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	const uint16_t ehl = obfs->cap_eth ? sizeof(struct ethhdr) : 0;
 	if (msg->len < ehl + sizeof(struct iphdr)) {
-		return false;
+		return NULL;
 	}
 	struct iphdr ip;
 	struct tcphdr tcp;
 	memcpy(&ip, msg->buf + ehl, sizeof(ip));
 	if (ip.protocol != IPPROTO_TCP) {
-		return false;
+		return NULL;
 	}
 	const uint16_t ihl = ip.ihl * UINT16_C(4);
 	const uint16_t tot_len = ntohs(ip.tot_len);
 	if (tot_len < ihl) {
-		return false;
+		return NULL;
 	}
 	const uint16_t plen = tot_len - ihl;
 	if (plen < sizeof(struct tcphdr)) {
-		return false;
+		return NULL;
 	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
 	if (msg->len < ehl + ihl + plen) {
-		return false;
+		return NULL;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
 	if ((ntohl(ip.saddr) >> IN_CLASSA_NSHIFT) != IN_LOOPBACKNET) {
@@ -935,15 +949,15 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			sum, msg->buf + ehl + ihl + sizeof(tcp),
 			plen - sizeof(tcp));
 		if (check != (uint16_t)sum) {
-			return false;
+			return NULL;
 		}
 	}
 	const uint16_t doff = tcp.doff * UINT16_C(4);
 	if (plen < doff) {
-		return false;
+		return NULL;
 	}
 	if (ntohs(tcp.dest) != obfs->bind_port) {
-		return false;
+		return NULL;
 	}
 	msg->addr.in = (struct sockaddr_in){
 		.sin_family = AF_INET,
@@ -963,7 +977,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
-		return false;
+		return NULL;
 	}
 
 	/* inbound */
@@ -973,35 +987,35 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		LOG_RATELIMITEDF(
 			LOG_LEVEL_DEBUG, obfs->loop, 1.0, "* obfs: rst from %s",
 			addr_str);
-		return false;
+		return NULL;
 	}
 	obfs_capture(ctx, UINT32_C(0), ecn, &tcp);
 	ctx->last_seen = msg->ts;
 	msg->off = ehl + ihl + doff;
 	msg->len = plen - doff;
-	return true;
+	return ctx;
 }
 
-static bool
+static struct obfs_ctx *
 obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	const uint16_t ehl = obfs->cap_eth ? sizeof(struct ethhdr) : 0;
 	if (msg->len < ehl + sizeof(struct ip6_hdr)) {
-		return false;
+		return NULL;
 	}
 	struct ip6_hdr ip6;
 	struct tcphdr tcp;
 	memcpy(&ip6, msg->buf + ehl, sizeof(ip6));
 	if (ip6.ip6_nxt != IPPROTO_TCP) {
-		return false;
+		return NULL;
 	}
 	const uint16_t ihl = sizeof(struct ip6_hdr);
 	const uint16_t plen = ntohs(ip6.ip6_plen);
 	if (plen < sizeof(struct tcphdr)) {
-		return false;
+		return NULL;
 	}
 	if (msg->len < ehl + ihl + plen) {
-		return false;
+		return NULL;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
 	if (!IN6_IS_ADDR_LOOPBACK(&ip6.ip6_src)) {
@@ -1020,15 +1034,15 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			sum, msg->buf + ehl + ihl + sizeof(tcp),
 			plen - sizeof(tcp));
 		if (check != (uint16_t)sum) {
-			return false;
+			return NULL;
 		}
 	}
 	const uint16_t doff = tcp.doff * UINT16_C(4);
 	if (plen < doff) {
-		return false;
+		return NULL;
 	}
 	if (ntohs(tcp.dest) != obfs->bind_port) {
-		return false;
+		return NULL;
 	}
 	msg->addr.in6 = (struct sockaddr_in6){
 		.sin6_family = AF_INET6,
@@ -1048,7 +1062,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
-		return false;
+		return NULL;
 	}
 
 	/* inbound */
@@ -1058,7 +1072,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		LOG_RATELIMITEDF(
 			LOG_LEVEL_DEBUG, obfs->loop, 1.0, "* obfs: rst from %s",
 			addr_str);
-		return false;
+		return NULL;
 	}
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
 	const uint8_t ecn = ((flow >> 20u) & ECN_MASK);
@@ -1066,30 +1080,32 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	ctx->last_seen = msg->ts;
 	msg->off = ehl + ihl + doff;
 	msg->len = plen - doff;
-	return true;
+	return ctx;
 }
 
-bool obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
+struct obfs_ctx *
+obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
 	obfs->stats.pkt_cap++;
 	obfs->stats.byt_cap += msg->len;
-	bool ok = false;
+	struct obfs_ctx *ctx = NULL;
 	switch (obfs->domain) {
 	case AF_INET:
-		ok = obfs_open_ipv4(obfs, msg);
+		ctx = obfs_open_ipv4(obfs, msg);
 		break;
 	case AF_INET6:
-		ok = obfs_open_ipv6(obfs, msg);
+		ctx = obfs_open_ipv6(obfs, msg);
 		break;
 	}
-	if (ok) {
+	if (ctx != NULL) {
 		obfs->stats.pkt_rx++;
 		obfs->stats.byt_rx += msg->len;
 	}
-	return ok;
+	return ctx;
 }
 
-bool obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
+static bool
+obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 {
 	assert(msg->off == sizeof(struct iphdr) + sizeof(struct tcphdr));
 	const struct sockaddr_in *restrict src = &ctx->laddr.in;
@@ -1143,7 +1159,8 @@ bool obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg
 	return true;
 }
 
-bool obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
+static bool
+obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 {
 	assert(msg->off == sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
 	const struct sockaddr_in6 *restrict src = &ctx->laddr.in6;
@@ -1230,6 +1247,18 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 	return ok;
 }
 
+void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
+{
+	if (ctx->authenticated == ok) {
+		return;
+	}
+	if (ok) {
+		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "authenticated");
+		ctx->obfs->unauthenticated--;
+	}
+	ctx->authenticated = ok;
+}
+
 static void obfs_accept_one(
 	struct obfs *restrict obfs, const int fd, struct sockaddr *sa,
 	socklen_t len)
@@ -1258,11 +1287,7 @@ static void obfs_accept_one(
 	struct ev_io *restrict w_read = &ctx->w_read;
 	ev_io_init(w_read, obfs_server_read_cb, fd, EV_READ);
 	w_read->data = ctx;
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGD_F("obfs: accept %s", addr_str);
-	}
+	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "accepted");
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
 		obfs_ctx_free(obfs->loop, ctx);
 	}
@@ -1289,10 +1314,14 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			ev_io_stop(loop, watcher);
 			return;
 		}
-		if (table_size(obfs->contexts) + 1 >= OBFS_MAX_CONTEXTS) {
+		if (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_FULL ||
+		    table_size(obfs->contexts) >= OBFS_MAX_CONTEXTS ||
+		    (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_START &&
+		     rand32() % UINT32_C(100) <
+			     (uint32_t)OBFS_STARTUP_LIMIT_RATE)) {
 			LOG_RATELIMITED(
 				LOG_LEVEL_ERROR, loop, 1.0,
-				"* obfs: max context count exceeded, new connections refused");
+				"* obfs: context limit exceeded, new connections refused");
 			if (close(fd) != 0) {
 				const int err = errno;
 				LOGW_F("close: %s", strerror(err));
@@ -1331,21 +1360,15 @@ void obfs_server_read_cb(
 			return;
 		}
 		OBFS_CTX_LOG_F(LOG_LEVEL_ERROR, ctx, "recv: %s", strerror(err));
-		obfs_ctx_stop(loop, ctx);
-		if (!ctx->established) {
-			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(loop, ctx);
-		}
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	} else if (nbrecv == 0) {
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_INFO, ctx, "early eof, %zu bytes discarded",
 			ctx->rlen);
-		obfs_ctx_stop(loop, ctx);
-		if (!ctx->established) {
-			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(loop, ctx);
-		}
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 	ctx->rlen += nbrecv;
@@ -1361,7 +1384,6 @@ void obfs_server_read_cb(
 		next = http_parse(next, msg);
 		if (next == NULL) {
 			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid request");
-			LOGD("obfs: invalid request");
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
@@ -1372,7 +1394,6 @@ void obfs_server_read_cb(
 					"request too large");
 				obfs_ctx_del(obfs, ctx);
 				obfs_ctx_free(loop, ctx);
-				return;
 			}
 			return;
 		}
@@ -1395,6 +1416,13 @@ void obfs_server_read_cb(
 			obfs_ctx_free(loop, ctx);
 			return;
 		} else if (next == ctx->http_nxt) {
+			if (cap == 0) {
+				OBFS_CTX_LOG(
+					LOG_LEVEL_DEBUG, ctx,
+					"request header too large");
+				obfs_ctx_del(obfs, ctx);
+				obfs_ctx_free(loop, ctx);
+			}
 			return;
 		}
 		ctx->http_nxt = next;
@@ -1403,29 +1431,27 @@ void obfs_server_read_cb(
 		}
 		LOGV_F("http: header %s: %s", key, value);
 	}
+	/* ignore all data arrived later */
+	ev_io_stop(loop, watcher);
 
 	if (strcasecmp(msg->req.method, "GET") != 0) {
-		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_BAD_REQUEST);
-		OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_NOT_FOUND);
+		ctx->eof = true;
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_BAD_REQUEST);
 		return;
 	}
 	char *url = msg->req.url;
 	if (strcmp(url, "/generate_204") != 0) {
-		ev_io_stop(loop, watcher);
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);
+		ctx->eof = true;
 		OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_NOT_FOUND);
 		return;
 	}
 
-	if (LOGLEVEL(LOG_LEVEL_INFO)) {
-		char addr_str[64];
-		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "serving request");
-	}
-
+	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "serving request");
 	char date_str[32];
 	const size_t date_len = http_date(date_str, sizeof(date_str));
 	ctx->wlen = snprintf(
@@ -1457,11 +1483,7 @@ void obfs_client_read_cb(
 		obfs->client = NULL;
 		return;
 	} else if (nbrecv == 0) {
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
-			char addr_str[64];
-			format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-			LOGI_F("obfs: eof %s", addr_str);
-		}
+		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "got server eof");
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
 		return;
@@ -1476,6 +1498,12 @@ void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	obfs_ctx_write(ctx);
+
+	if (ctx->wlen == 0 && ctx->eof) {
+		OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "send eof");
+		obfs_ctx_del(ctx->obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+	}
 }
 
 #endif /* WITH_OBFS */

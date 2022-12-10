@@ -223,8 +223,10 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 	for (size_t i = 0; i < q->mq_recv_len; i++) {
 		struct msgframe *restrict msg = q->mq_recv[i];
 #if WITH_OBFS
+		struct obfs_ctx *ctx = NULL;
 		if (q->obfs != NULL) {
-			if (!obfs_open_inplace(q->obfs, msg)) {
+			ctx = obfs_open_inplace(q->obfs, msg);
+			if (ctx == NULL) {
 				msgframe_delete(q, msg);
 				continue;
 			}
@@ -241,6 +243,11 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 			}
 			assert(len <= UINT16_MAX);
 			msg->len = len;
+		}
+#endif
+#if WITH_OBFS
+		if (q->obfs != NULL && ctx != NULL) {
+			obfs_ctx_auth(ctx, true);
 		}
 #endif
 		queue_recv_one(s, msg);

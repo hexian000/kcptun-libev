@@ -35,7 +35,7 @@ struct pktconn {
 	ev_tstamp inflight_ping;
 };
 
-#define MAX_SESSIONS 65536
+#define MAX_SESSIONS 65535
 
 struct server {
 	struct config *conf;

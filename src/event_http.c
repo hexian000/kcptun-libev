@@ -280,6 +280,7 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		obfs_sample(obfs);
 	}
 #endif
+#if MCACHE_STATS
 	if (msgpool != NULL) {
 		static size_t last_hit = 0;
 		static size_t last_query = 0;
@@ -296,7 +297,7 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		last_hit = msgpool->hit;
 		last_query = msgpool->query;
 	}
-
+#endif
 	ctx->wlen = sb.len;
 	ctx->wcap = sb.cap;
 	ctx->wbuf = (unsigned char *)sb.buf;

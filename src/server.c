@@ -240,6 +240,8 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 			(struct pktconn){
 				.fd = -1,
 				.inflight_ping = TSTAMP_NIL,
+				.last_send_time = TSTAMP_NIL,
+				.last_recv_time = TSTAMP_NIL,
 			},
 		.last_resolve_time = now,
 		.last_stats_time = now,

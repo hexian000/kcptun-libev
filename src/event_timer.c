@@ -108,23 +108,23 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
 	const double timeout = fmax(s->keepalive * 3.0, 60.0);
-	if (now - s->pkt.last_recv_time > timeout &&
-	    now - s->last_resolve_time > timeout) {
-		LOGD_F("remote not seen for %.0lfs, try resolve addresses",
-		       now - s->pkt.last_recv_time);
+	if (now - s->last_resolve_time > timeout &&
+	    (s->pkt.last_recv_time == TSTAMP_NIL ||
+	     now - s->pkt.last_recv_time > timeout)) {
+		LOGD("peer is not responding, try resolve addresses");
 		(void)server_resolve(s);
 #if WITH_CRYPTO
 		noncegen_init(s->pkt.queue->noncegen);
 #endif
 		s->last_resolve_time = now;
 	}
-	if (now - s->pkt.last_send_time < s->keepalive) {
+	if (s->pkt.last_send_time != TSTAMP_NIL &&
+	    now - s->pkt.last_send_time < s->keepalive) {
 		return;
 	}
-	const ev_tstamp ping_ts = ev_time();
-	const uint32_t tstamp = tstamp2ms(ping_ts);
+	const uint32_t tstamp = tstamp2ms(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));
-	s->pkt.inflight_ping = ping_ts;
+	s->pkt.inflight_ping = now;
 }
