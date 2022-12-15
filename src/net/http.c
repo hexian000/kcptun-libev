@@ -30,27 +30,6 @@ static const struct {
 	{ HTTP_ENTITY_TOO_LARGE, "Entity Too Large", "Entity Too Large" },
 };
 
-size_t http_peek(const char *buf, const size_t len)
-{
-	unsigned lf = 0;
-	for (size_t i = 0; i < len; i++) {
-		switch (buf[i]) {
-		case '\r':
-			break;
-		case '\n':
-			lf++;
-			break;
-		default:
-			lf = 0;
-			break;
-		}
-		if (lf == 2) {
-			return i + 1;
-		}
-	}
-	return 0;
-}
-
 static char *skip_whitespace(char *s)
 {
 	while (*s == ' ' || *s == '\t') {

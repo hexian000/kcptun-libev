@@ -14,14 +14,9 @@ static void udp_reset(struct server *restrict s)
 	if ((s->conf->mode & MODE_SERVER) != 0) {
 		return;
 	}
-	struct pktqueue *restrict q = s->pkt.queue;
-	LOGW("udp connection refused, closing all sessions");
-	session_close_all(s->sessions);
-	for (size_t i = 0; i < q->mq_send_len; i++) {
-		struct msgframe *restrict msg = q->mq_send[i];
-		msgframe_delete(q, msg);
-	}
-	q->mq_send_len = 0;
+	LOG_RATELIMITED(
+		LOG_LEVEL_WARNING, s->loop, 1.0,
+		"udp connection refused (wrong port number?)");
 }
 
 #if HAVE_RECVMMSG || HAVE_SENDMMSG
@@ -65,7 +60,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			if ((err == ECONNREFUSED) || (err == ECONNRESET)) {
+			if (err == ECONNREFUSED || err == ECONNRESET) {
 				udp_reset(s);
 				break;
 			}
@@ -120,8 +115,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			    err == EINTR || err == ENOMEM) {
 				break;
 			}
-			if ((err == ECONNREFUSED) || (err == ECONNRESET)) {
-				LOGW("udp connection refused, closing all sessions");
+			if (err == ECONNREFUSED || err == ECONNRESET) {
 				udp_reset(s);
 				break;
 			}

@@ -67,7 +67,7 @@ struct obfs {
 	size_t unauthenticated;
 };
 
-#define OBFS_MAX_REQUEST 256
+#define OBFS_MAX_REQUEST 4096
 #define OBFS_MAX_CONTEXTS 4095
 #define OBFS_STARTUP_LIMIT_START 10
 #define OBFS_STARTUP_LIMIT_RATE 30
@@ -89,7 +89,7 @@ struct obfs_ctx {
 	bool cap_ecn;
 	bool established;
 	bool authenticated;
-	bool eof;
+	bool http_keepalive;
 	size_t num_ecn, num_ece;
 	ev_tstamp created;
 	ev_tstamp last_seen;
@@ -408,6 +408,12 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx)
 		}
 		return;
 	}
+	if (!ctx->http_keepalive) {
+		OBFS_CTX_LOG(LOG_LEVEL_VERBOSE, ctx, "server close");
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(obfs->loop, ctx);
+		return;
+	}
 	if (ev_is_active(w_write)) {
 		ev_io_stop(obfs->loop, w_write);
 	}
@@ -517,6 +523,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			"User-Agent: curl/7.81.0\r\n"
 			"Accept: */*\r\n\r\n",
 			addr_str);
+		ctx->http_keepalive = true;
 		obfs_ctx_write(ctx);
 	}
 	obfs->client = ctx;
@@ -894,9 +901,6 @@ static void obfs_capture(
 		ctx->num_ece++;
 	}
 	if (ctx->established) {
-		return;
-	}
-	if (!tcp->psh) {
 		return;
 	}
 	ctx->cap_flow = flow;
@@ -1437,17 +1441,20 @@ void obfs_server_read_cb(
 	if (strcasecmp(msg->req.method, "GET") != 0) {
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_BAD_REQUEST);
-		ctx->eof = true;
 		OBFS_CTX_LOG_F(
-			LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_BAD_REQUEST);
+			LOG_LEVEL_DEBUG, ctx, "HTTP %d \"%s\"",
+			HTTP_BAD_REQUEST, msg->req.method);
+		obfs_ctx_write(ctx);
 		return;
 	}
 	char *url = msg->req.url;
 	if (strcmp(url, "/generate_204") != 0) {
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);
-		ctx->eof = true;
-		OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "HTTP %d", HTTP_NOT_FOUND);
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_DEBUG, ctx, "HTTP %d \"%s\"", HTTP_NOT_FOUND,
+			msg->req.url);
+		obfs_ctx_write(ctx);
 		return;
 	}
 
@@ -1461,6 +1468,7 @@ void obfs_server_read_cb(
 		"Content-Length: 0\r\n"
 		"Connection: keep-alive\r\n\r\n",
 		(int)date_len, date_str);
+	ctx->http_keepalive = true;
 	obfs_ctx_write(ctx);
 }
 
@@ -1498,12 +1506,6 @@ void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	obfs_ctx_write(ctx);
-
-	if (ctx->wlen == 0 && ctx->eof) {
-		OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "send eof");
-		obfs_ctx_del(ctx->obfs, ctx);
-		obfs_ctx_free(loop, ctx);
-	}
 }
 
 #endif /* WITH_OBFS */

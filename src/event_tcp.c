@@ -15,6 +15,7 @@
 
 #include <sys/socket.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include <assert.h>
 #include <stdbool.h>
@@ -131,6 +132,9 @@ static bool tcp_recv(struct session *restrict ss)
 		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
 		    err == ENOMEM) {
 			return true;
+		}
+		if (err == ECONNREFUSED || err == ECONNRESET) {
+			return false;
 		}
 		LOGE_F("session [%08" PRIX32 "] tcp recv: %s", ss->conv,
 		       strerror(err));

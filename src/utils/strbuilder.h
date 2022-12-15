@@ -5,12 +5,13 @@
 #define STRBUILDER_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
-/* User should init this struct to zero */
+/* User should initialize this struct to zero */
 struct strbuilder {
 	char *buf;
 	size_t len, cap;
@@ -18,7 +19,7 @@ struct strbuilder {
 
 /**
  * @brief Explicitly reallocate memory of a strbuilder.
- * @details When failed, the strbuilder left unchanged.
+ * @details When failed, the strbuilder is left unchanged.
  * @param b The strbuilder.
  * @param new_capacity Expected new capacity.
  */
@@ -28,7 +29,7 @@ strbuilder_reserve(struct strbuilder *restrict b, size_t new_capacity)
 	if (new_capacity < b->len) {
 		new_capacity = b->len;
 	}
-	if (new_capacity < 16) {
+	if (new_capacity < 16u) {
 		new_capacity = 16;
 	}
 	if (new_capacity == b->cap) {
@@ -43,6 +44,25 @@ strbuilder_reserve(struct strbuilder *restrict b, size_t new_capacity)
 }
 
 /**
+ * @brief Grow the size of a strbuilder.
+ * @details When failed, the strbuilder is left unchanged.
+ * @param b The strbuilder.
+ * @param min_capacity Expected least capacity.
+ */
+static inline void
+strbuilder_grow(struct strbuilder *restrict b, size_t min_capacity)
+{
+	if (b->cap >= min_capacity) {
+		return;
+	}
+	if (b->cap > SIZE_MAX / 2u || min_capacity > b->cap * 2u) {
+		strbuilder_reserve(b, min_capacity);
+		return;
+	}
+	strbuilder_reserve(b, b->cap * 2u);
+}
+
+/**
  * @brief Append one char.
  * @param b The strbuilder.
  * @param ch char to append.
@@ -51,9 +71,7 @@ strbuilder_reserve(struct strbuilder *restrict b, size_t new_capacity)
 static inline size_t strbuilder_appendch(struct strbuilder *restrict b, char ch)
 {
 	const size_t len = 1;
-	if (b->len + len > b->cap) {
-		strbuilder_reserve(b, b->cap * 2);
-	}
+	strbuilder_grow(b, b->len + len);
 	if (b->len + len > b->cap) {
 		return 0;
 	}
@@ -71,9 +89,7 @@ static inline size_t
 strbuilder_append(struct strbuilder *restrict b, const char *str)
 {
 	const size_t len = strlen(str);
-	if (b->len + len > b->cap) {
-		strbuilder_reserve(b, b->cap * 2);
-	}
+	strbuilder_grow(b, b->len + len);
 	if (b->len + len > b->cap) {
 		return 0;
 	}
@@ -93,9 +109,7 @@ strbuilder_append(struct strbuilder *restrict b, const char *str)
 static inline int strbuilder_appendf(
 	struct strbuilder *restrict b, size_t reserve, const char *fmt, ...)
 {
-	if (b->cap - b->len < reserve) {
-		strbuilder_reserve(b, b->len + reserve);
-	}
+	strbuilder_grow(b, b->len + reserve);
 	reserve = b->cap - b->len;
 	va_list args;
 	va_start(args, fmt);
@@ -117,9 +131,7 @@ static inline int strbuilder_appendf(
 static inline size_t
 strbuilder_nappend(struct strbuilder *restrict b, const void *str, size_t len)
 {
-	if (b->len + len > b->cap) {
-		strbuilder_reserve(b, b->cap * 2);
-	}
+	strbuilder_grow(b, b->len + len);
 	if (b->len + len > b->cap) {
 		return 0;
 	}
@@ -127,6 +139,9 @@ strbuilder_nappend(struct strbuilder *restrict b, const void *str, size_t len)
 	b->len += len;
 	return len;
 }
+
+#define STRBUILDER_APPENDSTR(b, literal)                                       \
+	strbuilder_nappend((b), (literal), sizeof(literal) - 1u)
 
 /**
  * @brief Free a strbuilder when no longer needed.

@@ -106,8 +106,6 @@ sudo setcap cap_net_raw+ep kcptun-libev
 
 Currently only one obfuscator implemented: "dpi/tcp-wnd"
 
-Unnecessarily enabling obfuscators will generally reduce performance and increase the attack surface.
-
 ## Compatibility
 ### System
 
