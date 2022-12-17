@@ -8,6 +8,7 @@
 #if WITH_OBFS
 
 #include "utils/slog.h"
+#include "utils/arraysize.h"
 #include "utils/hashtable.h"
 #include "utils/strbuilder.h"
 #include "utils/xorshift.h"
@@ -192,7 +193,7 @@ static struct sock_fprog filter_compile(const int domain, const uint16_t port)
 	default:
 		break;
 	}
-	CHECK_FAILED();
+	CHECKMSGF(false, "unknown domain: %d", domain);
 }
 #endif
 
@@ -213,6 +214,7 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		if (setsockopt(
 			    obfs->cap_fd, SOL_SOCKET, SO_DETACH_FILTER, NULL,
 			    0)) {
+			const int err = errno;
 			LOGW_F("cap bind: %s", strerror(err));
 		}
 		const struct sock_fprog bpf =
@@ -220,6 +222,7 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		if (setsockopt(
 			    obfs->cap_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf,
 			    sizeof(bpf))) {
+			const int err = errno;
 			LOGW_F("cap bind: %s", strerror(err));
 		}
 #endif
@@ -239,8 +242,13 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 	struct config *restrict conf = obfs->conf;
 	switch (domain) {
 	case AF_INET:
+#if USE_SOCK_FILTER
+		obfs->cap_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP));
+		obfs->cap_eth = true;
+#else
 		obfs->cap_fd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
 		obfs->cap_eth = false;
+#endif
 		break;
 	case AF_INET6:
 		obfs->cap_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IPV6));
@@ -937,6 +945,13 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		return NULL;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
+	const uint16_t doff = tcp.doff * UINT16_C(4);
+	if (plen < doff) {
+		return NULL;
+	}
+	if (ntohs(tcp.dest) != obfs->bind_port) {
+		return NULL;
+	}
 	if ((ntohl(ip.saddr) >> IN_CLASSA_NSHIFT) != IN_LOOPBACKNET) {
 		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
 			.saddr = ip.saddr,
@@ -955,13 +970,6 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		if (check != (uint16_t)sum) {
 			return NULL;
 		}
-	}
-	const uint16_t doff = tcp.doff * UINT16_C(4);
-	if (plen < doff) {
-		return NULL;
-	}
-	if (ntohs(tcp.dest) != obfs->bind_port) {
-		return NULL;
 	}
 	msg->addr.in = (struct sockaddr_in){
 		.sin_family = AF_INET,
@@ -1022,6 +1030,13 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		return NULL;
 	}
 	memcpy(&tcp, msg->buf + ehl + ihl, sizeof(struct tcphdr));
+	const uint16_t doff = tcp.doff * UINT16_C(4);
+	if (plen < doff) {
+		return NULL;
+	}
+	if (ntohs(tcp.dest) != obfs->bind_port) {
+		return NULL;
+	}
 	if (!IN6_IS_ADDR_LOOPBACK(&ip6.ip6_src)) {
 		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
 			.src = ip6.ip6_src,
@@ -1040,13 +1055,6 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		if (check != (uint16_t)sum) {
 			return NULL;
 		}
-	}
-	const uint16_t doff = tcp.doff * UINT16_C(4);
-	if (plen < doff) {
-		return NULL;
-	}
-	if (ntohs(tcp.dest) != obfs->bind_port) {
-		return NULL;
 	}
 	msg->addr.in6 = (struct sockaddr_in6){
 		.sin6_family = AF_INET6,
