@@ -281,8 +281,8 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 		break;
 	}
 	const struct sock_filter ret[] = {
-		BPF_STMT(BPF_RET, UINT32_C(0xFFFFFFFF)),
-		BPF_STMT(BPF_RET, UINT32_C(0x0)),
+		BPF_STMT(BPF_RET | BPF_K, -1),
+		BPF_STMT(BPF_RET | BPF_K, 0),
 	};
 	FILTER_GENCODE(&ctx, ret);
 
