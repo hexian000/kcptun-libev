@@ -100,10 +100,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		if (!socket_set_nonblock(client_fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
-			if (close(client_fd) != 0) {
-				const int err = errno;
-				LOGW_F("close: %s", strerror(err));
-			}
+			(void)close(client_fd);
 			return;
 		}
 		socket_set_tcp(
@@ -145,7 +142,7 @@ static bool tcp_recv(struct session *restrict ss)
 	} else if (nread == 0) {
 		ss->tcp_state = STATE_LINGER;
 	} else {
-		buf += nread, cap -= nread, len += nread;
+		cap -= nread, len += nread;
 		ss->rbuf_len += len;
 	}
 

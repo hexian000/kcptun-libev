@@ -4,7 +4,6 @@
 #include "sockutil.h"
 #include "utils/slog.h"
 #include "utils/hashtable.h"
-#include "util.h"
 
 #include <fcntl.h>
 #include <sys/types.h>
@@ -158,20 +157,18 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 		return false;
 	}
 	switch (domain) {
-	case AF_INET: {
+	case AF_INET:
 		return sa_matches_inet(
 			(const struct sockaddr_in *)bind,
 			(const struct sockaddr_in *)dest);
-	} break;
-	case AF_INET6: {
+	case AF_INET6:
 		return sa_matches_inet6(
 			(const struct sockaddr_in6 *)bind,
 			(const struct sockaddr_in6 *)dest);
-	} break;
 	default:
-		return false;
+		break;
 	}
-	return true;
+	return false;
 }
 
 struct sockaddr *sa_clone(const struct sockaddr *src)

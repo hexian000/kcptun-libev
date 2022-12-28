@@ -167,7 +167,7 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 		if (len + ARRAY_SIZE(fragment) > cap) {                        \
 			return false;                                          \
 		}                                                              \
-		for (uint16_t i = 0; i < ARRAY_SIZE(fragment); i++) {          \
+		for (size_t i = 0; i < ARRAY_SIZE(fragment); i++) {            \
 			filter[len++] = (fragment)[i];                         \
 		}                                                              \
 	} while (false)
@@ -515,10 +515,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		(void)close(fd);
 		return false;
 	}
 	obfs_tcp_setup(fd);
@@ -1317,10 +1314,7 @@ static void obfs_accept_one(
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		const int err = errno;
 		LOGE_F("obfs accept name: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		(void)close(fd);
 		obfs_ctx_free(obfs->loop, ctx);
 		return;
 	}
@@ -1371,10 +1365,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		if (!socket_set_nonblock(fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
-			if (close(fd) != 0) {
-				const int err = errno;
-				LOGW_F("close: %s", strerror(err));
-			}
+			(void)close(fd);
 			return;
 		}
 

@@ -73,10 +73,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGE_F("close: %s", strerror(err));
-		}
+		(void)close(fd);
 		return;
 	}
 	struct http_ctx *restrict ctx = malloc(sizeof(struct http_ctx));

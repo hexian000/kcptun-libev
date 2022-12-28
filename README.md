@@ -77,7 +77,7 @@ If the encryption is not enabled or not even compiled, no packet overhead is con
 In practice, we suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
 
 | Encryption Method      | Status    | Notes       |
-| ---------------------- | --------- | ----------- |
+|------------------------|-----------|-------------|
 | xchacha20poly1305_ietf | supported | recommended |
 | chacha20poly1305_ietf  | supported | since v2.0  |
 | aes256gcm              | supported | since v2.0  |
@@ -112,7 +112,7 @@ Currently only one obfuscator implemented: "dpi/tcp-wnd"
 Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
 | System          | Tier      | Notes |
-| --------------- | --------- | ----- |
+|-----------------|-----------|-------|
 | Ubuntu          | developed |       |
 | OpenWRT         | tested    |       |
 | Other Linux     | supported |       |
@@ -129,7 +129,7 @@ We use [semantic versioning](https://semver.org/).
 ### Dependencies
 
 | Name      | Required | Feature    |
-| --------- | -------- | ---------- |
+|-----------|----------|------------|
 | libev     | yes      |            |
 | libsodium | no       | encryption |
 

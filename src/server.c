@@ -41,10 +41,7 @@ static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		(void)close(fd);
 		return -1;
 	}
 	socket_set_reuseport(fd, conf->tcp_reuseport);
@@ -54,20 +51,14 @@ static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
 		const int err = errno;
 		LOGE_F("bind error: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		(void)close(fd);
 		return -1;
 	}
 	/* Start listing on the socket */
 	if (listen(fd, 16)) {
 		const int err = errno;
 		LOGE_F("listen error: %s", strerror(err));
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		(void)close(fd);
 		return -1;
 	}
 	return fd;
