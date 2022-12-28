@@ -123,7 +123,58 @@ bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
 	return na == nb && memcmp(a, b, na) == 0;
 }
 
-struct sockaddr *clonesockaddr(const struct sockaddr *src)
+static bool sa_matches_inet(
+	const struct sockaddr_in *restrict bind,
+	const struct sockaddr_in *restrict dest)
+{
+	if (bind->sin_port != dest->sin_port) {
+		return false;
+	}
+	if (bind->sin_addr.s_addr != INADDR_ANY &&
+	    bind->sin_addr.s_addr != dest->sin_addr.s_addr) {
+		return false;
+	}
+	return true;
+}
+
+static bool sa_matches_inet6(
+	const struct sockaddr_in6 *restrict bind,
+	const struct sockaddr_in6 *restrict dest)
+{
+	if (bind->sin6_port != dest->sin6_port) {
+		return false;
+	}
+	if (!IN6_IS_ADDR_UNSPECIFIED(&bind->sin6_addr) &&
+	    !IN6_ARE_ADDR_EQUAL(&bind->sin6_addr, &dest->sin6_addr)) {
+		return false;
+	}
+	return true;
+}
+
+bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
+{
+	const int domain = bind->sa_family;
+	if (domain != dest->sa_family) {
+		return false;
+	}
+	switch (domain) {
+	case AF_INET: {
+		return sa_matches_inet(
+			(const struct sockaddr_in *)bind,
+			(const struct sockaddr_in *)dest);
+	} break;
+	case AF_INET6: {
+		return sa_matches_inet6(
+			(const struct sockaddr_in6 *)bind,
+			(const struct sockaddr_in6 *)dest);
+	} break;
+	default:
+		return false;
+	}
+	return true;
+}
+
+struct sockaddr *sa_clone(const struct sockaddr *src)
 {
 	const socklen_t len = getsocklen(src);
 	struct sockaddr *dst = malloc(len);
@@ -134,45 +185,50 @@ struct sockaddr *clonesockaddr(const struct sockaddr *src)
 }
 
 static int
-format_sa_inet(const struct sockaddr_in *addr, char *s, const size_t buf_size)
+format_sa_inet(const struct sockaddr_in *addr, char *buf, const size_t buf_size)
 {
-	char buf[INET_ADDRSTRLEN];
-	if (inet_ntop(AF_INET, &(addr->sin_addr), buf, sizeof(buf)) == NULL) {
+	char s[INET_ADDRSTRLEN];
+	if (inet_ntop(AF_INET, &(addr->sin_addr), s, sizeof(s)) == NULL) {
 		return -1;
 	}
 	const uint16_t port = ntohs(addr->sin_port);
-	return snprintf(s, buf_size, "%s:%" PRIu16, buf, port);
+	return snprintf(buf, buf_size, "%s:%" PRIu16, s, port);
 }
 
-static int
-format_sa_inet6(const struct sockaddr_in6 *addr, char *s, const size_t buf_size)
+static int format_sa_inet6(
+	const struct sockaddr_in6 *addr, char *buf, const size_t buf_size)
 {
-	char buf[INET6_ADDRSTRLEN];
-	if (inet_ntop(AF_INET6, &(addr->sin6_addr), buf, sizeof(buf)) == NULL) {
+	char s[INET6_ADDRSTRLEN];
+	if (inet_ntop(AF_INET6, &(addr->sin6_addr), s, sizeof(s)) == NULL) {
 		return -1;
 	}
 	const uint16_t port = ntohs(addr->sin6_port);
-	return snprintf(s, buf_size, "[%s]:%" PRIu16, buf, port);
+	const uint32_t scope = addr->sin6_scope_id;
+	if (scope == 0) {
+		return snprintf(buf, buf_size, "[%s]:%" PRIu16, s, port);
+	}
+	return snprintf(
+		buf, buf_size, "[%s%%%" PRIu32 "]:%" PRIu16, s, scope, port);
 }
 
-void format_sa(const struct sockaddr *sa, char *s, const size_t buf_size)
+void format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
 {
 	int ret = -1;
 	switch (sa->sa_family) {
 	case AF_INET:
-		ret = format_sa_inet((struct sockaddr_in *)sa, s, buf_size);
+		ret = format_sa_inet((struct sockaddr_in *)sa, buf, buf_size);
 		break;
 	case AF_INET6:
-		ret = format_sa_inet6((struct sockaddr_in6 *)sa, s, buf_size);
+		ret = format_sa_inet6((struct sockaddr_in6 *)sa, buf, buf_size);
 		break;
 	}
 	if (ret < 0) {
-		strncpy(s, "???", buf_size);
+		strncpy(buf, "???", buf_size);
 	}
 }
 
 struct sockaddr *
-resolve(const char *hostname, const char *service, const int flags)
+resolve_sa(const char *hostname, const char *service, const int flags)
 {
 	struct addrinfo hints = {
 		.ai_family = PF_UNSPEC,
@@ -198,7 +254,7 @@ resolve(const char *hostname, const char *service, const int flags)
 		switch (it->ai_family) {
 		case AF_INET:
 		case AF_INET6:
-			sa = clonesockaddr(it->ai_addr);
+			sa = sa_clone(it->ai_addr);
 			break;
 		}
 	}

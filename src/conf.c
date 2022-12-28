@@ -259,7 +259,7 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 	if (hostname[0] == '\0') {
 		hostname = "0.0.0.0";
 	}
-	struct sockaddr *sa = resolve(hostname, service, flags);
+	struct sockaddr *sa = resolve_sa(hostname, service, flags);
 	if (sa == NULL) {
 		LOGE_F("failed resolving address: \"%s\"", addr->str);
 		free(str);

@@ -117,6 +117,9 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 static bool tcp_recv(struct session *restrict ss)
 {
+	if (ss->tcp_fd == -1) {
+		return false;
+	}
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
 	if (cap == 0) {

@@ -147,7 +147,9 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	const bool is_accept = !table_find(s->sessions, &sskey, (void **)&ss);
 	if (is_accept) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
-			LOGW_F("session %08" PRIX32 " not found", conv);
+			LOG_RATELIMITEDF(
+				LOG_LEVEL_WARNING, s->loop, 1.0,
+				"session %08" PRIX32 " not found", conv);
 			ss0_reset(s, sa, conv);
 			return;
 		}

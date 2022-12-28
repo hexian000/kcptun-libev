@@ -30,7 +30,8 @@ void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
 
 socklen_t getsocklen(const struct sockaddr *sa);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);
-struct sockaddr *clonesockaddr(const struct sockaddr *src);
+bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest);
+struct sockaddr *sa_clone(const struct sockaddr *src);
 void format_sa(const struct sockaddr *sa, char *s, size_t buf_size);
 
 enum {
@@ -39,6 +40,7 @@ enum {
 	RESOLVE_PASSIVE = 0x2,
 };
 
-struct sockaddr *resolve(const char *hostname, const char *service, int flags);
+struct sockaddr *
+resolve_sa(const char *hostname, const char *service, int flags);
 
 #endif /* SOCKUTIL_H */
