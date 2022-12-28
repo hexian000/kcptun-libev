@@ -155,98 +155,152 @@ static void obfs_tcp_setup(const int fd)
 	}
 }
 
-static bool
-filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
-{
-	struct sock_filter *filter = fprog->filter;
-	const uint16_t cap = fprog->len;
-	uint16_t len = 0;
+struct filter_compiler_ctx {
+	struct sock_filter *filter;
+	uint16_t cap, len;
+};
 
-#define FILTER_GEN(fragment)                                                   \
+#define FILTER_GENCODE(ctx, fragment)                                          \
 	do {                                                                   \
-		if (len + ARRAY_SIZE(fragment) > cap) {                        \
+		if ((ctx)->len + ARRAY_SIZE(fragment) > (ctx)->cap) {          \
 			return false;                                          \
 		}                                                              \
 		for (size_t i = 0; i < ARRAY_SIZE(fragment); i++) {            \
-			filter[len++] = (fragment)[i];                         \
+			(ctx)->filter[(ctx)->len++] = (fragment)[i];           \
 		}                                                              \
 	} while (false)
 
-	switch (addr->sa_family) {
-	case AF_INET: {
-		/* "(ip proto \\tcp) and (dst port 80) and (dst host 1.2.3.4)" */
-		const struct sockaddr_in *restrict sa =
-			(const struct sockaddr_in *)addr;
-		const struct sock_filter ipv4_port[] = {
-			{ 0x30, 0, 0, 0x00000000 },
-			{ 0x54, 0, 0, 0x000000f0 },
-			{ 0x15, 0, -1, 0x00000040 },
-			{ 0x30, 0, 0, 0x00000009 },
-			{ 0x15, 0, -1, 0x00000006 },
-			{ 0x28, 0, 0, 0x00000006 },
-			{ 0x45, -1, 0, 0x00001fff },
-			{ 0xb1, 0, 0, 0x00000000 },
-			{ 0x48, 0, 0, 0x00000002 },
-			{ 0x15, 0, -1, ntohs(sa->sin_port) },
-		};
-		FILTER_GEN(ipv4_port);
-		if (sa->sin_addr.s_addr != INADDR_ANY) {
-			const struct sock_filter ipv4_addr[] = {
-				{ 0x20, 0, 0, 0x00000010 },
-				{ 0x15, 0, -1, ntohl(sa->sin_addr.s_addr) },
-			};
-			FILTER_GEN(ipv4_addr);
-		}
-	} break;
-	case AF_INET6: {
-		/* "(ip6 proto \\tcp) and (dst port 80) and (dst host 1:2:3:4:5:6:7:8)" */
-		const struct sockaddr_in6 *restrict sa =
-			(const struct sockaddr_in6 *)addr;
-		const struct sock_filter ipv6_port[] = {
-			{ 0x30, 0, 0, 0x00000000 },
-			{ 0x54, 0, 0, 0x000000f0 },
-			{ 0x15, 0, -1, 0x00000060 },
-			{ 0x30, 0, 0, 0x00000006 },
-			{ 0x15, 0, -1, 0x00000006 },
-			{ 0x28, 0, 0, 0x0000002a },
-			{ 0x15, 0, -1, ntohs(sa->sin6_port) },
-		};
-		FILTER_GEN(ipv6_port);
-		if (!IN6_IS_ADDR_UNSPECIFIED(&sa->sin6_addr)) {
-			const struct sock_filter ipv6_addr[] = {
-				{ 0x20, 0, 0, 0x00000018 },
-				{ 0x15, 0, -1, ntohl(sa->sin6_addr.s6_addr32[0]) },
-				{ 0x20, 0, 0, 0x0000001c },
-				{ 0x15, 0, -1, ntohl(sa->sin6_addr.s6_addr32[1]) },
-				{ 0x20, 0, 0, 0x00000020 },
-				{ 0x15, 0, -1, ntohl(sa->sin6_addr.s6_addr32[2]) },
-				{ 0x20, 0, 0, 0x00000024 },
-				{ 0x15, 0, -1, ntohl(sa->sin6_addr.s6_addr32[3]) },
-			};
-			FILTER_GEN(ipv6_addr);
-		}
-	} break;
-	}
-	const struct sock_filter ret[] = {
-		{ 0x6, 0, 0, 0x00040000 },
-		{ 0x6, 0, 0, 0x00000000 },
+static bool filter_compile_inet(
+	struct filter_compiler_ctx *restrict ctx, const struct sockaddr_in *sa)
+{
+	/* "(ip proto \\tcp) and (dst port 80) and (dst host 1.2.3.4)" */
+	const struct sock_filter tcpip4[] = {
+		/* IP version */
+		BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0x0u),
+		BPF_STMT(BPF_ALU | BPF_K | BPF_AND, 0xf0u),
+		BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, 0x40u, 0, -1),
+		/* protocol */
+		BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0x9u),
+		BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, IPPROTO_TCP, 0, -1),
+		/* IP fragment */
+		BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 0x6u),
+		BPF_JUMP(BPF_JMP | BPF_K | BPF_JSET, 0x1fffu, -1, 0),
 	};
-	FILTER_GEN(ret);
-#undef FILTER_GEN
-
-	/* link */
-	for (uint16_t i = 0; i < len; i++) {
-		const uint8_t off = len - (i + 1u);
-		if ((int8_t)filter[i].jt < 0) {
-			filter[i].jt += off;
-		}
-		if ((int8_t)filter[i].jf < 0) {
-			filter[i].jf += off;
-		}
+	FILTER_GENCODE(ctx, tcpip4);
+	if (sa->sin_port != 0) {
+		const uint16_t port = ntohs(sa->sin_port);
+		const struct sock_filter ipv4_port[] = {
+			/* TCP port */
+			BPF_STMT(BPF_LDX | BPF_B | BPF_MSH, 0x0u),
+			BPF_STMT(BPF_LD | BPF_H | BPF_IND, 0x2u),
+			BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, port, 0, -1),
+		};
+		FILTER_GENCODE(ctx, ipv4_port);
 	}
-	fprog->len = len;
+	if (sa->sin_addr.s_addr != INADDR_ANY) {
+		const in_addr_t addr = ntohl(sa->sin_addr.s_addr);
+		const struct sock_filter ipv4_addr[] = {
+			/* IP destination */
+			BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0x10u),
+			BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, addr, 0, -1),
+		};
+		FILTER_GENCODE(ctx, ipv4_addr);
+	}
 	return true;
 }
+
+static bool filter_compile_inet6(
+	struct filter_compiler_ctx *restrict ctx, const struct sockaddr_in6 *sa)
+{
+	/* "(ip6 proto \\tcp) and (dst port 80) and (dst host 1:2:3:4:5:6:7:8)" */
+	const struct sock_filter tcpip6[] = {
+		/* IP version */
+		BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0x0u),
+		BPF_STMT(BPF_ALU | BPF_K | BPF_AND, 0xf0u),
+		BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, 0x60u, 0, -1),
+		/* protocol */
+		BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0x6u),
+		BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, IPPROTO_TCP, 0, -1),
+	};
+	FILTER_GENCODE(ctx, tcpip6);
+	if (sa->sin6_port != 0) {
+		const uint16_t port = ntohs(sa->sin6_port);
+		const struct sock_filter ipv6_port[] = {
+			/* TCP port */
+			BPF_STMT(BPF_LD | BPF_H | BPF_ABS, 0x2au),
+			BPF_JUMP(BPF_JMP | BPF_K | BPF_JEQ, port, 0, -1),
+		};
+		FILTER_GENCODE(ctx, ipv6_port);
+	}
+	if (!IN6_IS_ADDR_UNSPECIFIED(&sa->sin6_addr)) {
+		const struct sock_filter ipv6_addr[] = {
+			/* IPv6 destination */
+			BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0x18u),
+			BPF_JUMP(
+				BPF_JMP | BPF_K | BPF_JEQ,
+				ntohl(sa->sin6_addr.s6_addr32[0]), 0, -1),
+			BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0x1cu),
+			BPF_JUMP(
+				BPF_JMP | BPF_K | BPF_JEQ,
+				ntohl(sa->sin6_addr.s6_addr32[1]), 0, -1),
+			BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0x20u),
+			BPF_JUMP(
+				BPF_JMP | BPF_K | BPF_JEQ,
+				ntohl(sa->sin6_addr.s6_addr32[2]), 0, -1),
+			BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0x24u),
+			BPF_JUMP(
+				BPF_JMP | BPF_K | BPF_JEQ,
+				ntohl(sa->sin6_addr.s6_addr32[3]), 0, -1),
+		};
+		FILTER_GENCODE(ctx, ipv6_addr);
+	}
+	return true;
+}
+
+static bool
+filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
+{
+	struct filter_compiler_ctx ctx = (struct filter_compiler_ctx){
+		.filter = fprog->filter,
+		.cap = fprog->len,
+		.len = 0,
+	};
+
+	switch (addr->sa_family) {
+	case AF_INET:
+		if (!filter_compile_inet(
+			    &ctx, (const struct sockaddr_in *)addr)) {
+			return false;
+		}
+		break;
+	case AF_INET6:
+		if (!filter_compile_inet6(
+			    &ctx, (const struct sockaddr_in6 *)addr)) {
+			return false;
+		}
+		break;
+	}
+	const struct sock_filter ret[] = {
+		BPF_STMT(BPF_RET, UINT32_C(0xFFFFFFFF)),
+		BPF_STMT(BPF_RET, UINT32_C(0x0)),
+	};
+	FILTER_GENCODE(&ctx, ret);
+
+	/* link */
+	for (uint16_t i = 0; i < ctx.len; i++) {
+		const uint8_t off = ctx.len - (i + 1u);
+		if ((int8_t)ctx.filter[i].jt < 0) {
+			ctx.filter[i].jt += off;
+		}
+		if ((int8_t)ctx.filter[i].jf < 0) {
+			ctx.filter[i].jf += off;
+		}
+	}
+	fprog->len = ctx.len;
+	return true;
+}
+
+#undef FILTER_GENCODE
 
 static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
