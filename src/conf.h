@@ -22,6 +22,7 @@ enum runmode {
 const char *runmode_str(int mode);
 
 struct config {
+	const char *netdev;
 	struct netaddr listen;
 	struct netaddr connect;
 	struct netaddr kcp_bind;

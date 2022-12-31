@@ -25,6 +25,7 @@ bool socket_set_nonblock(int fd);
 void socket_set_reuseport(int fd, bool reuseport);
 void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
+void socket_bind_netdev(int fd, const char *netdev);
 
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
 

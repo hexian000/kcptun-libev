@@ -40,8 +40,10 @@
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
+#include <net/if.h>
 #include <sys/types.h>
 #include <linux/filter.h>
+#include <linux/if_packet.h>
 
 struct obfs_stats {
 	size_t pkt_cap, pkt_rx, pkt_tx;
@@ -62,6 +64,7 @@ struct obfs {
 	int cap_fd, raw_fd;
 	int fd;
 	int domain;
+	struct sockaddr_ll lladdr;
 	size_t unauthenticated;
 };
 
@@ -333,21 +336,41 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 {
 	const int domain = obfs->domain;
 	struct config *restrict conf = obfs->conf;
+	struct sockaddr_ll *restrict addr = &obfs->lladdr;
+	*addr = (struct sockaddr_ll){
+		.sll_family = AF_PACKET,
+	};
+	if (conf->netdev != NULL) {
+		addr->sll_ifindex = if_nametoindex(conf->netdev);
+		if (addr->sll_ifindex == 0) {
+			const int err = errno;
+			LOGW_F("obfs netdev: \"%s\"", strerror(err));
+		} else {
+			LOGD_F("obfs netdev: \"%s\" index=%d", conf->netdev,
+			       addr->sll_ifindex);
+		}
+	}
 	switch (domain) {
 	case AF_INET:
-		obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, htons(ETH_P_IP));
+		addr->sll_protocol = htons(ETH_P_IP);
 		break;
 	case AF_INET6:
-		obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, htons(ETH_P_IPV6));
+		addr->sll_protocol = htons(ETH_P_IPV6);
 		break;
 	default:
 		LOGF_F("unknown domain: %d", domain);
 		return false;
 	}
+	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, addr->sll_protocol);
 	if (obfs->cap_fd < 0) {
 		const int err = errno;
 		LOGE_F("obfs capture: %s", strerror(err));
 		return false;
+	}
+	if (bind(obfs->cap_fd, (struct sockaddr *)&obfs->lladdr,
+		 sizeof(obfs->lladdr))) {
+		const int err = errno;
+		LOGW_F("cap bind: %s", strerror(err));
 	}
 	if (!socket_set_nonblock(obfs->cap_fd)) {
 		const int err = errno;

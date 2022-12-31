@@ -12,13 +12,16 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <net/if.h>
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 
 bool socket_set_nonblock(int fd)
 {
@@ -65,22 +68,39 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 
 void socket_set_buffer(int fd, size_t send, size_t recv)
 {
+	int val;
 	if (send > 0) {
-		if (setsockopt(
-			    fd, SOL_SOCKET, SO_SNDBUF, &(int){ (int)send },
-			    sizeof(int))) {
+		assert(send <= INT_MAX);
+		val = (int)send;
+		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_SNDBUF: %s", strerror(err));
 		}
 	}
 	if (recv > 0) {
-		if (setsockopt(
-			    fd, SOL_SOCKET, SO_RCVBUF, &(int){ (int)recv },
-			    sizeof(int))) {
+		assert(send <= INT_MAX);
+		val = (int)recv;
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_RCVBUF: %s", strerror(err));
 		}
 	}
+}
+
+void socket_bind_netdev(const int fd, const char *netdev)
+{
+#ifdef SO_BINDTODEVICE
+	char ifname[IFNAMSIZ];
+	(void)strncpy(ifname, netdev, sizeof(ifname) - 1);
+	if (setsockopt(
+		    fd, SOL_SOCKET, SO_BINDTODEVICE, ifname, sizeof(ifname))) {
+		const int err = errno;
+		LOGW_F("SO_BINDTODEVICE: %s", strerror(err));
+	}
+#else
+	(void)fd;
+	(void)netdev;
+#endif
 }
 
 void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)
