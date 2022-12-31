@@ -344,7 +344,8 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		addr->sll_ifindex = if_nametoindex(conf->netdev);
 		if (addr->sll_ifindex == 0) {
 			const int err = errno;
-			LOGW_F("obfs netdev: \"%s\"", strerror(err));
+			LOGW_F("obfs netdev: \"%s\": %s", conf->netdev,
+			       strerror(err));
 		} else {
 			LOGD_F("obfs netdev: \"%s\" index=%d", conf->netdev,
 			       addr->sll_ifindex);
