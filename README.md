@@ -6,6 +6,8 @@
 
 A powerful and extremely lightweight encrypted port forwarder based on reliable UDP protocol.
 
+[User Wiki](https://github.com/hexian000/kcptun-libev/wiki)
+
 ## Index
 
 - [Introduction](#introduction)
@@ -44,7 +46,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 ## Features
 
 - Secure: For proper integration with the cryptography methods.
-- Fast: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
+- Responsive: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
 - Proper: KCP will be flushed on demand, no mechanistic lag introduced.
 - Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder.
 - Morden: Full IPv6 support.
