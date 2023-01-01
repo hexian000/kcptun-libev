@@ -572,6 +572,9 @@ static bool obfs_ctx_start(
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	struct obfs_ctx *restrict old_ctx = NULL;
 	if (table_del(obfs->contexts, &key, (void **)&old_ctx)) {
+		if (!old_ctx->authenticated) {
+			obfs->unauthenticated--;
+		}
 		obfs_ctx_free(loop, old_ctx);
 	}
 	const bool ok = table_set(obfs->contexts, &key, ctx);
