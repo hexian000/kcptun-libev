@@ -32,13 +32,6 @@
 
 #define TSTAMP_NIL (-1.0)
 
-static inline void *must_malloc(size_t n)
-{
-	void *p = malloc(n);
-	CHECKMSG(p != NULL, "out of memory");
-	return p;
-}
-
 extern struct mcache *msgpool;
 
 #define UTIL_SAFE_FREE(x)                                                      \

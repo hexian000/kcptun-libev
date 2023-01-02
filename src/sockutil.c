@@ -4,6 +4,7 @@
 #include "sockutil.h"
 #include "utils/slog.h"
 #include "utils/hashtable.h"
+#include "util.h"
 
 #include <fcntl.h>
 #include <sys/types.h>
@@ -98,8 +99,8 @@ void socket_bind_netdev(const int fd, const char *netdev)
 		LOGW_F("SO_BINDTODEVICE: %s", strerror(err));
 	}
 #else
-	(void)fd;
-	(void)netdev;
+	UNUSED(fd);
+	UNUSED(netdev);
 #endif
 }
 
@@ -164,7 +165,8 @@ static bool sa_matches_inet6(
 		return false;
 	}
 	if (!IN6_IS_ADDR_UNSPECIFIED(&bind->sin6_addr) &&
-	    !IN6_ARE_ADDR_EQUAL(&bind->sin6_addr, &dest->sin6_addr)) {
+	    !memcmp(&bind->sin6_addr, &dest->sin6_addr,
+		    sizeof(struct in6_addr))) {
 		return false;
 	}
 	return true;

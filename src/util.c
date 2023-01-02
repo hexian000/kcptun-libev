@@ -127,7 +127,8 @@ void genpsk(const char *method)
 		aead_list_methods();
 		exit(EXIT_FAILURE);
 	}
-	unsigned char *key = must_malloc(crypto->key_size);
+	unsigned char *key = malloc(crypto->key_size);
+	CHECKMSG(key != NULL, "out of memory");
 	aead_keygen(crypto, key);
 	char *keystr = b64_encode(key, crypto->key_size);
 	printf("%s\n", keystr);
