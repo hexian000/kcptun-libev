@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 
 #include <unistd.h>
 #include <strings.h>
@@ -64,7 +65,6 @@ struct obfs {
 	int cap_fd, raw_fd;
 	int fd;
 	int domain;
-	struct sockaddr_ll lladdr;
 	size_t unauthenticated;
 };
 
@@ -307,9 +307,9 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 
 static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	socklen_t len = getsocklen(sa);
+	const socklen_t len = getsocklen(sa);
 	memcpy(&obfs->bind_addr, sa, len);
-	{
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("obfs: cap bind %s", addr_str);
@@ -336,40 +336,38 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 {
 	const int domain = obfs->domain;
 	struct config *restrict conf = obfs->conf;
-	struct sockaddr_ll *restrict addr = &obfs->lladdr;
-	*addr = (struct sockaddr_ll){
+	struct sockaddr_ll addr = (struct sockaddr_ll){
 		.sll_family = AF_PACKET,
 	};
 	if (conf->netdev != NULL) {
-		addr->sll_ifindex = if_nametoindex(conf->netdev);
-		if (addr->sll_ifindex == 0) {
+		addr.sll_ifindex = if_nametoindex(conf->netdev);
+		if (addr.sll_ifindex == 0) {
 			const int err = errno;
-			LOGW_F("obfs netdev: \"%s\": %s", conf->netdev,
+			LOGW_F("obfs netdev \"%s\": %s", conf->netdev,
 			       strerror(err));
 		} else {
-			LOGD_F("obfs netdev: \"%s\" index=%d", conf->netdev,
-			       addr->sll_ifindex);
+			LOGD_F("obfs netdev \"%s\": index=%d", conf->netdev,
+			       addr.sll_ifindex);
 		}
 	}
 	switch (domain) {
 	case AF_INET:
-		addr->sll_protocol = htons(ETH_P_IP);
+		addr.sll_protocol = htons(ETH_P_IP);
 		break;
 	case AF_INET6:
-		addr->sll_protocol = htons(ETH_P_IPV6);
+		addr.sll_protocol = htons(ETH_P_IPV6);
 		break;
 	default:
 		LOGF_F("unknown domain: %d", domain);
 		return false;
 	}
-	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, addr->sll_protocol);
+	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, addr.sll_protocol);
 	if (obfs->cap_fd < 0) {
 		const int err = errno;
 		LOGE_F("obfs capture: %s", strerror(err));
 		return false;
 	}
-	if (bind(obfs->cap_fd, (struct sockaddr *)&obfs->lladdr,
-		 sizeof(obfs->lladdr))) {
+	if (bind(obfs->cap_fd, (struct sockaddr *)&addr, sizeof(addr))) {
 		const int err = errno;
 		LOGW_F("cap bind: %s", strerror(err));
 	}
@@ -807,13 +805,14 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
 	const double dbyt_rx = (double)(dstats.byt_rx) * 0x1p-10 / dt;
 	const double dbyt_tx = (double)(dstats.byt_tx) * 0x1p-10 / dt;
-	const double eff_cap = (double)stats->pkt_rx / (double)stats->pkt_cap;
+	const size_t drop = stats->pkt_cap - stats->pkt_rx;
+	const int num_ctx = table_size(obfs->contexts);
+	assert(0 <= num_ctx && obfs->unauthenticated <= (size_t)num_ctx);
 	strbuilder_appendf(
 		sb, 4096,
-		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, efficiency: %.2lf%%\n",
-		(size_t)table_size(obfs->contexts) - obfs->unauthenticated,
-		obfs->unauthenticated, dpkt_cap, dbyt_rx, dbyt_tx,
-		eff_cap * 100.0);
+		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, drop: %zu\n",
+		(size_t)num_ctx - obfs->unauthenticated, obfs->unauthenticated,
+		dpkt_cap, dbyt_rx, dbyt_tx, drop);
 }
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
