@@ -165,8 +165,8 @@ static bool sa_matches_inet6(
 		return false;
 	}
 	if (!IN6_IS_ADDR_UNSPECIFIED(&bind->sin6_addr) &&
-	    !memcmp(&bind->sin6_addr, &dest->sin6_addr,
-		    sizeof(struct in6_addr))) {
+	    memcmp(&bind->sin6_addr, &dest->sin6_addr,
+		   sizeof(struct in6_addr)) != 0) {
 		return false;
 	}
 	return true;
