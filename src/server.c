@@ -127,6 +127,9 @@ static bool udp_resolve(struct config *restrict conf)
 
 static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 {
+	if (conf->netdev != NULL) {
+		socket_bind_netdev(udp->fd, conf->netdev);
+	}
 	if (conf->kcp_bind.sa != NULL) {
 		const struct sockaddr *sa = conf->kcp_bind.sa;
 		if (bind(udp->fd, sa, getsocklen(sa))) {
@@ -137,9 +140,6 @@ static bool udp_bind(struct pktconn *restrict udp, struct config *restrict conf)
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGI_F("udp bind: %s", addr_str);
-		if (conf->netdev != NULL) {
-			socket_bind_netdev(udp->fd, conf->netdev);
-		}
 	}
 	if (conf->kcp_connect.sa != NULL) {
 		const struct sockaddr *sa = conf->kcp_connect.sa;

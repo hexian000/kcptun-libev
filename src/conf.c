@@ -51,7 +51,7 @@ static json_value *conf_parse(const char *filename)
 		fclose(f);
 		return NULL;
 	}
-	char *buf = malloc(len + 1);
+	char *buf = malloc(len + 1); /* null terminator */
 	if (buf == NULL) {
 		LOGF("conf_parse: out of memory");
 		fclose(f);
@@ -64,7 +64,7 @@ static json_value *conf_parse(const char *filename)
 		free(buf);
 		return NULL;
 	}
-	buf[nread] = '\0'; // end of string
+	buf[nread] = '\0';
 	json_value *obj = parse_json(buf, nread);
 	free(buf);
 	if (obj == NULL) {
@@ -80,16 +80,7 @@ static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
 	const char *name = entry->name;
 	const json_value *value = entry->value;
 	if (strcmp(name, "mtu") == 0) {
-		int mtu;
-		if (!parse_int_json(&mtu, value)) {
-			return false;
-		}
-		if (mtu < 300 || mtu > 1400) {
-			LOGE("kcp.mtu out of range");
-			return false;
-		}
-		conf->kcp_mtu = mtu;
-		return true;
+		return parse_int_json(&conf->kcp_mtu, value);
 	}
 	if (strcmp(name, "sndwnd") == 0) {
 		return parse_int_json(&conf->kcp_sndwnd, value);

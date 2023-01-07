@@ -46,7 +46,7 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 #else
 	UNUSED(fd);
 	if (reuseport) {
-		LOGW("reuseport not supported on this platform");
+		LOGW("reuseport: not supported in current build");
 	}
 #endif
 }
@@ -101,6 +101,7 @@ void socket_bind_netdev(const int fd, const char *netdev)
 #else
 	UNUSED(fd);
 	UNUSED(netdev);
+	LOGW("netdev: not supported in current build");
 #endif
 }
 

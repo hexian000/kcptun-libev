@@ -33,8 +33,6 @@ check_symbol_exists(sendmmsg "sys/socket.h" HAVE_API_SENDMMSG)
 check_symbol_exists(SYS_sendmmsg "sys/syscall.h" HAVE_SYS_SENDMMSG)
 check_symbol_exists(recvmmsg "sys/socket.h" HAVE_API_RECVMMSG)
 check_symbol_exists(SYS_recvmmsg "sys/syscall.h" HAVE_SYS_RECVMMSG)
-check_symbol_exists(clock_gettime "time.h" HAVE_CLOCK_GETTIME)
-check_symbol_exists(gettimeofday "sys/time.h" HAVE_GETTIMEOFDAY)
 
 target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR}/config.h")
 

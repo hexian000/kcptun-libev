@@ -16,6 +16,9 @@
 
 #define UNUSED(x) (void)(x)
 
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 #define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
 		if (!(cond)) {                                                 \

@@ -21,6 +21,7 @@ static void udp_reset(struct server *restrict s)
 
 #if HAVE_RECVMMSG || HAVE_SENDMMSG
 #define MMSG_BATCH_SIZE 128
+static struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
 #endif
 
 #if HAVE_RECVMMSG
@@ -36,8 +37,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 	size_t nrecv = 0, nbrecv = 0;
 	size_t nbatch;
 	do {
-		nbatch = navail > MMSG_BATCH_SIZE ? MMSG_BATCH_SIZE : navail;
-		static struct mmsghdr msgs[MMSG_BATCH_SIZE];
+		nbatch = MIN(navail, MMSG_BATCH_SIZE);
 		static struct msgframe *frames[MMSG_BATCH_SIZE] = { NULL };
 		for (size_t i = 0; i < nbatch; i++) {
 			if (frames[i] == NULL) {
@@ -48,12 +48,12 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 				}
 				frames[i] = msg;
 			}
-			msgs[i] = (struct mmsghdr){
+			mmsgs[i] = (struct mmsghdr){
 				.msg_hdr = frames[i]->hdr,
 			};
 		}
 
-		const int ret = recvmmsg(fd, msgs, nbatch, 0, NULL);
+		const int ret = recvmmsg(fd, mmsgs, nbatch, 0, NULL);
 		if (ret < 0) {
 			const int err = errno;
 			if (err == EAGAIN || err == EWOULDBLOCK ||
@@ -71,7 +71,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		}
 		for (int i = 0; i < ret; i++) {
 			struct msgframe *restrict msg = frames[i];
-			msg->len = (size_t)msgs[i].msg_len;
+			msg->len = (size_t)mmsgs[i].msg_len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
 			nbrecv += msg->len;
@@ -177,15 +177,14 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	size_t nsend = 0, nbsend = 0;
 	size_t nbatch;
 	do {
-		nbatch = navail > MMSG_BATCH_SIZE ? MMSG_BATCH_SIZE : navail;
-		static struct mmsghdr msgs[MMSG_BATCH_SIZE];
+		nbatch = MIN(navail, MMSG_BATCH_SIZE);
 		for (size_t i = 0; i < nbatch; i++) {
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
-			msgs[i] = (struct mmsghdr){
+			mmsgs[i] = (struct mmsghdr){
 				.msg_hdr = msg->hdr,
 			};
 		}
-		const int ret = sendmmsg(fd, msgs, nbatch, 0);
+		const int ret = sendmmsg(fd, mmsgs, nbatch, 0);
 		if (ret < 0) {
 			const int err = errno;
 			if (err == EAGAIN || err == EWOULDBLOCK ||
@@ -201,7 +200,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		}
 		/* delete sent messages */
 		for (int i = 0; i < ret; i++) {
-			nbsend += msgs[i].msg_len;
+			nbsend += mmsgs[i].msg_len;
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
 			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 				const struct sockaddr *sa = msg->hdr.msg_name;

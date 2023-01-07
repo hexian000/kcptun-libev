@@ -32,7 +32,6 @@ struct config {
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
 	int kcp_nodelay, kcp_interval, kcp_resend, kcp_nc;
-	/* enable for lower latency, disable for better thoughput */
 	int kcp_flush;
 
 	/* socket options */
