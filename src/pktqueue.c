@@ -30,7 +30,7 @@
 #include <inttypes.h>
 
 #if WITH_CRYPTO
-static const char crypto_tag[] = PROJECT_NAME;
+static const char crypto_tag[] = "kcptun-libev";
 static const size_t crypto_tag_size = sizeof(crypto_tag);
 
 static bool crypto_open_inplace(

@@ -146,13 +146,19 @@ obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void obfs_tcp_setup(const int fd)
 {
 	socket_set_buffer(fd, 65536, 65536);
+	socket_set_tcp(fd, false, false);
 	if (setsockopt(
 		    fd, SOL_SOCKET, TCP_WINDOW_CLAMP, &(int){ 32768 },
 		    sizeof(int))) {
 		const int err = errno;
 		LOGW_F("TCP_WINDOW_CLAMP: %s", strerror(err));
 	}
-	if (setsockopt(fd, SOL_SOCKET, TCP_QUICKACK, &(int){ 0 }, sizeof(int))) {
+}
+
+static void obfs_tcp_quickack(const int fd, const bool enabled)
+{
+	const int val = enabled ? 1 : 0;
+	if (setsockopt(fd, SOL_SOCKET, TCP_QUICKACK, &val, sizeof(val))) {
 		const int err = errno;
 		LOGW_F("TCP_QUICKACK: %s", strerror(err));
 	}
@@ -1110,6 +1116,10 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
 	obfs_capture(ctx, UINT32_C(0), ecn, &tcp);
+
+	if (!tcp.psh) {
+		return NULL;
+	}
 	ctx->last_seen = msg->ts;
 	msg->off = ihl + doff;
 	msg->len = plen - doff;
@@ -1194,6 +1204,10 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
 	const uint8_t ecn = ((flow >> 20u) & ECN_MASK);
 	obfs_capture(ctx, flow, ecn, &tcp);
+
+	if (!tcp.psh) {
+		return NULL;
+	}
 	ctx->last_seen = msg->ts;
 	msg->off = ihl + doff;
 	msg->len = plen - doff;
@@ -1256,7 +1270,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.res2 = ecn ? 0x1u : 0x0u,
 		.psh = 1,
 		.ack = 1,
-		.window = htons(32767),
+		.window = htons(32748),
 	};
 	{
 		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
@@ -1309,7 +1323,7 @@ obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.res2 = ecn ? 0x1u : 0x0u,
 		.psh = 1,
 		.ack = 1,
-		.window = htons(32767),
+		.window = htons(32748),
 	};
 	{
 		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
@@ -1453,6 +1467,43 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
+/* return: 0 - OK, 1 - more, -1 - error */
+static int obfs_parse_http(struct obfs_ctx *restrict ctx)
+{
+	ctx->rbuf[ctx->rlen] = '\0';
+	char *next = ctx->http_nxt;
+	if (next == NULL) {
+		ctx->http_nxt = next = (char *)ctx->rbuf;
+	}
+	struct http_message *restrict msg = &ctx->http_msg;
+	if (msg->any.field1 == NULL) {
+		next = http_parse(next, msg);
+		if (next == NULL) {
+			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid request");
+			return -1;
+		} else if (next == ctx->http_nxt) {
+			return 1;
+		}
+	}
+	ctx->http_nxt = next;
+	char *key, *value;
+	for (;;) {
+		next = http_parsehdr(ctx->http_nxt, &key, &value);
+		if (next == NULL) {
+			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid header");
+			return -1;
+		} else if (next == ctx->http_nxt) {
+			return 1;
+		}
+		ctx->http_nxt = next;
+		if (key == NULL) {
+			break;
+		}
+		LOGV_F("http: header %s: %s", key, value);
+	}
+	return 0;
+}
+
 void obfs_server_read_cb(
 	struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
@@ -1485,66 +1536,29 @@ void obfs_server_read_cb(
 	ctx->rlen += nbrecv;
 	cap -= nbrecv;
 
-	ctx->rbuf[ctx->rlen] = '\0';
-	char *next = ctx->http_nxt;
-	if (next == NULL) {
-		ctx->http_nxt = next = (char *)ctx->rbuf;
-	}
-	struct http_message *restrict msg = &ctx->http_msg;
-	if (msg->any.field1 == NULL) {
-		next = http_parse(next, msg);
-		if (next == NULL) {
-			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid request");
+	const int ret = obfs_parse_http(ctx);
+	if (ret < 0) {
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	} else if (ret > 0) {
+		if (cap == 0) {
+			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "request too large");
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
-			return;
-		} else if (next == ctx->http_nxt) {
-			if (cap == 0) {
-				OBFS_CTX_LOG(
-					LOG_LEVEL_DEBUG, ctx,
-					"request too large");
-				obfs_ctx_del(obfs, ctx);
-				obfs_ctx_free(loop, ctx);
-			}
-			return;
 		}
-		if (strncmp(msg->req.version, "HTTP/1.", 7) != 0) {
-			OBFS_CTX_LOG_F(
-				LOG_LEVEL_DEBUG, ctx, "unsupported protocol %s",
-				msg->req.version);
-			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(loop, ctx);
-			return;
-		}
+		return;
 	}
-	ctx->http_nxt = next;
-	char *key, *value;
-	for (;;) {
-		next = http_parsehdr(ctx->http_nxt, &key, &value);
-		if (next == NULL) {
-			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid header");
-			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(loop, ctx);
-			return;
-		} else if (next == ctx->http_nxt) {
-			if (cap == 0) {
-				OBFS_CTX_LOG(
-					LOG_LEVEL_DEBUG, ctx,
-					"request header too large");
-				obfs_ctx_del(obfs, ctx);
-				obfs_ctx_free(loop, ctx);
-			}
-			return;
-		}
-		ctx->http_nxt = next;
-		if (key == NULL) {
-			break;
-		}
-		LOGV_F("http: header %s: %s", key, value);
-	}
-	/* ignore all data arrived later */
-	ev_io_stop(loop, watcher);
 
+	struct http_message *restrict msg = &ctx->http_msg;
+	if (strcmp(msg->req.version, "HTTP/1.1") != 0) {
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_DEBUG, ctx, "unsupported protocol %s",
+			msg->req.version);
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	}
 	if (strcasecmp(msg->req.method, "GET") != 0) {
 		ctx->wlen = http_error(
 			(char *)ctx->wbuf, ctx->wcap, HTTP_BAD_REQUEST);
@@ -1577,6 +1591,10 @@ void obfs_server_read_cb(
 		(int)date_len, date_str);
 	ctx->http_keepalive = true;
 	obfs_ctx_write(ctx);
+
+	/* ignore all data arrived later */
+	ev_io_stop(loop, watcher);
+	obfs_tcp_quickack(ctx->fd, false);
 }
 
 void obfs_client_read_cb(
@@ -1586,7 +1604,9 @@ void obfs_client_read_cb(
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
 
-	const ssize_t nbrecv = recv(watcher->fd, ctx->rbuf, ctx->rcap, 0);
+	unsigned char *buf = ctx->rbuf + ctx->rlen;
+	size_t cap = ctx->rcap - ctx->rlen - 1; /* for null-terminator */
+	const ssize_t nbrecv = recv(watcher->fd, buf, cap, 0);
 	if (nbrecv < 0) {
 		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
@@ -1603,8 +1623,46 @@ void obfs_client_read_cb(
 		obfs->client = NULL;
 		return;
 	}
-	/* discard */
-	LOGD_F("obfs: client recv %zu bytes", (size_t)nbrecv);
+	ctx->rlen += nbrecv;
+	cap -= nbrecv;
+
+	const int ret = obfs_parse_http(ctx);
+	if (ret < 0) {
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	} else if (ret > 0) {
+		if (cap == 0) {
+			OBFS_CTX_LOG(
+				LOG_LEVEL_DEBUG, ctx, "response too large");
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+		}
+		return;
+	}
+
+	struct http_message *restrict msg = &ctx->http_msg;
+	if (strcmp(msg->rsp.version, "HTTP/1.1") != 0) {
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_DEBUG, ctx, "unsupported protocol %s",
+			msg->rsp.version);
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	}
+	if (strcmp(msg->rsp.code, "204") != 0) {
+		OBFS_CTX_LOG_F(
+			LOG_LEVEL_DEBUG, ctx, "unexpected http status %s",
+			msg->rsp.code);
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	}
+	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "client ready");
+
+	/* ignore all data arrived later */
+	ev_io_stop(loop, watcher);
+	obfs_tcp_quickack(ctx->fd, false);
 }
 
 void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
