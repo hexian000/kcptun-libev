@@ -239,7 +239,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		if (navail > 0) {
 			ss->wbuf_flush = TLV_HEADER_SIZE;
 			ss->wbuf_next = TLV_HEADER_SIZE + navail;
-			if (!tcp_send(ss)) {
+			if (tcp_send(ss) < 0) {
 				return false;
 			}
 		}
@@ -256,7 +256,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		ss->tcp_state = STATE_LINGER;
 		/* pass eof */
 		if (ss->tcp_fd != -1) {
-			if (!tcp_send(ss)) {
+			if (tcp_send(ss) < 0) {
 				return false;
 			}
 		}

@@ -42,8 +42,9 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 			not_seen = now - ss->last_recv;
 		}
 		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] timeout: keepalive",
-			       ss->conv);
+			LOGW_F("session [%08" PRIX32 "] "
+			       "timeout: not seen in %.01fs",
+			       ss->conv, not_seen);
 			session_stop(ss);
 			session_kcp_stop(ss);
 			break;

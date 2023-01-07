@@ -1521,6 +1521,14 @@ void obfs_server_read_cb(
 		    err == ENOMEM) {
 			return;
 		}
+		if (err == ECONNREFUSED || err == ECONNRESET) {
+			OBFS_CTX_LOG_F(
+				LOG_LEVEL_DEBUG, ctx, "recv: %s",
+				strerror(err));
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+			return;
+		}
 		OBFS_CTX_LOG_F(LOG_LEVEL_ERROR, ctx, "recv: %s", strerror(err));
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
