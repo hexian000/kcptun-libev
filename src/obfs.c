@@ -313,12 +313,47 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 
 static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	const socklen_t len = getsocklen(sa);
-	memcpy(&obfs->bind_addr, sa, len);
+	const bool rebind = &obfs->bind_addr.sa == sa;
+	if (!rebind) {
+		const socklen_t len = getsocklen(sa);
+		memcpy(&obfs->bind_addr.sa, sa, len);
+	}
+	struct sockaddr_ll addr = (struct sockaddr_ll){
+		.sll_family = AF_PACKET,
+	};
+	const char *netdev = obfs->conf->netdev;
+	if (netdev != NULL) {
+		addr.sll_ifindex = if_nametoindex(netdev);
+		if (addr.sll_ifindex == 0) {
+			const int err = errno;
+			LOGW_F("obfs netdev \"%s\": %s", netdev, strerror(err));
+		} else {
+			LOGD_F("obfs netdev \"%s\": index=%d", netdev,
+			       addr.sll_ifindex);
+		}
+	}
+	switch (obfs->domain) {
+	case AF_INET:
+		addr.sll_protocol = htons(ETH_P_IP);
+		break;
+	case AF_INET6:
+		addr.sll_protocol = htons(ETH_P_IPV6);
+		break;
+	default:
+		LOGF_F("unknown domain: %d", obfs->domain);
+		return false;
+	}
+	if (bind(obfs->cap_fd, (struct sockaddr *)&addr, sizeof(addr))) {
+		const int err = errno;
+		LOGW_F("cap bind: %s", strerror(err));
+	}
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("obfs: cap bind %s", addr_str);
+	}
+	if (rebind) {
+		return true;
 	}
 	struct sock_filter filter[32];
 	struct sock_fprog fprog = (struct sock_fprog){
@@ -342,40 +377,23 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 {
 	const int domain = obfs->domain;
 	struct config *restrict conf = obfs->conf;
-	struct sockaddr_ll addr = (struct sockaddr_ll){
-		.sll_family = AF_PACKET,
-	};
-	if (conf->netdev != NULL) {
-		addr.sll_ifindex = if_nametoindex(conf->netdev);
-		if (addr.sll_ifindex == 0) {
-			const int err = errno;
-			LOGW_F("obfs netdev \"%s\": %s", conf->netdev,
-			       strerror(err));
-		} else {
-			LOGD_F("obfs netdev \"%s\": index=%d", conf->netdev,
-			       addr.sll_ifindex);
-		}
-	}
+	uint16_t protocol;
 	switch (domain) {
 	case AF_INET:
-		addr.sll_protocol = htons(ETH_P_IP);
+		protocol = htons(ETH_P_IP);
 		break;
 	case AF_INET6:
-		addr.sll_protocol = htons(ETH_P_IPV6);
+		protocol = htons(ETH_P_IPV6);
 		break;
 	default:
 		LOGF_F("unknown domain: %d", domain);
 		return false;
 	}
-	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, addr.sll_protocol);
+	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, protocol);
 	if (obfs->cap_fd < 0) {
 		const int err = errno;
 		LOGE_F("obfs capture: %s", strerror(err));
 		return false;
-	}
-	if (bind(obfs->cap_fd, (struct sockaddr *)&addr, sizeof(addr))) {
-		const int err = errno;
-		LOGW_F("cap bind: %s", strerror(err));
 	}
 	if (!socket_set_nonblock(obfs->cap_fd)) {
 		const int err = errno;
@@ -747,8 +765,7 @@ struct obfs *obfs_new(struct server *restrict s)
 
 bool obfs_resolve(struct obfs *obfs)
 {
-	UNUSED(obfs);
-	return true;
+	return obfs_cap_bind(obfs, &obfs->bind_addr.sa);
 }
 
 void obfs_sample(struct obfs *restrict obfs)

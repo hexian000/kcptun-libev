@@ -15,7 +15,6 @@
 #include <ev.h>
 
 #include <inttypes.h>
-#include <math.h>
 
 static bool
 timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
@@ -108,11 +107,11 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		LOGD("ping timeout");
 		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
-	const double timeout = fmax(s->keepalive * 3.0, 60.0);
+	const double timeout = CLAMP(s->keepalive * 3.0, 60.0, 1800.0);
 	if (now - s->last_resolve_time > timeout &&
 	    (s->pkt.last_recv_time == TSTAMP_NIL ||
 	     now - s->pkt.last_recv_time > timeout)) {
-		LOGD("peer is not responding, try resolve addresses");
+		LOGW("peer is not responding, try resolve addresses");
 		(void)server_resolve(s);
 #if WITH_CRYPTO
 		noncegen_init(s->pkt.queue->noncegen);

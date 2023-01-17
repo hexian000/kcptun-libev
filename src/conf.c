@@ -339,7 +339,7 @@ static bool conf_check(struct config *restrict conf)
 		conf_check_range("kcp.flush", conf->kcp_flush, 0, 2) &&
 		conf_check_range("timeout", conf->timeout, 60, 86400) &&
 		conf_check_range("linger", conf->linger, 5, 600) &&
-		conf_check_range("keepalive", conf->keepalive, 0, 7200) &&
+		conf_check_range("keepalive", conf->keepalive, 0, 600) &&
 		conf_check_range("time_wait", conf->time_wait, 5, 3600) &&
 		conf_check_range("log_level", conf->log_level, 0, 6);
 	if (!range_ok) {

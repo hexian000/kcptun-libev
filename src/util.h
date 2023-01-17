@@ -18,6 +18,7 @@
 
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define CLAMP(x, a, b) ((x) < (a) ? (a) : ((b) < (x) ? (b) : (x)))
 
 #define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
