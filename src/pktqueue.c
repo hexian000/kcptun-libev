@@ -209,8 +209,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	if (is_accept) {
 		return;
 	}
-	ss->pkt_arrived++;
-	if (ss->kcp_flush >= 2 || ss->pkt_arrived >= ss->kcp->rcv_wnd) {
+	if (ss->kcp_flush >= 2) {
 		/* flush acks */
 		kcp_flush(ss);
 	}

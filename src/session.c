@@ -285,20 +285,9 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 
 void session_read_cb(struct session *ss)
 {
-	ss->pkt_arrived = 0;
-	for (;;) {
-		switch (ss->kcp_state) {
-		case STATE_CONNECT:
-		case STATE_CONNECTED:
-			break;
-		default:
-			return;
-		}
-		if (!kcp_recv(ss)) {
-			session_stop(ss);
-			kcp_reset(ss);
-			return;
-		}
+	while (ss->kcp_state == STATE_CONNECT ||
+	       ss->kcp_state == STATE_CONNECTED) {
+		kcp_recv_cb(ss);
 		if (ss->wbuf_next > ss->wbuf_flush) {
 			/* tcp flushing is in progress */
 			break;

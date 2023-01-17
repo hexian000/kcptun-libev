@@ -171,7 +171,7 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	assert(watcher == &ss->w_read);
 	assert(watcher->fd == ss->tcp_fd);
 
-	while (ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
+	while (ss->tcp_fd != -1 && ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
 		switch (tcp_recv(ss)) {
 		case TCPRECV_OK:
 			break;
@@ -258,7 +258,7 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	assert(watcher == &ss->w_write);
 	assert(watcher->fd == ss->tcp_fd);
 
-	while (ss->wbuf_next > ss->wbuf_flush) {
+	while (ss->tcp_fd != -1 && ss->wbuf_next > ss->wbuf_flush) {
 		const int ret = tcp_flush(ss);
 		if (ret < 0) {
 			session_stop(ss);

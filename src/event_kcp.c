@@ -34,11 +34,7 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	msg->len = len;
 	s->stats.kcp_tx += len;
 	ss->stats.kcp_tx += len;
-	if (!queue_send(q, s, msg)) {
-		ss->need_flush = true;
-		return -1;
-	}
-	return len;
+	return queue_send(q, s, msg) ? len : -1;
 }
 
 void kcp_reset(struct session *ss)
@@ -92,7 +88,7 @@ bool kcp_push(struct session *restrict ss)
 	return kcp_send(ss, ss->rbuf, len);
 }
 
-bool kcp_recv(struct session *restrict ss)
+void kcp_recv_cb(struct session *restrict ss)
 {
 	unsigned char *start = ss->wbuf + ss->wbuf_len;
 	size_t cap = SESSION_BUF_SIZE - ss->wbuf_len;
@@ -113,7 +109,6 @@ bool kcp_recv(struct session *restrict ss)
 		       "recv %zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
 	}
-	return true;
 }
 
 void kcp_update(struct session *restrict ss)
@@ -135,7 +130,6 @@ void kcp_update(struct session *restrict ss)
 		const uint32_t now_ms = tstamp2ms(now);
 		ikcp_update(ss->kcp, now_ms);
 	}
-	session_read_cb(ss);
 	if (ss->kcp != NULL && ss->tcp_fd != -1 &&
 	    ss->tcp_state != STATE_LINGER) {
 		struct ev_io *restrict w_read = &ss->w_read;
@@ -159,6 +153,7 @@ static bool kcp_update_iter(
 	UNUSED(key);
 	struct session *restrict ss = value;
 	kcp_update(ss);
+	session_read_cb(ss);
 	struct pktqueue *restrict q = user;
 	return q->mq_send_len < q->mq_send_cap;
 }

@@ -89,7 +89,6 @@ struct session {
 	int kcp_flush;
 	bool is_accepted;
 	bool need_flush;
-	size_t pkt_arrived;
 	unsigned char *rbuf;
 	size_t rbuf_len;
 	unsigned char *wbuf;
