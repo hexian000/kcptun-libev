@@ -52,13 +52,12 @@ struct obfs_stats {
 };
 
 struct obfs {
-	struct config *conf;
-	struct ev_loop *loop;
+	struct server *server;
 	struct hashtable *sessions;
 	struct hashtable *contexts;
 	struct ev_io w_accept;
 	struct ev_timer w_timer;
-	struct obfs_ctx *client;
+	struct obfs_ctx *client; /* for reference only, no ownership */
 	struct obfs_stats stats, last_stats;
 	ev_tstamp last_stats_time;
 	sockaddr_max_t bind_addr;
@@ -311,17 +310,21 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 
 #undef FILTER_GENCODE
 
-static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
+static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	const bool rebind = &obfs->bind_addr.sa == sa;
-	if (!rebind) {
-		const socklen_t len = getsocklen(sa);
-		memcpy(&obfs->bind_addr.sa, sa, len);
+	const socklen_t len = getsocklen(sa);
+	memmove(&obfs->bind_addr.sa, sa, len);
+
+	const struct config *restrict conf = obfs->server->conf;
+	/* if privileges are dropped, we won't able to rebind after device restart */
+	if (conf->netdev != NULL && conf->user == NULL) {
+		socket_bind_netdev(obfs->raw_fd, conf->netdev);
 	}
+
 	struct sockaddr_ll addr = (struct sockaddr_ll){
 		.sll_family = AF_PACKET,
 	};
-	const char *netdev = obfs->conf->netdev;
+	const char *netdev = obfs->server->conf->netdev;
 	if (netdev != NULL) {
 		addr.sll_ifindex = if_nametoindex(netdev);
 		if (addr.sll_ifindex == 0) {
@@ -352,9 +355,6 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGD_F("obfs: cap bind %s", addr_str);
 	}
-	if (rebind) {
-		return true;
-	}
 	struct sock_filter filter[32];
 	struct sock_fprog fprog = (struct sock_fprog){
 		.filter = filter,
@@ -376,7 +376,7 @@ static bool obfs_cap_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 static bool obfs_raw_start(struct obfs *restrict obfs)
 {
 	const int domain = obfs->domain;
-	struct config *restrict conf = obfs->conf;
+	struct config *restrict conf = obfs->server->conf;
 	uint16_t protocol;
 	switch (domain) {
 	case AF_INET:
@@ -517,7 +517,7 @@ static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 	}
 }
 
-static void obfs_ctx_write(struct obfs_ctx *restrict ctx)
+static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 {
 	struct obfs *restrict obfs = ctx->obfs;
 	unsigned char *buf = ctx->wbuf;
@@ -533,7 +533,7 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx)
 			}
 			LOGE_F("obfs: %s", strerror(err));
 			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(obfs->loop, ctx);
+			obfs_ctx_free(loop, ctx);
 			return;
 		}
 		len -= nsend;
@@ -544,18 +544,18 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx)
 	if (len > 0) {
 		memmove(buf, buf + nbsend, len);
 		if (!ev_is_active(w_write)) {
-			ev_io_start(obfs->loop, w_write);
+			ev_io_start(loop, w_write);
 		}
 		return;
 	}
 	if (!ctx->http_keepalive) {
 		OBFS_CTX_LOG(LOG_LEVEL_VERBOSE, ctx, "server close");
 		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(obfs->loop, ctx);
+		obfs_ctx_free(obfs->server->loop, ctx);
 		return;
 	}
 	if (ev_is_active(w_write)) {
-		ev_io_stop(obfs->loop, w_write);
+		ev_io_stop(obfs->server->loop, w_write);
 	}
 }
 
@@ -563,8 +563,8 @@ static bool obfs_ctx_start(
 	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
 {
 	ctx->fd = fd;
-	struct ev_loop *loop = obfs->loop;
-	if (obfs->conf->mode & MODE_CLIENT) {
+	struct ev_loop *loop = obfs->server->loop;
+	if (obfs->server->conf->mode & MODE_CLIENT) {
 		struct ev_io *restrict w_read = &ctx->w_read;
 		ev_io_init(w_read, obfs_client_read_cb, fd, EV_READ);
 		w_read->data = ctx;
@@ -607,8 +607,44 @@ static bool obfs_ctx_start(
 	return ok;
 }
 
+static bool
+obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
+{
+	const struct config *restrict conf = obfs->server->conf;
+	obfs->fd = socket(obfs->domain, SOCK_STREAM, IPPROTO_TCP);
+	if (obfs->fd < 0) {
+		const int err = errno;
+		LOGE_F("obfs tcp: %s", strerror(err));
+		return false;
+	}
+	if (!socket_set_nonblock(obfs->fd)) {
+		const int err = errno;
+		LOGE_F("fcntl: %s", strerror(err));
+		return false;
+	}
+	socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
+	obfs_tcp_setup(obfs->fd);
+	if (bind(obfs->fd, sa, getsocklen(sa))) {
+		const int err = errno;
+		LOGE_F("obfs tcp bind: %s", strerror(err));
+		return false;
+	}
+	if (listen(obfs->fd, 16)) {
+		const int err = errno;
+		LOGE_F("obfs tcp listen: %s", strerror(err));
+		return false;
+	}
+	if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOGI_F("obfs: tcp listen %s", addr_str);
+	}
+	return true;
+}
+
 static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
+	struct ev_loop *loop = obfs->server->loop;
 	int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
 		const int err = errno;
@@ -631,7 +667,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		const int err = errno;
 		if (err != EINPROGRESS) {
 			LOGE_F("obfs tcp connect: %s", strerror(err));
-			obfs_ctx_free(obfs->loop, ctx);
+			obfs_ctx_free(loop, ctx);
 			return false;
 		}
 	}
@@ -642,17 +678,17 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		const int err = errno;
 		LOGE_F("obfs client name: %s", strerror(err));
-		obfs_ctx_free(obfs->loop, ctx);
+		obfs_ctx_free(loop, ctx);
 		return false;
 	}
-	if (!obfs_cap_bind(obfs, &ctx->laddr.sa)) {
+	if (!obfs_bind(obfs, &ctx->laddr.sa)) {
 		return false;
 	}
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
-		obfs_ctx_free(obfs->loop, ctx);
+		obfs_ctx_free(loop, ctx);
 		return false;
 	}
-	if (obfs->conf->mode & MODE_CLIENT) {
+	if (obfs->server->conf->mode & MODE_CLIENT) {
 		/* send the request */
 		char addr_str[64];
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
@@ -664,7 +700,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			"Accept: */*\r\n\r\n",
 			addr_str);
 		ctx->http_keepalive = true;
-		obfs_ctx_write(ctx);
+		obfs_ctx_write(ctx, loop);
 	}
 	obfs->client = ctx;
 	return true;
@@ -676,8 +712,9 @@ static bool obfs_ctx_timeout_filt(
 	UNUSED(t);
 	UNUSED(key);
 	struct obfs *restrict obfs = user;
+	struct ev_loop *loop = obfs->server->loop;
 	struct obfs_ctx *restrict ctx = value;
-	const ev_tstamp now = ev_now(obfs->loop);
+	const ev_tstamp now = ev_now(loop);
 	assert(now >= ctx->last_seen);
 	double not_seen;
 	if (ctx->authenticated) {
@@ -700,12 +737,11 @@ static bool obfs_ctx_timeout_filt(
 	}
 	if (obfs->client == ctx) {
 		obfs->client = NULL;
-		return true;
 	}
 	if (!ctx->authenticated) {
 		obfs->unauthenticated--;
 	}
-	obfs_ctx_free(obfs->loop, ctx);
+	obfs_ctx_free(loop, ctx);
 	return false;
 }
 
@@ -726,8 +762,9 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 
 	/* client redial */
-	if ((obfs->conf->mode & MODE_CLIENT) && obfs->client == NULL) {
-		struct netaddr *addr = &obfs->conf->kcp_connect;
+	struct config *restrict conf = obfs->server->conf;
+	if ((conf->mode & MODE_CLIENT) && obfs->client == NULL) {
+		struct netaddr *addr = &conf->kcp_connect;
 		if (resolve_netaddr(addr, RESOLVE_TCP)) {
 			(void)obfs_ctx_dial(obfs, addr->sa);
 		}
@@ -745,8 +782,7 @@ struct obfs *obfs_new(struct server *restrict s)
 			return NULL;
 		}
 		*obfs = (struct obfs){
-			.loop = s->loop,
-			.conf = s->conf,
+			.server = s,
 			.sessions = s->sessions,
 			.contexts = table_new(),
 			.cap_fd = -1,
@@ -765,13 +801,32 @@ struct obfs *obfs_new(struct server *restrict s)
 
 bool obfs_resolve(struct obfs *obfs)
 {
-	return obfs_cap_bind(obfs, &obfs->bind_addr.sa);
+	struct config *restrict conf = obfs->server->conf;
+	if (conf->mode & MODE_SERVER) {
+		const struct sockaddr *sa = &obfs->bind_addr.sa;
+		if (!obfs_bind(obfs, sa)) {
+			return false;
+		}
+	} else if (conf->mode & MODE_CLIENT) {
+		if (!resolve_netaddr(&conf->kcp_connect, RESOLVE_TCP)) {
+			return false;
+		}
+		struct obfs_ctx *client = obfs->client;
+		if (client != NULL) {
+			obfs_ctx_del(obfs, client);
+			obfs_ctx_free(obfs->server->loop, client);
+		}
+		if (!obfs_ctx_dial(obfs, conf->kcp_connect.sa)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void obfs_sample(struct obfs *restrict obfs)
 {
 	obfs->last_stats = obfs->stats;
-	obfs->last_stats_time = ev_now(obfs->loop);
+	obfs->last_stats_time = ev_now(obfs->server->loop);
 }
 
 struct obfs_stats_ctx {
@@ -805,7 +860,7 @@ static bool print_ctx_iter(
 
 void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 {
-	const ev_tstamp now = ev_now(obfs->loop);
+	const ev_tstamp now = ev_now(obfs->server->loop);
 	struct obfs_stats *restrict stats = &obfs->stats;
 	struct obfs_stats *restrict last_stats = &obfs->last_stats;
 
@@ -840,7 +895,7 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 {
-	struct config *restrict conf = obfs->conf;
+	struct config *restrict conf = obfs->server->conf;
 	struct pktconn *restrict pkt = &s->pkt;
 	if (conf->mode & MODE_SERVER) {
 		struct netaddr *restrict addr = &conf->kcp_bind;
@@ -851,43 +906,18 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		const int domain = sa->sa_family;
 		obfs->domain = domain;
 		obfs_raw_start(obfs);
-		if (!obfs_cap_bind(obfs, sa)) {
+		if (!obfs_bind(obfs, sa)) {
 			return false;
 		}
-		obfs->fd = socket(domain, SOCK_STREAM, IPPROTO_TCP);
-		if (obfs->fd < 0) {
-			const int err = errno;
-			LOGE_F("obfs tcp: %s", strerror(err));
+		if (!obfs_tcp_listen(obfs, sa)) {
 			return false;
-		}
-		if (!socket_set_nonblock(obfs->fd)) {
-			const int err = errno;
-			LOGE_F("fcntl: %s", strerror(err));
-			return false;
-		}
-		socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
-		obfs_tcp_setup(obfs->fd);
-		if (bind(obfs->fd, sa, getsocklen(sa))) {
-			const int err = errno;
-			LOGE_F("obfs tcp bind: %s", strerror(err));
-			return false;
-		}
-		if (listen(obfs->fd, 16)) {
-			const int err = errno;
-			LOGE_F("obfs tcp listen: %s", strerror(err));
-			return false;
-		}
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
-			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGI_F("obfs: tcp listen %s", addr_str);
 		}
 	}
 	if (conf->mode & MODE_CLIENT) {
-		if (!resolve_netaddr(&obfs->conf->kcp_connect, RESOLVE_TCP)) {
+		if (!resolve_netaddr(&conf->kcp_connect, RESOLVE_TCP)) {
 			return false;
 		}
-		const struct sockaddr *sa = obfs->conf->kcp_connect.sa;
+		const struct sockaddr *sa = conf->kcp_connect.sa;
 		obfs->domain = sa->sa_family;
 		obfs_raw_start(obfs);
 		if (!obfs_ctx_dial(obfs, sa)) {
@@ -912,13 +942,13 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		struct ev_io *restrict w_accept = &obfs->w_accept;
 		ev_io_init(w_accept, obfs_accept_cb, obfs->fd, EV_READ);
 		w_accept->data = obfs;
-		ev_io_start(obfs->loop, w_accept);
+		ev_io_start(s->loop, w_accept);
 	}
 	{
 		struct ev_timer *restrict w_timer = &obfs->w_timer;
 		ev_timer_init(w_timer, obfs_timer_cb, 10.0, 10.0);
 		w_timer->data = obfs;
-		ev_timer_start(obfs->loop, w_timer);
+		ev_timer_start(s->loop, w_timer);
 	}
 	return true;
 }
@@ -930,7 +960,8 @@ static bool obfs_shutdown_filt(
 	UNUSED(key);
 	struct obfs_ctx *restrict ctx = (struct obfs_ctx *)value;
 	struct obfs *restrict obfs = (struct obfs *)user;
-	obfs_ctx_free(obfs->loop, ctx);
+	struct ev_loop *loop = obfs->server->loop;
+	obfs_ctx_free(loop, ctx);
 	return false;
 }
 
@@ -939,7 +970,7 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 	struct pktconn *restrict pkt = &s->pkt;
 	table_filter(obfs->contexts, obfs_shutdown_filt, obfs);
 	obfs->client = NULL;
-	struct ev_loop *loop = obfs->loop;
+	struct ev_loop *loop = obfs->server->loop;
 	{
 		struct ev_timer *restrict w_timer = &obfs->w_timer;
 		ev_timer_stop(loop, w_timer);
@@ -1115,7 +1146,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 			LOG_RATELIMITEDF(
-				LOG_LEVEL_DEBUG, obfs->loop, 1.0,
+				LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
@@ -1127,8 +1158,8 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_DEBUG, obfs->loop, 1.0, "* obfs: rst from %s",
-			addr_str);
+			LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
+			"* obfs: rst from %s", addr_str);
 		return NULL;
 	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
@@ -1202,7 +1233,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 			LOG_RATELIMITEDF(
-				LOG_LEVEL_DEBUG, obfs->loop, 1.0,
+				LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
@@ -1214,8 +1245,8 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_DEBUG, obfs->loop, 1.0, "* obfs: rst from %s",
-			addr_str);
+			LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
+			"* obfs: rst from %s", addr_str);
 		return NULL;
 	}
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
@@ -1369,7 +1400,7 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_WARNING, obfs->loop, 1.0,
+			LOG_LEVEL_WARNING, obfs->server->loop, 1.0,
 			"* obfs: can't send %" PRIu16 " bytes to unrelated %s",
 			msg->len, addr_str);
 		return false;
@@ -1408,8 +1439,8 @@ void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
 }
 
 static void obfs_accept_one(
-	struct obfs *restrict obfs, const int fd, struct sockaddr *sa,
-	socklen_t len)
+	struct obfs *restrict obfs, struct ev_loop *loop, const int fd,
+	struct sockaddr *sa, socklen_t len)
 {
 	struct obfs_ctx *restrict ctx = obfs_ctx_new(obfs);
 	if (ctx == NULL) {
@@ -1426,7 +1457,7 @@ static void obfs_accept_one(
 		const int err = errno;
 		LOGE_F("obfs accept name: %s", strerror(err));
 		(void)close(fd);
-		obfs_ctx_free(obfs->loop, ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -1434,7 +1465,7 @@ static void obfs_accept_one(
 	w_read->data = ctx;
 	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "accepted");
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
-		obfs_ctx_free(obfs->loop, ctx);
+		obfs_ctx_free(loop, ctx);
 	}
 }
 
@@ -1480,7 +1511,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			return;
 		}
 
-		obfs_accept_one(obfs, fd, &m_sa.sa, len);
+		obfs_accept_one(obfs, loop, fd, &m_sa.sa, len);
 	}
 }
 
@@ -1590,7 +1621,7 @@ void obfs_server_read_cb(
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_DEBUG, ctx, "HTTP %d \"%s\"",
 			HTTP_BAD_REQUEST, msg->req.method);
-		obfs_ctx_write(ctx);
+		obfs_ctx_write(ctx, loop);
 		return;
 	}
 	char *url = msg->req.url;
@@ -1600,7 +1631,7 @@ void obfs_server_read_cb(
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_DEBUG, ctx, "HTTP %d \"%s\"", HTTP_NOT_FOUND,
 			msg->req.url);
-		obfs_ctx_write(ctx);
+		obfs_ctx_write(ctx, loop);
 		return;
 	}
 
@@ -1615,7 +1646,7 @@ void obfs_server_read_cb(
 		"Connection: keep-alive\r\n\r\n",
 		(int)date_len, date_str);
 	ctx->http_keepalive = true;
-	obfs_ctx_write(ctx);
+	obfs_ctx_write(ctx, loop);
 
 	/* ignore all data arrived later */
 	ev_io_stop(loop, watcher);
@@ -1695,7 +1726,7 @@ void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	CHECK_EV_ERROR(revents);
 	struct obfs_ctx *restrict ctx = watcher->data;
-	obfs_ctx_write(ctx);
+	obfs_ctx_write(ctx, loop);
 }
 
 #endif /* WITH_OBFS */

@@ -40,7 +40,11 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
 target_link_libraries(kcptun-libev kcp json b64 bloom net utils)
 
-find_library(LIBM m)
+if(LINK_STATIC_LIBS)
+    find_library(LIBM NAMES libm.a)
+else()
+    find_library(LIBM NAMES m)
+endif()
 if(LIBM)
     target_link_libraries(kcptun-libev ${LIBM})
 endif()
