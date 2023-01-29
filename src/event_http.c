@@ -256,7 +256,7 @@ static struct strbuilder http_resp_txt(const uint16_t code)
 	strbuilder_appendf(
 		&sb, 4096,
 		"HTTP/1.0 %" PRIu16 " %s\r\n"
-		"Date: %*s\r\n"
+		"Date: %.*s\r\n"
 		"Connection: close\r\n"
 		"Content-type: text/plain\r\n\r\n",
 		code, http_status(code), (int)date_len, date_str);

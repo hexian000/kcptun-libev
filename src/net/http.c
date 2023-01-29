@@ -131,7 +131,7 @@ size_t http_error(char *buf, size_t buf_size, const uint16_t code)
 	const int ret = snprintf(
 		buf, buf_size,
 		"HTTP/1.0 %" PRIu16 " %s\r\n"
-		"Date: %*s\r\n"
+		"Date: %.*s\r\n"
 		"Connection: close\r\n"
 		"Content-type: text/html\r\n\r\n"
 		"<HTML><HEAD><TITLE>%" PRIu16 " %s</TITLE></HEAD>\n"

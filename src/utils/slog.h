@@ -52,7 +52,7 @@ extern FILE *slog_file;
 			log_filename = (path);                                 \
 		}                                                              \
 		(void)fprintf(                                                 \
-			log_fp, level##_STR " %*s %s:%d " format "\n",         \
+			log_fp, level##_STR " %.*s %s:%d " format "\n",        \
 			timestamp_len, log_timestamp, log_filename, (line),    \
 			__VA_ARGS__);                                          \
 		(void)fflush(log_fp);                                          \

@@ -1652,7 +1652,7 @@ void obfs_server_read_cb(
 	ctx->wlen = snprintf(
 		(char *)ctx->wbuf, ctx->wcap,
 		"HTTP/1.1 204 No Content\r\n"
-		"Date: %*s\r\n"
+		"Date: %.*s\r\n"
 		"Content-Length: 0\r\n"
 		"Connection: keep-alive\r\n\r\n",
 		(int)date_len, date_str);
