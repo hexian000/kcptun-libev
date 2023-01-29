@@ -315,26 +315,37 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	const socklen_t len = getsocklen(sa);
 	memmove(&obfs->bind_addr.sa, sa, len);
 
+	uint32_t scope_id = 0;
+	if (sa->sa_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(sa)) {
+		scope_id = ((struct sockaddr_in6 *)sa)->sin6_scope_id;
+	}
+	unsigned int ifindex = 0;
 	const struct config *restrict conf = obfs->server->conf;
-	/* if privileges are dropped, we won't able to rebind after device restart */
-	if (conf->netdev != NULL && conf->user == NULL) {
-		socket_bind_netdev(obfs->raw_fd, conf->netdev);
+	if (conf->netdev != NULL) {
+		ifindex = if_nametoindex(conf->netdev);
+		if (ifindex == 0) {
+			const int err = errno;
+			LOGW_F("obfs invalid netdev \"%s\": %s", conf->netdev,
+			       strerror(err));
+		} else {
+			LOGD_F("obfs netdev \"%s\": index=%d", conf->netdev,
+			       ifindex);
+		}
+	}
+	if (scope_id != 0 && ifindex != scope_id) {
+		if (ifindex != 0) {
+			LOGW("obfs bind: netdev that differs from the address scope is ignored");
+		}
+		ifindex = scope_id;
+	}
+	if (ifindex != 0) {
+		LOGD_F("obfs bind: device index=%u", ifindex);
 	}
 
 	struct sockaddr_ll addr = (struct sockaddr_ll){
 		.sll_family = AF_PACKET,
+		.sll_ifindex = ifindex,
 	};
-	const char *netdev = obfs->server->conf->netdev;
-	if (netdev != NULL) {
-		addr.sll_ifindex = if_nametoindex(netdev);
-		if (addr.sll_ifindex == 0) {
-			const int err = errno;
-			LOGW_F("obfs netdev \"%s\": %s", netdev, strerror(err));
-		} else {
-			LOGD_F("obfs netdev \"%s\": index=%d", netdev,
-			       addr.sll_ifindex);
-		}
-	}
 	switch (obfs->domain) {
 	case AF_INET:
 		addr.sll_protocol = htons(ETH_P_IP);
