@@ -30,7 +30,6 @@ struct pktqueue {
 	size_t mq_send_len, mq_send_cap;
 	struct msgframe **mq_recv;
 	size_t mq_recv_len, mq_recv_cap;
-	uint16_t pkt_offset;
 #if WITH_CRYPTO
 	struct aead *crypto;
 	struct noncegen *noncegen;

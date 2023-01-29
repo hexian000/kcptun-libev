@@ -37,7 +37,6 @@ struct http_ctx {
 	struct ev_loop *loop;
 	void *data;
 	int fd;
-	ev_tstamp created;
 	struct ev_io w_read, w_write;
 	struct ev_timer w_timeout;
 	unsigned char rbuf[HTTP_MAX_REQUEST];
@@ -89,7 +88,6 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		.loop = s->loop,
 		.data = s,
 		.fd = fd,
-		.created = ev_now(loop),
 		.rcap = HTTP_MAX_REQUEST,
 	};
 	struct ev_io *restrict w_read = &ctx->w_read;

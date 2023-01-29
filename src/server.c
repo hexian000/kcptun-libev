@@ -323,17 +323,26 @@ static void udp_free(struct pktconn *restrict conn)
 
 static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 {
-	if (l->fd == -1) {
-		return;
+	if (l->fd != -1) {
+		LOGD_F("listener close: %d", l->fd);
+		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io_stop(loop, w_accept);
+		if (close(l->fd) != 0) {
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
+		}
+		l->fd = -1;
 	}
-	LOGD_F("listener close: %d", l->fd);
-	struct ev_io *restrict w_accept = &l->w_accept;
-	ev_io_stop(loop, w_accept);
-	if (close(l->fd) != 0) {
-		const int err = errno;
-		LOGW_F("close: %s", strerror(err));
+	if (l->fd_http != -1) {
+		LOGD_F("http listener close: %d", l->fd_http);
+		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io_stop(loop, w_accept);
+		if (close(l->fd_http) != 0) {
+			const int err = errno;
+			LOGW_F("close: %s", strerror(err));
+		}
+		l->fd_http = -1;
 	}
-	l->fd = -1;
 }
 
 void server_stop(struct server *restrict s)

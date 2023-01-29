@@ -31,7 +31,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <limits.h>
 
 #include <unistd.h>
 #include <strings.h>
@@ -344,7 +343,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 	struct sockaddr_ll addr = (struct sockaddr_ll){
 		.sll_family = AF_PACKET,
-		.sll_ifindex = ifindex,
+		.sll_ifindex = (int)ifindex,
 	};
 	switch (obfs->domain) {
 	case AF_INET:

@@ -65,19 +65,6 @@ void uninit(void)
 	mcache_free(msgpool);
 }
 
-bool getuserid(const char *name, uid_t *userid, gid_t *groupid)
-{
-	struct passwd *restrict pwd = getpwnam(name);
-	if (pwd == NULL) {
-		const int err = errno;
-		LOGW_F("getpwnam: %s", strerror(err));
-		return false;
-	}
-	*userid = pwd->pw_uid;
-	*groupid = pwd->pw_gid;
-	return true;
-}
-
 void drop_privileges(const char *user)
 {
 	if (getuid() != 0) {

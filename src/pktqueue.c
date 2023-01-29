@@ -366,7 +366,6 @@ struct pktqueue *queue_new(struct server *restrict s)
 		queue_free(q);
 		return NULL;
 	}
-	q->pkt_offset = 0;
 #if WITH_CRYPTO
 	if (!queue_new_crypto(q, conf)) {
 		queue_free(q);
