@@ -230,7 +230,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 - "kcp.nodelay": Default to 1.
 - "kcp.interval":
 	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
-	2. This option is not intended for [traffic shaping](https://www.bufferbloat.net/projects/codel/wiki/Cake/). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it.
+	2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
 
