@@ -34,7 +34,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		return 0;
 	}
 	const ev_tstamp now = ev_now(s->loop);
-	size_t nrecv = 0, nbrecv = 0;
+	size_t nrecv = 0;
 	size_t nbatch;
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
@@ -74,7 +74,6 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			msg->len = (size_t)mmsgs[i].msg_len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
-			nbrecv += msg->len;
 			frames[i] = NULL;
 			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 				const struct sockaddr *sa = msg->hdr.msg_name;
@@ -87,10 +86,6 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		nrecv += (size_t)ret;
 		navail -= (size_t)ret;
 	} while (navail > 0);
-	if (nrecv > 0) {
-		s->stats.pkt_rx += nbrecv;
-		s->pkt.last_recv_time = ev_now(s->loop);
-	}
 	return nrecv;
 }
 
@@ -135,9 +130,6 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		s->stats.pkt_rx += nbrecv;
 		nrecv++;
 	} while (true);
-	if (nrecv > 0) {
-		s->pkt.last_recv_time = ev_now(s->loop);
-	}
 	return nrecv;
 }
 
