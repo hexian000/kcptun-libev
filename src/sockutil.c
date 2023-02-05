@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "sockutil.h"
+#include "util.h"
 #include "utils/slog.h"
 #include "utils/hashtable.h"
 
