@@ -33,15 +33,15 @@ ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 
 struct noncegen *noncegen_create(
 	const enum noncegen_method method, const size_t nonce_len,
-	const bool strict)
+	const bool server)
 {
 	struct noncegen *restrict g = malloc(sizeof(struct noncegen));
 	if (g == NULL) {
 		return NULL;
 	}
 
-	const size_t entries = strict ? 1u << 20u : 1u << 14u;
-	const double error = 0x1p-20;
+	const size_t entries = server ? 1u << 20u : 1u << 14u;
+	const double error = server ? 0x1p-20 : 0x1p-30;
 	*g = (struct noncegen){
 		.method = method,
 		.ppbloom =
