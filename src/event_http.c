@@ -137,7 +137,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ctx->rbuf[ctx->rlen] = '\0';
 	char *next = ctx->http_nxt;
 	if (next == NULL) {
-		ctx->http_nxt = next = (char *)ctx->rbuf;
+		next = (char *)ctx->rbuf;
 	}
 	struct http_message *restrict hdr = &ctx->http_msg;
 	if (hdr->any.field1 == NULL) {
@@ -162,11 +162,11 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		LOGV_F("http: request %s %s %s", hdr->req.method, hdr->req.url,
 		       hdr->req.version);
+		ctx->http_nxt = next;
 	}
-	ctx->http_nxt = next;
-	char *key, *value;
 	for (;;) {
-		next = http_parsehdr(ctx->http_nxt, &key, &value);
+		char *key, *value;
+		next = http_parsehdr(next, &key, &value);
 		if (next == NULL) {
 			LOGE("http: invalid header");
 			http_ctx_free(ctx);
@@ -314,7 +314,6 @@ void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr
 	if (strcmp(url, "/healthy") == 0) {
 		LOGV("http: serve /healthy");
 		struct strbuilder sb = http_resp_txt(HTTP_OK);
-		strbuilder_append(&sb, "OK");
 		ctx->wlen = sb.len;
 		ctx->wcap = sb.cap;
 		ctx->wbuf = (unsigned char *)sb.buf;

@@ -259,6 +259,8 @@ Then run the commands below from shell:
 watch curl -s http://127.0.1.1:8081/stats
 ```
 
+The URI "/healthy" always responds with HTTP 200, feel free to use it for healthy checks.
+
 ## Credits
 
 Thanks to:
