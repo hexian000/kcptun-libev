@@ -138,6 +138,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	char *next = ctx->http_nxt;
 	if (next == NULL) {
 		next = (char *)ctx->rbuf;
+		ctx->http_nxt = next;
 	}
 	struct http_message *restrict hdr = &ctx->http_msg;
 	if (hdr->any.field1 == NULL) {
