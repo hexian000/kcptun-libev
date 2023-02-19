@@ -8,7 +8,7 @@
 #cmakedefine01 WITH_SODIUM
 #define WITH_CRYPTO WITH_SODIUM
 #cmakedefine01 POSIX
-#define WITH_OBFS (WITH_CRYPTO && (__linux__ && !POSIX))
+#cmakedefine01 WITH_OBFS
 #cmakedefine01 HAVE_API_SENDMMSG
 #cmakedefine01 HAVE_SYS_SENDMMSG
 #define HAVE_SENDMMSG (HAVE_API_SENDMMSG && HAVE_SYS_SENDMMSG)
