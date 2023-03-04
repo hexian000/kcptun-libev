@@ -871,8 +871,6 @@ static bool print_ctx_iter(
 void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 {
 	const ev_tstamp now = ev_now(obfs->server->loop);
-	struct obfs_stats *restrict stats = &obfs->stats;
-	struct obfs_stats *restrict last_stats = &obfs->last_stats;
 
 	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
 		.now = now,
@@ -881,7 +879,9 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
 
 	const double dt = now - obfs->last_stats_time;
-	struct obfs_stats dstats = (struct obfs_stats){
+	const struct obfs_stats *restrict stats = &obfs->stats;
+	const struct obfs_stats *restrict last_stats = &obfs->last_stats;
+	const struct obfs_stats dstats = (struct obfs_stats){
 		.pkt_cap = stats->pkt_cap - last_stats->pkt_cap,
 		.byt_cap = stats->byt_cap - last_stats->byt_cap,
 		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
@@ -1531,7 +1531,8 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 	ctx->rbuf[ctx->rlen] = '\0';
 	char *next = ctx->http_nxt;
 	if (next == NULL) {
-		ctx->http_nxt = next = (char *)ctx->rbuf;
+		next = (char *)ctx->rbuf;
+		ctx->http_nxt = next;
 	}
 	struct http_message *restrict msg = &ctx->http_msg;
 	if (msg->any.field1 == NULL) {
@@ -1542,8 +1543,8 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 		} else if (next == ctx->http_nxt) {
 			return 1;
 		}
+		ctx->http_nxt = next;
 	}
-	ctx->http_nxt = next;
 	char *key, *value;
 	for (;;) {
 		next = http_parsehdr(ctx->http_nxt, &key, &value);

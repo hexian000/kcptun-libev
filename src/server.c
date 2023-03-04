@@ -449,8 +449,7 @@ static bool print_session_iter(
 		last_seen != TSTAMP_NIL ? ctx->now - last_seen : TSTAMP_NIL;
 	(void)strbuilder_appendf(
 		ctx->sb, 4096,
-		"    [%08" PRIX32 "] "
-		"%c peer=%s seen=%.0lfs "
+		"    [%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
 		"rx/tx=%zu/%zu\n",
 		ss->conv, session_state_char[state], addr_str, not_seen,
@@ -485,10 +484,10 @@ void server_stats(struct server *s, struct strbuilder *sb)
 {
 	print_session_table(s, sb);
 
-	struct link_stats *restrict stats = &s->stats;
-	struct link_stats *restrict last_stats = &s->last_stats;
 	const double dt = ev_now(s->loop) - s->last_stats_time;
-	struct link_stats dstats = (struct link_stats){
+	const struct link_stats *restrict stats = &s->stats;
+	const struct link_stats *restrict last_stats = &s->last_stats;
+	const struct link_stats dstats = (struct link_stats){
 		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
 		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
 		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
@@ -501,22 +500,21 @@ void server_stats(struct server *s, struct strbuilder *sb)
 	const double dkcp_tx = (double)(dstats.kcp_tx) * 0x1p-10 / dt;
 	const double dtcp_rx = (double)(dstats.tcp_rx) * 0x1p-10 / dt;
 	const double dtcp_tx = (double)(dstats.tcp_tx) * 0x1p-10 / dt;
-	const double deff_rx = (double)dstats.tcp_tx / (double)dstats.kcp_rx;
-	const double deff_tx = (double)dstats.tcp_rx / (double)dstats.kcp_tx;
+	const double deff_rx = dtcp_tx / dkcp_rx * 100.0;
+	const double deff_tx = dtcp_rx / dkcp_tx * 100.0;
 
 	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10;
 	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10;
 	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10;
 	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10;
-	const double eff_rx = (double)stats->tcp_tx / (double)stats->kcp_rx;
-	const double eff_tx = (double)stats->tcp_rx / (double)stats->kcp_tx;
+	const double eff_rx = tcp_tx / kcp_rx * 100.0;
+	const double eff_tx = tcp_rx / kcp_tx * 100.0;
 
 	strbuilder_appendf(
 		sb, 4096,
 		"traffic stats (rx/tx, in KiB):\n"
 		"    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
 		"      total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n",
-		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx * 100.0,
-		deff_tx * 100.0, kcp_rx, kcp_tx, tcp_rx, tcp_tx, eff_rx * 100.0,
-		eff_tx * 100.0);
+		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx, deff_tx, kcp_rx,
+		kcp_tx, tcp_rx, tcp_tx, eff_rx, eff_tx);
 }

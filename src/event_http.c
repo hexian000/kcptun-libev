@@ -189,7 +189,6 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 static void http_ctx_write(struct http_ctx *restrict ctx)
 {
 	unsigned char *buf = ctx->wbuf;
-	size_t nbsend = 0;
 	size_t len = ctx->wlen;
 	while (len > 0) {
 		const ssize_t nsend = send(ctx->fd, buf, len, 0);
@@ -203,12 +202,12 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 			http_ctx_free(ctx);
 			return;
 		}
+		buf += nsend;
 		len -= nsend;
-		nbsend += nsend;
 	}
 	ctx->wlen = len;
 	if (len > 0) {
-		memmove(buf, buf + nbsend, len);
+		memmove(ctx->wbuf, buf, len);
 		struct ev_io *restrict w_write = &ctx->w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(ctx->loop, w_write);
@@ -232,18 +231,26 @@ void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents
 	http_ctx_free(watcher->data);
 }
 
+static void http_set_wbuf(
+	struct http_ctx *restrict ctx, unsigned char *buf, const size_t len,
+	const size_t cap)
+{
+	UTIL_SAFE_FREE(ctx->wbuf);
+	ctx->wbuf = buf;
+	ctx->wcap = cap;
+	ctx->wlen = len;
+}
+
 static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
 {
-	const size_t cap = 4096;
+	const size_t cap = 512;
 	unsigned char *buf = malloc(cap);
 	if (buf == NULL) {
 		http_ctx_free(ctx);
 		return;
 	}
 	const size_t len = http_error((char *)buf, cap, code);
-	ctx->wbuf = buf;
-	ctx->wcap = cap;
-	ctx->wlen = len;
+	http_set_wbuf(ctx, buf, len, cap);
 	http_ctx_write(ctx);
 }
 
@@ -294,9 +301,8 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		last_query = msgpool->query;
 	}
 #endif
-	ctx->wlen = sb.len;
-	ctx->wcap = sb.cap;
-	ctx->wbuf = (unsigned char *)sb.buf;
+
+	http_set_wbuf(ctx, (unsigned char *)sb.buf, sb.len, sb.cap);
 	http_ctx_write(ctx);
 }
 
@@ -315,9 +321,7 @@ void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr
 	if (strcmp(url, "/healthy") == 0) {
 		LOGV("http: serve /healthy");
 		struct strbuilder sb = http_resp_txt(HTTP_OK);
-		ctx->wlen = sb.len;
-		ctx->wcap = sb.cap;
-		ctx->wbuf = (unsigned char *)sb.buf;
+		http_set_wbuf(ctx, (unsigned char *)sb.buf, sb.len, sb.cap);
 		http_ctx_write(ctx);
 		return;
 	}

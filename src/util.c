@@ -21,7 +21,6 @@
 #include <grp.h>
 #endif
 
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -52,10 +51,9 @@ struct mcache *msgpool;
 
 void init(void)
 {
-	size_t size = sizeof(struct IKCPSEG) + MAX_PACKET_SIZE;
-	if (size < sizeof(struct msgframe)) {
-		size = sizeof(struct msgframe);
-	}
+	const size_t size =
+		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
+		    sizeof(struct msgframe));
 	msgpool = mcache_new(256, size);
 	ikcp_segment_pool = msgpool;
 }
