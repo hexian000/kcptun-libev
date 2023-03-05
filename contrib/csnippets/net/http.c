@@ -16,18 +16,31 @@ static const struct {
 	const char *name;
 	const char *info;
 } http_resp[] = {
-	{ HTTP_OK, "OK", "" },
-	{ HTTP_MOVED_TEMPORARILY, "Found", "" },
+	{ HTTP_OK, "OK", NULL },
+	{ HTTP_CREATED, "Created", NULL },
+	{ HTTP_ACCEPTED, "Accepted", NULL },
+	{ HTTP_NO_CONTENT, "No Content", NULL },
+	{ HTTP_MOVED_PERMANENTLY, "Moved Permanently", NULL },
+	{ HTTP_FOUND, "Found", NULL },
+	{ HTTP_NOT_MODIFIED, "Not Modified", NULL },
 	{ HTTP_REQUEST_TIMEOUT, "Request Timeout",
-	  "No request appeared within timeout" },
+	  "Server timeout waiting for the HTTP request from the client." },
 	{ HTTP_NOT_IMPLEMENTED, "Not Implemented",
-	  "The requested method is not recognized" },
-	{ HTTP_NOT_FOUND, "Not Found", "The requested URL was not found" },
-	{ HTTP_BAD_REQUEST, "Bad Request", "Unsupported method" },
-	{ HTTP_FORBIDDEN, "Forbidden", "" },
+	  "The requested method is not supported for current URL." },
+	{ HTTP_NOT_FOUND, "Not Found",
+	  "The requested URL was not found on this server." },
+	{ HTTP_BAD_REQUEST, "Bad Request",
+	  "Your browser sent a request that this server could not understand." },
+	{ HTTP_FORBIDDEN, "Forbidden",
+	  "You don't have permission to access this resource." },
 	{ HTTP_INTERNAL_SERVER_ERROR, "Internal Server Error",
-	  "Internal Server Error" },
-	{ HTTP_ENTITY_TOO_LARGE, "Entity Too Large", "Entity Too Large" },
+	  "The server encountered an internal error." },
+	{ HTTP_ENTITY_TOO_LARGE, "Content Too Large",
+	  "The amount of data provided in the request exceeds the capacity limit." },
+	{ HTTP_BAD_GATEWAY, "Bad Gateway",
+	  "The proxy server received an invalid response from an upstream server." },
+	{ HTTP_GATEWAY_TIMEOUT, "Gateway Timeout",
+	  "The gateway did not receive a timely response from the upstream server or application." },
 };
 
 static char *skip_whitespace(char *s)
@@ -117,11 +130,15 @@ size_t http_error(char *buf, size_t buf_size, const uint16_t code)
 {
 	const char *name = NULL, *info = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(http_resp); i++) {
-		if (http_resp[i].code == code) {
-			name = http_resp[i].name;
-			info = http_resp[i].info;
-			break;
+		if (http_resp[i].code != code) {
+			continue;
 		}
+		name = http_resp[i].name;
+		info = http_resp[i].info;
+		if (info == NULL) {
+			info = name;
+		}
+		break;
 	}
 	if (name == NULL) {
 		return 0;

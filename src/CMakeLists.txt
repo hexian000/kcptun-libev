@@ -1,10 +1,3 @@
-add_subdirectory(kcp)
-add_subdirectory(json)
-add_subdirectory(b64)
-add_subdirectory(libbloom)
-add_subdirectory(net)
-add_subdirectory(utils)
-
 add_executable(kcptun-libev main.c
     aead.c aead.h
     util.c util.h
@@ -17,6 +10,7 @@ add_executable(kcptun-libev main.c
     nonce.c nonce.h
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
+target_include_directories(kcptun-libev PRIVATE ../contrib/csnippets ../contrib)
 target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=1)
 
 option(POSIX "Use POSIX API" OFF)
@@ -40,7 +34,7 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
-target_link_libraries(kcptun-libev kcp json b64 bloom net utils)
+target_link_libraries(kcptun-libev kcp json b64 bloom csnippets)
 
 if(LINK_STATIC_LIBS)
     find_library(LIBM NAMES libm.a)

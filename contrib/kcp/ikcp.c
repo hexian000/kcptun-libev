@@ -11,7 +11,7 @@
 //=====================================================================
 #include "ikcp.h"
 
-#include "../utils/mcache.h"
+#include "utils/mcache.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -49,7 +49,7 @@ const uint32_t IKCP_FASTACK_LIMIT = 5; // max times to trigger fastack
 // encode / decode
 //---------------------------------------------------------------------
 
-#include "../utils/serialize.h"
+#include "utils/serialize.h"
 
 /* encode 8 bits unsigned int */
 static inline char *ikcp_encode8u(char *p, uint8_t c)

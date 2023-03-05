@@ -1,0 +1,8 @@
+target_sources(csnippets
+    PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/addr.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/http.c"
+    PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/addr.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/http.h"
+)

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.11)
 project(kcptun-libev
     LANGUAGES C
     HOMEPAGE_URL "https://github.com/hexian000/kcptun-libev")
@@ -60,4 +60,5 @@ endif()
 set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fsanitize=address,undefined")
 set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -s")
 
+add_subdirectory(contrib)
 add_subdirectory(src)
