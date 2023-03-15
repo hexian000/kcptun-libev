@@ -292,7 +292,7 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		strbuilder_appendf(
 			&sb, 256,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
-			msgpool->n, msgpool->cache_size, hit, query - hit,
+			msgpool->num_elem, msgpool->cache_size, hit, query - hit,
 			(double)hit / ((double)query) * 100.0, msgpool->hit,
 			msgpool->query - msgpool->hit,
 			(double)msgpool->hit / ((double)msgpool->query) *

@@ -55,6 +55,7 @@ void init(void)
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
 	msgpool = mcache_new(256, size);
+	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
 }
 
@@ -113,7 +114,7 @@ void genpsk(const char *method)
 		exit(EXIT_FAILURE);
 	}
 	unsigned char *key = malloc(crypto->key_size);
-	CHECKMSG(key != NULL, "out of memory");
+	CHECKOOM(key);
 	aead_keygen(crypto, key);
 	char *keystr = b64_encode(key, crypto->key_size);
 	printf("%s\n", keystr);

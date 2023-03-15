@@ -216,7 +216,7 @@ struct aead *aead_create(const char *method)
 		};
 	} break;
 	default:
-		CHECKMSG(false, "unknown crypto method");
+		FAIL();
 	}
 	return aead;
 }

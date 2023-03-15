@@ -353,7 +353,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		addr.sll_protocol = htons(ETH_P_IPV6);
 		break;
 	default:
-		LOGF_F("unknown domain: %d", obfs->domain);
+		FAIL();
 		return false;
 	}
 	if (bind(obfs->cap_fd, (struct sockaddr *)&addr, sizeof(addr))) {
@@ -396,7 +396,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		protocol = htons(ETH_P_IPV6);
 		break;
 	default:
-		LOGF_F("unknown domain: %d", domain);
+		FAIL();
 		return false;
 	}
 	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, protocol);
@@ -443,7 +443,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		}
 		break;
 	default:
-		LOGF_F("unknown domain: %d", domain);
+		FAIL();
 		return false;
 	}
 	socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
@@ -1034,9 +1034,10 @@ uint16_t obfs_offset(struct obfs *obfs)
 	case AF_INET6:
 		return sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
 	default:
+		FAIL();
 		break;
 	}
-	CHECKMSG(false, "unknown af");
+	return 0;
 }
 
 /* RFC 1071 */
@@ -1427,6 +1428,7 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 		ok = obfs_seal_ipv6(ctx, msg);
 		break;
 	default:
+		FAIL();
 		break;
 	}
 	if (ok) {

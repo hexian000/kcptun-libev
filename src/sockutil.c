@@ -129,10 +129,10 @@ socklen_t getsocklen(const struct sockaddr *sa)
 	case AF_INET6:
 		return sizeof(struct sockaddr_in6);
 	default:
+		FAIL();
 		break;
 	}
-	LOGF("only IPv4/IPv6 addresses are supported");
-	abort();
+	return 0;
 }
 
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
@@ -187,6 +187,7 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 			(const struct sockaddr_in6 *)bind,
 			(const struct sockaddr_in6 *)dest);
 	default:
+		FAIL();
 		break;
 	}
 	return false;

@@ -27,12 +27,13 @@
 			exit(EXIT_FAILURE);                                    \
 		}                                                              \
 	} while (0)
-
 #define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)
-
-#define CHECK(cond) CHECKMSGF(cond, "runtime check failed: \"%s\"", #cond)
+#define CHECK(cond) CHECKMSGF(cond, "runtime check failed: %s", #cond)
 
 #define LOGOOM() LOGE("out of memory")
+#define CHECKOOM(ptr) CHECKMSG((ptr) != NULL, "out of memory")
+
+#define FAIL() CHECKMSG(0, "program entered an unexpected state (bug?)")
 
 #define TSTAMP_NIL (-1.0)
 
