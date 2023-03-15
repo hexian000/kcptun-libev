@@ -71,16 +71,14 @@ void socket_set_buffer(int fd, size_t send, size_t recv)
 {
 	int val;
 	if (send > 0) {
-		assert(send <= INT_MAX);
-		val = (int)send;
+		val = (int)MIN(send, INT_MAX);
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_SNDBUF: %s", strerror(err));
 		}
 	}
 	if (recv > 0) {
-		assert(send <= INT_MAX);
-		val = (int)recv;
+		val = (int)MIN(recv, INT_MAX);
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_RCVBUF: %s", strerror(err));

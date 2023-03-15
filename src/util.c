@@ -69,7 +69,7 @@ void drop_privileges(const char *user)
 		return;
 	}
 	if (user == NULL) {
-		LOGW("running as root, please consider set \"user\" field in config ");
+		LOGW("running as root, please consider set \"user\" field in config");
 		return;
 	}
 	if (chdir("/") != 0) {

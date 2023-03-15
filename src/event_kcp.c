@@ -140,12 +140,6 @@ void kcp_update(struct session *restrict ss)
 	}
 }
 
-void kcp_flush(struct session *ss)
-{
-	ss->need_flush = true;
-	kcp_update(ss);
-}
-
 static bool kcp_update_iter(
 	struct hashtable *t, const hashkey_t *key, void *value, void *user)
 {

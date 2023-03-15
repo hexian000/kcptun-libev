@@ -13,7 +13,6 @@ add_executable(kcptun-libev main.c
 target_include_directories(kcptun-libev PRIVATE ../contrib/csnippets ../contrib)
 target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=1)
 
-option(POSIX "Use POSIX API" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT POSIX)
     set(WITH_OBFS ON)
     list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")

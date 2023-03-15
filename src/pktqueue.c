@@ -144,8 +144,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	struct sockaddr *sa = &msg->addr.sa;
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
-	const bool is_accept = !table_find(s->sessions, &sskey, (void **)&ss);
-	if (is_accept) {
+	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOG_RATELIMITEDF(
 				LOG_LEVEL_WARNING, s->loop, 1.0,
@@ -206,12 +205,9 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
-	if (is_accept) {
-		return;
-	}
 	if (ss->kcp_flush >= 2) {
 		/* flush acks */
-		kcp_flush(ss);
+		ss->need_flush = true;
 	}
 }
 
@@ -258,6 +254,9 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 	if (nbrecv > 0) {
 		s->stats.pkt_rx += nbrecv;
 		s->pkt.last_recv_time = ev_now(s->loop);
+		if (s->conf->kcp_flush >= 2) {
+			kcp_notify_update(s);
+		}
 	}
 	q->mq_recv_len = 0;
 	return nbrecv;

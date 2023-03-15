@@ -34,7 +34,6 @@ bool kcp_sendmsg(struct session *ss, uint16_t msg);
 bool kcp_push(struct session *ss);
 void kcp_recv_cb(struct session *ss);
 void kcp_reset(struct session *ss);
-void kcp_flush(struct session *ss);
 
 int tcp_send(struct session *ss);
 void pkt_flush(struct server *s);

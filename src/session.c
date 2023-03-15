@@ -354,7 +354,8 @@ bool session_send(struct session *restrict ss)
 		ss->kcp_state = STATE_LINGER;
 	}
 	if (ss->kcp_flush >= 1) {
-		kcp_flush(ss);
+		ss->need_flush = true;
+		kcp_update(ss);
 	}
 	return true;
 }
