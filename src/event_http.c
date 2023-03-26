@@ -273,7 +273,7 @@ static struct vbuffer *http_resp_txt(struct vbuffer *buf, const uint16_t code)
 
 static void http_serve_stats(struct http_ctx *restrict ctx)
 {
-	struct vbuffer *restrict buf = vbuf_reserve(NULL, 255);
+	struct vbuffer *restrict buf = vbuf_reserve(NULL, 4000);
 	buf = http_resp_txt(buf, HTTP_OK);
 
 	struct server *restrict s = ctx->data;
