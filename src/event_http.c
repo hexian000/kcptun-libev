@@ -3,8 +3,9 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "utils/buffer.h"
+#include "utils/check.h"
 #include "utils/slog.h"
-#include "utils/strbuilder.h"
 #include "net/http.h"
 #include "util.h"
 #include "server.h"
@@ -37,14 +38,15 @@ struct http_ctx {
 	struct ev_loop *loop;
 	void *data;
 	int fd;
-	struct ev_io w_read, w_write;
-	struct ev_timer w_timeout;
-	unsigned char rbuf[HTTP_MAX_REQUEST];
-	size_t rlen, rcap;
-	unsigned char *wbuf;
-	size_t wlen, wcap;
 	struct http_message http_msg;
 	char *http_nxt;
+	struct ev_io w_read, w_write;
+	struct ev_timer w_timeout;
+	struct vbuffer *wbuf;
+	struct {
+		BUFFER_HDR;
+		unsigned char data[HTTP_MAX_REQUEST];
+	} rbuf;
 };
 
 static void http_ctx_free(struct http_ctx *restrict ctx)
@@ -84,12 +86,14 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		return;
 	}
-	*ctx = (struct http_ctx){
-		.loop = s->loop,
-		.data = s,
-		.fd = fd,
-		.rcap = HTTP_MAX_REQUEST,
-	};
+	ctx->loop = s->loop;
+	ctx->data = s;
+	ctx->fd = fd;
+	ctx->http_msg = (struct http_message){ 0 };
+	ctx->http_nxt = NULL;
+	buf_init(&ctx->rbuf, HTTP_MAX_REQUEST);
+	ctx->wbuf = NULL;
+
 	struct ev_io *restrict w_read = &ctx->w_read;
 	ev_io_init(w_read, http_read_cb, fd, EV_READ);
 	w_read->data = ctx;
@@ -115,9 +119,10 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct http_ctx *restrict ctx = watcher->data;
-	unsigned char *buf = ctx->rbuf + ctx->rlen;
-	size_t cap = ctx->rcap - ctx->rlen - 1; /* for null-terminator */
-	const ssize_t nrecv = recv(watcher->fd, buf, cap, 0);
+	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
+	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
+		     (size_t)1; /* for null-terminator */
+	const ssize_t nrecv = recv(watcher->fd, data, cap, 0);
 	if (nrecv < 0) {
 		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
@@ -131,13 +136,13 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		http_ctx_free(ctx);
 		return;
 	}
-	ctx->rlen += nrecv;
+	ctx->rbuf.len += nrecv;
 	cap -= nrecv;
 
-	ctx->rbuf[ctx->rlen] = '\0';
+	ctx->rbuf.data[ctx->rbuf.len] = '\0';
 	char *next = ctx->http_nxt;
 	if (next == NULL) {
-		next = (char *)ctx->rbuf;
+		next = (char *)ctx->rbuf.data;
 		ctx->http_nxt = next;
 	}
 	struct http_message *restrict hdr = &ctx->http_msg;
@@ -188,10 +193,12 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 static void http_ctx_write(struct http_ctx *restrict ctx)
 {
-	unsigned char *buf = ctx->wbuf;
-	size_t len = ctx->wlen;
+	struct vbuffer *restrict wbuf = ctx->wbuf;
+	unsigned char *data = wbuf->data;
+	size_t nbsend = 0;
+	size_t len = wbuf->len;
 	while (len > 0) {
-		const ssize_t nsend = send(ctx->fd, buf, len, 0);
+		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
 			if (err == EAGAIN || err == EWOULDBLOCK ||
@@ -202,12 +209,13 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 			http_ctx_free(ctx);
 			return;
 		}
-		buf += nsend;
+		data += nsend;
 		len -= nsend;
+		nbsend += nsend;
 	}
-	ctx->wlen = len;
+	wbuf->len -= nbsend;
 	if (len > 0) {
-		memmove(ctx->wbuf, buf, len);
+		vbuf_consume(wbuf, nbsend);
 		struct ev_io *restrict w_write = &ctx->w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(ctx->loop, w_write);
@@ -231,55 +239,50 @@ void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents
 	http_ctx_free(watcher->data);
 }
 
-static void http_set_wbuf(
-	struct http_ctx *restrict ctx, unsigned char *buf, const size_t len,
-	const size_t cap)
+static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)
 {
-	UTIL_SAFE_FREE(ctx->wbuf);
+	vbuf_free(ctx->wbuf);
 	ctx->wbuf = buf;
-	ctx->wcap = cap;
-	ctx->wlen = len;
 }
 
 static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
 {
-	const size_t cap = 512;
-	unsigned char *buf = malloc(cap);
+	struct vbuffer *restrict buf = vbuf_alloc(NULL, 512);
 	if (buf == NULL) {
-		http_ctx_free(ctx);
+		LOGOOM();
 		return;
 	}
-	const size_t len = http_error((char *)buf, cap, code);
-	http_set_wbuf(ctx, buf, len, cap);
-	http_ctx_write(ctx);
+	const int ret = http_error((char *)buf->data, buf->cap, code);
+	CHECK(ret > 0);
+	buf->len = ret;
+	http_set_wbuf(ctx, buf);
 }
 
-static struct strbuilder http_resp_txt(const uint16_t code)
+static struct vbuffer *http_resp_txt(struct vbuffer *buf, const uint16_t code)
 {
-	struct strbuilder sb = { 0 };
 	char date_str[32];
 	size_t date_len = http_date(date_str, sizeof(date_str));
-	strbuilder_appendf(
-		&sb, 4096,
+	return vbuf_appendf(
+		buf,
 		"HTTP/1.0 %" PRIu16 " %s\r\n"
 		"Date: %.*s\r\n"
 		"Connection: close\r\n"
 		"Content-type: text/plain\r\n\r\n",
 		code, http_status(code), (int)date_len, date_str);
-	return sb;
 }
 
 static void http_serve_stats(struct http_ctx *restrict ctx)
 {
-	struct strbuilder sb = http_resp_txt(HTTP_OK);
+	struct vbuffer *restrict buf = vbuf_reserve(NULL, 255);
+	buf = http_resp_txt(buf, HTTP_OK);
 
 	struct server *restrict s = ctx->data;
-	server_stats(s, &sb);
+	buf = server_stats(s, buf);
 	server_sample(s);
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
-		obfs_stats(obfs, &sb);
+		buf = obfs_stats(obfs, buf);
 		obfs_sample(obfs);
 	}
 #endif
@@ -289,12 +292,12 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 		static size_t last_query = 0;
 		const size_t hit = msgpool->hit - last_hit;
 		const size_t query = msgpool->query - last_query;
-		strbuilder_appendf(
-			&sb, 256,
+		buf = vbuf_appendf(
+			buf,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
-			msgpool->num_elem, msgpool->cache_size, hit, query - hit,
-			(double)hit / ((double)query) * 100.0, msgpool->hit,
-			msgpool->query - msgpool->hit,
+			msgpool->num_elem, msgpool->cache_size, hit,
+			query - hit, (double)hit / ((double)query) * 100.0,
+			msgpool->hit, msgpool->query - msgpool->hit,
 			(double)msgpool->hit / ((double)msgpool->query) *
 				100.0);
 		last_hit = msgpool->hit;
@@ -302,11 +305,11 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 	}
 #endif
 
-	http_set_wbuf(ctx, (unsigned char *)sb.buf, sb.len, sb.cap);
-	http_ctx_write(ctx);
+	http_set_wbuf(ctx, buf);
 }
 
-void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr)
+static void http_handle_request(
+	struct http_ctx *restrict ctx, struct http_message *restrict hdr)
 {
 	if (strcasecmp(hdr->req.method, "GET") != 0) {
 		http_write_error(ctx, HTTP_BAD_REQUEST);
@@ -320,10 +323,23 @@ void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr
 	}
 	if (strcmp(url, "/healthy") == 0) {
 		LOGV("http: serve /healthy");
-		struct strbuilder sb = http_resp_txt(HTTP_OK);
-		http_set_wbuf(ctx, (unsigned char *)sb.buf, sb.len, sb.cap);
-		http_ctx_write(ctx);
+		struct vbuffer *restrict buf = http_resp_txt(NULL, HTTP_OK);
+		if (buf == NULL) {
+			LOGOOM();
+			return;
+		}
+		http_set_wbuf(ctx, buf);
 		return;
 	}
 	http_write_error(ctx, HTTP_NOT_FOUND);
+}
+
+void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr)
+{
+	http_handle_request(ctx, hdr);
+	if (ctx->wbuf == NULL) {
+		http_ctx_free(ctx);
+		return;
+	}
+	http_ctx_write(ctx);
 }

@@ -3,9 +3,9 @@
 
 #include "server.h"
 #include "utils/slog.h"
-#include "utils/strbuilder.h"
-#include "utils/hashtable.h"
-#include "utils/xorshift.h"
+#include "utils/buffer.h"
+#include "algo/hashtable.h"
+#include "algo/xorshift.h"
 #include "conf.h"
 #include "event.h"
 #include "pktqueue.h"
@@ -416,7 +416,7 @@ void server_sample(struct server *restrict s)
 struct server_stats_ctx {
 	size_t num_in_state[STATE_MAX];
 	ev_tstamp now;
-	struct strbuilder *restrict sb;
+	struct vbuffer *restrict buf;
 };
 
 static bool print_session_iter(
@@ -447,8 +447,8 @@ static bool print_session_iter(
 	}
 	const double not_seen =
 		last_seen != TSTAMP_NIL ? ctx->now - last_seen : TSTAMP_NIL;
-	(void)strbuilder_appendf(
-		ctx->sb, 4096,
+	ctx->buf = vbuf_appendf(
+		ctx->buf,
 		"    [%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
 		"rx/tx=%zu/%zu\n",
@@ -458,21 +458,21 @@ static bool print_session_iter(
 	return true;
 }
 
-static void
-print_session_table(struct server *restrict s, struct strbuilder *sb)
+static struct vbuffer *
+print_session_table(struct server *restrict s, struct vbuffer *restrict buf)
 {
 	const size_t n_sessions = table_size(s->sessions);
 	if (n_sessions == 0) {
-		return;
+		return buf;
 	}
 	struct server_stats_ctx ctx = (struct server_stats_ctx){
 		.now = ev_now(s->loop),
-		.sb = sb,
+		.buf = buf,
 	};
-	strbuilder_append(sb, "session table:\n");
+	ctx.buf = VBUF_APPENDSTR(ctx.buf, "session table:\n");
 	table_iterate(s->sessions, &print_session_iter, &ctx);
-	strbuilder_appendf(
-		sb, 4096,
+	return vbuf_appendf(
+		ctx.buf,
 		"    ^ %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n",
 		n_sessions, ctx.num_in_state[STATE_CONNECT],
 		ctx.num_in_state[STATE_CONNECTED],
@@ -480,9 +480,9 @@ print_session_table(struct server *restrict s, struct strbuilder *sb)
 		ctx.num_in_state[STATE_TIME_WAIT]);
 }
 
-void server_stats(struct server *s, struct strbuilder *sb)
+struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
 {
-	print_session_table(s, sb);
+	buf = print_session_table(s, buf);
 
 	const double dt = ev_now(s->loop) - s->last_stats_time;
 	const struct link_stats *restrict stats = &s->stats;
@@ -510,8 +510,8 @@ void server_stats(struct server *s, struct strbuilder *sb)
 	const double eff_rx = tcp_tx / kcp_rx * 100.0;
 	const double eff_tx = tcp_rx / kcp_tx * 100.0;
 
-	strbuilder_appendf(
-		sb, 4096,
+	return vbuf_appendf(
+		buf,
 		"traffic stats (rx/tx, in KiB):\n"
 		"    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
 		"      total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n",

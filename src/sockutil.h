@@ -4,7 +4,7 @@
 #ifndef SOCKUTIL_H
 #define SOCKUTIL_H
 
-#include "utils/hashtable.h"
+#include "algo/hashtable.h"
 
 #include <stdbool.h>
 #include <stdint.h>

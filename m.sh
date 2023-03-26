@@ -79,8 +79,8 @@ case "$1" in
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_EXE_LINKER_FLAGS="--rtlib=compiler-rt -fuse-ld=lld" \
         -DCMAKE_C_COMPILER="clang" \
+        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     cmake --build "build" --parallel

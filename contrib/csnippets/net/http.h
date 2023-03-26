@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 enum http_status_code {
+	HTTP_CONTINUE = 100,
 	HTTP_OK = 200,
 	HTTP_CREATED = 201,
 	HTTP_ACCEPTED = 202,
@@ -19,6 +20,7 @@ enum http_status_code {
 	HTTP_BAD_REQUEST = 400,
 	HTTP_FORBIDDEN = 403,
 	HTTP_NOT_FOUND = 404,
+	HTTP_METHOD_NOT_ALLOWED = 405,
 	HTTP_REQUEST_TIMEOUT = 408,
 	HTTP_ENTITY_TOO_LARGE = 413,
 	HTTP_INTERNAL_SERVER_ERROR = 500,
@@ -89,9 +91,9 @@ size_t http_date(char *buf, size_t buf_size);
  * @param buf [OUT] string buffer
  * @param buf_size size of string buffer
  * @param code HTTP status code
- * @return Length of the generated response, or 0 if the code is unknown.
+ * @return snprintf result, or 0 if the code is unknown.
  * @see enum http_status_code
  */
-size_t http_error(char *buf, size_t buf_size, uint16_t code);
+int http_error(char *buf, size_t buf_size, uint16_t code);
 
 #endif /* HTTP_H */

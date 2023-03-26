@@ -3,6 +3,7 @@
 
 #include "aead.h"
 #include "utils/slog.h"
+#include "utils/check.h"
 #include "util.h"
 
 #include <assert.h>

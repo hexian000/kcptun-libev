@@ -3,7 +3,8 @@
 
 #include "pktqueue.h"
 #include "utils/slog.h"
-#include "utils/hashtable.h"
+#include "utils/check.h"
+#include "algo/hashtable.h"
 #include "utils/mcache.h"
 #include "conf.h"
 #include "event.h"

@@ -6,7 +6,7 @@
 /* csnippets: The following implements are modified to be portable. */
 
 #include "murmurhash.h"
-#include "serialize.h"
+#include "utils/serialize.h"
 #include <stdint.h>
 
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
@@ -54,9 +54,6 @@ uint32_t murmurhash2_32(const void *ptr, size_t len, uint32_t seed)
 	case 1:
 		hash ^= (uint8_t)(buf[0]);
 		hash *= m;
-		/* fallthrough */
-	default:
-		break;
 	};
 
 	// Do a few final mixes of the hash.

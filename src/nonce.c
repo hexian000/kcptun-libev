@@ -6,7 +6,7 @@
 #if WITH_SODIUM
 #include "utils/arraysize.h"
 #include "utils/serialize.h"
-#include "utils/xorshift.h"
+#include "algo/xorshift.h"
 #include "aead.h"
 #include "util.h"
 

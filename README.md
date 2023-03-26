@@ -6,6 +6,8 @@
 
 A powerful and extremely lightweight encrypted port forwarder based on reliable UDP protocol.
 
+Status: **Stable**
+
 [User Wiki](https://github.com/hexian000/kcptun-libev/wiki)
 
 ## Index

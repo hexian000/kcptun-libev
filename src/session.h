@@ -6,7 +6,7 @@
 
 #include "conf.h"
 #include "utils/serialize.h"
-#include "utils/hashtable.h"
+#include "algo/hashtable.h"
 #include "sockutil.h"
 #include "util.h"
 

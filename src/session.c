@@ -3,7 +3,7 @@
 
 #include "session.h"
 #include "utils/slog.h"
-#include "utils/hashtable.h"
+#include "algo/hashtable.h"
 #include "aead.h"
 #include "conf.h"
 #include "event.h"

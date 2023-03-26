@@ -3,6 +3,7 @@
 
 #include "jsonutil.h"
 #include "util.h"
+#include "utils/slog.h"
 
 #include "json/json.h"
 

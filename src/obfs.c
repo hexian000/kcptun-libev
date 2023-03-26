@@ -7,11 +7,12 @@
 
 #if WITH_OBFS
 
-#include "utils/slog.h"
 #include "utils/arraysize.h"
-#include "utils/hashtable.h"
-#include "utils/strbuilder.h"
-#include "utils/xorshift.h"
+#include "utils/buffer.h"
+#include "utils/slog.h"
+#include "utils/check.h"
+#include "algo/hashtable.h"
+#include "algo/xorshift.h"
 #include "net/http.h"
 #include "conf.h"
 #include "pktqueue.h"
@@ -77,21 +78,21 @@ struct obfs_ctx {
 	struct ev_io w_read, w_write;
 	sockaddr_max_t laddr, raddr;
 	int fd;
-	unsigned char rbuf[OBFS_MAX_REQUEST];
-	size_t rlen, rcap;
 	struct http_message http_msg;
 	char *http_nxt;
-	unsigned char wbuf[OBFS_MAX_REQUEST];
-	size_t wlen, wcap;
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
-	bool cap_ecn;
-	bool established;
-	bool authenticated;
-	bool http_keepalive;
+	bool cap_ecn : 1;
+	bool established : 1;
+	bool authenticated : 1;
+	bool http_keepalive : 1;
 	size_t num_ecn, num_ece;
 	ev_tstamp created;
 	ev_tstamp last_seen;
+	struct {
+		BUFFER_HDR;
+		unsigned char data[OBFS_MAX_REQUEST];
+	} rbuf, wbuf;
 };
 
 #define OBFS_CTX_LOG_F(level, ctx, format, ...)                                \
@@ -475,12 +476,18 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	if (ctx == NULL) {
 		return NULL;
 	}
-	*ctx = (struct obfs_ctx){
-		.obfs = obfs,
-		.established = false,
-		.rcap = OBFS_MAX_REQUEST,
-		.wcap = OBFS_MAX_REQUEST,
-	};
+	ctx->obfs = obfs;
+	ctx->fd = -1;
+	ctx->http_msg = (struct http_message){ 0 };
+	ctx->http_nxt = NULL;
+	ctx->cap_ecn = false;
+	ctx->established = false;
+	ctx->authenticated = false;
+	ctx->http_keepalive = false;
+	ctx->num_ecn = ctx->num_ece = 0;
+	ctx->created = ctx->last_seen = TSTAMP_NIL;
+	buf_init(&ctx->rbuf, OBFS_MAX_REQUEST);
+	buf_init(&ctx->wbuf, OBFS_MAX_REQUEST);
 	return ctx;
 }
 
@@ -530,11 +537,11 @@ static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 {
 	struct obfs *restrict obfs = ctx->obfs;
-	unsigned char *buf = ctx->wbuf;
+	unsigned char *data = ctx->wbuf.data;
 	size_t nbsend = 0;
-	size_t len = ctx->wlen;
+	size_t len = ctx->wbuf.len;
 	while (len > 0) {
-		const ssize_t nsend = send(ctx->fd, buf, len, 0);
+		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
 			if (err == EAGAIN || err == EWOULDBLOCK ||
@@ -546,13 +553,14 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 			obfs_ctx_free(loop, ctx);
 			return;
 		}
+		data += nsend;
 		len -= nsend;
 		nbsend += nsend;
 	}
-	ctx->wlen = len;
+	ctx->wbuf.len += nbsend;
 	struct ev_io *restrict w_write = &ctx->w_write;
 	if (len > 0) {
-		memmove(buf, buf + nbsend, len);
+		buf_consume(&ctx->wbuf, nbsend);
 		if (!ev_is_active(w_write)) {
 			ev_io_start(loop, w_write);
 		}
@@ -702,13 +710,16 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		/* send the request */
 		char addr_str[64];
 		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		ctx->wlen = snprintf(
-			(char *)ctx->wbuf, ctx->wcap,
+		char *b = (char *)ctx->wbuf.data;
+		const int ret = snprintf(
+			b, ctx->wbuf.cap,
 			"GET /generate_204 HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: curl/7.81.0\r\n"
 			"Accept: */*\r\n\r\n",
 			addr_str);
+		CHECK(ret > 0);
+		ctx->wbuf.len = (size_t)ret;
 		ctx->http_keepalive = true;
 		obfs_ctx_write(ctx, loop);
 	}
@@ -841,7 +852,7 @@ void obfs_sample(struct obfs *restrict obfs)
 
 struct obfs_stats_ctx {
 	ev_tstamp now;
-	struct strbuilder *restrict sb;
+	struct vbuffer *restrict buf;
 };
 
 static bool print_ctx_iter(
@@ -854,27 +865,27 @@ static bool print_ctx_iter(
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
 	if (ctx->established) {
-		strbuilder_appendf(
-			stats_ctx->sb, 4096,
+		stats_ctx->buf = vbuf_appendf(
+			stats_ctx->buf,
 			"obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%zu/%zu\n",
 			addr_str, stats_ctx->now - ctx->last_seen, ctx->num_ecn,
 			ctx->num_ece);
 	} else {
-		strbuilder_appendf(
-			stats_ctx->sb, 4096,
-			"obfs context peer=%s seen=%.0lfs\n", addr_str,
-			stats_ctx->now - ctx->last_seen);
+		stats_ctx->buf = vbuf_appendf(
+			stats_ctx->buf, "obfs context peer=%s seen=%.0lfs\n",
+			addr_str, stats_ctx->now - ctx->last_seen);
 	}
 	return true;
 }
 
-void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
+struct vbuffer *
+obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 {
 	const ev_tstamp now = ev_now(obfs->server->loop);
 
 	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
 		.now = now,
-		.sb = sb,
+		.buf = buf,
 	};
 	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
 
@@ -896,8 +907,8 @@ void obfs_stats(struct obfs *restrict obfs, struct strbuilder *restrict sb)
 	const size_t drop = stats->pkt_cap - stats->pkt_rx;
 	const int num_ctx = table_size(obfs->contexts);
 	assert(0 <= num_ctx && obfs->unauthenticated <= (size_t)num_ctx);
-	strbuilder_appendf(
-		sb, 4096,
+	return vbuf_appendf(
+		stats_ctx.buf,
 		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, drop: %zu\n",
 		(size_t)num_ctx - obfs->unauthenticated, obfs->unauthenticated,
 		dpkt_cap, dbyt_rx, dbyt_tx, drop);
@@ -915,7 +926,9 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		const struct sockaddr *restrict sa = addr->sa;
 		const int domain = sa->sa_family;
 		obfs->domain = domain;
-		obfs_raw_start(obfs);
+		if (!obfs_raw_start(obfs)) {
+			return false;
+		}
 		if (!obfs_bind(obfs, sa)) {
 			return false;
 		}
@@ -929,7 +942,9 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 		const struct sockaddr *sa = conf->kcp_connect.sa;
 		obfs->domain = sa->sa_family;
-		obfs_raw_start(obfs);
+		if (!obfs_raw_start(obfs)) {
+			return false;
+		}
 		if (!obfs_ctx_dial(obfs, sa)) {
 			return false;
 		}
@@ -1530,10 +1545,10 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 /* return: 0 - OK, 1 - more, -1 - error */
 static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 {
-	ctx->rbuf[ctx->rlen] = '\0';
+	ctx->rbuf.data[ctx->rbuf.len] = '\0';
 	char *next = ctx->http_nxt;
 	if (next == NULL) {
-		next = (char *)ctx->rbuf;
+		next = (char *)ctx->rbuf.data;
 		ctx->http_nxt = next;
 	}
 	struct http_message *restrict msg = &ctx->http_msg;
@@ -1573,9 +1588,10 @@ void obfs_server_read_cb(
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
 
-	unsigned char *buf = ctx->rbuf + ctx->rlen;
-	size_t cap = ctx->rcap - ctx->rlen - 1; /* for null-terminator */
-	const ssize_t nbrecv = recv(watcher->fd, buf, cap, 0);
+	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
+	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
+		     (size_t)1; /* for null-terminator */
+	const ssize_t nbrecv = recv(watcher->fd, data, cap, 0);
 	if (nbrecv < 0) {
 		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
@@ -1597,12 +1613,12 @@ void obfs_server_read_cb(
 	} else if (nbrecv == 0) {
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_INFO, ctx, "early eof, %zu bytes discarded",
-			ctx->rlen);
+			ctx->rbuf.len);
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
-	ctx->rlen += nbrecv;
+	ctx->rbuf.len += nbrecv;
 	cap -= nbrecv;
 
 	const int ret = obfs_parse_http(ctx);
@@ -1629,8 +1645,11 @@ void obfs_server_read_cb(
 		return;
 	}
 	if (strcasecmp(msg->req.method, "GET") != 0) {
-		ctx->wlen = http_error(
-			(char *)ctx->wbuf, ctx->wcap, HTTP_BAD_REQUEST);
+		const int ret = http_error(
+			(char *)ctx->wbuf.data, ctx->wbuf.cap,
+			HTTP_BAD_REQUEST);
+		CHECK(ret > 0);
+		ctx->wbuf.len = (size_t)ret;
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_DEBUG, ctx, "HTTP %d \"%s\"",
 			HTTP_BAD_REQUEST, msg->req.method);
@@ -1639,8 +1658,10 @@ void obfs_server_read_cb(
 	}
 	char *url = msg->req.url;
 	if (strcmp(url, "/generate_204") != 0) {
-		ctx->wlen = http_error(
-			(char *)ctx->wbuf, ctx->wcap, HTTP_NOT_FOUND);
+		const int ret = http_error(
+			(char *)ctx->wbuf.data, ctx->wbuf.cap, HTTP_NOT_FOUND);
+		CHECK(ret > 0);
+		ctx->wbuf.len = (size_t)ret;
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_DEBUG, ctx, "HTTP %d \"%s\"", HTTP_NOT_FOUND,
 			msg->req.url);
@@ -1649,15 +1670,19 @@ void obfs_server_read_cb(
 	}
 
 	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "serving request");
-	char date_str[32];
-	const size_t date_len = http_date(date_str, sizeof(date_str));
-	ctx->wlen = snprintf(
-		(char *)ctx->wbuf, ctx->wcap,
-		"HTTP/1.1 204 No Content\r\n"
-		"Date: %.*s\r\n"
-		"Content-Length: 0\r\n"
-		"Connection: keep-alive\r\n\r\n",
-		(int)date_len, date_str);
+	{
+		char date_str[32];
+		const size_t date_len = http_date(date_str, sizeof(date_str));
+		const int ret = snprintf(
+			(char *)ctx->wbuf.data, ctx->wbuf.cap,
+			"HTTP/1.1 204 No Content\r\n"
+			"Date: %.*s\r\n"
+			"Content-Length: 0\r\n"
+			"Connection: keep-alive\r\n\r\n",
+			(int)date_len, date_str);
+		CHECK(ret > 0);
+		ctx->wbuf.len = (size_t)ret;
+	}
 	ctx->http_keepalive = true;
 	obfs_ctx_write(ctx, loop);
 
@@ -1673,9 +1698,10 @@ void obfs_client_read_cb(
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
 
-	unsigned char *buf = ctx->rbuf + ctx->rlen;
-	size_t cap = ctx->rcap - ctx->rlen - 1; /* for null-terminator */
-	const ssize_t nbrecv = recv(watcher->fd, buf, cap, 0);
+	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
+	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
+		     (size_t)1; /* for null-terminator */
+	const ssize_t nbrecv = recv(watcher->fd, data, cap, 0);
 	if (nbrecv < 0) {
 		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
@@ -1692,7 +1718,7 @@ void obfs_client_read_cb(
 		obfs->client = NULL;
 		return;
 	}
-	ctx->rlen += nbrecv;
+	ctx->rbuf.len += nbrecv;
 	cap -= nbrecv;
 
 	const int ret = obfs_parse_http(ctx);

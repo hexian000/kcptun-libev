@@ -3,6 +3,7 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "utils/slog.h"
 #include "server.h"
 #include "pktqueue.h"
 

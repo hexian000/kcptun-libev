@@ -2,7 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "hashtable.h"
-#include "arraysize.h"
+#include "utils/arraysize.h"
 #include "xorshift.h"
 #include "murmurhash.h"
 

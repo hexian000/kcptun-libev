@@ -3,8 +3,10 @@
 
 #include "sockutil.h"
 #include "util.h"
+#include "utils/minmax.h"
 #include "utils/slog.h"
-#include "utils/hashtable.h"
+#include "utils/check.h"
+#include "algo/hashtable.h"
 
 #include <fcntl.h>
 #include <sys/types.h>
@@ -273,9 +275,12 @@ resolve_sa(const char *hostname, const char *service, const int flags)
 		switch (it->ai_family) {
 		case AF_INET:
 		case AF_INET6:
-			sa = sa_clone(it->ai_addr);
 			break;
+		default:
+			continue;
 		}
+		sa = sa_clone(it->ai_addr);
+		break;
 	}
 	freeaddrinfo(result);
 	return sa;

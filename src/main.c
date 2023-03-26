@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "utils/slog.h"
+#include "utils/check.h"
 #include "aead.h"
 #include "util.h"
 #include "conf.h"

@@ -3,8 +3,9 @@
 
 #include "event.h"
 #include "event_impl.h"
-#include "utils/hashtable.h"
+#include "algo/hashtable.h"
 #include "utils/slog.h"
+#include "utils/check.h"
 #include "server.h"
 #include "pktqueue.h"
 #include "session.h"

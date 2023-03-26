@@ -5,10 +5,10 @@
 #define SERVER_H
 
 #include "conf.h"
-#include "utils/hashtable.h"
+#include "algo/hashtable.h"
+#include "utils/buffer.h"
 #include "session.h"
 #include "util.h"
-#include "utils/strbuilder.h"
 
 #include "kcp/ikcp.h"
 
@@ -59,7 +59,7 @@ struct server {
 struct server *server_new(struct ev_loop *loop, struct config *conf);
 bool server_start(struct server *s);
 void server_sample(struct server *s);
-void server_stats(struct server *s, struct strbuilder *sb);
+struct vbuffer *server_stats(struct server *s, struct vbuffer *buf);
 bool server_resolve(struct server *s);
 void server_stop(struct server *s);
 void server_free(struct server *s);
