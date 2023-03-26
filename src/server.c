@@ -294,6 +294,16 @@ bool server_start(struct server *s)
 	return udp_start(s);
 }
 
+void server_ping(struct server *restrict s)
+{
+	const ev_tstamp now = ev_now(s->loop);
+	const uint32_t tstamp = tstamp2ms(now);
+	unsigned char b[sizeof(uint32_t)];
+	write_uint32(b, tstamp);
+	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));
+	s->pkt.inflight_ping = now;
+}
+
 static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 {
 	if (conn->fd == -1) {

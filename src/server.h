@@ -58,6 +58,7 @@ struct server {
 
 struct server *server_new(struct ev_loop *loop, struct config *conf);
 bool server_start(struct server *s);
+void server_ping(struct server *s);
 void server_sample(struct server *s);
 struct vbuffer *server_stats(struct server *s, struct vbuffer *buf);
 bool server_resolve(struct server *s);

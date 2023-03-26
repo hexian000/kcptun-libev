@@ -1758,6 +1758,8 @@ void obfs_client_read_cb(
 	/* ignore all data arrived later */
 	ev_io_stop(loop, watcher);
 	obfs_tcp_quickack(ctx->fd, false);
+
+	server_ping(ctx->obfs->server);
 }
 
 void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)

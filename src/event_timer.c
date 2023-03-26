@@ -123,9 +123,5 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	    now - s->pkt.last_send_time < s->keepalive) {
 		return;
 	}
-	const uint32_t tstamp = tstamp2ms(now);
-	unsigned char b[sizeof(uint32_t)];
-	write_uint32(b, tstamp);
-	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));
-	s->pkt.inflight_ping = now;
+	server_ping(s);
 }
