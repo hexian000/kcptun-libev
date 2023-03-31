@@ -2,11 +2,11 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "buffer.h"
-#include "math/intlog2.h"
 
 #include <assert.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 bool buf_appendf(void *buf, const char *format, ...)
@@ -65,20 +65,31 @@ struct vbuffer *vbuf_reserve(struct vbuffer *vbuf, size_t want)
 	return vbuf;
 }
 
-static struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want)
+static struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 {
-	want = MAX(want, 255);
-	/* ceil to 2^n-1 */
-	const unsigned n = ((size_t)1) << intlog2(want);
-	want = (n << 1u) - 1u;
-	size_t cap = 0;
-	if (vbuf != NULL) {
-		cap = vbuf->cap;
+	size_t cap = (vbuf != NULL) ? vbuf->cap : 0;
+	if (want <= cap) {
+		return vbuf;
 	}
-	if (cap < want) {
-		return vbuf_alloc(vbuf, want);
+	const size_t threshold1 = 256;
+	const size_t threshold2 = 4096;
+	while (cap < want) {
+		size_t grow;
+		if (cap < threshold1) {
+			grow = threshold1;
+		} else if (cap < threshold2) {
+			grow = cap;
+		} else {
+			grow = cap / 4 + 3 * threshold2 / 4;
+		}
+		if (cap >= SIZE_MAX - grow) {
+			/* overflow */
+			cap = want;
+			break;
+		}
+		cap += grow;
 	}
-	return vbuf;
+	return vbuf_alloc(vbuf, cap);
 }
 
 struct vbuffer *vbuf_append(
@@ -104,31 +115,44 @@ struct vbuffer *vbuf_append(
 struct vbuffer *
 vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
 {
+	char *b = NULL;
+	size_t maxlen = 0;
+	if (vbuf != NULL) {
+		b = (char *)(vbuf->data + vbuf->len);
+		maxlen = vbuf->cap - vbuf->len;
+	}
+
 	va_list args, args0;
 	va_start(args, format);
 	va_copy(args0, args);
-	const int reserve = vsnprintf(NULL, 0, format, args0);
+	int ret = vsnprintf(b, maxlen, format, args0);
 	va_end(args0);
-	if (reserve <= 0) {
+	if (ret <= 0) {
 		va_end(args);
 		return vbuf;
 	}
-	size_t want = (size_t)reserve + (size_t)1;
+	size_t want = (size_t)ret + (size_t)1;
 	if (vbuf != NULL) {
 		want += vbuf->len;
+		if (want <= vbuf->cap) {
+			/* first try success */
+			va_end(args);
+			vbuf->len += (size_t)ret;
+			return vbuf;
+		}
 	}
-	vbuf = vbuf_grow(vbuf, want);
+	vbuf = vbuf_reserve(vbuf, want);
 	if (vbuf == NULL) {
 		va_end(args);
 		return NULL;
 	}
-	const size_t maxlen = vbuf->cap - vbuf->len;
-	assert(maxlen > 0);
-	char *b = (char *)(vbuf->data + vbuf->len);
-	const int ret = vsnprintf(b, maxlen, format, args);
+	assert(vbuf->cap == want);
+	maxlen = vbuf->cap - vbuf->len;
+	b = (char *)(vbuf->data + vbuf->len);
+	ret = vsnprintf(b, maxlen, format, args);
 	va_end(args);
 	if (ret > 0) {
-		vbuf->len += MIN((size_t)ret, maxlen - 1);
+		vbuf->len += (size_t)ret;
 	}
 	return vbuf;
 }

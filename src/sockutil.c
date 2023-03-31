@@ -2,11 +2,11 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "sockutil.h"
-#include "util.h"
 #include "utils/minmax.h"
 #include "utils/slog.h"
 #include "utils/check.h"
 #include "algo/hashtable.h"
+#include "util.h"
 
 #include <fcntl.h>
 #include <sys/types.h>
@@ -17,7 +17,6 @@
 #include <netinet/tcp.h>
 #include <net/if.h>
 
-#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>

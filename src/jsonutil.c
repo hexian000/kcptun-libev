@@ -2,9 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "jsonutil.h"
-#include "util.h"
 #include "utils/slog.h"
-
 #include "json/json.h"
 
 #define b64_malloc(ptr) malloc(ptr)

@@ -8,8 +8,8 @@
 #include "util.h"
 #include "server.h"
 #include "pktqueue.h"
-
 #include "kcp/ikcp.h"
+
 #include <ev.h>
 
 #include <assert.h>

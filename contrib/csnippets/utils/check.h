@@ -12,7 +12,7 @@
 	do {                                                                   \
 		if (!(cond)) {                                                 \
 			LOGF_F(format, __VA_ARGS__);                           \
-			exit(EXIT_FAILURE);                                    \
+			abort();                                               \
 		}                                                              \
 	} while (0)
 #define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)

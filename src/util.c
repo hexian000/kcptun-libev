@@ -8,14 +8,7 @@
 #include "utils/mcache.h"
 #include "aead.h"
 #include "pktqueue.h"
-
 #include "kcp/ikcp.h"
-
-#include <stddef.h>
-
-#define b64_malloc(ptr) malloc(ptr)
-#define b64_realloc(ptr, size) realloc(ptr, size)
-#include "b64/b64.h"
 
 #include <unistd.h>
 #include <pwd.h>
@@ -23,26 +16,15 @@
 #include <grp.h>
 #endif
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <inttypes.h>
 #include <string.h>
 #include <time.h>
 
-void print_bin(const void *b, const size_t n)
-{
-#ifdef NDEBUG
-	UNUSED(b);
-	UNUSED(n);
-#else
-	fprintf(stderr, "[%zu] ", n);
-	for (size_t i = 0; i < n; i++) {
-		fprintf(stderr, "%02" PRIX8, ((const uint8_t *)b)[i]);
-	}
-	fprintf(stderr, "\n");
-	fflush(stderr);
-#endif /* NDEBUG */
-}
+#define b64_malloc(ptr) malloc(ptr)
+#define b64_realloc(ptr, size) realloc(ptr, size)
+#include "b64/b64.h"
 
 uint32_t tstamp2ms(const ev_tstamp t)
 {

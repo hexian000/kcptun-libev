@@ -9,11 +9,11 @@
 #include "server.h"
 
 #include <ev.h>
+#include <signal.h>
 
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 
 static struct {
 	const char *conf_path;

@@ -24,15 +24,6 @@
 #include "event_impl.h"
 
 #include <ev.h>
-
-#include <assert.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <inttypes.h>
-
 #include <unistd.h>
 #include <strings.h>
 #include <sys/socket.h>
@@ -45,6 +36,14 @@
 #include <sys/types.h>
 #include <linux/filter.h>
 #include <linux/if_packet.h>
+
+#include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <inttypes.h>
 
 struct obfs_stats {
 	size_t pkt_cap, pkt_rx, pkt_tx;

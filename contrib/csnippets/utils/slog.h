@@ -19,6 +19,7 @@ enum {
 	LOG_LEVEL_VERBOSE,
 };
 
+#define LOG_LEVEL_SILENCE_STR "-"
 #define LOG_LEVEL_FATAL_STR "F"
 #define LOG_LEVEL_ERROR_STR "E"
 #define LOG_LEVEL_WARNING_STR "W"
@@ -58,7 +59,12 @@ extern FILE *slog_file;
 		(void)fflush(log_fp);                                          \
 	} while (0)
 
-/* Fatal: Log an fatal message. */
+/* LOG: Log a message unconditionally. */
+#define LOG_F(level, format, ...)                                              \
+	LOG_WRITE(level, __FILE__, __LINE__, format, __VA_ARGS__);
+#define LOG(level, message) LOG_F(level, "%s", message)
+
+/* LOGF: Log a fatal message. */
 #define LOGF_F(format, ...)                                                    \
 	do {                                                                   \
 		if (LOGLEVEL(LOG_LEVEL_FATAL)) {                               \

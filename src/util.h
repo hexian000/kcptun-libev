@@ -26,8 +26,6 @@ extern struct mcache *msgpool;
 		}                                                              \
 	} while (0)
 
-void print_bin(const void *b, size_t n);
-
 uint32_t tstamp2ms(ev_tstamp t);
 
 void init(void);

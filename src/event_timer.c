@@ -4,7 +4,6 @@
 #include "event.h"
 #include "event_impl.h"
 #include "utils/buffer.h"
-#include "utils/serialize.h"
 #include "utils/slog.h"
 #include "session.h"
 #include "util.h"
@@ -12,7 +11,6 @@
 #include "pktqueue.h"
 #include "nonce.h"
 
-#include "kcp/ikcp.h"
 #include <ev.h>
 
 #include <inttypes.h>

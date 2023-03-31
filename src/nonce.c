@@ -10,10 +10,10 @@
 #include "aead.h"
 #include "util.h"
 
+#include <sodium.h>
+
 #include <stddef.h>
 #include <stdint.h>
-
-#include <sodium.h>
 
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)

@@ -15,7 +15,6 @@
 #include "sockutil.h"
 
 #include <ev.h>
-
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>

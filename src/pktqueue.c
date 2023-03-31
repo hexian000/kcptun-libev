@@ -16,10 +16,9 @@
 #include "session.h"
 #include "util.h"
 #include "sockutil.h"
-
 #include "kcp/ikcp.h"
-#include <ev.h>
 
+#include <ev.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
