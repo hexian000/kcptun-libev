@@ -78,13 +78,13 @@ case "$1" in
     # rebuild with Linux clang/lld
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     cmake --build "build" --parallel
-    # llvm-objdump -drwS "build/src/kcptun-libev" >"build/src/kcptun-libev.S"
+    llvm-objdump -drwS "build/src/kcptun-libev" >"build/src/kcptun-libev.S"
     ls -lh "build/src/kcptun-libev"
     ;;
 "msys2")
