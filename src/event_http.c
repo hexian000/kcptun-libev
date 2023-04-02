@@ -132,7 +132,8 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		LOGE_F("recv: %s", strerror(err));
 		http_ctx_free(ctx);
 		return;
-	} else if (nrecv == 0) {
+	}
+	if (nrecv == 0) {
 		http_ctx_free(ctx);
 		return;
 	}
@@ -152,7 +153,8 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			LOGE("http: invalid request");
 			http_ctx_free(ctx);
 			return;
-		} else if (next == ctx->http_nxt) {
+		}
+		if (next == ctx->http_nxt) {
 			if (cap == 0) {
 				LOGE("http: request too large");
 				http_ctx_free(ctx);
@@ -160,7 +162,8 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			}
 			return;
 		}
-		if (strncmp(hdr->req.version, "HTTP/1.", 7) != 0) {
+		const char http1[] = "HTTP/1.";
+		if (strncmp(hdr->req.version, http1, sizeof(http1) - 1) != 0) {
 			LOGE_F("http: unsupported protocol %s",
 			       hdr->req.version);
 			http_ctx_free(ctx);
@@ -177,7 +180,8 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			LOGE("http: invalid header");
 			http_ctx_free(ctx);
 			return;
-		} else if (next == ctx->http_nxt) {
+		}
+		if (next == ctx->http_nxt) {
 			return;
 		}
 		ctx->http_nxt = next;

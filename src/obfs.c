@@ -1112,10 +1112,10 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	struct iphdr ip;
 	struct tcphdr tcp;
 	memcpy(&ip, msg->buf, sizeof(ip));
-	if (ip.version != IPVERSION || ip.protocol != IPPROTO_TCP) {
+	if ((uint8_t)ip.version != IPVERSION || ip.protocol != IPPROTO_TCP) {
 		return NULL;
 	}
-	const uint16_t ihl = ip.ihl * UINT16_C(4);
+	const uint16_t ihl = (uint16_t)ip.ihl * UINT16_C(4);
 	if (ihl < sizeof(struct iphdr)) {
 		return NULL;
 	}
@@ -1556,7 +1556,8 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 		if (next == NULL) {
 			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid request");
 			return -1;
-		} else if (next == ctx->http_nxt) {
+		}
+		if (next == ctx->http_nxt) {
 			return 1;
 		}
 		ctx->http_nxt = next;
@@ -1567,7 +1568,8 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 		if (next == NULL) {
 			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "invalid header");
 			return -1;
-		} else if (next == ctx->http_nxt) {
+		}
+		if (next == ctx->http_nxt) {
 			return 1;
 		}
 		ctx->http_nxt = next;
@@ -1609,7 +1611,8 @@ void obfs_server_read_cb(
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
-	} else if (nbrecv == 0) {
+	}
+	if (nbrecv == 0) {
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_INFO, ctx, "early eof, %zu bytes discarded",
 			ctx->rbuf.len);
@@ -1625,7 +1628,8 @@ void obfs_server_read_cb(
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
-	} else if (ret > 0) {
+	}
+	if (ret > 0) {
 		if (cap == 0) {
 			OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "request too large");
 			obfs_ctx_del(obfs, ctx);
@@ -1711,7 +1715,8 @@ void obfs_client_read_cb(
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
 		return;
-	} else if (nbrecv == 0) {
+	}
+	if (nbrecv == 0) {
 		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "got server eof");
 		obfs_ctx_stop(loop, ctx);
 		obfs->client = NULL;
@@ -1725,7 +1730,8 @@ void obfs_client_read_cb(
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
-	} else if (ret > 0) {
+	}
+	if (ret > 0) {
 		if (cap == 0) {
 			OBFS_CTX_LOG(
 				LOG_LEVEL_DEBUG, ctx, "response too large");

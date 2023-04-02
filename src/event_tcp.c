@@ -145,12 +145,12 @@ static int tcp_recv(struct session *restrict ss)
 		LOGE_F("session [%08" PRIX32 "] tcp recv: %s", ss->conv,
 		       strerror(err));
 		return TCPRECV_ERROR;
-	} else if (nread == 0) {
-		return TCPRECV_EOF;
-	} else {
-		cap -= nread, len += nread;
-		ss->rbuf_len += len;
 	}
+	if (nread == 0) {
+		return TCPRECV_EOF;
+	}
+	cap -= nread, len += nread;
+	ss->rbuf_len += len;
 
 	if (len > 0) {
 		ss->stats.tcp_rx += len;
@@ -263,7 +263,8 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			session_stop(ss);
 			kcp_reset(ss);
 			return;
-		} else if (ret == 0) {
+		}
+		if (ret == 0) {
 			return;
 		}
 		if (ss->wbuf_flush == ss->wbuf_next) {

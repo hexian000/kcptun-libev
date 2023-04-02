@@ -67,7 +67,8 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			}
 			LOGE_F("recvmmsg: %s", strerror(err));
 			break;
-		} else if (ret == 0) {
+		}
+		if (ret == 0) {
 			break;
 		}
 		for (int i = 0; i < ret; i++) {
@@ -188,7 +189,8 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 			/* drop packets to prevent infinite error loop */
 			drop = true;
 			break;
-		} else if (ret == 0) {
+		}
+		if (ret == 0) {
 			break;
 		}
 		/* delete sent messages */
