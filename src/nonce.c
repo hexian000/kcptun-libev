@@ -6,6 +6,8 @@
 #if WITH_SODIUM
 #include "utils/arraysize.h"
 #include "utils/serialize.h"
+#include "utils/buffer.h"
+#include "utils/check.h"
 #include "algo/xorshift.h"
 #include "aead.h"
 #include "util.h"
@@ -14,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
@@ -37,8 +40,16 @@ struct noncegen *noncegen_create(
 {
 	struct noncegen *restrict g = malloc(sizeof(struct noncegen));
 	if (g == NULL) {
+		LOGOOM();
 		return NULL;
 	}
+	struct vbuffer *restrict buf = vbuf_alloc(NULL, nonce_len);
+	if (buf == NULL) {
+		LOGOOM();
+		free(g);
+		return NULL;
+	}
+	buf->len = buf->cap;
 
 	const size_t entries = server ? 1u << 20u : 1u << 14u;
 	const double error = server ? 0x1p-20 : 0x1p-30;
@@ -50,13 +61,8 @@ struct noncegen *noncegen_create(
 				.current = 0,
 				.entries = entries,
 			},
-		.nonce_buf = malloc(nonce_len),
-		.nonce_len = nonce_len,
+		.nonce_buf = buf,
 	};
-	if (g->nonce_buf == NULL) {
-		noncegen_free(g);
-		return NULL;
-	}
 	if (bloom_init(&g->ppbloom.bloom[0], (int)entries, error)) {
 		noncegen_free(g);
 		return NULL;
@@ -86,22 +92,24 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 		}
 		g->src[i] = 0;
 	}
-	size_t n = g->nonce_len / sizeof(uint32_t);
+	struct vbuffer *restrict buf = g->nonce_buf;
+	size_t n = buf->len / sizeof(uint32_t);
 	if (n > ARRAY_SIZE(g->src)) {
 		n = ARRAY_SIZE(g->src);
 	}
 	for (size_t i = 0; i < n; i++) {
-		write_uint32(g->nonce_buf + i * sizeof(uint32_t), g->src[i]);
+		write_uint32(buf->data + i * sizeof(uint32_t), g->src[i]);
 	}
-	for (size_t i = n * sizeof(uint32_t); i < g->nonce_len; i++) {
-		g->nonce_buf[i] = (unsigned char)rand32();
+	for (size_t i = n * sizeof(uint32_t); i < buf->len; i++) {
+		buf->data[i] = (unsigned char)rand32();
 	}
 }
 
 /* higher packet entropy */
 static void noncegen_fill_random(struct noncegen *restrict g)
 {
-	randombytes_buf(g->nonce_buf, g->nonce_len);
+	struct vbuffer *restrict buf = g->nonce_buf;
+	randombytes_buf(buf->data, buf->len);
 }
 
 const unsigned char *noncegen_next(struct noncegen *restrict g)
@@ -114,12 +122,12 @@ const unsigned char *noncegen_next(struct noncegen *restrict g)
 		noncegen_fill_counter(g);
 		break;
 	}
-	return g->nonce_buf;
+	return g->nonce_buf->data;
 }
 
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce)
 {
-	return !ppbloom_check_add(&g->ppbloom, nonce, g->nonce_len);
+	return !ppbloom_check_add(&g->ppbloom, nonce, g->nonce_buf->len);
 }
 
 void noncegen_free(struct noncegen *g)
@@ -129,7 +137,7 @@ void noncegen_free(struct noncegen *g)
 	}
 	bloom_free(&g->ppbloom.bloom[0]);
 	bloom_free(&g->ppbloom.bloom[1]);
-	UTIL_SAFE_FREE(g->nonce_buf);
+	vbuf_free(g->nonce_buf);
 	free(g);
 }
 

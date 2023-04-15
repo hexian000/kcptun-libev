@@ -49,13 +49,14 @@ static inline void buf_consume(void *buf, const size_t n)
 	vbuf->len -= n;
 }
 
-static inline void buf_append(void *buf, const unsigned char *data, size_t n)
+static inline size_t buf_append(void *buf, const unsigned char *data, size_t n)
 {
 	struct vbuffer *restrict vbuf = buf;
 	unsigned char *b = vbuf->data + vbuf->len;
 	n = MIN(n, vbuf->cap - vbuf->len);
 	(void)memcpy(b, data, n);
 	vbuf->len += n;
+	return n;
 }
 
 #define BUF_APPENDCONST(buf, str)                                              \
@@ -64,11 +65,15 @@ static inline void buf_append(void *buf, const unsigned char *data, size_t n)
 #define BUF_APPENDSTR(vbuf, str)                                               \
 	buf_append((vbuf), (const unsigned char *)(str), strlen(str))
 
-bool buf_appendf(void *buf, const char *format, ...);
+int buf_appendf(void *buf, const char *format, ...);
 
-static inline void vbuf_consume(struct vbuffer *buf, const size_t n)
+static inline bool buf_equals(const void *buf_a, const void *buf_b)
 {
-	buf_consume(buf, n);
+	const struct vbuffer *restrict a = buf_a, *restrict b = buf_b;
+	if (a->len != b->len) {
+		return false;
+	}
+	return memcmp(a->data, b->data, a->len) == 0;
 }
 
 struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, size_t cap);

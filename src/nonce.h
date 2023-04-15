@@ -5,7 +5,7 @@
 #define NONCE_H
 
 #include "aead.h"
-
+#include "utils/buffer.h"
 #include "libbloom/bloom.h"
 
 #include <stdbool.h>
@@ -23,8 +23,7 @@ struct noncegen {
 	enum noncegen_method method;
 	struct ppbloom ppbloom;
 	uint32_t src[8];
-	unsigned char *nonce_buf;
-	size_t nonce_len;
+	struct vbuffer *nonce_buf;
 };
 
 struct noncegen *

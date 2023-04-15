@@ -33,7 +33,6 @@
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <net/if.h>
-#include <sys/types.h>
 #include <linux/filter.h>
 #include <linux/if_packet.h>
 
@@ -1623,7 +1622,7 @@ void obfs_server_read_cb(
 	ctx->rbuf.len += nbrecv;
 	cap -= nbrecv;
 
-	const int ret = obfs_parse_http(ctx);
+	int ret = obfs_parse_http(ctx);
 	if (ret < 0) {
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
@@ -1648,7 +1647,7 @@ void obfs_server_read_cb(
 		return;
 	}
 	if (strcasecmp(msg->req.method, "GET") != 0) {
-		const int ret = http_error(
+		ret = http_error(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap,
 			HTTP_BAD_REQUEST);
 		CHECK(ret > 0);
@@ -1661,7 +1660,7 @@ void obfs_server_read_cb(
 	}
 	char *url = msg->req.url;
 	if (strcmp(url, "/generate_204") != 0) {
-		const int ret = http_error(
+		ret = http_error(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap, HTTP_NOT_FOUND);
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
@@ -1676,7 +1675,7 @@ void obfs_server_read_cb(
 	{
 		char date_str[32];
 		const size_t date_len = http_date(date_str, sizeof(date_str));
-		const int ret = snprintf(
+		ret = snprintf(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap,
 			"HTTP/1.1 204 No Content\r\n"
 			"Date: %.*s\r\n"

@@ -54,6 +54,9 @@ uint32_t murmurhash2_32(const void *ptr, size_t len, uint32_t seed)
 	case 1:
 		hash ^= (uint8_t)(buf[0]);
 		hash *= m;
+		/* fallthrough */
+	default:
+		break;
 	};
 
 	// Do a few final mixes of the hash.

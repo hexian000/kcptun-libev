@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-bool buf_appendf(void *buf, const char *format, ...)
+int buf_appendf(void *buf, const char *format, ...)
 {
 	struct vbuffer *restrict vbuf = buf;
 	char *b = (char *)(vbuf->data + vbuf->len);
@@ -19,13 +19,12 @@ bool buf_appendf(void *buf, const char *format, ...)
 	}
 	va_list args;
 	va_start(args, format);
-	const int ret = vsnprintf((char *)b, maxlen, format, args);
+	const int ret = vsnprintf(b, maxlen, format, args);
 	va_end(args);
-	const bool ok = ret >= 0 && (size_t)ret < maxlen;
-	if (ok) {
-		vbuf->len += (size_t)ret;
+	if (ret > 0) {
+		vbuf->len += MIN((size_t)ret, maxlen - 1);
 	}
-	return ok;
+	return ret;
 }
 
 struct vbuffer *vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
@@ -102,8 +101,10 @@ struct vbuffer *vbuf_append(
 	size_t want = n;
 	if (vbuf != NULL) {
 		want += vbuf->len;
+		vbuf = vbuf_grow(vbuf, want);
+	} else {
+		vbuf = vbuf_reserve(vbuf, want);
 	}
-	vbuf = vbuf_grow(vbuf, want);
 	if (vbuf == NULL) {
 		return NULL;
 	}
@@ -140,8 +141,10 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
 			vbuf->len += (size_t)ret;
 			return vbuf;
 		}
+		vbuf = vbuf_grow(vbuf, want);
+	} else {
+		vbuf = vbuf_reserve(vbuf, want);
 	}
-	vbuf = vbuf_reserve(vbuf, want);
 	if (vbuf == NULL) {
 		va_end(args);
 		return NULL;

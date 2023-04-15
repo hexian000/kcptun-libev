@@ -219,7 +219,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 	}
 	wbuf->len -= nbsend;
 	if (len > 0) {
-		vbuf_consume(wbuf, nbsend);
+		buf_consume(wbuf, nbsend);
 		struct ev_io *restrict w_write = &ctx->w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(ctx->loop, w_write);
