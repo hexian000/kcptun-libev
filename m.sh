@@ -60,7 +60,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     cmake --build "build" --parallel
-    objdump -drwS "build/src/kcptun-libev" >"build/src/kcptun-libev.S"
+    (cd "build/src" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/src/kcptun-libev"
     ;;
 "posix")
@@ -84,7 +84,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     cmake --build "build" --parallel
-    llvm-objdump -drwS "build/src/kcptun-libev" >"build/src/kcptun-libev.S"
+    (cd "build/src" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/src/kcptun-libev"
     ;;
 "msys2")
@@ -101,7 +101,7 @@ case "$1" in
     ;;
 "c")
     # clean artifacts
-    rm -rf build xbuild
+    rm -rf "build" "xbuild" "compile_commands.json"
     ;;
 *)
     # default to debug builds
@@ -110,7 +110,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Debug" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
-    ln -sf build/compile_commands.json compile_commands.json
+    ln -sf "build/compile_commands.json" "compile_commands.json"
     cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"
     ;;
