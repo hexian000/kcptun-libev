@@ -902,7 +902,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
 	const double dbyt_rx = (double)(dstats.byt_rx) * 0x1p-10 / dt;
 	const double dbyt_tx = (double)(dstats.byt_cap) * 0x1p-10 / dt;
-	const size_t pkt_drop = stats->pkt_cap - stats->pkt_rx;
+	const uintmax_t pkt_drop = stats->pkt_cap - stats->pkt_rx;
 	const double byt_drop =
 		(double)(stats->byt_cap - stats->byt_rx) * 0x1p-10;
 	const int num_ctx = table_size(obfs->contexts);
@@ -911,7 +911,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	const size_t authenticated = (size_t)num_ctx - unauthenticated;
 	return vbuf_appendf(
 		stats_ctx.buf,
-		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, drop: %zu(%.1lf KiB)\n",
+		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, drop: %ju (%.1lf KiB)\n",
 		authenticated, unauthenticated, dpkt_cap, dbyt_rx, dbyt_tx,
 		pkt_drop, byt_drop);
 }
