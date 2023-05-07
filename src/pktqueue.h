@@ -44,7 +44,7 @@ struct server;
 struct pktqueue *queue_new(struct server *s);
 void queue_free(struct pktqueue *q);
 
-struct msgframe *msgframe_new(struct pktqueue *q, struct sockaddr *sa);
+struct msgframe *msgframe_new(struct pktqueue *q, const struct sockaddr *sa);
 void msgframe_delete(struct pktqueue *q, struct msgframe *msg);
 
 /* process mq_recv */

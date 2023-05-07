@@ -65,9 +65,9 @@ enum session_state {
 extern const char session_state_char[STATE_MAX];
 
 struct link_stats {
-	size_t tcp_rx, tcp_tx;
-	size_t kcp_rx, kcp_tx;
-	size_t pkt_rx, pkt_tx;
+	uintmax_t tcp_rx, tcp_tx;
+	uintmax_t kcp_rx, kcp_tx;
+	uintmax_t pkt_rx, pkt_tx;
 };
 
 struct IKCPCB;
@@ -123,9 +123,9 @@ struct session0_header {
 #define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
 
 bool ss0_send(
-	struct server *s, struct sockaddr *sa, uint16_t what,
+	struct server *s, const struct sockaddr *sa, uint16_t what,
 	const unsigned char *b, size_t n);
-void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv);
+void ss0_reset(struct server *s, const struct sockaddr *sa, uint32_t conv);
 
 void session0(struct server *restrict s, struct msgframe *restrict msg);
 

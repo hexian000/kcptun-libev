@@ -206,7 +206,7 @@ static int tcp_flush(struct session *restrict ss)
 	unsigned char *payload = ss->wbuf;
 	unsigned char *buf = payload + ss->wbuf_flush;
 	const size_t len = ss->wbuf_next - ss->wbuf_flush;
-	int nsend = -1;
+	size_t nsend = 0;
 	if (len > 0) {
 		const ssize_t ret = send(ss->tcp_fd, buf, len, 0);
 		if (ret < 0) {
@@ -219,18 +219,19 @@ static int tcp_flush(struct session *restrict ss)
 			       strerror(err));
 			return -1;
 		}
-		if (ret > 0) {
-			ss->wbuf_flush += ret;
-			ss->stats.tcp_tx += ret;
-			ss->server->stats.tcp_tx += ret;
-			LOGV_F("session [%08" PRIX32 "] tcp: "
-			       "send %zd/%zu bytes",
-			       ss->conv, ret, len);
-		}
 		assert(0 <= ret && ret <= INT_MAX);
-		nsend = (int)ret;
+		nsend = (size_t)ret;
 	}
-	return nsend;
+	if (nsend > 0) {
+		ss->wbuf_flush += nsend;
+		ss->stats.tcp_tx += nsend;
+		ss->server->stats.tcp_tx += nsend;
+		LOGV_F("session [%08" PRIX32 "] tcp: "
+		       "send %zu/%zu bytes",
+		       ss->conv, nsend, len);
+		return 1;
+	}
+	return 0;
 }
 
 int tcp_send(struct session *restrict ss)

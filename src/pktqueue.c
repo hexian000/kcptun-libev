@@ -87,7 +87,8 @@ static bool crypto_seal_inplace(
 }
 #endif /* WITH_CRYPTO */
 
-struct msgframe *msgframe_new(struct pktqueue *restrict q, struct sockaddr *sa)
+struct msgframe *
+msgframe_new(struct pktqueue *restrict q, const struct sockaddr *sa)
 {
 	UNUSED(q);
 	struct msgframe *restrict msg = mcache_get(msgpool);
@@ -132,7 +133,7 @@ void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
 static void
 queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 {
-	unsigned char *kcp_packet = msg->buf + msg->off;
+	const unsigned char *kcp_packet = msg->buf + msg->off;
 	uint32_t conv = ikcp_getconv(kcp_packet);
 	if (conv == UINT32_C(0)) {
 		session0(s, msg);
@@ -140,7 +141,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	}
 
 	hashkey_t sskey;
-	struct sockaddr *sa = &msg->addr.sa;
+	const struct sockaddr *sa = &msg->addr.sa;
 	conv_make_key(&sskey, sa, conv);
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
@@ -197,7 +198,8 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 
-	int r = ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
+	const int r =
+		ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
 	if (r < 0) {
 		LOGW_F("ikcp_input: %d", r);
 		return;
@@ -215,9 +217,11 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 	if (q->mq_recv_len == 0) {
 		return 0;
 	}
+	s->pkt.last_recv_time = ev_now(s->loop);
 	size_t nbrecv = 0;
 	for (size_t i = 0; i < q->mq_recv_len; i++) {
 		struct msgframe *restrict msg = q->mq_recv[i];
+		s->stats.pkt_rx += msg->len;
 #if WITH_OBFS
 		struct obfs_ctx *ctx = NULL;
 		if (q->obfs != NULL) {
@@ -250,12 +254,8 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 		nbrecv += msg->len;
 		msgframe_delete(q, msg);
 	}
-	if (nbrecv > 0) {
-		s->stats.pkt_rx += nbrecv;
-		s->pkt.last_recv_time = ev_now(s->loop);
-		if (s->conf->kcp_flush >= 2) {
-			kcp_notify_update(s);
-		}
+	if (nbrecv > 0 && s->conf->kcp_flush >= 2) {
+		kcp_notify_update(s);
 	}
 	q->mq_recv_len = 0;
 	return nbrecv;

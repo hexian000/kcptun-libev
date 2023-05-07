@@ -389,7 +389,7 @@ ss0_header_write(unsigned char *d, struct session0_header header)
 	write_uint16((uint8_t *)d + sizeof(uint32_t), header.what);
 }
 
-void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv)
+void ss0_reset(struct server *s, const struct sockaddr *sa, uint32_t conv)
 {
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, conv);
@@ -397,8 +397,8 @@ void ss0_reset(struct server *s, struct sockaddr *sa, uint32_t conv)
 }
 
 bool ss0_send(
-	struct server *restrict s, struct sockaddr *sa, const uint16_t what,
-	const unsigned char *b, const size_t n)
+	struct server *restrict s, const struct sockaddr *sa,
+	const uint16_t what, const unsigned char *b, const size_t n)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	struct msgframe *restrict msg = msgframe_new(q, sa);

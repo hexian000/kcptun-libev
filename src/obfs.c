@@ -45,8 +45,8 @@
 #include <inttypes.h>
 
 struct obfs_stats {
-	size_t pkt_cap, pkt_rx, pkt_tx;
-	size_t byt_cap, byt_rx, byt_tx;
+	uintmax_t pkt_cap, pkt_rx, pkt_tx;
+	uintmax_t byt_cap, byt_rx, byt_tx;
 };
 
 struct obfs {
@@ -901,15 +901,19 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 
 	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
 	const double dbyt_rx = (double)(dstats.byt_rx) * 0x1p-10 / dt;
-	const double dbyt_tx = (double)(dstats.byt_tx) * 0x1p-10 / dt;
-	const size_t drop = stats->pkt_cap - stats->pkt_rx;
+	const double dbyt_tx = (double)(dstats.byt_cap) * 0x1p-10 / dt;
+	const size_t pkt_drop = stats->pkt_cap - stats->pkt_rx;
+	const double byt_drop =
+		(double)(stats->byt_cap - stats->byt_rx) * 0x1p-10;
 	const int num_ctx = table_size(obfs->contexts);
-	assert(0 <= num_ctx && obfs->unauthenticated <= (size_t)num_ctx);
+	const size_t unauthenticated = obfs->unauthenticated;
+	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
+	const size_t authenticated = (size_t)num_ctx - unauthenticated;
 	return vbuf_appendf(
 		stats_ctx.buf,
-		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, drop: %zu\n",
-		(size_t)num_ctx - obfs->unauthenticated, obfs->unauthenticated,
-		dpkt_cap, dbyt_rx, dbyt_tx, drop);
+		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, rx/tx %.1lf/%.1lf KiB/s, drop: %zu(%.1lf KiB)\n",
+		authenticated, unauthenticated, dpkt_cap, dbyt_rx, dbyt_tx,
+		pkt_drop, byt_drop);
 }
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)

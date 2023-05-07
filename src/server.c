@@ -516,14 +516,14 @@ struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
 	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10;
 	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10;
 	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10;
-	const double eff_rx = tcp_tx / kcp_rx * 100.0;
-	const double eff_tx = tcp_rx / kcp_tx * 100.0;
+	const double pkt_rx = (double)(stats->pkt_rx) * 0x1p-10;
+	const double pkt_tx = (double)(stats->pkt_tx) * 0x1p-10;
 
 	return vbuf_appendf(
 		buf,
 		"traffic stats (rx/tx, in KiB):\n"
 		"    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
-		"      total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n",
-		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx, deff_tx, kcp_rx,
-		kcp_tx, tcp_rx, tcp_tx, eff_rx, eff_tx);
+		"      total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; pkt: %.1lf/%.1lf\n",
+		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx, deff_tx, /* dt */
+		kcp_rx, kcp_tx, tcp_rx, tcp_tx, pkt_rx, pkt_tx);
 }
