@@ -460,7 +460,7 @@ static bool print_session_iter(
 		ctx->buf,
 		"    [%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
-		"rx/tx=%zu/%zu\n",
+		"rx/tx=%ju/%ju\n",
 		ss->conv, session_state_char[state], addr_str, not_seen,
 		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
 		ss->stats.tcp_tx, ss->stats.tcp_rx);
