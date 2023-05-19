@@ -104,24 +104,6 @@ void socket_bind_netdev(const int fd, const char *netdev)
 #endif
 }
 
-void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv)
-{
-	memset(key, 0, sizeof(hashkey_t));
-	struct {
-		sockaddr_max_t sa;
-		uint32_t conv;
-	} *ep = (void *)key;
-	switch (sa->sa_family) {
-	case AF_INET: {
-		memcpy(&ep->sa, sa, sizeof(struct sockaddr_in));
-	} break;
-	case AF_INET6: {
-		memcpy(&ep->sa, sa, sizeof(struct sockaddr_in6));
-	} break;
-	}
-	ep->conv = conv;
-}
-
 socklen_t getsocklen(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
@@ -134,6 +116,18 @@ socklen_t getsocklen(const struct sockaddr *sa)
 		break;
 	}
 	return 0;
+}
+
+void conv_make_key(
+	hashkey_t *key, const struct sockaddr *sa, const uint32_t conv)
+{
+	memset(key, 0, sizeof(hashkey_t));
+	struct {
+		sockaddr_max_t sa;
+		uint32_t conv;
+	} *ep = (void *)key;
+	memcpy(&ep->sa, sa, getsocklen(sa));
+	ep->conv = conv;
 }
 
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)

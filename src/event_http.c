@@ -249,36 +249,60 @@ static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)
 	ctx->wbuf = buf;
 }
 
-static void http_write_error(struct http_ctx *restrict ctx, const uint16_t code)
+static struct vbuffer *
+http_resphdr_init(struct vbuffer *buf, const uint16_t code)
+{
+	char date_str[32];
+	size_t date_len = http_date(date_str, sizeof(date_str));
+	const char *status = http_status(code);
+	if (buf != NULL) {
+		buf->len = 0;
+	}
+	return vbuf_appendf(
+		buf,
+		"HTTP/1.0 %" PRIu16 " %s\r\n"
+		"Date: %.*s\r\n"
+		"Connection: close\r\n",
+		code, status ? status : "", (int)date_len, date_str);
+}
+
+#define RESPHDR_ADD(buf, key, value)                                           \
+	VBUF_APPENDCONST((buf), key ": " value "\r\n")
+
+#define RESPHDR_END(buf) VBUF_APPENDCONST((buf), "\r\n")
+
+static void
+http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 {
 	struct vbuffer *restrict buf = vbuf_alloc(NULL, 512);
 	if (buf == NULL) {
 		LOGOOM();
 		return;
 	}
-	const int ret = http_error((char *)buf->data, buf->cap, code);
-	CHECK(ret > 0);
-	buf->len = ret;
+	const int len = http_error((char *)buf->data, buf->cap, code);
+	if (len <= 0) {
+		/* can't generate error page, reply with code only */
+		buf = http_resphdr_init(buf, code);
+		buf = RESPHDR_END(buf);
+		http_set_wbuf(ctx, buf);
+		return;
+	}
+	buf->len = len;
 	http_set_wbuf(ctx, buf);
-}
-
-static struct vbuffer *http_resp_txt(struct vbuffer *buf, const uint16_t code)
-{
-	char date_str[32];
-	size_t date_len = http_date(date_str, sizeof(date_str));
-	return vbuf_appendf(
-		buf,
-		"HTTP/1.0 %" PRIu16 " %s\r\n"
-		"Date: %.*s\r\n"
-		"Connection: close\r\n"
-		"Content-type: text/plain\r\n\r\n",
-		code, http_status(code), (int)date_len, date_str);
 }
 
 static void http_serve_stats(struct http_ctx *restrict ctx)
 {
 	struct vbuffer *restrict buf = vbuf_reserve(NULL, 4000);
-	buf = http_resp_txt(buf, HTTP_OK);
+	if (buf == NULL) {
+		LOGOOM();
+		return;
+	}
+	buf = http_resphdr_init(buf, HTTP_OK);
+	buf = RESPHDR_ADD(buf, "Cache-Control", "no-store");
+	buf = RESPHDR_ADD(buf, "Content-Type", "text/plain; charset=utf-8");
+	buf = RESPHDR_ADD(buf, "X-Content-Type-Options", "nosniff");
+	buf = RESPHDR_END(buf);
 
 	struct server *restrict s = ctx->data;
 	buf = server_stats(s, buf);
@@ -316,7 +340,7 @@ static void http_handle_request(
 	struct http_ctx *restrict ctx, struct http_message *restrict hdr)
 {
 	if (strcasecmp(hdr->req.method, "GET") != 0) {
-		http_write_error(ctx, HTTP_BAD_REQUEST);
+		http_resp_errpage(ctx, HTTP_BAD_REQUEST);
 		return;
 	}
 	char *url = hdr->req.url;
@@ -327,15 +351,17 @@ static void http_handle_request(
 	}
 	if (strcmp(url, "/healthy") == 0) {
 		LOGV("http: serve /healthy");
-		struct vbuffer *restrict buf = http_resp_txt(NULL, HTTP_OK);
+		struct vbuffer *restrict buf = vbuf_alloc(NULL, 512);
 		if (buf == NULL) {
 			LOGOOM();
 			return;
 		}
+		buf = http_resphdr_init(buf, HTTP_OK);
+		buf = RESPHDR_END(buf);
 		http_set_wbuf(ctx, buf);
 		return;
 	}
-	http_write_error(ctx, HTTP_NOT_FOUND);
+	http_resp_errpage(ctx, HTTP_NOT_FOUND);
 }
 
 void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr)

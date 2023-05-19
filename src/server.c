@@ -522,8 +522,8 @@ struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
 	return vbuf_appendf(
 		buf,
 		"traffic stats (rx/tx, in KiB):\n"
-		"    current kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
-		"      total kcp: %.1lf/%.1lf; tcp: %.1lf/%.1lf; pkt: %.1lf/%.1lf\n",
+		"    current tcp: %.1lf/%.1lf; kcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
+		"      total tcp: %.1lf/%.1lf; kcp: %.1lf/%.1lf; pkt: %.1lf/%.1lf\n",
 		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx, deff_tx, /* dt */
 		kcp_rx, kcp_tx, tcp_rx, tcp_tx, pkt_rx, pkt_tx);
 }

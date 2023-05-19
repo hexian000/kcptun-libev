@@ -43,8 +43,7 @@ struct vbuffer *vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
 	struct vbuffer *restrict newbuf =
 		realloc(vbuf, sizeof(struct vbuffer) + cap);
 	if (newbuf == NULL) {
-		free(vbuf);
-		return NULL;
+		return vbuf;
 	}
 	vbuf = newbuf;
 	*((size_t *)&vbuf->cap) = cap;
