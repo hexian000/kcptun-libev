@@ -9,7 +9,7 @@
 #include "conf.h"
 #include "event.h"
 #include "event_impl.h"
-#include "aead.h"
+#include "crypto.h"
 #include "nonce.h"
 #include "obfs.h"
 #include "server.h"
@@ -36,7 +36,7 @@ static bool crypto_open_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
 	const size_t size)
 {
-	struct aead *restrict crypto = q->crypto;
+	struct crypto *restrict crypto = q->crypto;
 	assert(crypto != NULL);
 	const size_t src_len = *len;
 	assert(size >= src_len);
@@ -47,7 +47,7 @@ static bool crypto_open_inplace(
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
 	const size_t cipher_len = src_len - nonce_size;
-	const size_t dst_len = aead_open(
+	const size_t dst_len = crypto_open(
 		crypto, data, size, nonce, data, cipher_len,
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE);
 	if (dst_len + overhead + nonce_size != src_len) {
@@ -67,14 +67,14 @@ static bool crypto_seal_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
 	const size_t size)
 {
-	struct aead *restrict crypto = q->crypto;
+	struct crypto *restrict crypto = q->crypto;
 	const size_t src_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	assert(size >= src_len + overhead + nonce_size);
 	const unsigned char *nonce = noncegen_next(q->noncegen);
 	const size_t dst_size = size - nonce_size;
-	size_t dst_len = aead_seal(
+	size_t dst_len = crypto_seal(
 		crypto, data, dst_size, nonce, data, src_len,
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE);
 	if (dst_len != src_len + overhead) {
@@ -316,28 +316,28 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 	if (conf->method == NULL) {
 		return true;
 	}
-	q->crypto = aead_create(conf->method);
+	q->crypto = crypto_new(conf->method);
 	if (q->crypto == NULL) {
 		return false;
 	}
 	if (conf->psk) {
 		if (conf->psklen != q->crypto->key_size) {
 			LOGE("wrong psk length");
-			aead_free(q->crypto);
+			crypto_free(q->crypto);
 			q->crypto = NULL;
 			return false;
 		}
-		aead_psk(q->crypto, conf->psk);
+		crypto_psk(q->crypto, conf->psk);
 		UTIL_SAFE_FREE(conf->psk);
 	} else if (conf->password) {
-		aead_password(q->crypto, conf->password);
+		crypto_password(q->crypto, conf->password);
 		UTIL_SAFE_FREE(conf->password);
 	}
 	q->noncegen = noncegen_create(
 		q->crypto->noncegen_method, q->crypto->nonce_size,
 		(conf->mode & MODE_SERVER) != 0);
 	if (q->noncegen == NULL) {
-		aead_free(q->crypto);
+		crypto_free(q->crypto);
 		return false;
 	}
 	return true;
@@ -408,7 +408,7 @@ void queue_free(struct pktqueue *restrict q)
 	}
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
-		aead_free(q->crypto);
+		crypto_free(q->crypto);
 		q->crypto = NULL;
 	}
 	if (q->noncegen != NULL) {

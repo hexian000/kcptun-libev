@@ -1,5 +1,5 @@
 add_executable(kcptun-libev main.c
-    aead.c aead.h
+    crypto.c crypto.h
     util.c util.h
     sockutil.c sockutil.h
     conf.c conf.h

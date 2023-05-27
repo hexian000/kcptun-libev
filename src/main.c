@@ -3,7 +3,7 @@
 
 #include "utils/slog.h"
 #include "utils/check.h"
-#include "aead.h"
+#include "crypto.h"
 #include "util.h"
 #include "conf.h"
 #include "server.h"
@@ -80,7 +80,7 @@ static void parse_args(int argc, char **argv)
 		}
 #if WITH_CRYPTO
 		if (strcmp(argv[i], "--list-methods") == 0) {
-			aead_list_methods();
+			crypto_list_methods();
 			exit(EXIT_FAILURE);
 		}
 		if (strcmp(argv[i], "--genpsk") == 0) {

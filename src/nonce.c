@@ -9,7 +9,7 @@
 #include "utils/buffer.h"
 #include "utils/check.h"
 #include "algo/xorshift.h"
-#include "aead.h"
+#include "crypto.h"
 #include "util.h"
 
 #include <sodium.h>

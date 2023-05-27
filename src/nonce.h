@@ -4,7 +4,7 @@
 #ifndef NONCE_H
 #define NONCE_H
 
-#include "aead.h"
+#include "crypto.h"
 #include "utils/buffer.h"
 #include "libbloom/bloom.h"
 

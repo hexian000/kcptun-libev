@@ -6,7 +6,7 @@
 #include "utils/check.h"
 #include "utils/minmax.h"
 #include "utils/mcache.h"
-#include "aead.h"
+#include "crypto.h"
 #include "pktqueue.h"
 #include "kcp/ikcp.h"
 
@@ -91,19 +91,19 @@ void drop_privileges(const char *user)
 #if WITH_CRYPTO
 void genpsk(const char *method)
 {
-	struct aead *crypto = aead_create(method);
+	struct crypto *crypto = crypto_new(method);
 	if (crypto == NULL) {
 		LOGW_F("unsupported crypto method: %s", method);
-		aead_list_methods();
+		crypto_list_methods();
 		exit(EXIT_FAILURE);
 	}
 	unsigned char *key = malloc(crypto->key_size);
 	CHECKOOM(key);
-	aead_keygen(crypto, key);
+	crypto_keygen(crypto, key);
 	char *keystr = b64_encode(key, crypto->key_size);
 	printf("%s\n", keystr);
 	free(key);
 	free(keystr);
-	aead_free(crypto);
+	crypto_free(crypto);
 }
 #endif

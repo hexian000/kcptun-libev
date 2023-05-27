@@ -31,7 +31,7 @@ struct pktqueue {
 	struct msgframe **mq_recv;
 	size_t mq_recv_len, mq_recv_cap;
 #if WITH_CRYPTO
-	struct aead *crypto;
+	struct crypto *crypto;
 	struct noncegen *noncegen;
 #endif
 #if WITH_OBFS

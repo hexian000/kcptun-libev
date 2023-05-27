@@ -4,7 +4,7 @@
 #include "session.h"
 #include "utils/slog.h"
 #include "algo/hashtable.h"
-#include "aead.h"
+#include "crypto.h"
 #include "conf.h"
 #include "event.h"
 #include "server.h"
@@ -39,7 +39,7 @@ kcp_new(struct session *restrict ss, struct config *restrict conf,
 	ikcp_wndsize(kcp, conf->kcp_sndwnd, conf->kcp_rcvwnd);
 	int mtu = conf->kcp_mtu;
 #if WITH_CRYPTO
-	struct aead *restrict crypto = ss->server->pkt.queue->crypto;
+	struct crypto *restrict crypto = ss->server->pkt.queue->crypto;
 	if (crypto != NULL) {
 		mtu -= (int)(crypto->overhead + crypto->nonce_size);
 	}
