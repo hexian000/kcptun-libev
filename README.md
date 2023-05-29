@@ -13,12 +13,21 @@ Status: **Stable**
 
 ## Index
 
+- [Index](#index)
 - [Introduction](#introduction)
 - [Features](#features)
 - [Security](#security)
+	- [Encryption](#encryption)
+	- [Obfuscation](#obfuscation)
 - [Compatibility](#compatibility)
+	- [System](#system)
+	- [Version Compatibility](#version-compatibility)
 - [Build](#build)
-- [Runtime (setup guide here)](#runtime)
+	- [Dependencies](#dependencies)
+	- [Build on Unix-like systems](#build-on-unix-like-systems)
+- [Runtime](#runtime)
+	- [Dependencies](#dependencies-1)
+	- [Configurations](#configurations)
 - [Tunables](#tunables)
 - [Observability](#observability)
 - [Credits](#credits)
@@ -69,7 +78,7 @@ For your convenience, some statically-linked executables are also provided in th
 
 ### Encryption
 
-kcptun-libev can optionally encrypt packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [AEAD](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://doc.libsodium.org/).
+kcptun-libev can optionally encrypt packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://doc.libsodium.org/).
 
 In config file:
 
@@ -79,15 +88,16 @@ In config file:
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets could crash the server because no authenticate tag was added either. We are not responsible for such vulnerabilities.
 
-In practice, we suggest user to use "--genpsk" command-line argument to generate a strong random preshared key instead of using a simple password.
+In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random preshared key instead of using a simple password.
 
-| Encryption Method      | Status    | Notes       |
-|------------------------|-----------|-------------|
-| xchacha20poly1305_ietf | supported | recommended |
-| chacha20poly1305_ietf  | supported | since v2.0  |
-| aes256gcm              | supported | since v2.0  |
+| Encryption Method      | Since | Form | Packet Overhead | Notes       |
+| ---------------------- | ----- | ---- | --------------- | ----------- |
+| xchacha20poly1305_ietf | v1.0  | AEAD | 40 bytes        | recommended |
+| xsalsa20poly1305       | v2.2  | AE   | 40 bytes        |             |
+| chacha20poly1305_ietf  | v2.0  | AEAD | 28 bytes        |             |
+| aes256gcm              | v2.0  | AEAD | 28 bytes        |             |
 
-kcptun-libev will not include known practically vulnerable encryption method in latest release.
+kcptun-libev ships with additional encryption methods to ensure that users have alternatives for specific reasons. In most cases, the recommended one is just what you need.
 
 ### Obfuscation
 
@@ -117,7 +127,7 @@ Currently only one obfuscator implemented: "dpi/tcp-wnd"
 Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
 | System          | Tier      | Notes |
-|-----------------|-----------|-------|
+| --------------- | --------- | ----- |
 | Ubuntu          | developed |       |
 | OpenWRT         | tested    |       |
 | Other Linux     | supported |       |
@@ -134,7 +144,7 @@ We use [semantic versioning](https://semver.org/).
 ### Dependencies
 
 | Name      | Required | Feature    |
-|-----------|----------|------------|
+| --------- | -------- | ---------- |
 | libev     | yes      |            |
 | libsodium | no       | encryption |
 
@@ -170,13 +180,13 @@ opkg install libev libsodium
 
 ### Configurations
 
-#### Generate a random key for encryption:
+Generate a random key for encryption:
 
 ```sh
 ./kcptun-libev --genpsk xchacha20poly1305_ietf
 ```
 
-#### Create a server.json file and fill in the options:
+Create a server.json file and fill in the options:
 
 ```json
 {
@@ -187,13 +197,13 @@ opkg install libev libsodium
 }
 ```
 
-#### Start the server:
+Start the server:
 
 ```sh
 ./kcptun-libev -c server.json
 ```
 
-#### Create a client.json file and fill in the options:
+Create a client.json file and fill in the options:
 
 ```json
 {
@@ -204,7 +214,7 @@ opkg install libev libsodium
 }
 ```
 
-#### Start the client:
+Start the client:
 
 ```sh
 ./kcptun-libev -c client.json

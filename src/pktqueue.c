@@ -29,8 +29,6 @@
 #include <inttypes.h>
 
 #if WITH_CRYPTO
-static const char crypto_tag[] = "kcptun-libev";
-#define CRYPTO_TAG_SIZE (sizeof crypto_tag)
 
 static bool crypto_open_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
@@ -47,9 +45,8 @@ static bool crypto_open_inplace(
 	}
 	const unsigned char *nonce = data + src_len - nonce_size;
 	const size_t cipher_len = src_len - nonce_size;
-	const size_t dst_len = crypto_open(
-		crypto, data, size, nonce, data, cipher_len,
-		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE);
+	const size_t dst_len =
+		crypto_open(crypto, data, size, nonce, data, cipher_len);
 	if (dst_len + overhead + nonce_size != src_len) {
 		LOGV("failed to open packet");
 		return false;
@@ -74,9 +71,8 @@ static bool crypto_seal_inplace(
 	assert(size >= src_len + overhead + nonce_size);
 	const unsigned char *nonce = noncegen_next(q->noncegen);
 	const size_t dst_size = size - nonce_size;
-	size_t dst_len = crypto_seal(
-		crypto, data, dst_size, nonce, data, src_len,
-		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE);
+	size_t dst_len =
+		crypto_seal(crypto, data, dst_size, nonce, data, src_len);
 	if (dst_len != src_len + overhead) {
 		LOGE("failed to seal packet");
 		return false;

@@ -6,7 +6,7 @@
 #include "utils/check.h"
 #include "util.h"
 
-#include <assert.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,10 +15,12 @@
 
 #include <sodium.h>
 
-static bool sodium_init_done = false;
+static const char crypto_tag[] = "kcptun-libev";
+#define CRYPTO_TAG_SIZE (sizeof crypto_tag)
 
-static bool aead_init(void)
+static bool crypto_init(void)
 {
+	static bool sodium_init_done = false;
 	if (sodium_init_done) {
 		return true;
 	}
@@ -52,16 +54,26 @@ kdf(const size_t key_size, unsigned char *restrict key,
 }
 
 struct crypto_impl {
-	void (*keygen)(unsigned char *);
+	void (*keygen)(unsigned char *k);
 
 	int (*seal)(
+		unsigned char *c, unsigned char *mac, const unsigned char *m,
+		unsigned long long mlen, const unsigned char *n,
+		const unsigned char *k);
+
+	int (*open)(
+		unsigned char *m, const unsigned char *c,
+		const unsigned char *mac, unsigned long long clen,
+		const unsigned char *n, const unsigned char *k);
+
+	int (*aead_seal)(
 		unsigned char *c, unsigned long long *clen_p,
 		const unsigned char *m, unsigned long long mlen,
 		const unsigned char *ad, unsigned long long adlen,
 		const unsigned char *nsec, const unsigned char *npub,
 		const unsigned char *k);
 
-	int (*open)(
+	int (*aead_open)(
 		unsigned char *m, unsigned long long *mlen_p,
 		unsigned char *nsec, const unsigned char *c,
 		unsigned long long clen, const unsigned char *ad,
@@ -72,36 +84,72 @@ struct crypto_impl {
 };
 
 size_t crypto_seal(
-	struct crypto *restrict crypto, unsigned char *dst, size_t dst_size,
-	const unsigned char *nonce, const unsigned char *plain,
-	size_t plain_size, const unsigned char *tag, size_t tag_size)
+	struct crypto *restrict crypto, unsigned char *dst,
+	const size_t dst_size, const unsigned char *nonce,
+	const unsigned char *plain, const size_t plain_size)
 {
-	assert(dst_size >= plain_size + crypto->overhead);
+	if (dst_size < plain_size + crypto->overhead) {
+		LOGW("crypto_seal: insufficient crypto buffer");
+		return 0;
+	}
 	struct crypto_impl *restrict impl = crypto->impl;
+	if (impl->seal != NULL) {
+		unsigned char *mac = dst + plain_size;
+		const int r = impl->seal(
+			dst, mac, plain, plain_size, nonce, impl->key);
+		if (r != 0) {
+			LOGV_F("crypto_seal: (%p %p %zu %p %p) %d", (void *)dst,
+			       (void *)plain, plain_size, (void *)nonce,
+			       (void *)impl->key, r);
+			return 0;
+		}
+		return plain_size + crypto->overhead;
+	}
 	unsigned long long r_len = dst_size;
-	int r = impl->seal(
-		dst, &r_len, plain, plain_size, tag, tag_size, NULL, nonce,
+	const int r = impl->aead_seal(
+		dst, &r_len, plain, plain_size,
+		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, NULL, nonce,
 		impl->key);
 	if (r != 0) {
-		LOGV_F("aead_seal: %d", r);
+		LOGV_F("crypto_seal: aead %d", r);
 		return 0;
 	}
 	return r_len;
 }
 
 size_t crypto_open(
-	struct crypto *restrict crypto, unsigned char *dst, size_t dst_size,
-	const unsigned char *nonce, const unsigned char *cipher,
-	size_t cipher_size, const unsigned char *tag, size_t tag_size)
+	struct crypto *restrict crypto, unsigned char *dst,
+	const size_t dst_size, const unsigned char *nonce,
+	const unsigned char *cipher, const size_t cipher_size)
 {
-	assert(dst_size + crypto->overhead >= cipher_size);
+	if (dst_size + crypto->overhead < cipher_size) {
+		LOGW("crypto_seal: insufficient crypto buffer");
+		return 0;
+	}
 	struct crypto_impl *restrict impl = crypto->impl;
+	if (impl->open != NULL) {
+		if (cipher_size < crypto->overhead) {
+			LOGV_F("crypto_open: short cipher %zu, overhead %zu",
+			       cipher_size, crypto->overhead);
+			return 0;
+		}
+		const size_t plain_size = cipher_size - crypto->overhead;
+		const unsigned char *mac = cipher + plain_size;
+		const int r = impl->open(
+			dst, cipher, mac, plain_size, nonce, impl->key);
+		if (r != 0) {
+			LOGV_F("crypto_open: %d", r);
+			return 0;
+		}
+		return plain_size;
+	}
 	unsigned long long r_len = dst_size;
-	int r = impl->open(
-		dst, &r_len, NULL, cipher, cipher_size, tag, tag_size, nonce,
+	int r = impl->aead_open(
+		dst, &r_len, NULL, cipher, cipher_size,
+		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, nonce,
 		impl->key);
 	if (r != 0) {
-		LOGV_F("aead_open: %d", r);
+		LOGV_F("crypto_open: aead %d", r);
 		return 0;
 	}
 	return r_len;
@@ -109,6 +157,7 @@ size_t crypto_open(
 
 enum crypto_method {
 	method_xchacha20poly1305_ietf,
+	method_xsalsa20poly1305,
 	method_chacha20poly1305_ietf,
 	method_aes256gcm,
 	method_MAX,
@@ -119,6 +168,8 @@ static inline char *strmethod(const enum crypto_method m)
 	switch (m) {
 	case method_xchacha20poly1305_ietf:
 		return "xchacha20poly1305_ietf";
+	case method_xsalsa20poly1305:
+		return "xsalsa20poly1305";
 	case method_chacha20poly1305_ietf:
 		return "chacha20poly1305_ietf";
 	case method_aes256gcm:
@@ -135,11 +186,12 @@ void crypto_list_methods(void)
 	for (int i = 0; i < method_MAX; i++) {
 		fprintf(stderr, "  %s\n", strmethod(i));
 	}
+	fflush(stderr);
 }
 
 struct crypto *crypto_new(const char *method)
 {
-	if (!aead_init()) {
+	if (!crypto_init()) {
 		return NULL;
 	}
 	enum crypto_method m;
@@ -149,6 +201,11 @@ struct crypto *crypto_new(const char *method)
 		nonce_size = crypto_aead_xchacha20poly1305_ietf_npubbytes();
 		overhead = crypto_aead_xchacha20poly1305_ietf_abytes();
 		key_size = crypto_aead_xchacha20poly1305_ietf_keybytes();
+	} else if (strcmp(method, strmethod(method_xsalsa20poly1305)) == 0) {
+		m = method_xsalsa20poly1305;
+		nonce_size = crypto_secretbox_xsalsa20poly1305_noncebytes();
+		overhead = crypto_secretbox_xsalsa20poly1305_macbytes();
+		key_size = crypto_secretbox_xsalsa20poly1305_keybytes();
 	} else if (strcmp(method, strmethod(method_chacha20poly1305_ietf)) == 0) {
 		m = method_chacha20poly1305_ietf;
 		nonce_size = crypto_aead_chacha20poly1305_ietf_npubbytes();
@@ -156,6 +213,11 @@ struct crypto *crypto_new(const char *method)
 		key_size = crypto_aead_chacha20poly1305_ietf_keybytes();
 	} else if (strcmp(method, strmethod(method_aes256gcm)) == 0) {
 		m = method_aes256gcm;
+		if (!crypto_aead_aes256gcm_is_available()) {
+			LOGE_F("%s is not supported by current hardware",
+			       strmethod(m));
+			return NULL;
+		}
 		nonce_size = crypto_aead_aes256gcm_npubbytes();
 		overhead = crypto_aead_aes256gcm_abytes();
 		key_size = crypto_aead_aes256gcm_keybytes();
@@ -192,8 +254,20 @@ struct crypto *crypto_new(const char *method)
 		*crypto->impl = (struct crypto_impl){
 			.key = key,
 			.keygen = &crypto_aead_xchacha20poly1305_ietf_keygen,
-			.seal = &crypto_aead_xchacha20poly1305_ietf_encrypt,
-			.open = &crypto_aead_xchacha20poly1305_ietf_decrypt,
+			.aead_seal =
+				&crypto_aead_xchacha20poly1305_ietf_encrypt,
+			.aead_open =
+				&crypto_aead_xchacha20poly1305_ietf_decrypt,
+		};
+	} break;
+	case method_xsalsa20poly1305: {
+		*(enum noncegen_method *)&crypto->noncegen_method =
+			noncegen_random;
+		*crypto->impl = (struct crypto_impl){
+			.key = key,
+			.keygen = &crypto_stream_xsalsa20_keygen,
+			.seal = &crypto_secretbox_detached,
+			.open = &crypto_secretbox_open_detached,
 		};
 	} break;
 	case method_chacha20poly1305_ietf: {
@@ -202,8 +276,8 @@ struct crypto *crypto_new(const char *method)
 		*crypto->impl = (struct crypto_impl){
 			.key = key,
 			.keygen = &crypto_aead_chacha20poly1305_ietf_keygen,
-			.seal = &crypto_aead_chacha20poly1305_ietf_encrypt,
-			.open = &crypto_aead_chacha20poly1305_ietf_decrypt,
+			.aead_seal = &crypto_aead_chacha20poly1305_ietf_encrypt,
+			.aead_open = &crypto_aead_chacha20poly1305_ietf_decrypt,
 		};
 	} break;
 	case method_aes256gcm: {
@@ -212,8 +286,8 @@ struct crypto *crypto_new(const char *method)
 		*crypto->impl = (struct crypto_impl){
 			.key = key,
 			.keygen = &crypto_aead_aes256gcm_keygen,
-			.seal = &crypto_aead_aes256gcm_encrypt,
-			.open = &crypto_aead_aes256gcm_decrypt,
+			.aead_seal = &crypto_aead_aes256gcm_encrypt,
+			.aead_open = &crypto_aead_aes256gcm_decrypt,
 		};
 	} break;
 	default:
@@ -222,28 +296,16 @@ struct crypto *crypto_new(const char *method)
 	return crypto;
 }
 
-static void aead_free_key(struct crypto_impl *impl, const size_t key_size)
-{
-	if (impl == NULL) {
-		return;
-	}
-	if (impl->key != NULL) {
-		(void)sodium_munlock(impl->key, key_size);
-		sodium_free(impl->key);
-		impl->key = NULL;
-	}
-}
-
 void crypto_password(struct crypto *restrict crypto, char *password)
 {
 	kdf(crypto->key_size, crypto->impl->key, password);
-	memset(password, 0, strlen(password));
+	sodium_memzero(password, strlen(password));
 }
 
 void crypto_psk(struct crypto *restrict crypto, unsigned char *psk)
 {
 	memcpy(crypto->impl->key, psk, crypto->key_size);
-	memset(psk, 0, crypto->key_size);
+	sodium_memzero(psk, crypto->key_size);
 }
 
 void crypto_keygen(struct crypto *restrict crypto, unsigned char *key)
@@ -251,10 +313,26 @@ void crypto_keygen(struct crypto *restrict crypto, unsigned char *key)
 	crypto->impl->keygen(key);
 }
 
+static void crypto_impl_free(struct crypto *restrict crypto)
+{
+	struct crypto_impl *restrict impl = crypto->impl;
+	if (impl == NULL) {
+		return;
+	}
+	if (impl->key != NULL) {
+		(void)sodium_munlock(impl->key, crypto->key_size);
+		sodium_free(impl->key);
+		impl->key = NULL;
+	}
+	UTIL_SAFE_FREE(crypto->impl);
+}
+
 void crypto_free(struct crypto *restrict crypto)
 {
-	aead_free_key(crypto->impl, crypto->key_size);
-	UTIL_SAFE_FREE(crypto->impl);
+	if (crypto == NULL) {
+		return;
+	}
+	crypto_impl_free(crypto);
 	free(crypto);
 }
 

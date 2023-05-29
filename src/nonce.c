@@ -4,13 +4,9 @@
 #include "nonce.h"
 
 #if WITH_SODIUM
-#include "utils/arraysize.h"
-#include "utils/serialize.h"
 #include "utils/buffer.h"
 #include "utils/check.h"
-#include "algo/xorshift.h"
 #include "crypto.h"
-#include "util.h"
 
 #include <sodium.h>
 
@@ -79,30 +75,15 @@ void noncegen_init(struct noncegen *restrict g)
 {
 	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
 	if (g->method == noncegen_counter) {
-		randombytes_buf(g->src, sizeof(g->src));
+		struct vbuffer *restrict buf = g->nonce_buf;
+		randombytes_buf(buf->data, buf->len);
 	}
 }
 
 static void noncegen_fill_counter(struct noncegen *restrict g)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(g->src); i++) {
-		if (g->src[i] != UINT32_MAX) {
-			g->src[i]++;
-			break;
-		}
-		g->src[i] = 0;
-	}
 	struct vbuffer *restrict buf = g->nonce_buf;
-	size_t n = buf->len / sizeof(uint32_t);
-	if (n > ARRAY_SIZE(g->src)) {
-		n = ARRAY_SIZE(g->src);
-	}
-	for (size_t i = 0; i < n; i++) {
-		write_uint32(buf->data + i * sizeof(uint32_t), g->src[i]);
-	}
-	for (size_t i = n * sizeof(uint32_t); i < buf->len; i++) {
-		buf->data[i] = (unsigned char)rand32();
-	}
+	sodium_increment(buf->data, buf->len);
 }
 
 /* higher packet entropy */

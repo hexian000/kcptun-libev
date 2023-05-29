@@ -22,7 +22,6 @@ struct ppbloom {
 struct noncegen {
 	enum noncegen_method method;
 	struct ppbloom ppbloom;
-	uint32_t src[8];
 	struct vbuffer *nonce_buf;
 };
 

@@ -16,8 +16,6 @@
 
 #include <stdint.h>
 
-struct aead;
-
 struct listener {
 	struct ev_io w_accept;
 	int fd;

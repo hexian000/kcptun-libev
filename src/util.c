@@ -93,8 +93,7 @@ void genpsk(const char *method)
 {
 	struct crypto *crypto = crypto_new(method);
 	if (crypto == NULL) {
-		LOGW_F("unsupported crypto method: %s", method);
-		crypto_list_methods();
+		LOGF("failed to initialize crypto");
 		exit(EXIT_FAILURE);
 	}
 	unsigned char *key = malloc(crypto->key_size);

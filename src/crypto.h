@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* AEAD interface */
+/* crypto interface */
 struct crypto_impl;
 
 enum noncegen_method {
@@ -34,11 +34,11 @@ void crypto_keygen(struct crypto *, unsigned char *key);
 size_t crypto_seal(
 	struct crypto *, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *plain,
-	size_t plain_size, const unsigned char *tag, size_t tag_size);
+	size_t plain_size);
 size_t crypto_open(
 	struct crypto *, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *cipher,
-	size_t cipher_size, const unsigned char *tag, size_t tag_size);
+	size_t cipher_size);
 
 void crypto_list_methods(void);
 
