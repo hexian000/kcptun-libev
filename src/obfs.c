@@ -51,7 +51,6 @@ struct obfs_stats {
 
 struct obfs {
 	struct server *server;
-	struct hashtable *sessions;
 	struct hashtable *contexts;
 	struct ev_io w_accept;
 	struct ev_timer w_timer;
@@ -84,7 +83,7 @@ struct obfs_ctx {
 	bool established : 1;
 	bool authenticated : 1;
 	bool http_keepalive : 1;
-	size_t num_ecn, num_ece;
+	uintmax_t num_ecn, num_ece;
 	ev_tstamp created;
 	ev_tstamp last_seen;
 	struct {
@@ -507,7 +506,7 @@ static bool ctx_del_filter(
 static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 {
 	/* free all related sessions */
-	table_filter(obfs->sessions, ctx_del_filter, &ctx->raddr.sa);
+	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
 	hashkey_t key;
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	(void)table_del(obfs->contexts, &key, NULL);
@@ -611,6 +610,7 @@ static bool obfs_ctx_start(
 	struct obfs_ctx *restrict old_ctx = NULL;
 	if (table_del(obfs->contexts, &key, (void **)&old_ctx)) {
 		if (!old_ctx->authenticated) {
+			assert(obfs->unauthenticated > 0u);
 			obfs->unauthenticated--;
 		}
 		obfs_ctx_free(loop, old_ctx);
@@ -757,6 +757,7 @@ static bool obfs_ctx_timeout_filt(
 		obfs->client = NULL;
 	}
 	if (!ctx->authenticated) {
+		assert(obfs->unauthenticated > 0u);
 		obfs->unauthenticated--;
 	}
 	obfs_ctx_free(loop, ctx);
@@ -801,7 +802,6 @@ struct obfs *obfs_new(struct server *restrict s)
 		}
 		*obfs = (struct obfs){
 			.server = s,
-			.sessions = s->sessions,
 			.contexts = table_new(),
 			.cap_fd = -1,
 			.raw_fd = -1,
@@ -864,7 +864,7 @@ static bool print_ctx_iter(
 	if (ctx->established) {
 		stats_ctx->buf = vbuf_appendf(
 			stats_ctx->buf,
-			"obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%zu/%zu\n",
+			"obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%ju/%ju\n",
 			addr_str, stats_ctx->now - ctx->last_seen, ctx->num_ecn,
 			ctx->num_ece);
 	} else {
@@ -1461,6 +1461,7 @@ void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
 	}
 	if (ok) {
 		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "authenticated");
+		assert(ctx->obfs->unauthenticated > 0u);
 		ctx->obfs->unauthenticated--;
 	}
 	ctx->authenticated = ok;
