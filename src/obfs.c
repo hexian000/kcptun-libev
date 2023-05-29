@@ -735,17 +735,16 @@ static bool obfs_ctx_timeout_filt(
 	struct obfs_ctx *restrict ctx = value;
 	const ev_tstamp now = ev_now(loop);
 	assert(now >= ctx->last_seen);
-	double not_seen;
+	double not_seen, timeout;
 	if (ctx->authenticated) {
 		not_seen = now - ctx->last_seen;
-		if (not_seen < 600.0) {
-			return true;
-		}
+		timeout = obfs->server->timeout;
 	} else {
 		not_seen = now - ctx->created;
-		if (not_seen < 60.0) {
-			return true;
-		}
+		timeout = obfs->server->dial_timeout;
+	}
+	if (not_seen < timeout) {
+		return true;
 	}
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char laddr[64], raddr[64];

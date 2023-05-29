@@ -244,6 +244,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.session_timeout = conf->timeout,
 		.session_keepalive = conf->timeout / 2.0,
 		.keepalive = conf->keepalive,
+		.timeout = CLAMP(s->keepalive * 3.0, 60.0, 1800.0),
 		.time_wait = conf->time_wait,
 	};
 

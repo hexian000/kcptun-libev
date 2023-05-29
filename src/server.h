@@ -47,7 +47,7 @@ struct server {
 	double dial_timeout;
 	double session_timeout, session_keepalive;
 	double linger, time_wait;
-	double keepalive;
+	double keepalive, timeout;
 	struct link_stats stats, last_stats;
 	ev_tstamp last_stats_time;
 	uint32_t m_conv;

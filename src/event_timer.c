@@ -106,10 +106,9 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		LOGD("ping timeout");
 		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
-	const double timeout = CLAMP(s->keepalive * 3.0, 60.0, 1800.0);
-	if (now - s->last_resolve_time > timeout &&
+	if (now - s->last_resolve_time > s->timeout &&
 	    (s->pkt.last_recv_time == TSTAMP_NIL ||
-	     now - s->pkt.last_recv_time > timeout)) {
+	     now - s->pkt.last_recv_time > s->timeout)) {
 		LOGW("peer is not responding, try resolve addresses");
 		(void)server_resolve(s);
 #if WITH_CRYPTO
