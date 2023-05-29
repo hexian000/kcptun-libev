@@ -112,7 +112,10 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		LOGW("peer is not responding, try resolve addresses");
 		(void)server_resolve(s);
 #if WITH_CRYPTO
-		noncegen_init(s->pkt.queue->noncegen);
+		struct noncegen *restrict noncegen = s->pkt.queue->noncegen;
+		if (noncegen != NULL) {
+			noncegen_init(noncegen);
+		}
 #endif
 		s->last_resolve_time = now;
 	}
