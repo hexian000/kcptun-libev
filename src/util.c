@@ -22,10 +22,6 @@
 #include <string.h>
 #include <time.h>
 
-#define b64_malloc(ptr) malloc(ptr)
-#define b64_realloc(ptr, size) realloc(ptr, size)
-#include "b64/b64.h"
-
 uint32_t tstamp2ms(const ev_tstamp t)
 {
 	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
@@ -96,13 +92,13 @@ void genpsk(const char *method)
 		LOGF("failed to initialize crypto");
 		exit(EXIT_FAILURE);
 	}
-	unsigned char *key = malloc(crypto->key_size);
-	CHECKOOM(key);
-	crypto_keygen(crypto, key);
-	char *keystr = b64_encode(key, crypto->key_size);
-	printf("%s\n", keystr);
-	free(key);
-	free(keystr);
+	char key[256];
+	if (!crypto_keygen(crypto, key, sizeof(key))) {
+		LOGF("failed to generate random key");
+		exit(EXIT_FAILURE);
+	}
+	fprintf(stdout, "%s\n", key);
+	fflush(stdout);
 	crypto_free(crypto);
 }
 #endif

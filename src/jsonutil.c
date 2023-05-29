@@ -5,10 +5,6 @@
 #include "utils/slog.h"
 #include "json/json.h"
 
-#define b64_malloc(ptr) malloc(ptr)
-#define b64_realloc(ptr, size) realloc(ptr, size)
-#include "b64/b64.h"
-
 #include <string.h>
 
 static void *jsonutil_malloc(size_t n, int zero, void *user_data)
@@ -95,21 +91,4 @@ char *parse_string_json(const json_value *value)
 		return NULL;
 	}
 	return strndup(value->u.string.ptr, value->u.string.length);
-}
-
-unsigned char *parse_b64_json(const json_value *value, size_t *restrict outlen)
-{
-	if (value->type != json_string) {
-		LOGE_F("unexpected json object type: %d", value->type);
-		return 0;
-	}
-	unsigned char *b = b64_decode_ex(
-		value->u.string.ptr, value->u.string.length, outlen);
-	if (b == NULL) {
-		return NULL;
-	}
-	unsigned char *data = malloc(*outlen);
-	memcpy(data, b, *outlen);
-	free(b);
-	return data;
 }

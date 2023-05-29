@@ -317,13 +317,11 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 		return false;
 	}
 	if (conf->psk) {
-		if (conf->psklen != q->crypto->key_size) {
-			LOGE("wrong psk length");
+		if (!crypto_b64psk(q->crypto, conf->psk)) {
 			crypto_free(q->crypto);
 			q->crypto = NULL;
 			return false;
 		}
-		crypto_psk(q->crypto, conf->psk);
 		UTIL_SAFE_FREE(conf->psk);
 	} else if (conf->password) {
 		crypto_password(q->crypto, conf->password);

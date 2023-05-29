@@ -26,10 +26,10 @@ struct crypto {
 
 struct crypto *crypto_new(const char *method);
 void crypto_password(struct crypto *, char *password);
-void crypto_psk(struct crypto *, unsigned char *psk);
+bool crypto_b64psk(struct crypto *, char *b64);
 void crypto_free(struct crypto *);
 
-void crypto_keygen(struct crypto *, unsigned char *key);
+bool crypto_keygen(struct crypto *, char *b64, size_t b64_len);
 
 size_t crypto_seal(
 	struct crypto *, unsigned char *dst, size_t dst_size,

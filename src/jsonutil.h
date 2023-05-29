@@ -23,6 +23,4 @@ bool parse_int_json(int *i, const json_value *v);
 
 char *parse_string_json(const json_value *value);
 
-unsigned char *parse_b64_json(const json_value *value, size_t *restrict outlen);
-
 #endif /* JSONUTIL_H */

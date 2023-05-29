@@ -194,7 +194,7 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return conf->password != NULL;
 	}
 	if (strcmp(name, "psk") == 0) {
-		conf->psk = parse_b64_json(value, &conf->psklen);
+		conf->psk = parse_string_json(value);
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */

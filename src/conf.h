@@ -42,8 +42,7 @@ struct config {
 #if WITH_CRYPTO
 	char *method;
 	char *password;
-	unsigned char *psk;
-	size_t psklen;
+	char *psk;
 #endif
 
 #if WITH_OBFS

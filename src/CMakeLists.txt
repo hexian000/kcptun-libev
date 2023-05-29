@@ -33,7 +33,7 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
-target_link_libraries(kcptun-libev kcp json b64 bloom csnippets)
+target_link_libraries(kcptun-libev kcp json bloom csnippets)
 
 if(LINK_STATIC_LIBS)
     find_library(LIBM NAMES libm.a)

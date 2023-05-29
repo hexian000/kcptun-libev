@@ -6,6 +6,8 @@
 #include "utils/check.h"
 #include "util.h"
 
+#include <sodium/utils.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -302,15 +304,40 @@ void crypto_password(struct crypto *restrict crypto, char *password)
 	sodium_memzero(password, strlen(password));
 }
 
-void crypto_psk(struct crypto *restrict crypto, unsigned char *psk)
+bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
 {
-	memcpy(crypto->impl->key, psk, crypto->key_size);
-	sodium_memzero(psk, crypto->key_size);
+	const char *b64_end = NULL;
+	const size_t b64_len = strlen(psk);
+	size_t len;
+	const int ret = sodium_base642bin(
+		crypto->impl->key, crypto->key_size, psk, b64_len, NULL, &len,
+		&b64_end, sodium_base64_VARIANT_ORIGINAL);
+	if (ret != 0) {
+		LOGE_F("base64 decode failed: %d", ret);
+		return false;
+	}
+	if ((ptrdiff_t)b64_len != (b64_end - psk) || len != crypto->key_size) {
+		LOGE_F("psk length error: expect %zu, got %zu",
+		       crypto->key_size, len);
+		return false;
+	}
+	sodium_memzero(psk, b64_len);
+	return true;
 }
 
-void crypto_keygen(struct crypto *restrict crypto, unsigned char *key)
+bool crypto_keygen(
+	struct crypto *restrict crypto, char *b64, const size_t b64_len)
 {
+	unsigned char *key = crypto->impl->key;
+	const size_t key_size = crypto->key_size;
+	if (b64_len < sodium_base64_encoded_len(
+			      key_size, sodium_base64_VARIANT_ORIGINAL)) {
+		return false;
+	}
 	crypto->impl->keygen(key);
+	(void)sodium_bin2base64(
+		b64, b64_len, key, key_size, sodium_base64_VARIANT_ORIGINAL);
+	return true;
 }
 
 static void crypto_impl_free(struct crypto *restrict crypto)
