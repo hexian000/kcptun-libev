@@ -44,7 +44,7 @@ kdf(const size_t key_size, unsigned char *restrict key,
 	int r = crypto_generichash(
 		salt, crypto_pwhash_argon2id_SALTBYTES,
 		(unsigned char *)salt_str, sizeof(salt_str) - 1, NULL, 0);
-	if (r) {
+	if (r != 0) {
 		return r;
 	}
 	r = crypto_pwhash_argon2id(
@@ -298,10 +298,14 @@ struct crypto *crypto_new(const char *method)
 	return crypto;
 }
 
-void crypto_password(struct crypto *restrict crypto, char *password)
+bool crypto_password(struct crypto *restrict crypto, char *password)
 {
-	kdf(crypto->key_size, crypto->impl->key, password);
+	if (kdf(crypto->key_size, crypto->impl->key, password) != 0) {
+		LOGOOM();
+		return false;
+	}
 	sodium_memzero(password, strlen(password));
+	return true;
 }
 
 bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
@@ -317,8 +321,7 @@ bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
 		return false;
 	}
 	if ((ptrdiff_t)b64_len != (b64_end - psk) || len != crypto->key_size) {
-		LOGE_F("psk length error: expect %zu, got %zu",
-		       crypto->key_size, len);
+		LOGE("psk length error");
 		return false;
 	}
 	sodium_memzero(psk, b64_len);

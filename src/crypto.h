@@ -25,7 +25,7 @@ struct crypto {
 };
 
 struct crypto *crypto_new(const char *method);
-void crypto_password(struct crypto *, char *password);
+bool crypto_password(struct crypto *, char *password);
 bool crypto_b64psk(struct crypto *, char *b64);
 void crypto_free(struct crypto *);
 

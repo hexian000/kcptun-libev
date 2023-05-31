@@ -324,7 +324,11 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 		}
 		UTIL_SAFE_FREE(conf->psk);
 	} else if (conf->password) {
-		crypto_password(q->crypto, conf->password);
+		if (!crypto_password(q->crypto, conf->password)) {
+			crypto_free(q->crypto);
+			q->crypto = NULL;
+			return false;
+		}
 		UTIL_SAFE_FREE(conf->password);
 	}
 	q->noncegen = noncegen_create(

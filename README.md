@@ -126,13 +126,13 @@ Currently only one obfuscator implemented: "dpi/tcp-wnd"
 
 Theoretically all systems that support ISO C11 and POSIX.1-2008.
 
-| System          | Tier      | Notes |
-| --------------- | --------- | ----- |
-| Ubuntu          | developed |       |
-| OpenWRT         | tested    |       |
-| Other Linux     | supported |       |
-| macOS           | supported |       |
-| Windows (MSYS2) | supported |       |
+| System          | Tier      | Notes              |
+| --------------- | --------- | ------------------ |
+| Ubuntu          | developed |                    |
+| OpenWRT         | tested    |                    |
+| Other Linux     | supported |                    |
+| macOS           | supported | without obfuscator |
+| Windows (MSYS2) | supported | without obfuscator |
 
 ### Version Compatibility
 
