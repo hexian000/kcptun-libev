@@ -7,6 +7,7 @@
 #include "murmurhash.h"
 
 #include <assert.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,15 +20,17 @@
 
 /* start from 2^4 */
 static const int prime_list[] = {
-	13,   31,    61,    127,   251,	   509,	   1021,   2039,    4093,
-	8191, 16381, 32749, 65521, 131071, 262139, 524287, 1048573, 2097143,
+	13,	31,	61,	 127,	  251,	   509,	   1021,
+	2039,	4093,	6143,	 10223,	  16381,   24571,  36857,
+	55291,	83939,	114679,	 163819,  229373,  311293, 425977,
+	573437, 770047, 1032191, 1376237, 1835003,
 };
 
 #define COLLISION_THRESHOLD 100
 
 #define INITIAL_CAPACITY (prime_list[0])
 
-static inline int get_capacity(int x)
+static inline int ceil_capacity(int x)
 {
 	const int last_prime = prime_list[ARRAY_SIZE(prime_list) - 1];
 	if (x > last_prime) {
@@ -50,9 +53,10 @@ struct hash_item {
 
 struct hashtable {
 	struct hash_item *p;
-	int size, capacity;
+	int size, capacity, max_load;
 	int freelist;
 	uint32_t seed;
+	int flags;
 #ifndef NDEBUG
 	unsigned int version;
 #endif
@@ -149,6 +153,12 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 #endif
 	table->p = m;
 	table->capacity = new_capacity;
+	/* max load factor: 1.0 - normal, 0.75 - fast */
+	if (table->flags & TABLE_FAST) {
+		table->max_load = new_capacity / 4 * 3;
+	} else {
+		table->max_load = new_capacity;
+	}
 
 	if (new_capacity > old_capacity) {
 		/* init newly allocated memory */
@@ -158,15 +168,14 @@ table_realloc(struct hashtable *restrict table, const int new_capacity)
 
 static inline void table_grow(struct hashtable *restrict table)
 {
-	const int last_prime = prime_list[ARRAY_SIZE(prime_list) - 1];
-	if (table->size < last_prime) {
-		/* will fit next number in prime_list */
-		table_reserve(table, table->size + 1);
-	} else if (table->size < (INT_MAX - last_prime)) {
-		table_reserve(table, table->size + last_prime);
+	const int want = table->size / 3 + 1;
+	int estimated = table->size;
+	if (estimated < (INT_MAX - want)) {
+		estimated += want;
 	} else {
-		table_reserve(table, INT_MAX);
+		estimated = INT_MAX;
 	}
+	table_reserve(table, estimated);
 }
 
 static inline void table_reseed(struct hashtable *restrict table)
@@ -209,10 +218,10 @@ bool table_set(
 		table->freelist = table->p[index].next;
 		table->size++;
 	} else {
-		if (table->size == table->capacity) {
+		if (table->size >= table->max_load) {
 			table_grow(table);
 			if (table->size == table->capacity) {
-				// cannot grow, return failure
+				/* no space, return failure */
 				return false;
 			}
 			bucket = hash % table->capacity;
@@ -291,12 +300,21 @@ void table_free(struct hashtable *restrict table)
 	free(table);
 }
 
-void table_reserve(struct hashtable *restrict table, int new_capacity)
+void table_reserve(struct hashtable *restrict table, const int new_size)
 {
+	int new_capacity = new_size;
 	if (new_capacity < table->size) {
 		new_capacity = table->size;
 	}
-	new_capacity = get_capacity(new_capacity);
+	if (table->flags & TABLE_FAST) {
+		const int want = new_size / 3 + 1;
+		if (new_capacity < (INT_MAX - want)) {
+			new_capacity += want;
+		} else {
+			new_capacity = INT_MAX;
+		}
+	}
+	new_capacity = ceil_capacity(new_capacity);
 	if (table->capacity == new_capacity) {
 		return;
 	}
@@ -304,39 +322,38 @@ void table_reserve(struct hashtable *restrict table, int new_capacity)
 	fprintf(stderr, "table resize: size=%d capacity=%d new_capacity=%d\n",
 		table->size, table->capacity, new_capacity);
 #endif
+#ifndef NDEBUG
+	table->version++;
+#endif
 	table_compact(table);
 	table_realloc(table, new_capacity);
 	table_rehash(table);
 }
 
-struct hashtable *table_new(void)
+struct hashtable *table_new(const int flags)
 {
-	struct hashtable *table = malloc(sizeof(struct hashtable));
+	struct hashtable *restrict table = malloc(sizeof(struct hashtable));
 	if (table == NULL) {
 		return NULL;
 	}
 	*table = (struct hashtable){
 		.p = NULL,
-		.capacity = 0,
 		.size = 0,
+		.capacity = 0,
+		.max_load = 0,
 		.freelist = -1,
 		.seed = rand32(),
+		.flags = flags,
 #ifndef NDEBUG
 		.version = 0,
 #endif
 	};
-	int capacity = INITIAL_CAPACITY;
-	table_realloc(table, capacity);
+	table_realloc(table, INITIAL_CAPACITY);
 	if (table->p == NULL) {
 		free(table);
 		return NULL;
 	}
 	return table;
-}
-
-int table_size(struct hashtable *restrict table)
-{
-	return table->size;
 }
 
 void table_filter(
@@ -389,4 +406,9 @@ void table_iterate(
 			return;
 		}
 	}
+}
+
+int table_size(struct hashtable *restrict table)
+{
+	return table->size;
 }

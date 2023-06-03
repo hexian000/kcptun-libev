@@ -15,9 +15,10 @@ uint32_t murmurhash2_32(const void *ptr, size_t len, uint32_t seed);
 
 uint64_t murmurhash2_64(const void *ptr, size_t len, uint64_t seed);
 
-uint32_t murmurhash3_32(const void *key, size_t len, uint32_t seed);
+uint32_t murmurhash3_32(const void *ptr, size_t len, uint32_t seed);
 
 void murmurhash3_128(
-	const void *key, size_t len, const uint64_t seed[2], uint64_t out[2]);
+	const void *ptr, size_t len, const unsigned char seed[16],
+	unsigned char out[16]);
 
 #endif /* MURMURHASH_H */

@@ -3,6 +3,7 @@
 
 #ifndef HASHTABLE_H
 #define HASHTABLE_H
+/* hashtable is an unordered map whose keys are of fixed length */
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -21,11 +22,18 @@ struct hashtable;
 typedef bool (*table_iterate_cb)(
 	struct hashtable *table, const hashkey_t *key, void *value, void *data);
 
+enum table_flags {
+	TABLE_DEFAULT = 0,
+	/* set max load factor to 75%, trading space for speed */
+	TABLE_FAST = 1 << 0,
+};
+
 /**
  * @brief Create a new hash table.
+ * @param flags Any combination of enum table_flags.
  * @return Pointer to the newly created table.
  */
-struct hashtable *table_new(void);
+struct hashtable *table_new(int flags);
 
 /**
  * @brief Free all memory used by a table.
@@ -36,11 +44,11 @@ void table_free(struct hashtable *table);
 /**
  * @brief Explicitly reallocate memory for the table.
  * @details 1. Preallocate memory for faster table filling. <br>
- * 2. Passing any new_capacity less than current size to trim a table.
+ * 2. Passing any new_size less than current size to shrink a table.
  * @param table Pointer to the table.
- * @param new_capacity Expected new table capacity.
+ * @param new_size Expected new table size.
  */
-void table_reserve(struct hashtable *table, int new_capacity);
+void table_reserve(struct hashtable *table, int new_size);
 
 /**
  * @brief Insert or assign to an item in the table.

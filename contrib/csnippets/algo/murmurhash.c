@@ -113,9 +113,9 @@ static inline uint64_t fmix64(uint64_t k)
 	return k;
 }
 
-uint32_t murmurhash3_32(const void *key, const size_t len, const uint32_t seed)
+uint32_t murmurhash3_32(const void *ptr, const size_t len, const uint32_t seed)
 {
-	const unsigned char *restrict data = (const unsigned char *)key;
+	const unsigned char *restrict data = (const unsigned char *)ptr;
 	const size_t n = len / sizeof(uint32_t);
 
 	uint32_t h1 = seed;
@@ -156,14 +156,14 @@ uint32_t murmurhash3_32(const void *key, const size_t len, const uint32_t seed)
 }
 
 void murmurhash3_128(
-	const void *key, const size_t len, const uint64_t seed[2],
-	uint64_t out[2])
+	const void *ptr, const size_t len, const unsigned char seed[16],
+	unsigned char out[16])
 {
-	const unsigned char *restrict data = (const unsigned char *)key;
+	const unsigned char *restrict data = (const unsigned char *)ptr;
 	const size_t n = len / (sizeof(uint64_t) * 2);
 
-	uint64_t h1 = seed[0];
-	uint64_t h2 = seed[1];
+	uint64_t h1 = read_uint64(seed);
+	uint64_t h2 = read_uint64(seed + sizeof(uint64_t));
 
 	const uint64_t c1 = UINT64_C(0x87c37b91114253d5);
 	const uint64_t c2 = UINT64_C(0x4cf5ad432745937f);
@@ -233,6 +233,6 @@ void murmurhash3_128(
 	h1 += h2;
 	h2 += h1;
 
-	out[0] = h1;
-	out[1] = h2;
+	write_uint64(out, h1);
+	write_uint64(out + sizeof(uint64_t), h2);
 }

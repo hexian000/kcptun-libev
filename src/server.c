@@ -255,7 +255,11 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	ev_timer_init(w_timer, timer_cb, 2.0, 2.0);
 	w_timer->data = s;
 
-	s->sessions = table_new();
+	if (conf->mode == MODE_SERVER) {
+		s->sessions = table_new(TABLE_FAST);
+	} else {
+		s->sessions = table_new(TABLE_DEFAULT);
+	}
 	if (s->sessions == NULL) {
 		server_free(s);
 		return NULL;
@@ -498,25 +502,25 @@ struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
 	const struct link_stats *restrict stats = &s->stats;
 	const struct link_stats *restrict last_stats = &s->last_stats;
 	const struct link_stats dstats = (struct link_stats){
-		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
-		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
-		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
-		.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
 		.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
 		.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
+		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
+		.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
+		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
 	};
 
-	const double dkcp_rx = (double)(dstats.kcp_rx) * 0x1p-10 / dt;
-	const double dkcp_tx = (double)(dstats.kcp_tx) * 0x1p-10 / dt;
 	const double dtcp_rx = (double)(dstats.tcp_rx) * 0x1p-10 / dt;
 	const double dtcp_tx = (double)(dstats.tcp_tx) * 0x1p-10 / dt;
+	const double dkcp_rx = (double)(dstats.kcp_rx) * 0x1p-10 / dt;
+	const double dkcp_tx = (double)(dstats.kcp_tx) * 0x1p-10 / dt;
 	const double deff_rx = dtcp_tx / dkcp_rx * 100.0;
 	const double deff_tx = dtcp_rx / dkcp_tx * 100.0;
 
-	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10;
-	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10;
 	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10;
 	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10;
+	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10;
+	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10;
 	const double pkt_rx = (double)(stats->pkt_rx) * 0x1p-10;
 	const double pkt_tx = (double)(stats->pkt_tx) * 0x1p-10;
 
@@ -525,6 +529,6 @@ struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
 		"traffic stats (rx/tx, in KiB):\n"
 		"    current tcp: %.1lf/%.1lf; kcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
 		"      total tcp: %.1lf/%.1lf; kcp: %.1lf/%.1lf; pkt: %.1lf/%.1lf\n",
-		dkcp_rx, dkcp_tx, dtcp_rx, dtcp_tx, deff_rx, deff_tx, /* dt */
-		kcp_rx, kcp_tx, tcp_rx, tcp_tx, pkt_rx, pkt_tx);
+		dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx, /* dt */
+		tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 }

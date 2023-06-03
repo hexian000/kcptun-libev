@@ -793,8 +793,8 @@ obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 struct obfs *obfs_new(struct server *restrict s)
 {
 	struct obfs *obfs = NULL;
-	const char *method = s->conf->obfs;
-	if (strcmp(method, "dpi/tcp-wnd") == 0) {
+	const struct config *restrict conf = s->conf;
+	if (strcmp(conf->obfs, "dpi/tcp-wnd") == 0) {
 		obfs = malloc(sizeof(struct obfs));
 		if (obfs == NULL) {
 			LOGOOM();
@@ -802,12 +802,16 @@ struct obfs *obfs_new(struct server *restrict s)
 		}
 		*obfs = (struct obfs){
 			.server = s,
-			.contexts = table_new(),
 			.cap_fd = -1,
 			.raw_fd = -1,
 			.fd = -1,
 			.last_stats_time = ev_now(s->loop),
 		};
+		if (conf->mode == MODE_SERVER) {
+			obfs->contexts = table_new(TABLE_FAST);
+		} else {
+			obfs->contexts = table_new(TABLE_DEFAULT);
+		}
 		if (obfs->contexts == NULL) {
 			LOGOOM();
 			free(obfs);
