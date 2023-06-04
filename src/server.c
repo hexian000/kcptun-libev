@@ -237,6 +237,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 				.last_send_time = TSTAMP_NIL,
 				.last_recv_time = TSTAMP_NIL,
 			},
+		.uptime = now,
 		.last_resolve_time = now,
 		.last_stats_time = now,
 		.interval = conf->kcp_interval * 1e-3,
@@ -500,7 +501,11 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 {
 	buf = print_session_table(s, buf);
 
-	const double dt = ev_now(s->loop) - s->last_stats_time;
+	const ev_tstamp now = ev_now(s->loop);
+	char uptime[16];
+	(void)format_duration_seconds(
+		uptime, sizeof(uptime), make_duration(now - s->uptime));
+	const double dt = now - s->last_stats_time;
 	const struct link_stats *restrict stats = &s->stats;
 	const struct link_stats *restrict last_stats = &s->last_stats;
 	const struct link_stats dstats = (struct link_stats){
@@ -531,11 +536,10 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 
 	return vbuf_appendf(
 		buf,
-		"traffic stats (rx/tx):\n"
+		"uptime %s, traffic stats (rx/tx):\n"
 		"    current tcp: %s/%s; kcp: %s/%s; efficiency: %.1lf%%/%.1lf%%\n"
 		"      total tcp: %s/%s; kcp: %s/%s; pkt: %s/%s\n",
-		dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx, /* dt */
-		tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx /* total */
-	);
+		uptime, dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx,
+		tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 #undef FORMAT_BYTES
 }

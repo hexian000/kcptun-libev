@@ -49,9 +49,10 @@ struct server {
 	double linger, time_wait;
 	double keepalive, timeout;
 	struct link_stats stats, last_stats;
-	ev_tstamp last_stats_time;
 	uint32_t m_conv;
-	double last_resolve_time;
+	ev_tstamp uptime;
+	ev_tstamp last_stats_time;
+	ev_tstamp last_resolve_time;
 };
 
 struct server *server_new(struct ev_loop *loop, struct config *conf);
