@@ -4,6 +4,7 @@
 #include "server.h"
 #include "utils/slog.h"
 #include "utils/buffer.h"
+#include "utils/formats.h"
 #include "algo/hashtable.h"
 #include "algo/xorshift.h"
 #include "conf.h"
@@ -494,7 +495,8 @@ print_session_table(struct server *restrict s, struct vbuffer *restrict buf)
 		ctx.num_in_state[STATE_TIME_WAIT]);
 }
 
-struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
+struct vbuffer *
+server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 {
 	buf = print_session_table(s, buf);
 
@@ -510,25 +512,30 @@ struct vbuffer *server_stats(struct server *s, struct vbuffer *restrict buf)
 		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
 	};
 
-	const double dtcp_rx = (double)(dstats.tcp_rx) * 0x1p-10 / dt;
-	const double dtcp_tx = (double)(dstats.tcp_tx) * 0x1p-10 / dt;
-	const double dkcp_rx = (double)(dstats.kcp_rx) * 0x1p-10 / dt;
-	const double dkcp_tx = (double)(dstats.kcp_tx) * 0x1p-10 / dt;
-	const double deff_rx = dtcp_tx / dkcp_rx * 100.0;
-	const double deff_tx = dtcp_rx / dkcp_tx * 100.0;
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
 
-	const double tcp_rx = (double)(stats->tcp_rx) * 0x1p-10;
-	const double tcp_tx = (double)(stats->tcp_tx) * 0x1p-10;
-	const double kcp_rx = (double)(stats->kcp_rx) * 0x1p-10;
-	const double kcp_tx = (double)(stats->kcp_tx) * 0x1p-10;
-	const double pkt_rx = (double)(stats->pkt_rx) * 0x1p-10;
-	const double pkt_tx = (double)(stats->pkt_tx) * 0x1p-10;
+	FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
+	FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
+	FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
+	FORMAT_BYTES(dkcp_tx, dstats.kcp_tx / dt);
+	const double deff_rx = dstats.tcp_tx * 100.0 / dstats.kcp_rx;
+	const double deff_tx = dstats.tcp_rx * 100.0 / dstats.kcp_tx;
+	FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
+	FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
+	FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
+	FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
+	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
+	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
 
 	return vbuf_appendf(
 		buf,
-		"traffic stats (rx/tx, in KiB):\n"
-		"    current tcp: %.1lf/%.1lf; kcp: %.1lf/%.1lf; efficiency: %.1lf%%/%.1lf%%\n"
-		"      total tcp: %.1lf/%.1lf; kcp: %.1lf/%.1lf; pkt: %.1lf/%.1lf\n",
+		"traffic stats (rx/tx):\n"
+		"    current tcp: %s/%s; kcp: %s/%s; efficiency: %.1lf%%/%.1lf%%\n"
+		"      total tcp: %s/%s; kcp: %s/%s; pkt: %s/%s\n",
 		dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx, /* dt */
-		tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+		tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx /* total */
+	);
+#undef FORMAT_BYTES
 }

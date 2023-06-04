@@ -9,6 +9,7 @@
 
 #include "utils/arraysize.h"
 #include "utils/buffer.h"
+#include "utils/formats.h"
 #include "utils/slog.h"
 #include "utils/check.h"
 #include "algo/hashtable.h"
@@ -903,20 +904,26 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	};
 
 	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
-	const double dbyt_cap = (double)(dstats.byt_cap) * 0x1p-10 / dt;
-	const double dbyt_rx = (double)(dstats.byt_rx) * 0x1p-10 / dt;
 	const uintmax_t pkt_drop = stats->pkt_cap - stats->pkt_rx;
-	const double byt_drop =
-		(double)(stats->byt_cap - stats->byt_rx) * 0x1p-10;
 	const int num_ctx = table_size(obfs->contexts);
 	const size_t unauthenticated = obfs->unauthenticated;
 	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
 	const size_t authenticated = (size_t)num_ctx - unauthenticated;
+
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
+	FORMAT_BYTES(dbyt_cap, dstats.byt_cap / dt);
+	FORMAT_BYTES(dbyt_rx, dstats.byt_rx / dt);
+	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
+
 	return vbuf_appendf(
 		stats_ctx.buf,
-		"obfs: %zu(+%zu) contexts, capture %.1lf pkt/s, cap/rx %.1lf/%.1lf KiB/s, drop: %ju (%.1lf KiB)\n",
+		"obfs: %zu(+%zu) contexts, capture %.1lf/s (%s/s), rx %s/s, drop: %ju (%s)\n",
 		authenticated, unauthenticated, dpkt_cap, dbyt_cap, dbyt_rx,
 		pkt_drop, byt_drop);
+#undef FORMAT_BYTES
 }
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
