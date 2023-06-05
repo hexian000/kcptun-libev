@@ -91,14 +91,14 @@ If the encryption is not enabled or not even compiled, no packet overhead is con
 
 In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random preshared key instead of using a simple password.
 
-| Encryption Method      | Since | Form | Packet Overhead | Notes             |
-| ---------------------- | ----- | ---- | --------------- | ----------------- |
-| xchacha20poly1305_ietf | v1.0  | AEAD | 40 bytes        | recommended       |
-| xsalsa20poly1305       | v2.2  | AE   | 40 bytes        |                   |
-| chacha20poly1305_ietf  | v2.0  | AEAD | 28 bytes        |                   |
-| aes256gcm              | v2.0  | AEAD | 28 bytes        | limited hardware* |
+| Encryption Method      | Since | Form | Packet Overhead | Notes              |
+| ---------------------- | ----- | ---- | --------------- | ------------------ |
+| xchacha20poly1305_ietf | v1.0  | AEAD | 40 bytes        | recommended        |
+| xsalsa20poly1305       | v2.2  | AE   | 40 bytes        |                    |
+| chacha20poly1305_ietf  | v2.0  | AEAD | 28 bytes        |                    |
+| aes256gcm              | v2.0  | AEAD | 28 bytes        | limited hardware\* |
 
-*\* Specifically: x86 with SSSE3, aesni and pclmul*
+*\* Specifically: x86 CPU with SSSE3, aesni and pclmul.*
 
 kcptun-libev ships with additional encryption methods to ensure that users have alternatives for specific reasons. In most cases, the recommended one is just what you need.
 
@@ -122,7 +122,7 @@ sudo setcap cap_net_raw+ep kcptun-libev
 ./kcptun-libev -c server.json
 ```
 
-Currently only one obfuscator implemented: "dpi/tcp-wnd"
+Currently only one obfuscator implemented: `dpi/tcp-wnd`
 
 ## Compatibility
 ### System
