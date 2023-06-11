@@ -3,7 +3,6 @@
 
 #include "formats.h"
 #include "utils/arraysize.h"
-#include "utils/minmax.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -70,7 +69,7 @@ int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 	}
 	const int x = ((int)log2(value) - 3) / 10;
 	const int n = (int)ARRAY_SIZE(iec_units) - 1;
-	const int i = CLAMP(x, 0, n);
+	const int i = (x <= n ? x : n);
 	const double v = ldexp(value, i * -10);
 	if (v < 10.0) {
 		return snprintf(buf, bufsize, "%.02lf %s", v, iec_units[i]);
@@ -91,12 +90,40 @@ int format_duration_seconds(char *b, const size_t size, const struct duration d)
 		return snprintf(
 			b, size, "%d:%02u:%02u", d.sign * (int)d.hours,
 			d.minutes, d.seconds);
-	} else if (d.minutes) {
+	}
+	return snprintf(b, size, "%d:%02u", d.sign * (int)d.minutes, d.seconds);
+}
+
+int format_duration_millis(char *b, const size_t size, const struct duration d)
+{
+	if (d.days) {
 		return snprintf(
-			b, size, "%d:%02u", d.sign * (int)d.minutes, d.seconds);
+			b, size, "%dd%02u:%02u:%02u.%03u", d.sign * (int)d.days,
+			d.hours, d.minutes, d.seconds, d.millis);
+	} else if (d.hours) {
+		return snprintf(
+			b, size, "%d:%02u:%02u.%03u", d.sign * (int)d.hours,
+			d.minutes, d.seconds, d.millis);
 	}
-	if (d.sign < 0) {
-		return snprintf(b, size, "-%u", d.seconds);
+	return snprintf(
+		b, size, "%d:%02u.%03u", d.sign * (int)d.minutes, d.seconds,
+		d.millis);
+}
+
+int format_duration_nanos(char *b, const size_t size, const struct duration d)
+{
+	if (d.days) {
+		return snprintf(
+			b, size, "%dd%02u:%02u:%02u.%03u%03u%03u",
+			d.sign * (int)d.days, d.hours, d.minutes, d.seconds,
+			d.millis, d.micros, d.nanos);
+	} else if (d.hours) {
+		return snprintf(
+			b, size, "%d:%02u:%02u.%03u%03u%03u",
+			d.sign * (int)d.hours, d.minutes, d.seconds, d.millis,
+			d.micros, d.nanos);
 	}
-	return snprintf(b, size, "%u", d.seconds);
+	return snprintf(
+		b, size, "%d:%02u.%03u%03u%03u", d.sign * (int)d.minutes,
+		d.seconds, d.millis, d.micros, d.nanos);
 }

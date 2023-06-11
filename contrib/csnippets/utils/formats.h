@@ -24,5 +24,7 @@ struct duration make_duration(double seconds);
 struct duration make_duration_nanos(int64_t nanos);
 
 int format_duration_seconds(char *b, size_t size, struct duration d);
+int format_duration_millis(char *b, size_t size, struct duration d);
+int format_duration_nanos(char *b, size_t size, struct duration d);
 
 #endif /* FORMATS_H */

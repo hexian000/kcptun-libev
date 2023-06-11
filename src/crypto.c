@@ -6,7 +6,6 @@
 #include "utils/check.h"
 #include "util.h"
 
-#include <sodium/utils.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
