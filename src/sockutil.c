@@ -112,10 +112,9 @@ socklen_t getsocklen(const struct sockaddr *sa)
 	case AF_INET6:
 		return sizeof(struct sockaddr_in6);
 	default:
-		FAIL();
 		break;
 	}
-	return 0;
+	FAIL();
 }
 
 void conv_make_key(
@@ -182,10 +181,9 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 			(const struct sockaddr_in6 *)bind,
 			(const struct sockaddr_in6 *)dest);
 	default:
-		FAIL();
 		break;
 	}
-	return false;
+	FAIL();
 }
 
 struct sockaddr *sa_clone(const struct sockaddr *src)

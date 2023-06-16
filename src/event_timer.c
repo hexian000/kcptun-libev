@@ -4,7 +4,6 @@
 #include "event.h"
 #include "event_impl.h"
 #include "algo/hashtable.h"
-#include "utils/buffer.h"
 #include "utils/slog.h"
 #include "session.h"
 #include "util.h"

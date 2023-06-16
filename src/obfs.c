@@ -13,7 +13,7 @@
 #include "utils/slog.h"
 #include "utils/check.h"
 #include "algo/hashtable.h"
-#include "algo/xorshift.h"
+#include "algo/rand.h"
 #include "net/http.h"
 #include "conf.h"
 #include "pktqueue.h"

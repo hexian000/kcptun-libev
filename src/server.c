@@ -6,7 +6,7 @@
 #include "utils/buffer.h"
 #include "utils/formats.h"
 #include "algo/hashtable.h"
-#include "algo/xorshift.h"
+#include "algo/rand.h"
 #include "conf.h"
 #include "event.h"
 #include "pktqueue.h"
@@ -525,8 +525,10 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 	FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
 	FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
 	FORMAT_BYTES(dkcp_tx, dstats.kcp_tx / dt);
-	const double deff_rx = dstats.tcp_tx * 100.0 / dstats.kcp_rx;
-	const double deff_tx = dstats.tcp_rx * 100.0 / dstats.kcp_tx;
+	const double deff_rx =
+		(double)dstats.tcp_tx * 100.0 / (double)dstats.kcp_rx;
+	const double deff_tx =
+		(double)dstats.tcp_rx * 100.0 / (double)dstats.kcp_tx;
 	FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
 	FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
 	FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));

@@ -2,9 +2,9 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "hashtable.h"
+#include "algo/murmurhash.h"
+#include "algo/rand.h"
 #include "utils/arraysize.h"
-#include "xorshift.h"
-#include "murmurhash.h"
 
 #include <assert.h>
 #include <stddef.h>

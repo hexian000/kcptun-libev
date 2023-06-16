@@ -5,6 +5,7 @@
 #define EVENT_IMPL_H
 
 #include <ev.h>
+#include <errno.h>
 
 #include <string.h>
 
@@ -16,6 +17,11 @@
 			return;                                                \
 		}                                                              \
 	} while (0)
+
+/* these errors do not fail the connection */
+#define IS_TEMPORARY_ERROR(err)                                                \
+	((err) == EAGAIN || (err) == EWOULDBLOCK || (err) == EINTR ||          \
+	 (err) == ENOMEM)
 
 #define LOG_RATELIMITEDF(level, loop, rate, format, ...)                       \
 	do {                                                                   \

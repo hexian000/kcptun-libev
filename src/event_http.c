@@ -125,8 +125,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	const ssize_t nrecv = recv(watcher->fd, data, cap, 0);
 	if (nrecv < 0) {
 		const int err = errno;
-		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
-		    err == ENOMEM) {
+		if (IS_TEMPORARY_ERROR(err)) {
 			return;
 		}
 		LOGE_F("recv: %s", strerror(err));
@@ -205,8 +204,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
-			if (err == EAGAIN || err == EWOULDBLOCK ||
-			    err == EINTR || err == ENOMEM) {
+			if (IS_TEMPORARY_ERROR(err)) {
 				break;
 			}
 			LOGE_F("send: %s", strerror(err));
