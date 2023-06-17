@@ -13,7 +13,3 @@ target_sources(csnippets
     "${CMAKE_CURRENT_SOURCE_DIR}/serialize.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/slog.h"
 )
-
-target_compile_definitions(csnippets
-    PUBLIC MCACHE_STATS=1
-)

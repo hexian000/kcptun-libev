@@ -304,12 +304,10 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 
 	struct server *restrict s = ctx->data;
 	buf = server_stats(s, buf);
-	server_sample(s);
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
 		buf = obfs_stats(obfs, buf);
-		obfs_sample(obfs);
 	}
 #endif
 #if MCACHE_STATS

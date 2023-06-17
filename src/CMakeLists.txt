@@ -11,7 +11,7 @@ add_executable(kcptun-libev main.c
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
 target_include_directories(kcptun-libev PRIVATE ../contrib/csnippets ../contrib)
-target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=1)
+target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=0)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT POSIX)
     set(WITH_OBFS ON)

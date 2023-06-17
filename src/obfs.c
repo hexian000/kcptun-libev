@@ -846,12 +846,6 @@ bool obfs_resolve(struct obfs *obfs)
 	return true;
 }
 
-void obfs_sample(struct obfs *restrict obfs)
-{
-	obfs->last_stats = obfs->stats;
-	obfs->last_stats_time = ev_now(obfs->server->loop);
-}
-
 struct obfs_stats_ctx {
 	ev_tstamp now;
 	struct vbuffer *restrict buf;
@@ -885,11 +879,14 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 {
 	const ev_tstamp now = ev_now(obfs->server->loop);
 
-	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
-		.now = now,
-		.buf = buf,
-	};
-	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
+	{
+		struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
+			.now = now,
+			.buf = buf,
+		};
+		table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
+		buf = stats_ctx.buf;
+	}
 
 	const double dt = now - obfs->last_stats_time;
 	const struct obfs_stats *restrict stats = &obfs->stats;
@@ -918,12 +915,17 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	FORMAT_BYTES(dbyt_rx, dstats.byt_rx / dt);
 	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
 
-	return vbuf_appendf(
-		stats_ctx.buf,
+	buf = vbuf_appendf(
+		buf,
 		"obfs: %zu(+%zu) contexts, capture %.1lf/s (%s/s), rx %s/s, drop: %ju (%s)\n",
 		authenticated, unauthenticated, dpkt_cap, dbyt_cap, dbyt_rx,
 		pkt_drop, byt_drop);
 #undef FORMAT_BYTES
+
+	/* rotate stats */
+	obfs->last_stats = obfs->stats;
+	obfs->last_stats_time = ev_now(obfs->server->loop);
+	return buf;
 }
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)

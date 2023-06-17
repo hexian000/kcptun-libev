@@ -16,6 +16,7 @@
 #include "sockutil.h"
 
 #include <ev.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -24,6 +25,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdlib.h>
+#include <time.h>
 
 static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
 {
@@ -248,6 +250,8 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.keepalive = conf->keepalive,
 		.timeout = CLAMP(s->keepalive * 3.0, 60.0, 1800.0),
 		.time_wait = conf->time_wait,
+		.clock = (clock_t)(-1),
+		.last_clock = (clock_t)(-1),
 	};
 
 	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
@@ -423,12 +427,6 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 	return conv;
 }
 
-void server_sample(struct server *restrict s)
-{
-	s->last_stats = s->stats;
-	s->last_stats_time = ev_now(s->loop);
-}
-
 struct server_stats_ctx {
 	size_t num_in_state[STATE_MAX];
 	ev_tstamp now;
@@ -536,12 +534,27 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
 	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
 
-	return vbuf_appendf(
+	char load_str[16] = "";
+	s->clock = clock();
+	if (s->last_clock != (clock_t)(-1) && s->clock > s->last_clock) {
+		const double load = (double)(s->clock - s->last_clock) /
+				    (double)(CLOCKS_PER_SEC) / dt * 100.0;
+		(void)snprintf(
+			load_str, sizeof(load_str), "load: %.03f%%, ", load);
+	}
+
+	buf = vbuf_appendf(
 		buf,
-		"uptime %s, traffic stats (rx/tx):\n"
+		"uptime %s, %straffic stats (rx/tx):\n"
 		"    current tcp: %s/%s; kcp: %s/%s; efficiency: %.1lf%%/%.1lf%%\n"
 		"      total tcp: %s/%s; kcp: %s/%s; pkt: %s/%s\n",
-		uptime, dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx,
-		tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+		uptime, load_str, dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx,
+		deff_tx, tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 #undef FORMAT_BYTES
+
+	/* rotate stats */
+	s->last_clock = s->clock;
+	s->last_stats = s->stats;
+	s->last_stats_time = ev_now(s->loop);
+	return buf;
 }

@@ -15,6 +15,7 @@
 #include <ev.h>
 
 #include <stdint.h>
+#include <time.h>
 
 struct listener {
 	struct ev_io w_accept;
@@ -53,12 +54,12 @@ struct server {
 	ev_tstamp uptime;
 	ev_tstamp last_stats_time;
 	ev_tstamp last_resolve_time;
+	clock_t clock, last_clock;
 };
 
 struct server *server_new(struct ev_loop *loop, struct config *conf);
 bool server_start(struct server *s);
 void server_ping(struct server *s);
-void server_sample(struct server *s);
 struct vbuffer *server_stats(struct server *s, struct vbuffer *buf);
 bool server_resolve(struct server *s);
 void server_stop(struct server *s);
