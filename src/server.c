@@ -461,14 +461,23 @@ static bool print_session_iter(
 	}
 	const double not_seen =
 		last_seen != TSTAMP_NIL ? ctx->now - last_seen : TSTAMP_NIL;
+
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
+	FORMAT_BYTES(kcp_rx, (double)ss->stats.tcp_tx);
+	FORMAT_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
 	ctx->buf = vbuf_appendf(
 		ctx->buf,
 		"    [%08" PRIX32 "] %c peer=%s seen=%.0lfs "
-		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%d "
-		"rx/tx=%ju/%ju\n",
+		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%" PRIu32 " "
+		"rx/tx=%s/%s\n",
 		ss->conv, session_state_char[state], addr_str, not_seen,
 		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
-		ss->stats.tcp_tx, ss->stats.tcp_rx);
+		kcp_rx, kcp_tx);
+#undef FORMAT_BYTES
+
 	return true;
 }
 
