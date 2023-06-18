@@ -8,20 +8,22 @@
 #include <stdint.h>
 #include <time.h>
 
+#define GEN_SEED(hint) (xorshift64(time(NULL)) ^ xorshift64((uintptr_t)(hint)))
+
 uint32_t rand32(void)
 {
-	static _Thread_local uint32_t x = UINT32_C(0);
-	if (x == UINT32_C(0)) {
-		x = time(NULL);
+	static _Thread_local struct {
+		uint32_t x;
+	} state = { .x = UINT32_C(0) };
+	if (state.x == UINT32_C(0)) {
+		const uint64_t seed = GEN_SEED(&state);
+		state.x = (uint32_t)seed;
 	}
-	x = xorshift32(x);
-	return x;
+	state.x = xorshift32(state.x);
+	return state.x;
 }
 
-static inline uint64_t rol64(const uint64_t x, const unsigned k)
-{
-	return (x << k) | (x >> (64u - k));
-}
+#define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
 
 static inline uint64_t splitmix64(uint64_t *restrict state)
 {
@@ -40,7 +42,7 @@ uint64_t rand64(void)
 	} state = { .init = false };
 	uint64_t *restrict s = state.s;
 	if (!state.init) {
-		uint64_t seed = xorshift64(time(NULL));
+		uint64_t seed = GEN_SEED(&state);
 		s[0] = splitmix64(&seed);
 		s[1] = splitmix64(&seed);
 		s[2] = splitmix64(&seed);
@@ -49,7 +51,7 @@ uint64_t rand64(void)
 	}
 
 	const uint64_t result =
-		rol64(s[1] * UINT64_C(5), UINT64_C(7)) * UINT64_C(9);
+		ROTL(s[1] * UINT64_C(5), UINT64_C(7)) * UINT64_C(9);
 	const uint64_t t = s[1] << 17u;
 
 	s[2] ^= s[0];
@@ -58,7 +60,7 @@ uint64_t rand64(void)
 	s[0] ^= s[3];
 
 	s[2] ^= t;
-	s[3] = rol64(s[3], 45u);
+	s[3] = ROTL(s[3], 45);
 	return result;
 }
 
