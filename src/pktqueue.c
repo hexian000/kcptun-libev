@@ -2,10 +2,10 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "pktqueue.h"
-#include "utils/slog.h"
-#include "utils/check.h"
 #include "algo/hashtable.h"
 #include "utils/mcache.h"
+#include "utils/check.h"
+#include "utils/slog.h"
 #include "conf.h"
 #include "event.h"
 #include "event_impl.h"
@@ -206,6 +206,10 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		/* flush acks */
 		ss->need_flush = true;
 	}
+	if (ikcp_peeksize(ss->kcp) <= 0) {
+		return;
+	}
+	session_read_cb(ss);
 }
 
 size_t queue_recv(struct pktqueue *restrict q, struct server *s)
@@ -249,9 +253,6 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 		queue_recv_one(s, msg);
 		nbrecv += msg->len;
 		msgframe_delete(q, msg);
-	}
-	if (nbrecv > 0 && s->conf->kcp_flush >= 2) {
-		kcp_notify_update(s);
 	}
 	q->mq_recv_len = 0;
 	return nbrecv;

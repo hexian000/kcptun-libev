@@ -147,7 +147,6 @@ static bool kcp_update_iter(
 	UNUSED(key);
 	struct session *restrict ss = value;
 	kcp_update(ss);
-	session_read_cb(ss);
 	struct pktqueue *restrict q = user;
 	return q->mq_send_len < q->mq_send_cap;
 }

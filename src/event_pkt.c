@@ -142,8 +142,12 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
 	struct pktqueue *restrict q = s->pkt.queue;
+	size_t nbrecv = 0;
 	while (pkt_recv(watcher->fd, s) > 0) {
-		(void)queue_recv(q, s);
+		nbrecv += queue_recv(q, s);
+	}
+	if (nbrecv > 0 && s->conf->kcp_flush >= 2) {
+		kcp_notify_update(s);
 	}
 }
 

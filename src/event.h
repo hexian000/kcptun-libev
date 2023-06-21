@@ -38,6 +38,4 @@ void kcp_reset(struct session *ss);
 int tcp_send(struct session *ss);
 void pkt_flush(struct server *s);
 
-void kcp_notify_update(struct server *s);
-
 #endif /* EVENT_H */
