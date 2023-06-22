@@ -90,9 +90,14 @@ void daemonize(void)
 		}
 	}
 	/* In the daemon process, connect /dev/null to standard input, output, and error. */
-	(void)freopen("/dev/null", "r", stdin);
-	(void)freopen("/dev/null", "w", stdout);
-	(void)freopen("/dev/null", "w", stderr);
+	FILE *f;
+	f = freopen("/dev/null", "r", stdin);
+	assert(f == stdin);
+	f = freopen("/dev/null", "w", stdout);
+	assert(f == stdout);
+	f = freopen("/dev/null", "w", stderr);
+	assert(f == stderr);
+	(void)f;
 	/* In the daemon process, reset the umask to 0. */
 	(void)umask(0);
 	/* From the daemon process, notify the original process started
