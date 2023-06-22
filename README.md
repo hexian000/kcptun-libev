@@ -11,9 +11,6 @@ Status: **Stable**
 
 [User Wiki](https://github.com/hexian000/kcptun-libev/wiki)
 
-## Index
-
-- [Index](#index)
 - [Introduction](#introduction)
 - [Features](#features)
 - [Security](#security)
