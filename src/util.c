@@ -66,7 +66,8 @@ void daemonize(void)
 			/* Wait for the daemon process to be started. */
 			const ssize_t nread = read(fd[0], buf, sizeof(buf));
 			CHECK(nread > 0);
-			LOGI_F("the daemon pid is %.*s", (int)nread, buf);
+			LOGI_F("daemon process has started with pid %.*s",
+			       (int)nread, buf);
 			/* Finally, call exit() in the original process. */
 			exit(EXIT_SUCCESS);
 		} else {
@@ -111,7 +112,7 @@ void daemonize(void)
 	/* Close the anonymous pipe. */
 	(void)close(fd[1]);
 
-	/* Disable logging to avoid unnecessary formatting. */
+	/* Disable logging to avoid unnecessary string formatting. */
 	slog_level = LOG_LEVEL_SILENCE;
 }
 
