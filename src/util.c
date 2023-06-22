@@ -16,7 +16,9 @@
 #include <grp.h>
 #endif
 
+#include <assert.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -42,6 +44,70 @@ void init(void)
 void uninit(void)
 {
 	mcache_free(msgpool);
+}
+
+void daemonize(void)
+{
+	/* Create an anonymous pipe for communicating with daemon process. */
+	int fd[2];
+	if (pipe(fd) == -1) {
+		const int err = errno;
+		FAILMSGF("pipe: %s", strerror(err));
+	}
+	/* First fork(). */
+	{
+		const pid_t pid = fork();
+		if (pid < 0) {
+			const int err = errno;
+			FAILMSGF("fork: %s", strerror(err));
+		} else if (pid > 0) {
+			(void)close(fd[1]);
+			char buf[32];
+			/* Wait for the daemon process to be started. */
+			const ssize_t nread = read(fd[0], buf, sizeof(buf));
+			CHECK(nread > 0);
+			LOGI_F("the daemon pid is %.*s", (int)nread, buf);
+			/* Finally, call exit() in the original process. */
+			exit(EXIT_SUCCESS);
+		} else {
+			(void)close(fd[0]);
+		}
+	}
+	/* In the child, call setsid(). */
+	if (setsid() < 0) {
+		const int err = errno;
+		LOGE_F("setsid: %s", strerror(err));
+	}
+	/* In the child, call fork() again. */
+	{
+		const pid_t pid = fork();
+		if (pid < 0) {
+			const int err = errno;
+			FAILMSGF("fork: %s", strerror(err));
+		} else if (pid > 0) {
+			/* Call exit() in the first child. */
+			exit(EXIT_SUCCESS);
+		}
+	}
+	/* In the daemon process, connect /dev/null to standard input, output, and error. */
+	(void)freopen("/dev/null", "r", stdin);
+	(void)freopen("/dev/null", "w", stdout);
+	(void)freopen("/dev/null", "w", stderr);
+	/* In the daemon process, reset the umask to 0. */
+	(void)umask(0);
+	/* From the daemon process, notify the original process started
+           that initialization is complete. */
+	char buf[32] = { 0 };
+	const int n = snprintf(buf, sizeof(buf), "%jd", (intmax_t)getpid());
+	assert(n > 0 && (size_t)n < sizeof(buf));
+	const ssize_t nwritten = write(fd[1], buf, n);
+	assert(nwritten == n);
+	(void)nwritten;
+	/* Close the anonymous pipe. */
+	(void)close(fd[1]);
+
+	/* Disable logging to avoid unnecessary formatting. */
+	slog_level = LOG_LEVEL_SILENCE;
 }
 
 void drop_privileges(const char *user)

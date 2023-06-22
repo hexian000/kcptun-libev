@@ -277,8 +277,6 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 	LOGE_F("session [%08" PRIX32 "] msg: error "
 	       "msg=%04" PRIX16 ", len=%04" PRIX16,
 	       ss->conv, hdr->msg, hdr->len);
-	session_stop(ss);
-	kcp_reset(ss);
 	return false;
 }
 

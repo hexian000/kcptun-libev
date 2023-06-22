@@ -11,6 +11,7 @@
 #include <ev.h>
 #include <signal.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +23,8 @@ static struct {
 	struct ev_signal w_sighup;
 	struct ev_signal w_sigint;
 	struct ev_signal w_sigterm;
-} app;
+	bool daemonize : 1;
+} args = { 0 };
 
 void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents);
 
@@ -35,8 +37,11 @@ static void print_usage(char *argv0)
 	fprintf(stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
 		"  -c, --config <file>        specify json config\n"
+		"  -d, --daemonize            run in background and discard all logs\n"
 		"  -u, --user <name>          run as the specified limited user, e.g. nobody\n"
-		"  -v, --verbose              increase verbosity\n"
+		"  -v, --verbose              increase logging verbosity, can be specified more than once\n"
+		"                             e.g. \"-v -v\" prints verbose messages\n"
+		"  -s, --silence              decrease logging verbosity\n"
 #if WITH_CRYPTO
 		"\ncrypto options:\n"
 		"  --list-methods             list supported crypto methods and exit\n"
@@ -63,7 +68,7 @@ static void parse_args(int argc, char **argv)
 				print_usage(argv[0]);
 				exit(EXIT_FAILURE);
 			}
-			app.conf_path = argv[++i];
+			args.conf_path = argv[++i];
 			continue;
 		}
 		if (strcmp(argv[i], "-u") == 0 ||
@@ -75,7 +80,7 @@ static void parse_args(int argc, char **argv)
 				print_usage(argv[0]);
 				exit(EXIT_FAILURE);
 			}
-			app.user_name = argv[++i];
+			args.user_name = argv[++i];
 			continue;
 		}
 #if WITH_CRYPTO
@@ -97,7 +102,17 @@ static void parse_args(int argc, char **argv)
 #endif
 		if (strcmp(argv[i], "-v") == 0 ||
 		    strcmp(argv[i], "--verbose") == 0) {
-			app.verbosity++;
+			args.verbosity++;
+			continue;
+		}
+		if (strcmp(argv[i], "-s") == 0 ||
+		    strcmp(argv[i], "--silence") == 0) {
+			args.verbosity--;
+			continue;
+		}
+		if (strcmp(argv[i], "-d") == 0 ||
+		    strcmp(argv[i], "--daemonize") == 0) {
+			args.daemonize = true;
 			continue;
 		}
 		if (strcmp(argv[i], "--") == 0) {
@@ -114,18 +129,22 @@ int main(int argc, char **argv)
 	init();
 
 	parse_args(argc, argv);
-	if (app.conf_path == NULL) {
+	if (args.conf_path == NULL) {
 		LOGF("config file must be specified");
 		print_usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
-	struct config *conf = conf_read(app.conf_path);
+	struct config *conf = conf_read(args.conf_path);
 	if (conf == NULL) {
 		LOGF("failed to read config");
 		return EXIT_FAILURE;
 	}
-	slog_level = conf->log_level + app.verbosity;
+	slog_level = conf->log_level + args.verbosity;
+
+	if (args.daemonize) {
+		daemonize();
+	}
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
@@ -143,7 +162,7 @@ int main(int argc, char **argv)
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
-	drop_privileges(app.user_name ? app.user_name : conf->user);
+	drop_privileges(args.user_name ? args.user_name : conf->user);
 
 	/* signal watchers */
 	if (sigaction(
@@ -159,15 +178,15 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	{
-		struct ev_signal *restrict w_sighup = &app.w_sighup;
+		struct ev_signal *restrict w_sighup = &args.w_sighup;
 		ev_signal_init(w_sighup, signal_cb, SIGHUP);
 		w_sighup->data = s;
 		ev_signal_start(loop, w_sighup);
-		struct ev_signal *restrict w_sigint = &app.w_sigint;
+		struct ev_signal *restrict w_sigint = &args.w_sigint;
 		ev_signal_init(w_sigint, signal_cb, SIGINT);
 		w_sigint->data = s;
 		ev_signal_start(loop, w_sigint);
-		struct ev_signal *restrict w_sigterm = &app.w_sigterm;
+		struct ev_signal *restrict w_sigterm = &args.w_sigterm;
 		ev_signal_init(w_sigterm, signal_cb, SIGTERM);
 		w_sigterm->data = s;
 		ev_signal_start(loop, w_sigterm);
@@ -177,9 +196,9 @@ int main(int argc, char **argv)
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
-	ev_signal_stop(loop, &app.w_sighup);
-	ev_signal_stop(loop, &app.w_sigint);
-	ev_signal_stop(loop, &app.w_sigterm);
+	ev_signal_stop(loop, &args.w_sighup);
+	ev_signal_stop(loop, &args.w_sigint);
+	ev_signal_stop(loop, &args.w_sigterm);
 
 	server_stop(s);
 	server_free(s);
@@ -197,9 +216,9 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 	struct server *restrict s = watcher->data;
 	switch (watcher->signum) {
 	case SIGHUP: {
-		struct config *conf = conf_read(app.conf_path);
+		struct config *conf = conf_read(args.conf_path);
 		if (conf == NULL) {
-			LOGE_F("failed to read config: %s", app.conf_path);
+			LOGE_F("failed to read config: %s", args.conf_path);
 			return;
 		}
 		conf_free(s->conf);

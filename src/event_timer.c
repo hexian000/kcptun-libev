@@ -50,7 +50,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
 			LOGD_F("session [%08" PRIX32 "] kcp: send keepalive",
 			       ss->conv);
-			kcp_sendmsg(ss, SMSG_KEEPALIVE);
+			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		break;
 	case STATE_LINGER:
