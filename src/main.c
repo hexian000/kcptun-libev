@@ -20,11 +20,14 @@ static struct {
 	const char *conf_path;
 	const char *user_name;
 	int verbosity;
+	bool daemonize : 1;
+} args = { 0 };
+
+static struct {
 	struct ev_signal w_sighup;
 	struct ev_signal w_sigint;
 	struct ev_signal w_sigterm;
-	bool daemonize : 1;
-} args = { 0 };
+} app;
 
 void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents);
 
@@ -127,6 +130,7 @@ static void parse_args(int argc, char **argv)
 int main(int argc, char **argv)
 {
 	init();
+	atexit(uninit);
 
 	parse_args(argc, argv);
 	if (args.conf_path == NULL) {
@@ -165,28 +169,16 @@ int main(int argc, char **argv)
 	drop_privileges(args.user_name ? args.user_name : conf->user);
 
 	/* signal watchers */
-	if (sigaction(
-		    SIGPIPE,
-		    &(struct sigaction){
-			    .sa_handler = SIG_IGN,
-		    },
-		    NULL) != 0) {
-		const int err = errno;
-		LOGF(strerror(err));
-		server_free(s);
-		conf_free(conf);
-		return EXIT_FAILURE;
-	}
 	{
-		struct ev_signal *restrict w_sighup = &args.w_sighup;
+		struct ev_signal *restrict w_sighup = &app.w_sighup;
 		ev_signal_init(w_sighup, signal_cb, SIGHUP);
 		w_sighup->data = s;
 		ev_signal_start(loop, w_sighup);
-		struct ev_signal *restrict w_sigint = &args.w_sigint;
+		struct ev_signal *restrict w_sigint = &app.w_sigint;
 		ev_signal_init(w_sigint, signal_cb, SIGINT);
 		w_sigint->data = s;
 		ev_signal_start(loop, w_sigint);
-		struct ev_signal *restrict w_sigterm = &args.w_sigterm;
+		struct ev_signal *restrict w_sigterm = &app.w_sigterm;
 		ev_signal_init(w_sigterm, signal_cb, SIGTERM);
 		w_sigterm->data = s;
 		ev_signal_start(loop, w_sigterm);
@@ -196,16 +188,15 @@ int main(int argc, char **argv)
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
-	ev_signal_stop(loop, &args.w_sighup);
-	ev_signal_stop(loop, &args.w_sigint);
-	ev_signal_stop(loop, &args.w_sigterm);
+	ev_signal_stop(loop, &app.w_sighup);
+	ev_signal_stop(loop, &app.w_sigint);
+	ev_signal_stop(loop, &app.w_sigterm);
 
 	server_stop(s);
 	server_free(s);
 	LOGI_F("%s shutdown", runmode_str(conf->mode));
 	conf_free(conf);
 	LOGI("program terminated normally.");
-	uninit();
 	return EXIT_SUCCESS;
 }
 

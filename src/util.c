@@ -33,6 +33,14 @@ struct mcache *msgpool;
 
 void init(void)
 {
+	struct sigaction ignore = {
+		.sa_handler = SIG_IGN,
+	};
+	if (sigaction(SIGPIPE, &ignore, NULL) != 0) {
+		const int err = errno;
+		FAILMSGF("sigaction: %s", strerror(err));
+	}
+
 	const size_t size =
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
@@ -129,16 +137,16 @@ void drop_privileges(const char *user)
 		const int err = errno;
 		LOGW_F("chdir: %s", strerror(err));
 	}
-	struct passwd *restrict pwd = getpwnam(user);
-	if (pwd == NULL) {
+	struct passwd *restrict pw = getpwnam(user);
+	if (pw == NULL) {
 		LOGW_F("su: user \"%s\" does not exist ", user);
 		return;
 	}
-	if (pwd->pw_uid == 0) {
+	if (pw->pw_uid == 0) {
 		return;
 	}
-	LOGI_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pwd->pw_uid,
-	       (intmax_t)pwd->pw_gid);
+	LOGI_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pw->pw_uid,
+	       (intmax_t)pw->pw_gid);
 #if _BSD_SOURCE || _GNU_SOURCE
 	if (setgroups(0, NULL) != 0) {
 		const int err = errno;
@@ -146,11 +154,11 @@ void drop_privileges(const char *user)
 		       strerror(err));
 	}
 #endif
-	if (setgid(pwd->pw_gid) != 0 || setegid(pwd->pw_gid) != 0) {
+	if (setgid(pw->pw_gid) != 0 || setegid(pw->pw_gid) != 0) {
 		const int err = errno;
 		LOGW_F("unable to drop group privileges: %s", strerror(err));
 	}
-	if (setuid(pwd->pw_uid) != 0 || seteuid(pwd->pw_uid) != 0) {
+	if (setuid(pw->pw_uid) != 0 || seteuid(pw->pw_uid) != 0) {
 		const int err = errno;
 		LOGW_F("unable to drop user privileges: %s", strerror(err));
 	}

@@ -510,7 +510,7 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 
 	const ev_tstamp now = ev_now(s->loop);
 	char uptime[16];
-	(void)format_duration_seconds(
+	(void)format_duration(
 		uptime, sizeof(uptime), make_duration(now - s->uptime));
 	const double dt = now - s->last_stats_time;
 	const struct link_stats *restrict stats = &s->stats;
