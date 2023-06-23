@@ -141,21 +141,21 @@ struct mcache *ikcp_segment_pool = NULL;
 // allocate a new kcp segment
 static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 {
-	struct mcache *restrict c = ikcp_segment_pool;
-	if (c) {
-		return mcache_get(c);
+	struct mcache *restrict pool = ikcp_segment_pool;
+	if (pool == NULL) {
+		return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
 	}
-	return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
+	return mcache_get(pool);
 }
 
 // delete a segment
 static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
 {
-	struct mcache *restrict c = ikcp_segment_pool;
-	if (c) {
-		return mcache_put(c, seg);
+	struct mcache *restrict pool = ikcp_segment_pool;
+	if (pool == NULL) {
+		ikcp_free(seg);
 	}
-	ikcp_free(seg);
+	return mcache_put(pool, seg);
 }
 
 // write log

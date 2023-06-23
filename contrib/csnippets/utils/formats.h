@@ -23,8 +23,13 @@ struct duration {
 struct duration make_duration(double seconds);
 struct duration make_duration_nanos(int64_t nanos);
 
+/* the value is truncated */
 int format_duration_seconds(char *b, size_t size, struct duration d);
+/* the value is truncated */
 int format_duration_millis(char *b, size_t size, struct duration d);
+/* the value is precise */
 int format_duration_nanos(char *b, size_t size, struct duration d);
+/* the value is rounded */
+int format_duration(char *b, size_t size, struct duration d);
 
 #endif /* FORMATS_H */
