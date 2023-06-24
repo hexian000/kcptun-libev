@@ -6,19 +6,19 @@ set -ex
 case "$1" in
 "x")
     # cross compiling, SYSROOT need to be set
-    rm -rf "xbuild" && mkdir "xbuild"
+    rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
-        -S "." -B "xbuild"
-    nice cmake --build "xbuild" --parallel
-    ls -lh "xbuild/src/kcptun-libev"
+        -S "." -B "build"
+    nice cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 "xs")
     # cross compile statically linked executable
-    rm -rf "xbuild" && mkdir "xbuild"
+    rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-static" \
@@ -26,9 +26,9 @@ case "$1" in
         -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DLINK_STATIC_LIBS=TRUE \
-        -S "." -B "xbuild"
-    nice cmake --build "xbuild" --parallel
-    ls -lh "xbuild/src/kcptun-libev"
+        -S "." -B "build"
+    nice cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 "r")
     # rebuild release
@@ -101,7 +101,7 @@ case "$1" in
     ;;
 "c")
     # clean artifacts
-    rm -rf "build" "xbuild" "compile_commands.json"
+    rm -rf "build" "compile_commands.json"
     ;;
 *)
     # default to debug builds
