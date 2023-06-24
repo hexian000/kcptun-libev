@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <limits.h>
 #include <math.h>
 
 struct duration make_duration(double value)
@@ -28,8 +29,12 @@ struct duration make_duration(double value)
 	d.minutes = (unsigned int)floor(fmod(value, 60.0));
 	value /= 60.0;
 	d.hours = (unsigned int)floor(fmod(value, 24.0));
-	value /= 24.0;
-	d.days = (unsigned int)floor(value);
+	value = floor(value / 24.0);
+	if (value <= UINT_MAX) {
+		d.days = (unsigned int)value;
+	} else {
+		d.days = UINT_MAX;
+	}
 	return d;
 }
 
@@ -38,12 +43,12 @@ struct duration make_duration_nanos(int64_t value)
 	struct duration d;
 	if (value < INT64_C(0)) {
 		d.sign = -1;
-		value = -value;
 	} else {
 		d.sign = 1;
 	}
-	d.nanos = (unsigned int)(value % 1000);
+	d.nanos = (unsigned int)(value % 1000 * d.sign);
 	value /= 1000;
+	value *= d.sign;
 	d.micros = (unsigned int)(value % 1000);
 	value /= 1000;
 	d.millis = (unsigned int)(value % 1000);

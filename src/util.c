@@ -17,6 +17,7 @@
 #endif
 
 #include <assert.h>
+#include <locale.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -31,8 +32,12 @@ uint32_t tstamp2ms(const ev_tstamp t)
 
 struct mcache *msgpool;
 
+static void uninit(void);
+
 void init(void)
 {
+	(void)setlocale(LC_ALL, "");
+
 	struct sigaction ignore = {
 		.sa_handler = SIG_IGN,
 	};
@@ -47,9 +52,16 @@ void init(void)
 	msgpool = mcache_new(256, size);
 	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
+
+	{
+		const int ret = atexit(uninit);
+		if (ret != 0) {
+			FAILMSGF("atexit: %d", ret);
+		}
+	}
 }
 
-void uninit(void)
+static void uninit(void)
 {
 	mcache_free(msgpool);
 }

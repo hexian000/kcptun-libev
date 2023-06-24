@@ -29,7 +29,6 @@ extern struct mcache *msgpool;
 uint32_t tstamp2ms(ev_tstamp t);
 
 void init(void);
-void uninit(void);
 
 void daemonize(void);
 void drop_privileges(const char *user);
