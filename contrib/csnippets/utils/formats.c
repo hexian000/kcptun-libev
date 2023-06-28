@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <limits.h>
 #include <math.h>
 
 static const char *iec_units[] = {
@@ -78,113 +77,131 @@ struct duration make_duration_nanos(int64_t value)
 	return d;
 }
 
+#define SIGNED_STR(sign, literal) ((sign) < 0 ? "-" literal : (literal))
+
 int format_duration_seconds(char *b, const size_t size, const struct duration d)
 {
-	const char *sign = d.sign < 0 ? "-" : "";
 	if (d.days) {
 		return snprintf(
-			b, size, "%s%ud%02u:%02u:%02u", sign, d.days, d.hours,
-			d.minutes, d.seconds);
-	} else if (d.hours) {
-		return snprintf(
-			b, size, "%s%u:%02u:%02u", sign, d.hours, d.minutes,
-			d.seconds);
+			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02u"),
+			d.days, d.hours, d.minutes, d.seconds);
 	}
-	return snprintf(b, size, "%s%u:%02u", sign, d.minutes, d.seconds);
+	if (d.hours) {
+		return snprintf(
+			b, size, SIGNED_STR(d.sign, "%u:%02u:%02u"), d.hours,
+			d.minutes, d.seconds);
+	}
+	return snprintf(
+		b, size, SIGNED_STR(d.sign, "%u:%02u"), d.minutes, d.seconds);
 }
 
 int format_duration_millis(char *b, const size_t size, const struct duration d)
 {
-	const char *sign = d.sign < 0 ? "-" : "";
 	if (d.days) {
 		return snprintf(
-			b, size, "%s%ud%02u:%02u:%02u.%03u", sign, d.days,
-			d.hours, d.minutes, d.seconds, d.millis);
-	} else if (d.hours) {
+			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02u.%03u"),
+			d.days, d.hours, d.minutes, d.seconds, d.millis);
+	}
+	if (d.hours) {
 		return snprintf(
-			b, size, "%s%u:%02u:%02u.%03u", sign, d.hours,
-			d.minutes, d.seconds, d.millis);
+			b, size, SIGNED_STR(d.sign, "%u:%02u:%02u.%03u"),
+			d.hours, d.minutes, d.seconds, d.millis);
 	}
 	return snprintf(
-		b, size, "%s%u:%02u.%03u", sign, d.minutes, d.seconds,
-		d.millis);
+		b, size, SIGNED_STR(d.sign, "%u:%02u.%03u"), d.minutes,
+		d.seconds, d.millis);
 }
 
 int format_duration_nanos(char *b, const size_t size, const struct duration d)
 {
-	const char *sign = d.sign < 0 ? "-" : "";
 	if (d.days) {
 		return snprintf(
-			b, size, "%s%ud%02u:%02u:%02u.%03u%03u%03u", sign,
+			b, size,
+			SIGNED_STR(d.sign, "%ud%02u:%02u:%02u.%03u%03u%03u"),
 			d.days, d.hours, d.minutes, d.seconds, d.millis,
 			d.micros, d.nanos);
-	} else if (d.hours) {
+	}
+	if (d.hours) {
 		return snprintf(
-			b, size, "%s%u:%02u:%02u.%03u%03u%03u", sign, d.hours,
-			d.minutes, d.seconds, d.millis, d.micros, d.nanos);
+			b, size,
+			SIGNED_STR(d.sign, "%u:%02u:%02u.%03u%03u%03u"),
+			d.hours, d.minutes, d.seconds, d.millis, d.micros,
+			d.nanos);
 	}
 	return snprintf(
-		b, size, "%s%u:%02u.%03u%03u%03u", sign, d.minutes, d.seconds,
-		d.millis, d.micros, d.nanos);
+		b, size, SIGNED_STR(d.sign, "%u:%02u.%03u%03u%03u"), d.minutes,
+		d.seconds, d.millis, d.micros, d.nanos);
 }
 
 int format_duration(char *b, size_t size, struct duration d)
 {
-	const char *sign = d.sign < 0 ? "-" : "";
 	if (d.days) {
 		const double seconds = d.seconds + d.millis * 1e-3 +
 				       d.micros * 1e-6 + d.nanos * 1e-9;
 		return snprintf(
-			b, size, "%s%ud%02u:%02u:%02.0f", sign, d.days, d.hours,
-			d.minutes, seconds);
-	} else if (d.hours) {
+			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02.0f"),
+			d.days, d.hours, d.minutes, seconds);
+	}
+	if (d.hours) {
 		const double seconds = d.seconds + d.millis * 1e-3 +
 				       d.micros * 1e-6 + d.nanos * 1e-9;
 		return snprintf(
-			b, size, "%s%u:%02u:%02.0f", sign, d.hours, d.minutes,
-			seconds);
-	} else if (d.minutes) {
+			b, size, SIGNED_STR(d.sign, "%u:%02u:%02.0f"), d.hours,
+			d.minutes, seconds);
+	}
+	if (d.minutes) {
 		const double seconds = d.seconds + d.millis * 1e-3 +
 				       d.micros * 1e-6 + d.nanos * 1e-9;
 		if (d.minutes >= 10) {
 			return snprintf(
-				b, size, "%s%u:%02.0f", sign, d.minutes,
-				seconds);
+				b, size, SIGNED_STR(d.sign, "%u:%02.0f"),
+				d.minutes, seconds);
 		}
 		return snprintf(
-			b, size, "%s%u:%04.01f", sign, d.minutes, seconds);
-	} else if (d.seconds) {
+			b, size, SIGNED_STR(d.sign, "%u:%04.01f"), d.minutes,
+			seconds);
+	}
+	if (d.seconds) {
 		if (d.seconds >= 10) {
 			const double seconds = d.seconds + d.millis * 1e-3 +
 					       d.micros * 1e-6 + d.nanos * 1e-9;
-			return snprintf(b, size, "%s%.02fs", sign, seconds);
+			return snprintf(
+				b, size, SIGNED_STR(d.sign, "%.02fs"), seconds);
 		}
 		const double millis = d.seconds * 1e+3 + d.millis +
 				      d.micros * 1e-3 + d.nanos * 1e-6;
-		return snprintf(b, size, "%s%.0fms", sign, millis);
-	} else if (d.millis) {
+		return snprintf(b, size, SIGNED_STR(d.sign, "%.0fms"), millis);
+	}
+	if (d.millis) {
 		if (d.millis >= 100) {
 			const double millis =
 				d.millis + d.micros * 1e-3 + d.nanos * 1e-6;
-			return snprintf(b, size, "%s%.01fms", sign, millis);
-		} else if (d.millis >= 10) {
+			return snprintf(
+				b, size, SIGNED_STR(d.sign, "%.01fms"), millis);
+		}
+		if (d.millis >= 10) {
 			const double millis =
 				d.millis + d.micros * 1e-3 + d.nanos * 1e-6;
-			return snprintf(b, size, "%s%.02fms", sign, millis);
+			return snprintf(
+				b, size, SIGNED_STR(d.sign, "%.02fms"), millis);
 		}
 		const double micros =
 			d.millis * 1e+3 + d.micros + d.nanos * 1e-3;
-		return snprintf(b, size, "%s%.0fµs", sign, micros);
-	} else if (d.micros) {
+		return snprintf(b, size, SIGNED_STR(d.sign, "%.0fµs"), micros);
+	}
+	if (d.micros) {
 		if (d.micros >= 100) {
 			const double micros = d.micros + d.nanos * 1e-3;
-			return snprintf(b, size, "%s%.01fµs", sign, micros);
-		} else if (d.micros >= 10) {
-			const double micros = d.micros + d.nanos * 1e-3;
-			return snprintf(b, size, "%s%.02fµs", sign, micros);
+			return snprintf(
+				b, size, SIGNED_STR(d.sign, "%.01fµs"), micros);
 		}
-		const double nanos = d.micros * 1e+3 + d.nanos;
-		return snprintf(b, size, "%s%.0fns", sign, nanos);
+		if (d.micros >= 10) {
+			const double micros = d.micros + d.nanos * 1e-3;
+			return snprintf(
+				b, size, SIGNED_STR(d.sign, "%.02fµs"), micros);
+		}
+		const unsigned int nanos = d.micros * 1000u + d.nanos;
+		return snprintf(b, size, SIGNED_STR(d.sign, "%uns"), nanos);
 	}
-	return snprintf(b, size, "%s%uns", sign, d.nanos);
+	return snprintf(b, size, SIGNED_STR(d.sign, "%uns"), d.nanos);
 }

@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef HTTP_H
-#define HTTP_H
+#ifndef NET_HTTP_H
+#define NET_HTTP_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -96,4 +96,4 @@ size_t http_date(char *buf, size_t buf_size);
  */
 int http_error(char *buf, size_t buf_size, uint16_t code);
 
-#endif /* HTTP_H */
+#endif /* NET_HTTP_H */

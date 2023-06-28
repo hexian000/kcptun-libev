@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef HASHTABLE_H
-#define HASHTABLE_H
+#ifndef ALGO_HASHTABLE_H
+#define ALGO_HASHTABLE_H
 /* hashtable is an unordered map whose keys are of fixed length */
 
 #include <stddef.h>
@@ -102,4 +102,4 @@ void table_iterate(struct hashtable *table, table_iterate_cb f, void *data);
  */
 int table_size(struct hashtable *table);
 
-#endif /* HASHTABLE_H */
+#endif /* ALGO_HASHTABLE_H */

@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
-* This code is licensed under MIT license (see LICENSE for details) */
+ * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef CHECK_H
-#define CHECK_H
+#ifndef UTILS_CHECK_H
+#define UTILS_CHECK_H
 
 #include "slog.h"
 
@@ -29,4 +29,4 @@
 #define CHECKOOM(ptr) CHECKMSG((ptr) != NULL, "out of memory")
 #define LOGOOM() LOGE("out of memory")
 
-#endif /* CHECK_H */
+#endif /* UTILS_CHECK_H */

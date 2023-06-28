@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef ADDR_H
-#define ADDR_H
+#ifndef NET_ADDR_H
+#define NET_ADDR_H
 
 #include <stdbool.h>
 
@@ -16,4 +16,4 @@
  */
 bool splithostport(char *str, char **host, char **port);
 
-#endif /* ADDR_H */
+#endif /* NET_ADDR_H */

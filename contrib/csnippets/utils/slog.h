@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef SLOG_H
-#define SLOG_H
+#ifndef UTILS_SLOG_H
+#define UTILS_SLOG_H
 
 #include <stdio.h>
 #include <errno.h>
@@ -130,4 +130,4 @@ extern FILE *slog_file;
 	} while (0)
 #define LOGV(message) LOGV_F("%s", message)
 
-#endif /* SLOG_H */
+#endif /* UTILS_SLOG_H */

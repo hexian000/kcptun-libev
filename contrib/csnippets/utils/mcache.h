@@ -1,9 +1,15 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef MCACHE_H
-#define MCACHE_H
+#ifndef UTILS_MCACHE_H
+#define UTILS_MCACHE_H
 
+/**
+ * @brief mcache.h is a fixed size object allocation cache
+ * For single-threaded use only.
+ */
+
+#include <stddef.h>
 #include <stdlib.h>
 
 struct mcache {
@@ -15,7 +21,8 @@ struct mcache {
 	void *p[];
 };
 
-static inline struct mcache *mcache_new(size_t cache_size, size_t elem_size)
+static inline struct mcache *
+mcache_new(const size_t cache_size, const size_t elem_size)
 {
 	struct mcache *cache =
 		malloc(sizeof(struct mcache) + sizeof(void *) * cache_size);
@@ -66,4 +73,15 @@ static inline void mcache_put(struct mcache *restrict cache, void *elem)
 	cache->p[cache->num_elem++] = elem;
 }
 
-#endif /* MCACHE_H */
+static inline void
+mcache_shrink(struct mcache *restrict cache, const size_t count)
+{
+	size_t n = cache->num_elem;
+	const size_t stop = count < n ? n - count : 0;
+	for (; n > stop; --n) {
+		free(cache->p[n]);
+	}
+	cache->num_elem = n;
+}
+
+#endif /* UTILS_MCACHE_H */

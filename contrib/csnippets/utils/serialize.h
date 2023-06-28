@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef SERIALIZE_H
-#define SERIALIZE_H
+#ifndef UTILS_SERIALIZE_H
+#define UTILS_SERIALIZE_H
 
 /**
  * @brief serialize.h is a primitive type serializer
@@ -66,4 +66,4 @@ static inline void write_uint64(unsigned char *restrict b, uint64_t v)
 	b[0] = (uint8_t)(v >> 56U);
 }
 
-#endif /* SERIALIZE_H */
+#endif /* UTILS_SERIALIZE_H */

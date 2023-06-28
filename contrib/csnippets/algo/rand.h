@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef RAND_H
-#define RAND_H
+#ifndef ALGO_RAND_H
+#define ALGO_RAND_H
 
 #include <stdint.h>
 
@@ -28,4 +28,4 @@ uint64_t rand64(void);
 float frandf(void);
 double frand(void);
 
-#endif /* RAND_H */
+#endif /* ALGO_RAND_H */

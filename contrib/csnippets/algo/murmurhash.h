@@ -5,8 +5,8 @@
 
 /* csnippets: The following implements are modified to be portable. */
 
-#ifndef MURMURHASH_H
-#define MURMURHASH_H
+#ifndef ALGO_MURMURHASH_H
+#define ALGO_MURMURHASH_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -21,4 +21,4 @@ void murmurhash3_128(
 	const void *ptr, size_t len, const unsigned char seed[16],
 	unsigned char out[16]);
 
-#endif /* MURMURHASH_H */
+#endif /* ALGO_MURMURHASH_H */

@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef FORMATS_H
-#define FORMATS_H
+#ifndef UTILS_FORMATS_H
+#define UTILS_FORMATS_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -65,4 +65,4 @@ int format_duration_nanos(char *b, size_t size, struct duration d);
  */
 int format_duration(char *b, size_t size, struct duration d);
 
-#endif /* FORMATS_H */
+#endif /* UTILS_FORMATS_H */

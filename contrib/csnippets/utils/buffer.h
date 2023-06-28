@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2023 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef BUFFER_H
-#define BUFFER_H
+#ifndef UTILS_BUFFER_H
+#define UTILS_BUFFER_H
 
 #include "minmax.h"
 
@@ -62,8 +62,8 @@ static inline size_t buf_append(void *buf, const unsigned char *data, size_t n)
 #define BUF_APPENDCONST(buf, str)                                              \
 	buf_append((buf), (const unsigned char *)(str), sizeof(str) - 1u)
 
-#define BUF_APPENDSTR(vbuf, str)                                               \
-	buf_append((vbuf), (const unsigned char *)(str), strlen(str))
+#define BUF_APPENDSTR(buf, str)                                                \
+	buf_append((buf), (const unsigned char *)(str), strlen(str))
 
 int buf_appendf(void *buf, const char *format, ...);
 
@@ -96,4 +96,4 @@ vbuf_append(struct vbuffer *vbuf, const unsigned char *data, size_t n);
 
 struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 
-#endif /* BUFFER_H */
+#endif /* UTILS_BUFFER_H */
