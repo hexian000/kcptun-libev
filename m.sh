@@ -1,6 +1,10 @@
 #!/bin/sh
 cd "$(dirname "$0")"
 GENERATOR="Unix Makefiles"
+NPROC=""
+if command -v nproc >/dev/null 2>&1; then
+    NPROC="$(nproc --all)"
+fi
 set -ex
 
 case "$1" in
@@ -13,7 +17,7 @@ case "$1" in
         -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 "xs")
@@ -21,13 +25,12 @@ case "$1" in
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_EXE_LINKER_FLAGS="-static" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
-        -DLINK_STATIC_LIBS=TRUE \
+        -DBUILD_STATIC=ON \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 "r")
@@ -37,7 +40,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 "s")
@@ -45,11 +48,10 @@ case "$1" in
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_EXE_LINKER_FLAGS="-static" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DLINK_STATIC_LIBS=TRUE \
+        -DBUILD_STATIC=ON \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 "p")
@@ -59,7 +61,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     (cd "build/src" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/src/kcptun-libev"
     ;;
@@ -71,7 +73,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DPOSIX=1 \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 "clang")
@@ -83,7 +85,7 @@ case "$1" in
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     (cd "build/src" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/src/kcptun-libev"
     ;;
@@ -96,7 +98,7 @@ case "$1" in
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DLINK_STATIC_LIBS=TRUE \
         -S "." -B "build"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 "c")
@@ -111,7 +113,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     ln -sf "build/compile_commands.json" "compile_commands.json"
-    nice cmake --build "build" --parallel
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/src/kcptun-libev"
     ;;
 esac
