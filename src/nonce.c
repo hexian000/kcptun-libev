@@ -45,7 +45,6 @@ struct noncegen *noncegen_create(
 		free(g);
 		return NULL;
 	}
-	buf->len = buf->cap;
 
 	const size_t entries = server ? 1u << 20u : 1u << 14u;
 	const double error = server ? 0x1p-20 : 0x1p-30;
@@ -73,9 +72,10 @@ struct noncegen *noncegen_create(
 
 void noncegen_init(struct noncegen *restrict g)
 {
+	struct vbuffer *restrict buf = g->nonce_buf;
+	buf->len = buf->cap;
 	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
 	if (g->method == noncegen_counter) {
-		struct vbuffer *restrict buf = g->nonce_buf;
 		randombytes_buf(buf->data, buf->len);
 	}
 }
@@ -86,7 +86,6 @@ static void noncegen_fill_counter(struct noncegen *restrict g)
 	sodium_increment(buf->data, buf->len);
 }
 
-/* higher packet entropy */
 static void noncegen_fill_random(struct noncegen *restrict g)
 {
 	struct vbuffer *restrict buf = g->nonce_buf;

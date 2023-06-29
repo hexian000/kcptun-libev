@@ -14,6 +14,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -55,7 +56,8 @@ void kcp_reset(struct session *ss)
 static bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
-	int r = ikcp_send(ss->kcp, (char *)buf, (int)len);
+	assert(len <= INT_MAX);
+	const int r = ikcp_send(ss->kcp, (char *)buf, (int)len);
 	if (r < 0) {
 		return false;
 	}
