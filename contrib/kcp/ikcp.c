@@ -10,9 +10,10 @@
 //
 //=====================================================================
 #include "ikcp.h"
-
+#include "utils/serialize.h"
 #include "utils/mcache.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +26,7 @@
 const uint32_t IKCP_RTO_NDL = 30; // no delay min rto
 const uint32_t IKCP_RTO_MIN = 100; // normal min rto
 const uint32_t IKCP_RTO_DEF = 200;
-const uint32_t IKCP_RTO_MAX = 4000;
+const uint32_t IKCP_RTO_MAX = 15000;
 const uint32_t IKCP_CMD_PUSH = 81; // cmd: push data
 const uint32_t IKCP_CMD_ACK = 82; // cmd: ack
 const uint32_t IKCP_CMD_WASK = 83; // cmd: window probe (ask)
@@ -48,8 +49,6 @@ const uint32_t IKCP_FASTACK_LIMIT = 5; // max times to trigger fastack
 //---------------------------------------------------------------------
 // encode / decode
 //---------------------------------------------------------------------
-
-#include "utils/serialize.h"
 
 /* encode 8 bits unsigned int */
 static inline char *ikcp_encode8u(char *p, uint8_t c)
@@ -142,6 +141,7 @@ struct mcache *ikcp_segment_pool = NULL;
 static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 {
 	struct mcache *restrict pool = ikcp_segment_pool;
+	assert(0 < size && (size_t)size <= pool->elem_size);
 	if (pool == NULL) {
 		return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
 	}
@@ -453,6 +453,7 @@ int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 {
 	IKCPSEG *seg;
 	int count, i;
+	int sent = 0;
 
 	assert(kcp->mss > 0);
 	if (len < 0)
@@ -483,10 +484,11 @@ int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 				len -= extend;
 				iqueue_del_init(&old->node);
 				ikcp_segment_delete(kcp, old);
+				sent = extend;
 			}
 		}
 		if (len <= 0) {
-			return 0;
+			return sent;
 		}
 	}
 
@@ -495,8 +497,11 @@ int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 	else
 		count = (len + kcp->mss - 1) / kcp->mss;
 
-	if (count >= (int)IKCP_WND_RCV)
+	if (count >= (int)IKCP_WND_RCV) {
+		if (kcp->stream != 0 && sent > 0)
+			return sent;
 		return -2;
+	}
 
 	if (count == 0)
 		count = 1;
@@ -521,9 +526,10 @@ int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 			buffer += size;
 		}
 		len -= size;
+		sent += size;
 	}
 
-	return 0;
+	return sent;
 }
 
 //---------------------------------------------------------------------

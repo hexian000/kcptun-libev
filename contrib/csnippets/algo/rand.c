@@ -8,16 +8,14 @@
 #include <stdint.h>
 #include <time.h>
 
-#define GEN_SEED(hint) (xorshift64(time(NULL)) ^ xorshift64((uintptr_t)(hint)))
-
 uint32_t rand32(void)
 {
 	static _Thread_local struct {
 		uint32_t x;
 	} state = { .x = UINT32_C(0) };
 	if (state.x == UINT32_C(0)) {
-		const uint64_t seed = GEN_SEED(&state);
-		state.x = (uint32_t)seed;
+		state.x = xorshift32(time(NULL)) ^
+			  xorshift32((uintptr_t)(&state));
 	}
 	state.x = xorshift32(state.x);
 	return state.x;
@@ -33,7 +31,7 @@ static inline uint64_t splitmix64(uint64_t *restrict state)
 	return result ^ (result >> 31u);
 }
 
-/* Algorithm "xoshiro256**" from Blackman & Vigna, Scrambled linear pseudorandom number generators */
+/* Algorithm "xoshiro256**" from Blackman & Vigna, "Scrambled linear pseudorandom number generators" */
 uint64_t rand64(void)
 {
 	static _Thread_local struct {
@@ -42,7 +40,8 @@ uint64_t rand64(void)
 	} state = { .init = false };
 	uint64_t *restrict s = state.s;
 	if (!state.init) {
-		uint64_t seed = GEN_SEED(&state);
+		uint64_t seed = xorshift64(time(NULL)) ^
+				xorshift64((uintptr_t)(&state));
 		s[0] = splitmix64(&seed);
 		s[1] = splitmix64(&seed);
 		s[2] = splitmix64(&seed);
