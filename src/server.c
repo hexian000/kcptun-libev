@@ -543,18 +543,19 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
 	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
 
-	char load_str[16] = "";
+	char load_buf[16];
+	const char *load_str = "(unknown)";
 	s->clock = clock();
 	if (s->last_clock != (clock_t)(-1) && s->clock > s->last_clock) {
 		const double load = (double)(s->clock - s->last_clock) /
 				    (double)(CLOCKS_PER_SEC) / dt * 100.0;
-		(void)snprintf(
-			load_str, sizeof(load_str), "load: %.03f%%, ", load);
+		(void)snprintf(load_buf, sizeof(load_buf), "%.03f%%", load);
+		load_str = load_buf;
 	}
 
 	buf = vbuf_appendf(
 		buf,
-		"uptime %s, %straffic stats (rx/tx):\n"
+		"uptime: %s, load: %s; traffic stats (rx/tx):\n"
 		"    current tcp: %s/%s; kcp: %s/%s; efficiency: %.1lf%%/%.1lf%%\n"
 		"      total tcp: %s/%s; kcp: %s/%s; pkt: %s/%s\n",
 		uptime, load_str, dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx,
