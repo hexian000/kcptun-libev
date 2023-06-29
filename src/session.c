@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "session.h"
+#include "utils/formats.h"
 #include "utils/slog.h"
 #include "algo/hashtable.h"
 #include "crypto.h"
@@ -28,6 +29,13 @@ const char session_state_char[STATE_MAX] = {
 	[STATE_LINGER] = '.', [STATE_TIME_WAIT] = 'x',
 };
 
+static void kcp_log(const char *log, struct IKCPCB *kcp, void *user)
+{
+	UNUSED(kcp);
+	struct session *restrict ss = user;
+	LOGV_F("session [%08" PRIX32 "] kcp internal: %s", ss->conv, log);
+}
+
 static ikcpcb *
 kcp_new(struct session *restrict ss, struct config *restrict conf,
 	uint32_t conv)
@@ -49,6 +57,10 @@ kcp_new(struct session *restrict ss, struct config *restrict conf,
 		kcp, conf->kcp_nodelay, conf->kcp_interval, conf->kcp_resend,
 		conf->kcp_nc);
 	ikcp_setoutput(kcp, udp_output);
+	if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+		kcp->logmask = -1;
+		kcp->writelog = kcp_log;
+	}
 	return kcp;
 }
 
@@ -152,7 +164,6 @@ void session_kcp_stop(struct session *restrict ss)
 
 static void consume_wbuf(struct session *restrict ss, const size_t len)
 {
-	LOGV_F("consume_wbuf: %zu", len);
 	assert(len <= ss->wbuf_len);
 	ss->wbuf_len -= len;
 	if (ss->wbuf_len > 0) {
@@ -198,9 +209,8 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("session [%08" PRIX32 "] tcp: "
-		       "connect %s",
-		       ss->conv, addr_str);
+		LOGI_F("session [%08" PRIX32 "] tcp: connect %s", ss->conv,
+		       addr_str);
 	}
 	session_start(ss, fd);
 	return true;
@@ -441,15 +451,20 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	const uint32_t tstamp = read_uint32(msgbuf);
-	/*  print RTT */
+	/* calculate RTT & estimated bandwidth */
 	const uint32_t now_ms = tstamp2ms(ev_time());
 	const double rtt = (now_ms - tstamp) * 1e-3;
 	const struct config *restrict conf = s->conf;
-	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / 1024.0 / rtt;
-	const double tx = conf->kcp_sndwnd * conf->kcp_mtu / 1024.0 / rtt;
+	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / rtt;
+	const double tx = conf->kcp_sndwnd * conf->kcp_mtu / rtt;
+
+	char bw_rx[16], bw_tx[16];
+	format_iec_bytes(bw_rx, sizeof(bw_rx), rx);
+	format_iec_bytes(bw_tx, sizeof(bw_tx), tx);
+
 	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms, "
-	       "bandwidth rx/tx: %.0lf/%.0lf KiB/s",
-	       now_ms - tstamp, rx, tx);
+	       "bandwidth rx: %s/s, tx: %s/s",
+	       now_ms - tstamp, bw_rx, bw_tx);
 	s->pkt.inflight_ping = TSTAMP_NIL;
 }
 
