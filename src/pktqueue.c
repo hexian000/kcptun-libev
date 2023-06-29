@@ -144,7 +144,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOG_RATELIMITEDF(
 				LOG_LEVEL_WARNING, s->loop, 1.0,
-				"session %08" PRIX32 " not found", conv);
+				"* session %08" PRIX32 " not found", conv);
 			ss0_reset(s, sa, conv);
 			return;
 		}
@@ -350,8 +350,8 @@ struct pktqueue *queue_new(struct server *restrict s)
 	if (q == NULL) {
 		return NULL;
 	}
-	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, 256);
-	const size_t recv_cap = 256;
+	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, 128);
+	const size_t recv_cap = 128;
 	*q = (struct pktqueue){
 		.mq_send = malloc(send_cap * sizeof(struct msgframe *)),
 		.mq_send_cap = send_cap,

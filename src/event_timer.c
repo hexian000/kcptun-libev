@@ -4,6 +4,7 @@
 #include "event.h"
 #include "event_impl.h"
 #include "algo/hashtable.h"
+#include "utils/mcache.h"
 #include "utils/slog.h"
 #include "session.h"
 #include "util.h"
@@ -14,6 +15,7 @@
 #include <ev.h>
 
 #include <inttypes.h>
+#include <math.h>
 
 static bool
 timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
@@ -76,29 +78,15 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	return true;
 }
 
-void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+static void keepalive(struct server *restrict s)
 {
-	CHECK_EV_ERROR(revents);
-
-	struct server *restrict s = (struct server *)watcher->data;
-
-	/* check & restart accept watchers */
-	struct ev_io *restrict w_accept = &s->listener.w_accept;
-	if (s->listener.fd != -1 && !ev_is_active(w_accept)) {
-		ev_io_start(loop, w_accept);
-	}
-
-	/* timeout check */
-	table_filter(s->sessions, timeout_filt, s);
-
-	/* ping */
 	if ((s->conf->mode & MODE_CLIENT) == 0) {
 		return;
 	}
-	if (!(s->keepalive > 0.0)) {
+	if (!isnormal(s->keepalive) || signbit(s->keepalive)) {
 		return;
 	}
-	const ev_tstamp now = ev_now(loop);
+	const ev_tstamp now = ev_now(s->loop);
 	if (s->pkt.inflight_ping != TSTAMP_NIL) {
 		if (now - s->pkt.inflight_ping < 4.0) {
 			return;
@@ -124,4 +112,45 @@ void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		return;
 	}
 	server_ping(s);
+}
+
+static bool
+check_tick(ev_tstamp *restrict last, const ev_tstamp now, const double interval)
+{
+	const ev_tstamp last_tick = *last;
+	if (last_tick == TSTAMP_NIL) {
+		*last = now;
+		return false;
+	}
+	const double dt = now - last_tick;
+	if (dt < interval) {
+		return false;
+	}
+	*last = (dt < 2.0 * interval) ? (last_tick + interval) : now;
+	return true;
+}
+
+void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+
+	struct server *restrict s = (struct server *)watcher->data;
+	keepalive(s);
+
+	/* check & restart accept watchers */
+	struct ev_io *restrict w_accept = &s->listener.w_accept;
+	if (s->listener.fd != -1 && !ev_is_active(w_accept)) {
+		ev_io_start(loop, w_accept);
+	}
+
+	const ev_tstamp now = ev_now(s->loop);
+	static ev_tstamp last_tick = TSTAMP_NIL;
+	if (!check_tick(&last_tick, now, 10.0)) {
+		return;
+	}
+
+	/* timeout check */
+	table_filter(s->sessions, timeout_filt, s);
+
+	mcache_shrink(msgpool, 1);
 }

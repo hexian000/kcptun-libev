@@ -37,21 +37,24 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 	const ev_tstamp now = ev_now(s->loop);
 	size_t nrecv = 0;
 	size_t nbatch;
+	struct msgframe *frames[MMSG_BATCH_SIZE];
+	size_t num_frames = 0;
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
-		static struct msgframe *frames[MMSG_BATCH_SIZE] = { NULL };
-		for (size_t i = 0; i < nbatch; i++) {
-			if (frames[i] == NULL) {
-				struct msgframe *msg = msgframe_new(q, NULL);
-				if (msg == NULL) {
-					nbatch = i;
-					break;
-				}
-				frames[i] = msg;
+		for (size_t i = num_frames; i < nbatch; i++) {
+			struct msgframe *msg = msgframe_new(q, NULL);
+			if (msg == NULL) {
+				nbatch = i;
+				break;
 			}
+			frames[num_frames++] = msg;
 			mmsgs[i] = (struct mmsghdr){
-				.msg_hdr = frames[i]->hdr,
+				.msg_hdr = msg->hdr,
 			};
+		}
+		if (nbatch == 0) {
+			/* no frame could be allocated */
+			break;
 		}
 
 		const int ret = recvmmsg(fd, mmsgs, nbatch, 0, NULL);
@@ -66,16 +69,15 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			}
 			LOGE_F("recvmmsg: %s", strerror(err));
 			break;
-		}
-		if (ret == 0) {
+		} else if (ret == 0) {
 			break;
 		}
-		for (int i = 0; i < ret; i++) {
+		const size_t n = (size_t)ret;
+		for (size_t i = 0; i < n; i++) {
 			struct msgframe *restrict msg = frames[i];
 			msg->len = (size_t)mmsgs[i].msg_len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
-			frames[i] = NULL;
 			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 				const struct sockaddr *sa = msg->hdr.msg_name;
 				char addr_str[64];
@@ -84,9 +86,18 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 				       msg->len, addr_str);
 			}
 		}
-		nrecv += (size_t)ret;
-		navail -= (size_t)ret;
+		/* collect unused frames */
+		num_frames = nbatch - n;
+		for (size_t i = 0; i < num_frames; i++) {
+			frames[i] = frames[i + n];
+		}
+		nrecv += n;
+		navail -= n;
 	} while (navail > 0);
+	/* delete unused frames */
+	for (size_t i = 0; i < num_frames; i++) {
+		msgframe_delete(q, frames[i]);
+	}
 	return nrecv;
 }
 
@@ -95,6 +106,10 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 static size_t pkt_recv(const int fd, struct server *restrict s)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
+	size_t navail = q->mq_recv_cap - q->mq_recv_len;
+	if (navail == 0) {
+		return 0;
+	}
 
 	const ev_tstamp now = ev_now(s->loop);
 	size_t nrecv = 0;
@@ -129,7 +144,8 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		}
 		s->stats.pkt_rx += nbrecv;
 		nrecv++;
-	} while (true);
+		navail--;
+	} while (navail > 0);
 	return nrecv;
 }
 
@@ -190,12 +206,12 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 			/* clear the send queue if the error is persistent */
 			drop = true;
 			break;
-		}
-		if (ret == 0) {
+		} else if (ret == 0) {
 			break;
 		}
+		const size_t n = (size_t)ret;
 		/* delete sent messages */
-		for (int i = 0; i < ret; i++) {
+		for (size_t i = 0; i < n; i++) {
 			nbsend += mmsgs[i].msg_len;
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
 			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
@@ -207,8 +223,8 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 			}
 			msgframe_delete(q, msg);
 		}
-		nsend += (size_t)ret;
-		navail -= (size_t)ret;
+		nsend += n;
+		navail -= n;
 	} while (navail > 0);
 
 	/* move remaining messages */

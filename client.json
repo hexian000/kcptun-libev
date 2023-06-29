@@ -5,7 +5,7 @@
         "mtu": 1400,
         "sndwnd": 256,
         "rcvwnd": 256,
-        "nodelay": 1,
+        "nodelay": 2,
         "interval": 50,
         "resend": 0,
         "nc": 1

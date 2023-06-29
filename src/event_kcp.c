@@ -132,8 +132,7 @@ void kcp_update(struct session *restrict ss)
 		const uint32_t now_ms = tstamp2ms(now);
 		ikcp_update(ss->kcp, now_ms);
 	}
-	if (ss->kcp != NULL && ss->tcp_fd != -1 &&
-	    ss->tcp_state != STATE_LINGER) {
+	if (ss->tcp_fd != -1 && ss->tcp_state != STATE_LINGER) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		if (!ev_is_active(w_read) &&
 		    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
