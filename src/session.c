@@ -164,8 +164,8 @@ static void consume_wbuf(struct session *restrict ss, const size_t len)
 
 static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 {
+	/* Create client socket */
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
-	// Create socket
 	if (fd < 0) {
 		const int err = errno;
 		LOGE_F("socket: %s", strerror(err));
@@ -183,10 +183,10 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	}
 
-	// Connect to address
+	/* Connect to address */
 	if (connect(fd, sa, getsocklen(sa)) != 0) {
 		const int err = errno;
-		if (err != EINPROGRESS) {
+		if (err != EINTR && err != EINPROGRESS) {
 			LOGE_F("connect: %s", strerror(err));
 			return false;
 		}

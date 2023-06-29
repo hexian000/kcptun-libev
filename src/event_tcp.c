@@ -78,7 +78,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		client_fd = accept(watcher->fd, &m_sa.sa, &sa_len);
 		if (client_fd < 0) {
 			const int err = errno;
-			if (IS_TEMPORARY_ERROR(err)) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("accept: %s", strerror(err));
@@ -132,7 +132,7 @@ static int tcp_recv(struct session *restrict ss)
 	const ssize_t nread = recv(ss->tcp_fd, buf, cap, 0);
 	if (nread < 0) {
 		const int err = errno;
-		if (IS_TEMPORARY_ERROR(err)) {
+		if (IS_TRANSIENT_ERROR(err)) {
 			return TCPRECV_AGAIN;
 		}
 		if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -209,7 +209,7 @@ static int tcp_flush(struct session *restrict ss)
 		const ssize_t ret = send(ss->tcp_fd, buf, len, 0);
 		if (ret < 0) {
 			const int err = errno;
-			if (IS_TEMPORARY_ERROR(err)) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				return 0;
 			}
 			LOGE_F("session [%08" PRIX32 "] tcp send: %s", ss->conv,

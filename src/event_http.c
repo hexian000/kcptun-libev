@@ -112,7 +112,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
-static void http_serve(struct http_ctx *ctx, struct http_message *hdr);
+static void http_serve(struct http_ctx *ctx);
 
 void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
@@ -125,7 +125,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	const ssize_t nrecv = recv(watcher->fd, data, cap, 0);
 	if (nrecv < 0) {
 		const int err = errno;
-		if (IS_TEMPORARY_ERROR(err)) {
+		if (IS_TRANSIENT_ERROR(err)) {
 			return;
 		}
 		LOGE_F("recv: %s", strerror(err));
@@ -191,7 +191,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 	/* HTTP/1.0 only, close after serve */
 	ev_io_stop(loop, watcher);
-	http_serve(ctx, hdr);
+	http_serve(ctx);
 }
 
 static void http_ctx_write(struct http_ctx *restrict ctx)
@@ -204,7 +204,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
-			if (IS_TEMPORARY_ERROR(err)) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("send: %s", strerror(err));
@@ -291,13 +291,18 @@ http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 
 static void http_serve_stats(struct http_ctx *restrict ctx)
 {
+	const struct http_message *restrict hdr = &ctx->http_msg;
+	if (strcasecmp(hdr->req.method, "POST") != 0) {
+		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
+		return;
+	}
+
 	struct vbuffer *restrict buf = vbuf_reserve(NULL, 4000);
 	if (buf == NULL) {
 		LOGOOM();
 		return;
 	}
 	buf = http_resphdr_init(buf, HTTP_OK);
-	buf = RESPHDR_ADD(buf, "Cache-Control", "no-store");
 	buf = RESPHDR_ADD(buf, "Content-Type", "text/plain; charset=utf-8");
 	buf = RESPHDR_ADD(buf, "X-Content-Type-Options", "nosniff");
 	buf = RESPHDR_END(buf);
@@ -332,13 +337,9 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 	http_set_wbuf(ctx, buf);
 }
 
-static void http_handle_request(
-	struct http_ctx *restrict ctx, struct http_message *restrict hdr)
+static void http_handle_request(struct http_ctx *restrict ctx)
 {
-	if (strcasecmp(hdr->req.method, "GET") != 0) {
-		http_resp_errpage(ctx, HTTP_BAD_REQUEST);
-		return;
-	}
+	const struct http_message *restrict hdr = &ctx->http_msg;
 	char *url = hdr->req.url;
 	if (strcmp(url, "/stats") == 0) {
 		LOGV("http: serve /stats");
@@ -360,9 +361,9 @@ static void http_handle_request(
 	http_resp_errpage(ctx, HTTP_NOT_FOUND);
 }
 
-void http_serve(struct http_ctx *restrict ctx, struct http_message *restrict hdr)
+void http_serve(struct http_ctx *restrict ctx)
 {
-	http_handle_request(ctx, hdr);
+	http_handle_request(ctx);
 	if (ctx->wbuf == NULL) {
 		http_ctx_free(ctx);
 		return;

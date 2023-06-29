@@ -57,7 +57,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		const int ret = recvmmsg(fd, mmsgs, nbatch, 0, NULL);
 		if (ret < 0) {
 			const int err = errno;
-			if (IS_TEMPORARY_ERROR(err)) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -107,8 +107,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		if (nbrecv < 0) {
 			const int err = errno;
 			msgframe_delete(q, msg);
-			if (err == EAGAIN || err == EWOULDBLOCK ||
-			    err == EINTR || err == ENOMEM) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -184,11 +183,11 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		const int ret = sendmmsg(fd, mmsgs, nbatch, 0);
 		if (ret < 0) {
 			const int err = errno;
-			if (IS_TEMPORARY_ERROR(err)) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("sendmmsg: %s", strerror(err));
-			/* drop packets to prevent infinite error loop */
+			/* clear the send queue if the error is persistent */
 			drop = true;
 			break;
 		}
@@ -241,12 +240,11 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		const ssize_t ret = sendmsg(fd, &msg->hdr, 0);
 		if (ret < 0) {
 			const int err = errno;
-			if (err == EAGAIN || err == EWOULDBLOCK ||
-			    err == EINTR || err == ENOMEM) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("sendmsg: %s", strerror(err));
-			/* drop packets to prevent infinite error loop */
+			/* clear the send queue if the error is persistent */
 			drop = true;
 			break;
 		}

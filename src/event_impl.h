@@ -13,15 +13,20 @@
 	do {                                                                   \
 		if ((unsigned)(revents) & (unsigned)EV_ERROR) {                \
 			const int err = errno;                                 \
-			LOGE_F("got error event: %s", strerror(err));          \
+			LOGE_F("error event: [errno=%d] %s", err,              \
+			       strerror(err));                                 \
 			return;                                                \
 		}                                                              \
 	} while (0)
 
-/* these errors do not fail the connection */
-#define IS_TEMPORARY_ERROR(err)                                                \
-	((err) == EAGAIN || (err) == EWOULDBLOCK || (err) == EINTR ||          \
-	 (err) == ENOMEM)
+/* Check if the error is generally "transient":
+ *   In accept()/send()/recv()/sendmsg()/recvmsg()/sendmmsg()/recvmmsg(),
+ * transient errors should not cause the socket to fail. The operation should
+ * be retried later if the corresponding event is still available.
+ */
+#define IS_TRANSIENT_ERROR(err)                                                \
+	((err) == EINTR || (err) == EAGAIN || (err) == EWOULDBLOCK ||          \
+	 (err) == ENOBUFS || (err) == ENOMEM)
 
 #define LOG_RATELIMITEDF(level, loop, rate, format, ...)                       \
 	do {                                                                   \
