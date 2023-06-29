@@ -78,8 +78,8 @@ mcache_shrink(struct mcache *restrict cache, const size_t count)
 {
 	size_t n = cache->num_elem;
 	const size_t stop = count < n ? n - count : 0;
-	for (; n > stop; --n) {
-		free(cache->p[n]);
+	while (n > stop) {
+		free(cache->p[--n]);
 	}
 	cache->num_elem = n;
 }
