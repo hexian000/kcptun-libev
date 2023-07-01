@@ -82,7 +82,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				break;
 			}
 			LOGE_F("accept: %s", strerror(err));
-			/* sleep until next timer, see timer_cb */
+			/* sleep for a while, see ticker_cb */
 			ev_io_stop(loop, watcher);
 			return;
 		}
@@ -247,6 +247,26 @@ int tcp_send(struct session *restrict ss)
 	return ret;
 }
 
+static bool connected_cb(struct session *restrict ss)
+{
+	int sockerr = 0;
+	if (getsockopt(
+		    ss->tcp_fd, SOL_SOCKET, SO_ERROR, &sockerr,
+		    &(socklen_t){ sizeof(sockerr) }) == 0) {
+		if (sockerr != 0) {
+			LOGE_F("SO_ERROR: %s", strerror(sockerr));
+			session_stop(ss);
+			kcp_reset(ss);
+			return false;
+		}
+		return true;
+	} else {
+		const int err = errno;
+		LOGD_F("SO_ERROR: %s", strerror(err));
+	}
+	return true;
+}
+
 void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
@@ -254,6 +274,10 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct session *restrict ss = (struct session *)watcher->data;
 	assert(watcher == &ss->w_write);
 	assert(watcher->fd == ss->tcp_fd);
+	if (ss->tcp_state == STATE_CONNECT) {
+		connected_cb(ss);
+		ss->tcp_state = STATE_CONNECTED;
+	}
 
 	while (ss->tcp_fd != -1 && ss->wbuf_next > ss->wbuf_flush) {
 		const int ret = tcp_flush(ss);

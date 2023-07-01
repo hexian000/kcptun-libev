@@ -27,6 +27,16 @@ extern struct mcache *msgpool;
 	} while (0)
 
 uint32_t tstamp2ms(ev_tstamp t);
+bool split_tick(ev_tstamp *last, ev_tstamp now, double interval);
+
+/* run expr at an interval not shorter than specified */
+#define TICK_INTERVAL(now, interval, expr)                                     \
+	do {                                                                   \
+		static ev_tstamp last_tick = TSTAMP_NIL;                       \
+		if (split_tick(&last_tick, (now), (interval))) {               \
+			expr;                                                  \
+		}                                                              \
+	} while (0)
 
 void init(void);
 

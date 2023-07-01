@@ -78,7 +78,7 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	return true;
 }
 
-static void keepalive(struct server *restrict s)
+static void tick_keepalive(struct server *restrict s)
 {
 	if ((s->conf->mode & MODE_CLIENT) == 0) {
 		return;
@@ -114,43 +114,30 @@ static void keepalive(struct server *restrict s)
 	server_ping(s);
 }
 
-static bool
-check_tick(ev_tstamp *restrict last, const ev_tstamp now, const double interval)
+static void tick_listener(struct server *restrict s)
 {
-	const ev_tstamp last_tick = *last;
-	if (last_tick == TSTAMP_NIL) {
-		*last = now;
-		return false;
-	}
-	const double dt = now - last_tick;
-	if (dt < interval) {
-		return false;
-	}
-	*last = (dt < 2.0 * interval) ? (last_tick + interval) : now;
-	return true;
-}
-
-void timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
-{
-	CHECK_EV_ERROR(revents);
-
-	struct server *restrict s = (struct server *)watcher->data;
-	keepalive(s);
-
 	/* check & restart accept watchers */
 	struct ev_io *restrict w_accept = &s->listener.w_accept;
 	if (s->listener.fd != -1 && !ev_is_active(w_accept)) {
-		ev_io_start(loop, w_accept);
+		ev_io_start(s->loop, w_accept);
 	}
+}
 
-	const ev_tstamp now = ev_now(s->loop);
-	static ev_tstamp last_tick = TSTAMP_NIL;
-	if (!check_tick(&last_tick, now, 10.0)) {
-		return;
-	}
-
-	/* timeout check */
+static void tick_timeout(struct server *restrict s)
+{
+	/* session timeout */
 	table_filter(s->sessions, timeout_filt, s);
 
+	/* mcache maintenance */
 	mcache_shrink(msgpool, 1);
+}
+
+void ticker_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	const ev_tstamp now = ev_now(loop);
+	struct server *restrict s = (struct server *)watcher->data;
+	TICK_INTERVAL(now, 1.0, tick_keepalive(s));
+	TICK_INTERVAL(now, 5.0, tick_listener(s));
+	TICK_INTERVAL(now, 10.0, tick_timeout(s));
 }

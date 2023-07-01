@@ -30,12 +30,35 @@ uint32_t tstamp2ms(const ev_tstamp t)
 	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
 }
 
+bool split_tick(
+	ev_tstamp *restrict last, const ev_tstamp now, const double interval)
+{
+	const ev_tstamp last_tick = *last;
+	if (last_tick == TSTAMP_NIL || now < last_tick) {
+		*last = now;
+		return false;
+	}
+	const double dt = now - last_tick;
+	if (dt < interval) {
+		return false;
+	}
+	*last = (dt < 2.0 * interval) ? (last_tick + interval) : now;
+	return true;
+}
+
 struct mcache *msgpool;
 
 static void uninit(void);
 
 void init(void)
 {
+	{
+		const int ret = atexit(uninit);
+		if (ret != 0) {
+			FAILMSGF("atexit: %d", ret);
+		}
+	}
+
 	(void)setlocale(LC_ALL, "");
 
 	struct sigaction ignore = {
@@ -52,18 +75,12 @@ void init(void)
 	msgpool = mcache_new(256, size);
 	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
-
-	{
-		const int ret = atexit(uninit);
-		if (ret != 0) {
-			FAILMSGF("atexit: %d", ret);
-		}
-	}
 }
 
 static void uninit(void)
 {
 	mcache_free(msgpool);
+	ikcp_segment_pool = msgpool = NULL;
 }
 
 void daemonize(void)

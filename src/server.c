@@ -258,7 +258,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	ev_timer_init(w_kcp_update, kcp_update_cb, s->interval, s->interval);
 	w_kcp_update->data = s;
 	struct ev_timer *restrict w_timer = &s->w_timer;
-	ev_timer_init(w_timer, timer_cb, 2.0, 2.0);
+	ev_timer_init(w_timer, ticker_cb, 1.0, 1.0);
 	w_timer->data = s;
 
 	if (conf->mode == MODE_SERVER) {
