@@ -16,15 +16,16 @@
 #include "sockutil.h"
 
 #include <ev.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
-#include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include <time.h>
 
 static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
@@ -478,7 +479,7 @@ static bool print_session_iter(
 }
 
 static struct vbuffer *print_session_table(
-	struct server *restrict s, struct vbuffer *restrict buf,
+	const struct server *restrict s, struct vbuffer *restrict buf,
 	const int level)
 {
 	struct server_stats_ctx ctx = (struct server_stats_ctx){
@@ -496,9 +497,25 @@ static struct vbuffer *print_session_table(
 		ctx.num_in_state[STATE_TIME_WAIT]);
 }
 
+static bool update_load(
+	struct server *restrict s, char *buf, size_t bufsize, const double dt)
+{
+	bool ok = false;
+	s->clock = clock();
+	if (s->clock != (clock_t)(-1) && s->last_clock != (clock_t)(-1) &&
+	    s->clock > s->last_clock) {
+		const double load = (double)(s->clock - s->last_clock) /
+				    (double)(CLOCKS_PER_SEC) / dt * 100.0;
+		(void)snprintf(buf, bufsize, "%.03f%%", load);
+		ok = true;
+	}
+	s->last_clock = s->clock;
+	return ok;
+}
+
 struct vbuffer *server_stats(
 	struct server *restrict s, struct vbuffer *restrict buf,
-	const int level)
+	const bool update, const int level)
 {
 	buf = print_session_table(s, buf, level);
 
@@ -508,58 +525,60 @@ struct vbuffer *server_stats(
 		uptime, sizeof(uptime), make_duration(now - s->uptime));
 	const double dt = now - s->last_stats_time;
 	const struct link_stats *restrict stats = &s->stats;
-	const struct link_stats *restrict last_stats = &s->last_stats;
-	const struct link_stats dstats = (struct link_stats){
-		.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
-		.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
-		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
-		.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
-		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
-		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
-	};
+
+	if (update) {
+		const struct link_stats *restrict last_stats = &s->last_stats;
+		const struct link_stats dstats = (struct link_stats){
+			.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
+			.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
+			.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
+			.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
+			.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
+			.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
+		};
 
 #define FORMAT_BYTES(name, value)                                              \
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
-	FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
-	FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
-	FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
-	FORMAT_BYTES(dkcp_tx, dstats.kcp_tx / dt);
-	const double deff_rx =
-		(double)dstats.tcp_tx * 100.0 / (double)dstats.kcp_rx;
-	const double deff_tx =
-		(double)dstats.tcp_rx * 100.0 / (double)dstats.kcp_tx;
+		FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
+		FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
+		FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
+		FORMAT_BYTES(dkcp_tx, dstats.kcp_tx / dt);
+		const double deff_rx =
+			(double)dstats.tcp_tx * 100.0 / (double)dstats.kcp_rx;
+		const double deff_tx =
+			(double)dstats.tcp_rx * 100.0 / (double)dstats.kcp_tx;
+
+		buf = vbuf_appendf(
+			buf,
+			"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1lf%%, %.1lf%%\n",
+			dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx);
+	}
+
 	FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
 	FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
 	FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
 	FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
 	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
 	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
+	buf = vbuf_appendf(
+		buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n", tcp_rx,
+		tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+#undef FORMAT_BYTES
 
 	char load_buf[16];
 	const char *load_str = "(unknown)";
-	s->clock = clock();
-	if (s->last_clock != (clock_t)(-1) && s->clock > s->last_clock) {
-		const double load = (double)(s->clock - s->last_clock) /
-				    (double)(CLOCKS_PER_SEC) / dt * 100.0;
-		(void)snprintf(load_buf, sizeof(load_buf), "%.03f%%", load);
+	if (update && update_load(s, load_buf, sizeof(load_buf), dt)) {
 		load_str = load_buf;
 	}
-
-	buf = vbuf_appendf(
-		buf,
-		""
-		"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1lf%%, %.1lf%%\n"
-		"[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n"
-		"  = uptime: %s, load: %s\n",
-		dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx, tcp_rx,
-		tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx, uptime, load_str);
-#undef FORMAT_BYTES
+	buf = vbuf_appendf(buf, "  = load: %s, uptime: %s\n", load_str, uptime);
 
 	/* rotate stats */
-	s->last_clock = s->clock;
-	s->last_stats = s->stats;
-	s->last_stats_time = ev_now(s->loop);
+	if (update) {
+		s->last_clock = s->clock;
+		s->last_stats = s->stats;
+		s->last_stats_time = ev_now(s->loop);
+	}
 	return buf;
 }

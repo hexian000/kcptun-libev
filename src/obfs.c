@@ -1726,7 +1726,7 @@ void obfs_server_read_cb(
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
-	if (strcasecmp(msg->req.method, "GET") != 0) {
+	if (strcmp(msg->req.method, "GET") != 0) {
 		ret = http_error(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap,
 			HTTP_BAD_REQUEST);

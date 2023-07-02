@@ -301,9 +301,9 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	const struct http_message *restrict hdr = &ctx->http_msg;
 
 	bool stateless;
-	if (strcasecmp(hdr->req.method, "GET") == 0) {
+	if (strcmp(hdr->req.method, "GET") == 0) {
 		stateless = true;
-	} else if (strcasecmp(hdr->req.method, "POST") == 0) {
+	} else if (strcmp(hdr->req.method, "POST") == 0) {
 		stateless = false;
 	} else {
 		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
@@ -357,16 +357,17 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		(void)strftime(
 			timestamp, sizeof(timestamp), "%FT%T%z",
 			localtime(&server_time));
-		buf = vbuf_appendf(buf, "server time: %s\n", timestamp);
+		buf = vbuf_appendf(buf, "server time: %s\n\n", timestamp);
 	}
+
+	struct server *restrict s = ctx->data;
+	buf = server_stats(s, buf, !stateless, state_level);
 
 	if (stateless) {
 		http_set_wbuf(ctx, buf);
 		return;
 	}
 
-	struct server *restrict s = ctx->data;
-	buf = server_stats(s, buf, state_level);
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
