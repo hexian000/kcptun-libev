@@ -429,6 +429,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 
 struct server_stats_ctx {
 	size_t num_in_state[STATE_MAX];
+	int level;
 	ev_tstamp now;
 	struct vbuffer *restrict buf;
 };
@@ -442,12 +443,7 @@ static bool print_session_iter(
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;
-	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-	case STATE_LINGER:
-		break;
-	default:
+	if (ss->kcp_state > ctx->level) {
 		return true;
 	}
 	char addr_str[64];
@@ -470,7 +466,7 @@ static bool print_session_iter(
 	FORMAT_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
 	ctx->buf = vbuf_appendf(
 		ctx->buf,
-		"    [%08" PRIX32 "] %c peer=%s seen=%.0lfs "
+		"[%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%" PRIu32 " "
 		"rx/tx=%s/%s\n",
 		ss->conv, session_state_char[state], addr_str, not_seen,
@@ -481,32 +477,30 @@ static bool print_session_iter(
 	return true;
 }
 
-static struct vbuffer *
-print_session_table(struct server *restrict s, struct vbuffer *restrict buf)
+static struct vbuffer *print_session_table(
+	struct server *restrict s, struct vbuffer *restrict buf,
+	const int level)
 {
-	const size_t n_sessions = table_size(s->sessions);
-	if (n_sessions == 0) {
-		return buf;
-	}
 	struct server_stats_ctx ctx = (struct server_stats_ctx){
+		.level = level,
 		.now = ev_now(s->loop),
 		.buf = buf,
 	};
-	ctx.buf = VBUF_APPENDSTR(ctx.buf, "session table:\n");
 	table_iterate(s->sessions, &print_session_iter, &ctx);
 	return vbuf_appendf(
 		ctx.buf,
-		"    ^ %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n",
-		n_sessions, ctx.num_in_state[STATE_CONNECT],
+		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n\n",
+		table_size(s->sessions), ctx.num_in_state[STATE_CONNECT],
 		ctx.num_in_state[STATE_CONNECTED],
 		ctx.num_in_state[STATE_LINGER],
 		ctx.num_in_state[STATE_TIME_WAIT]);
 }
 
-struct vbuffer *
-server_stats(struct server *restrict s, struct vbuffer *restrict buf)
+struct vbuffer *server_stats(
+	struct server *restrict s, struct vbuffer *restrict buf,
+	const int level)
 {
-	buf = print_session_table(s, buf);
+	buf = print_session_table(s, buf, level);
 
 	const ev_tstamp now = ev_now(s->loop);
 	char uptime[16];
@@ -555,11 +549,12 @@ server_stats(struct server *restrict s, struct vbuffer *restrict buf)
 
 	buf = vbuf_appendf(
 		buf,
-		"uptime: %s, load: %s; traffic stats (rx/tx):\n"
-		"    current tcp: %s/%s; kcp: %s/%s; efficiency: %.1lf%%/%.1lf%%\n"
-		"      total tcp: %s/%s; kcp: %s/%s; pkt: %s/%s\n",
-		uptime, load_str, dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx,
-		deff_tx, tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+		""
+		"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1lf%%, %.1lf%%\n"
+		"[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n"
+		"  = uptime: %s, load: %s\n",
+		dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx, tcp_rx,
+		tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx, uptime, load_str);
 #undef FORMAT_BYTES
 
 	/* rotate stats */

@@ -83,7 +83,7 @@ struct obfs_ctx {
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
 	bool cap_ecn : 1;
-	bool established : 1;
+	bool captured : 1;
 	bool authenticated : 1;
 	bool http_keepalive : 1;
 	uintmax_t num_ecn, num_ece;
@@ -483,7 +483,7 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	ctx->http_msg = (struct http_message){ 0 };
 	ctx->http_nxt = NULL;
 	ctx->cap_ecn = false;
-	ctx->established = false;
+	ctx->captured = false;
 	ctx->authenticated = false;
 	ctx->http_keepalive = false;
 	ctx->num_ecn = ctx->num_ece = 0;
@@ -902,17 +902,16 @@ static bool print_ctx_iter(
 	struct obfs_ctx *restrict ctx = value;
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-	if (ctx->established) {
+	if (!ctx->captured) {
 		stats_ctx->buf = vbuf_appendf(
-			stats_ctx->buf,
-			"obfs context peer=%s seen=%.0lfs ecn(rx/tx)=%ju/%ju\n",
-			addr_str, stats_ctx->now - ctx->last_seen, ctx->num_ecn,
-			ctx->num_ece);
-	} else {
-		stats_ctx->buf = vbuf_appendf(
-			stats_ctx->buf, "obfs context peer=%s seen=%.0lfs\n",
-			addr_str, stats_ctx->now - ctx->last_seen);
+			stats_ctx->buf, "[%s] ? seen=%.0lfs\n", addr_str,
+			stats_ctx->now - ctx->last_seen);
+		return true;
 	}
+	stats_ctx->buf = vbuf_appendf(
+		stats_ctx->buf, "[%s] %c seen=%.0lfs ecn(rx/tx)=%ju/%ju\n",
+		addr_str, ctx->authenticated ? '-' : '>',
+		stats_ctx->now - ctx->last_seen, ctx->num_ecn, ctx->num_ece);
 	return true;
 }
 
@@ -943,7 +942,6 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	};
 
 	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
-	const uintmax_t pkt_drop = stats->pkt_cap - stats->pkt_rx;
 	const int num_ctx = table_size(obfs->contexts);
 	const size_t unauthenticated = obfs->unauthenticated;
 	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
@@ -955,13 +953,14 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 
 	FORMAT_BYTES(dbyt_cap, (double)dstats.byt_cap / dt);
 	FORMAT_BYTES(dbyt_rx, (double)dstats.byt_rx / dt);
+	FORMAT_BYTES(dbyt_tx, (double)dstats.byt_tx / dt);
 	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
 
 	buf = vbuf_appendf(
 		buf,
-		"obfs: %zu(+%zu) contexts, capture %.1lf/s (%s/s), rx %s/s, drop: %ju (%s)\n",
-		authenticated, unauthenticated, dpkt_cap, dbyt_cap, dbyt_rx,
-		pkt_drop, byt_drop);
+		"  = %zu(+%zu) contexts, rx %s/s, tx %s/s, capture %.1lf/s (%s/s), drop %s\n",
+		authenticated, unauthenticated, dbyt_rx, dbyt_tx, dpkt_cap,
+		dbyt_cap, byt_drop);
 #undef FORMAT_BYTES
 
 	/* rotate stats */
@@ -1158,13 +1157,13 @@ static void obfs_capture(
 	if (tcp->res2 & 0x1u) {
 		ctx->num_ece++;
 	}
-	if (ctx->established) {
+	if (ctx->captured) {
 		return;
 	}
 	ctx->cap_flow = flow;
 	ctx->cap_seq = ntohl(tcp->seq);
 	ctx->cap_ack_seq = ntohl(tcp->ack_seq);
-	ctx->established = true;
+	ctx->captured = true;
 	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "captured");
 }
 
@@ -1497,7 +1496,7 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 			msg->len, addr_str);
 		return false;
 	}
-	if (!ctx->established) {
+	if (!ctx->captured) {
 		return false;
 	}
 	bool ok = false;

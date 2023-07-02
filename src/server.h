@@ -60,7 +60,7 @@ struct server {
 struct server *server_new(struct ev_loop *loop, struct config *conf);
 bool server_start(struct server *s);
 void server_ping(struct server *s);
-struct vbuffer *server_stats(struct server *s, struct vbuffer *buf);
+struct vbuffer *server_stats(struct server *s, struct vbuffer *buf, int level);
 bool server_resolve(struct server *s);
 void server_stop(struct server *s);
 void server_free(struct server *s);

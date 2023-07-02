@@ -77,7 +77,7 @@ void init(void)
 	ikcp_segment_pool = msgpool;
 }
 
-static void uninit(void)
+void uninit(void)
 {
 	mcache_free(msgpool);
 	ikcp_segment_pool = msgpool = NULL;

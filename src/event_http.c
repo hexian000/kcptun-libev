@@ -3,10 +3,12 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "session.h"
 #include "utils/buffer.h"
 #include "utils/check.h"
 #include "utils/slog.h"
 #include "net/http.h"
+#include "net/url.h"
 #include "util.h"
 #include "server.h"
 #include "pktqueue.h"
@@ -289,12 +291,41 @@ http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 	http_set_wbuf(ctx, buf);
 }
 
-static void http_serve_stats(struct http_ctx *restrict ctx)
+static void
+http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 {
+	if (uri->path != NULL) {
+		http_resp_errpage(ctx, HTTP_NOT_FOUND);
+		return;
+	}
 	const struct http_message *restrict hdr = &ctx->http_msg;
 	if (strcasecmp(hdr->req.method, "POST") != 0) {
 		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
 		return;
+	}
+	bool banner = true;
+	int state_level = STATE_CONNECTED;
+	while (uri->query != NULL) {
+		char *key, *value;
+		if (!url_query_component(&uri->query, &key, &value)) {
+			http_resp_errpage(ctx, HTTP_BAD_REQUEST);
+			return;
+		}
+		if (strcmp(key, "banner") == 0) {
+			if (strcmp(value, "no") == 0) {
+				banner = false;
+			}
+		} else if (strcmp(key, "sessions") == 0) {
+			if (strcmp(value, "none") == 0) {
+				state_level = -1;
+			} else if (strcmp(value, "connected") == 0) {
+				state_level = STATE_CONNECTED;
+			} else if (strcmp(value, "active") == 0) {
+				state_level = STATE_LINGER;
+			} else if (strcmp(value, "all") == 0) {
+				state_level = STATE_MAX;
+			}
+		}
 	}
 
 	struct vbuffer *restrict buf = vbuf_reserve(NULL, 4000);
@@ -306,12 +337,18 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 	buf = RESPHDR_ADD(buf, "Content-Type", "text/plain; charset=utf-8");
 	buf = RESPHDR_ADD(buf, "X-Content-Type-Options", "nosniff");
 	buf = RESPHDR_END(buf);
+	if (banner) {
+		buf = VBUF_APPENDCONST(
+			buf, "" PROJECT_NAME " " PROJECT_VER "\n"
+			     "  " PROJECT_HOMEPAGE "\n\n");
+	}
 
 	struct server *restrict s = ctx->data;
-	buf = server_stats(s, buf);
+	buf = server_stats(s, buf, state_level);
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
+		buf = VBUF_APPENDCONST(buf, "\n");
 		buf = obfs_stats(obfs, buf);
 	}
 #endif
@@ -340,14 +377,23 @@ static void http_serve_stats(struct http_ctx *restrict ctx)
 static void http_handle_request(struct http_ctx *restrict ctx)
 {
 	const struct http_message *restrict hdr = &ctx->http_msg;
-	char *url = hdr->req.url;
-	if (strcmp(url, "/stats") == 0) {
-		LOGV("http: serve /stats");
-		http_serve_stats(ctx);
+	struct url uri;
+	LOGV_F("api: serve uri \"%s\"", hdr->req.url);
+	if (!url_parse(hdr->req.url, &uri)) {
+		LOGW("api: failed parsing url");
+		http_resp_errpage(ctx, HTTP_BAD_REQUEST);
 		return;
 	}
-	if (strcmp(url, "/healthy") == 0) {
-		LOGV("http: serve /healthy");
+	char *segment;
+	if (!url_path_segment(&uri.path, &segment)) {
+		http_resp_errpage(ctx, HTTP_BAD_REQUEST);
+		return;
+	}
+	if (strcmp(segment, "stats") == 0) {
+		http_serve_stats(ctx, &uri);
+		return;
+	}
+	if (strcmp(segment, "healthy") == 0) {
 		struct vbuffer *restrict buf = vbuf_alloc(NULL, 512);
 		if (buf == NULL) {
 			LOGOOM();
