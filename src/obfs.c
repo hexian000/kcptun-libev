@@ -56,6 +56,8 @@ struct obfs {
 	struct ev_io w_accept;
 	struct ev_timer w_timer;
 	struct obfs_ctx *client; /* for reference only, no ownership */
+	int redial_count;
+	struct ev_timer w_redial;
 	struct obfs_stats stats, last_stats;
 	ev_tstamp last_stats_time;
 	sockaddr_max_t bind_addr;
@@ -99,10 +101,8 @@ struct obfs_ctx {
 			char addr_str[64];                                     \
 			format_sa(                                             \
 				&(ctx)->raddr.sa, addr_str, sizeof(addr_str)); \
-			LOG_WRITE(                                             \
-				level, __FILE__, __LINE__,                     \
-				"obfs: peer=%s " format, addr_str,             \
-				__VA_ARGS__);                                  \
+			LOG_F(level, "obfs: peer=%s " format, addr_str,        \
+			      __VA_ARGS__);                                    \
 		}                                                              \
 	} while (0)
 #define OBFS_CTX_LOG(level, ctx, message)                                      \
@@ -138,7 +138,11 @@ obfs_server_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 obfs_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
+obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+static void
 obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+
+static void obfs_redial(struct obfs *restrict obfs);
 
 static void obfs_tcp_setup(const int fd)
 {
@@ -512,7 +516,7 @@ static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	(void)table_del(obfs->contexts, &key, NULL);
 	if (obfs->client == ctx) {
-		obfs->client = NULL;
+		obfs_redial(obfs);
 	}
 	if (!ctx->authenticated) {
 		assert(obfs->unauthenticated > 0u);
@@ -542,8 +546,7 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
-			if (err == EAGAIN || err == EWOULDBLOCK ||
-			    err == EINTR || err == ENOMEM) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("obfs: %s", strerror(err));
@@ -565,13 +568,13 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 		return;
 	}
 	if (!ctx->http_keepalive) {
-		OBFS_CTX_LOG(LOG_LEVEL_VERBOSE, ctx, "server close");
+		OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "server close");
 		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(obfs->server->loop, ctx);
+		obfs_ctx_free(loop, ctx);
 		return;
 	}
 	if (ev_is_active(w_write)) {
-		ev_io_stop(obfs->server->loop, w_write);
+		ev_io_stop(loop, w_write);
 	}
 }
 
@@ -661,7 +664,9 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 
 static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	struct ev_loop *loop = obfs->server->loop;
+	struct server *restrict s = obfs->server;
+	assert(s->conf->mode & MODE_CLIENT);
+	struct ev_loop *loop = s->loop;
 	int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
 		const int err = errno;
@@ -682,7 +687,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 	if (connect(fd, sa, getsocklen(sa))) {
 		const int err = errno;
-		if (err != EINPROGRESS) {
+		if (err != EINTR && err != EINPROGRESS) {
 			LOGE_F("obfs tcp connect: %s", strerror(err));
 			obfs_ctx_free(loop, ctx);
 			return false;
@@ -705,25 +710,54 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		obfs_ctx_free(loop, ctx);
 		return false;
 	}
-	if (obfs->server->conf->mode & MODE_CLIENT) {
-		/* send the request */
-		char addr_str[64];
-		format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-		char *b = (char *)ctx->wbuf.data;
-		const int ret = snprintf(
-			b, ctx->wbuf.cap,
-			"GET /generate_204 HTTP/1.1\r\n"
-			"Host: %s\r\n"
-			"User-Agent: curl/7.81.0\r\n"
-			"Accept: */*\r\n\r\n",
-			addr_str);
-		CHECK(ret > 0);
-		ctx->wbuf.len = (size_t)ret;
-		ctx->http_keepalive = true;
-		obfs_ctx_write(ctx, loop);
-	}
 	obfs->client = ctx;
+
+	/* send the request */
+	char addr_str[64];
+	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+	char *b = (char *)ctx->wbuf.data;
+	const int ret = snprintf(
+		b, ctx->wbuf.cap,
+		"GET /generate_204 HTTP/1.1\r\n"
+		"Host: %s\r\n"
+		"User-Agent: curl/7.81.0\r\n"
+		"Accept: */*\r\n\r\n",
+		addr_str);
+	CHECK(ret > 0);
+	ctx->wbuf.len = (size_t)ret;
+	ctx->http_keepalive = true;
+	obfs_ctx_write(ctx, loop);
 	return true;
+}
+
+void obfs_redial(struct obfs *restrict obfs)
+{
+	struct server *restrict s = obfs->server;
+	struct config *restrict conf = s->conf;
+	if (!(conf->mode & MODE_CLIENT)) {
+		return;
+	}
+	struct ev_timer *restrict w_redial = &obfs->w_redial;
+	if (ev_is_active(w_redial)) {
+		return;
+	}
+	obfs->client = NULL;
+	struct ev_loop *loop = s->loop;
+	const int i = obfs->redial_count - 1;
+	if (i < 0) {
+		ev_feed_event(loop, w_redial, EV_TIMER);
+		return;
+	}
+	static const double wait_schedule[] = { 5.0, 10.0, 30.0, 60.0 };
+	const double wait_time = wait_schedule[CLAMP(
+		(size_t)i, 0, ARRAY_SIZE(wait_schedule) - 1)];
+	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		LOG_F(LOG_LEVEL_DEBUG,
+		      "obfs: scheduled redial #%d after %.0lfs",
+		      obfs->redial_count + 1, wait_time);
+	}
+	ev_timer_set(w_redial, wait_time, 0.0);
+	ev_timer_start(loop, w_redial);
 }
 
 static bool obfs_ctx_timeout_filt(
@@ -755,7 +789,7 @@ static bool obfs_ctx_timeout_filt(
 			LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	}
 	if (obfs->client == ctx) {
-		obfs->client = NULL;
+		obfs_redial(obfs);
 	}
 	if (!ctx->authenticated) {
 		assert(obfs->unauthenticated > 0u);
@@ -765,30 +799,48 @@ static bool obfs_ctx_timeout_filt(
 	return false;
 }
 
+static void tick_listener(struct obfs *restrict obfs)
+{
+	/* check & restart accept watcher */
+	struct ev_io *restrict w_accept = &obfs->w_accept;
+	if (obfs->fd != -1 && !ev_is_active(w_accept)) {
+		ev_io_start(obfs->server->loop, w_accept);
+	}
+}
+
+static void tick_timeout(struct obfs *restrict obfs)
+{
+	/* context timeout */
+	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
+}
+
 static void
-obfs_timer_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
-
-	/* check & restart accept watcher */
-	struct ev_io *restrict w_accept = &obfs->w_accept;
-	if (obfs->fd != -1 && !ev_is_active(w_accept)) {
-		ev_io_start(loop, w_accept);
-	}
-
-	/* context timeout */
-	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
-
-	/* client redial */
 	struct config *restrict conf = obfs->server->conf;
-	if ((conf->mode & MODE_CLIENT) && obfs->client == NULL) {
-		struct netaddr *addr = &conf->kcp_connect;
-		if (resolve_netaddr(addr, RESOLVE_TCP)) {
-			(void)obfs_ctx_dial(obfs, addr->sa);
-		}
+	if (obfs->client != NULL) {
+		return;
 	}
+	obfs->redial_count++;
+	struct netaddr *addr = &conf->kcp_connect;
+	LOGI_F("obfs: redial #%d to \"%s\"", obfs->redial_count, addr->str);
+	if (!resolve_netaddr(addr, RESOLVE_TCP)) {
+		return;
+	}
+	(void)obfs_ctx_dial(obfs, addr->sa);
+}
+
+static void
+obfs_ticker_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	const ev_tstamp now = ev_now(loop);
+	struct obfs *restrict obfs = (struct obfs *)watcher->data;
+	TICK_INTERVAL(now, 5.0, tick_listener(obfs));
+	TICK_INTERVAL(now, 10.0, tick_timeout(obfs));
 }
 
 struct obfs *obfs_new(struct server *restrict s)
@@ -831,17 +883,7 @@ bool obfs_resolve(struct obfs *obfs)
 			return false;
 		}
 	} else if (conf->mode & MODE_CLIENT) {
-		if (!resolve_netaddr(&conf->kcp_connect, RESOLVE_TCP)) {
-			return false;
-		}
-		struct obfs_ctx *client = obfs->client;
-		if (client != NULL) {
-			obfs_ctx_del(obfs, client);
-			obfs_ctx_free(obfs->server->loop, client);
-		}
-		if (!obfs_ctx_dial(obfs, conf->kcp_connect.sa)) {
-			return false;
-		}
+		obfs_redial(obfs);
 	}
 	return true;
 }
@@ -911,8 +953,8 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
-	FORMAT_BYTES(dbyt_cap, dstats.byt_cap / dt);
-	FORMAT_BYTES(dbyt_rx, dstats.byt_rx / dt);
+	FORMAT_BYTES(dbyt_cap, (double)dstats.byt_cap / dt);
+	FORMAT_BYTES(dbyt_rx, (double)dstats.byt_rx / dt);
 	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
 
 	buf = vbuf_appendf(
@@ -924,7 +966,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 
 	/* rotate stats */
 	obfs->last_stats = obfs->stats;
-	obfs->last_stats_time = ev_now(obfs->server->loop);
+	obfs->last_stats_time = now;
 	return buf;
 }
 
@@ -985,9 +1027,14 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	}
 	{
 		struct ev_timer *restrict w_timer = &obfs->w_timer;
-		ev_timer_init(w_timer, obfs_timer_cb, 10.0, 10.0);
+		ev_timer_init(w_timer, obfs_ticker_cb, 5.0, 5.0);
 		w_timer->data = obfs;
 		ev_timer_start(s->loop, w_timer);
+	}
+	{
+		struct ev_timer *restrict w_redial = &obfs->w_redial;
+		ev_timer_init(w_redial, obfs_redial_cb, 10.0, 0.0);
+		w_redial->data = obfs;
 	}
 	return true;
 }
@@ -1474,8 +1521,9 @@ void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
 	}
 	if (ok) {
 		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "authenticated");
-		assert(ctx->obfs->unauthenticated > 0u);
-		ctx->obfs->unauthenticated--;
+		struct obfs *restrict obfs = ctx->obfs;
+		assert(obfs->unauthenticated > 0u);
+		obfs->unauthenticated--;
 	}
 	ctx->authenticated = ok;
 }
@@ -1511,6 +1559,23 @@ static void obfs_accept_one(
 	}
 }
 
+static bool is_startup_limited(struct obfs *restrict obfs)
+{
+	if (table_size(obfs->contexts) >= OBFS_MAX_CONTEXTS) {
+		return true;
+	}
+	if (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_FULL) {
+		return true;
+	}
+	if (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_START) {
+		const double rate = OBFS_STARTUP_LIMIT_RATE / 100.0;
+		if (frand() < rate) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
@@ -1523,20 +1588,15 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		const int fd = accept(watcher->fd, &m_sa.sa, &len);
 		if (fd < 0) {
 			const int err = errno;
-			if (err == EAGAIN || err == EWOULDBLOCK ||
-			    err == EINTR || err == ENOMEM) {
+			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("accept: %s", strerror(err));
-			/* sleep until next timer, see obfs_timer_cb */
+			/* sleep for a while, see obfs_ticker_cb */
 			ev_io_stop(loop, watcher);
 			return;
 		}
-		if (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_FULL ||
-		    table_size(obfs->contexts) >= OBFS_MAX_CONTEXTS ||
-		    (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_START &&
-		     rand32() % UINT32_C(100) <
-			     (uint32_t)OBFS_STARTUP_LIMIT_RATE)) {
+		if (is_startup_limited(obfs)) {
 			LOG_RATELIMITED(
 				LOG_LEVEL_ERROR, loop, 1.0,
 				"* obfs: context limit exceeded, new connections refused");
@@ -1611,8 +1671,7 @@ void obfs_server_read_cb(
 	const ssize_t nbrecv = recv(watcher->fd, data, cap, 0);
 	if (nbrecv < 0) {
 		const int err = errno;
-		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
-		    err == ENOMEM) {
+		if (IS_TRANSIENT_ERROR(err)) {
 			return;
 		}
 		if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -1688,7 +1747,7 @@ void obfs_server_read_cb(
 		return;
 	}
 
-	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "serving request");
+	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "serving request");
 	{
 		char date_str[32];
 		const size_t date_len = http_date(date_str, sizeof(date_str));
@@ -1705,8 +1764,7 @@ void obfs_server_read_cb(
 	ctx->http_keepalive = true;
 	obfs_ctx_write(ctx, loop);
 
-	/* ignore all data arrived later */
-	ev_io_stop(loop, watcher);
+	ev_set_cb(watcher, obfs_fail_cb);
 	obfs_tcp_quickack(ctx->fd, false);
 }
 
@@ -1723,19 +1781,18 @@ void obfs_client_read_cb(
 	const ssize_t nbrecv = recv(watcher->fd, data, cap, 0);
 	if (nbrecv < 0) {
 		const int err = errno;
-		if (err == EAGAIN || err == EWOULDBLOCK || err == EINTR ||
-		    err == ENOMEM) {
+		if (IS_TRANSIENT_ERROR(err)) {
 			return;
 		}
 		LOGE_F("read: %s", strerror(err));
 		obfs_ctx_stop(loop, ctx);
-		obfs->client = NULL;
+		obfs_redial(obfs);
 		return;
 	}
 	if (nbrecv == 0) {
 		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "got server eof");
 		obfs_ctx_stop(loop, ctx);
-		obfs->client = NULL;
+		obfs_redial(obfs);
 		return;
 	}
 	ctx->rbuf.len += nbrecv;
@@ -1776,11 +1833,19 @@ void obfs_client_read_cb(
 	}
 	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "client ready");
 
-	/* ignore all data arrived later */
-	ev_io_stop(loop, watcher);
+	ev_set_cb(watcher, obfs_fail_cb);
 	obfs_tcp_quickack(ctx->fd, false);
+	obfs->redial_count = 0;
 
 	server_ping(ctx->obfs->server);
+}
+
+void obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	struct obfs_ctx *restrict ctx = watcher->data;
+	obfs_ctx_stop(loop, ctx);
+	obfs_redial(ctx->obfs);
 }
 
 void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
