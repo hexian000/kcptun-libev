@@ -28,23 +28,16 @@
 	((err) == EINTR || (err) == EAGAIN || (err) == EWOULDBLOCK ||          \
 	 (err) == ENOBUFS || (err) == ENOMEM)
 
-#define LOG_RATELIMITEDF(level, loop, rate, format, ...)                       \
+#define LOG_RATELIMITEDF(level, now, rate, format, ...)                        \
 	do {                                                                   \
 		if (LOGLEVEL(level)) {                                         \
-			const ev_tstamp now = ev_now(loop);                    \
-			static ev_tstamp last_log = TSTAMP_NIL;                \
-			if (last_log == TSTAMP_NIL ||                          \
-			    now - last_log > (rate)) {                         \
-				LOG_WRITE(                                     \
-					level, __FILE__, __LINE__, format,     \
-					__VA_ARGS__);                          \
-				last_log = now;                                \
-			}                                                      \
+			RATELIMIT(                                             \
+				now, rate, LOG_F(level, format, __VA_ARGS__)); \
 		}                                                              \
 	} while (0)
 
-#define LOG_RATELIMITED(level, loop, rate, message)                            \
-	LOG_RATELIMITEDF(level, loop, rate, "%s", message)
+#define LOG_RATELIMITED(level, now, rate, message)                             \
+	LOG_RATELIMITEDF(level, now, rate, "%s", message)
 
 struct server;
 

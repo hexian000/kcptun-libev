@@ -30,7 +30,7 @@ uint32_t tstamp2ms(const ev_tstamp t)
 	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
 }
 
-bool split_tick(
+bool check_rate_limit(
 	ev_tstamp *restrict last, const ev_tstamp now, const double interval)
 {
 	const ev_tstamp last_tick = *last;

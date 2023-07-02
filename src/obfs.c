@@ -738,7 +738,7 @@ void obfs_redial(struct obfs *restrict obfs)
 		return;
 	}
 	struct ev_timer *restrict w_redial = &obfs->w_redial;
-	if (ev_is_active(w_redial)) {
+	if (ev_is_active(w_redial) || ev_is_pending(w_redial)) {
 		return;
 	}
 	obfs->client = NULL;
@@ -749,8 +749,8 @@ void obfs_redial(struct obfs *restrict obfs)
 		return;
 	}
 	static const double wait_schedule[] = { 5.0, 10.0, 30.0, 60.0 };
-	const double wait_time = wait_schedule[CLAMP(
-		(size_t)i, 0, ARRAY_SIZE(wait_schedule) - 1)];
+	const double wait_time =
+		wait_schedule[CLAMP(i, 0, (int)ARRAY_SIZE(wait_schedule) - 1)];
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		LOG_F(LOG_LEVEL_DEBUG,
 		      "obfs: scheduled redial #%d after %.0lfs",
@@ -839,8 +839,8 @@ obfs_ticker_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	const ev_tstamp now = ev_now(loop);
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
-	TICK_INTERVAL(now, 5.0, tick_listener(obfs));
-	TICK_INTERVAL(now, 10.0, tick_timeout(obfs));
+	RATELIMIT(now, 5.0, tick_listener(obfs));
+	RATELIMIT(now, 10.0, tick_timeout(obfs));
 }
 
 struct obfs *obfs_new(struct server *restrict s)
@@ -1033,7 +1033,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	}
 	{
 		struct ev_timer *restrict w_redial = &obfs->w_redial;
-		ev_timer_init(w_redial, obfs_redial_cb, 10.0, 0.0);
+		ev_timer_init(w_redial, obfs_redial_cb, 5.0, 0.0);
 		w_redial->data = obfs;
 	}
 	return true;
@@ -1232,8 +1232,9 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITEDF(
-				LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
+				LOG_LEVEL_DEBUG, now, 1.0,
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
@@ -1244,9 +1245,10 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (LOGLEVEL(LOG_LEVEL_DEBUG) && tcp.rst) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
-			"* obfs: rst from %s", addr_str);
+			LOG_LEVEL_DEBUG, now, 1.0, "* obfs: rst from %s",
+			addr_str);
 		return NULL;
 	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
@@ -1319,8 +1321,9 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITEDF(
-				LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
+				LOG_LEVEL_DEBUG, now, 1.0,
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
@@ -1331,9 +1334,10 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (LOGLEVEL(LOG_LEVEL_DEBUG) && tcp.rst) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_DEBUG, obfs->server->loop, 1.0,
-			"* obfs: rst from %s", addr_str);
+			LOG_LEVEL_DEBUG, now, 1.0, "* obfs: rst from %s",
+			addr_str);
 		return NULL;
 	}
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
@@ -1486,8 +1490,9 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_WARNING, obfs->server->loop, 1.0,
+			LOG_LEVEL_WARNING, now, 1.0,
 			"* obfs: can't send %" PRIu16 " bytes to unrelated %s",
 			msg->len, addr_str);
 		return false;
@@ -1598,7 +1603,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		if (is_startup_limited(obfs)) {
 			LOG_RATELIMITED(
-				LOG_LEVEL_ERROR, loop, 1.0,
+				LOG_LEVEL_ERROR, ev_now(loop), 1.0,
 				"* obfs: context limit exceeded, new connections refused");
 			if (close(fd) != 0) {
 				const int err = errno;

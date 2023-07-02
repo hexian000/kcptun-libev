@@ -27,13 +27,12 @@ extern struct mcache *msgpool;
 	} while (0)
 
 uint32_t tstamp2ms(ev_tstamp t);
-bool split_tick(ev_tstamp *last, ev_tstamp now, double interval);
+bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 
-/* run expr at an interval not shorter than specified */
-#define TICK_INTERVAL(now, interval, expr)                                     \
+#define RATELIMIT(now, interval, expr)                                         \
 	do {                                                                   \
-		static ev_tstamp last_tick = TSTAMP_NIL;                       \
-		if (split_tick(&last_tick, (now), (interval))) {               \
+		static ev_tstamp last = TSTAMP_NIL;                            \
+		if (check_rate_limit(&last, (now), (interval))) {              \
 			expr;                                                  \
 		}                                                              \
 	} while (0)

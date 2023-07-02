@@ -16,7 +16,7 @@ static void udp_reset(struct server *restrict s)
 		return;
 	}
 	LOG_RATELIMITED(
-		LOG_LEVEL_WARNING, s->loop, 1.0,
+		LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
 		"udp connection refused (wrong port number?)");
 }
 

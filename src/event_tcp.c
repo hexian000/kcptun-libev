@@ -92,7 +92,7 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				LOGW_F("close: %s", strerror(err));
 			}
 			LOG_RATELIMITED(
-				LOG_LEVEL_ERROR, loop, 1.0,
+				LOG_LEVEL_ERROR, ev_now(loop), 1.0,
 				"* max session count exceeded, new connections refused");
 			return;
 		}

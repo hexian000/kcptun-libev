@@ -137,7 +137,7 @@ void ticker_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	const ev_tstamp now = ev_now(loop);
 	struct server *restrict s = (struct server *)watcher->data;
-	TICK_INTERVAL(now, 1.0, tick_keepalive(s));
-	TICK_INTERVAL(now, 5.0, tick_listener(s));
-	TICK_INTERVAL(now, 10.0, tick_timeout(s));
+	RATELIMIT(now, 1.0, tick_keepalive(s));
+	RATELIMIT(now, 5.0, tick_listener(s));
+	RATELIMIT(now, 10.0, tick_timeout(s));
 }

@@ -143,12 +143,12 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOG_RATELIMITEDF(
-				LOG_LEVEL_WARNING, s->loop, 1.0,
+				LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
 				"* session %08" PRIX32 " not found", conv);
 			ss0_reset(s, sa, conv);
 			return;
 		}
-		/* serve new kcp session */
+		/* accept new kcp session */
 		ss = session_new(s, sa, conv);
 		if (ss == NULL) {
 			LOGE("out of memory");
@@ -283,15 +283,16 @@ bool queue_send(
 	}
 #endif
 
+	const ev_tstamp now = ev_now(s->loop);
 	if (q->mq_send_len >= q->mq_send_cap) {
 		LOG_RATELIMITEDF(
-			LOG_LEVEL_WARNING, s->loop, 1.0,
+			LOG_LEVEL_WARNING, now, 1.0,
 			"* mq_send is full, %" PRIu16 " bytes discarded",
 			msg->len);
 		msgframe_delete(q, msg);
 		return false;
 	}
-	msg->ts = ev_now(s->loop);
+	msg->ts = now;
 	msg->hdr.msg_namelen = getsocklen(msg->hdr.msg_name);
 	msg->iov.iov_len = msg->len;
 	q->mq_send[q->mq_send_len++] = msg;
