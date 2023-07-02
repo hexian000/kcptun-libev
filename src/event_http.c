@@ -299,7 +299,13 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		return;
 	}
 	const struct http_message *restrict hdr = &ctx->http_msg;
-	if (strcasecmp(hdr->req.method, "POST") != 0) {
+
+	bool stateless;
+	if (strcasecmp(hdr->req.method, "GET") == 0) {
+		stateless = true;
+	} else if (strcasecmp(hdr->req.method, "POST") == 0) {
+		stateless = false;
+	} else {
 		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
 		return;
 	}
@@ -336,11 +342,27 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	buf = http_resphdr_init(buf, HTTP_OK);
 	buf = RESPHDR_ADD(buf, "Content-Type", "text/plain; charset=utf-8");
 	buf = RESPHDR_ADD(buf, "X-Content-Type-Options", "nosniff");
+	if (stateless) {
+		buf = RESPHDR_ADD(buf, "Cache-Control", "no-store");
+	}
 	buf = RESPHDR_END(buf);
 	if (banner) {
 		buf = VBUF_APPENDCONST(
 			buf, "" PROJECT_NAME " " PROJECT_VER "\n"
 			     "  " PROJECT_HOMEPAGE "\n\n");
+	}
+	{
+		const time_t server_time = time(NULL);
+		char timestamp[32];
+		(void)strftime(
+			timestamp, sizeof(timestamp), "%FT%T%z",
+			localtime(&server_time));
+		buf = vbuf_appendf(buf, "server time: %s\n", timestamp);
+	}
+
+	if (stateless) {
+		http_set_wbuf(ctx, buf);
+		return;
 	}
 
 	struct server *restrict s = ctx->data;
