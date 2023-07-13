@@ -23,6 +23,8 @@ struct listener {
 
 	struct ev_io w_accept_http;
 	int fd_http;
+
+	struct ev_timer w_timer;
 };
 
 struct pktconn {
@@ -43,15 +45,18 @@ struct server {
 	struct pktconn pkt;
 	struct hashtable *sessions;
 	struct ev_timer w_kcp_update;
-	struct ev_timer w_timer;
+	struct ev_timer w_keepalive;
+	struct ev_timer w_resolve;
+	struct ev_timer w_timeout;
 	double interval;
 	double dial_timeout;
 	double session_timeout, session_keepalive;
 	double linger, time_wait;
 	double keepalive, timeout;
+	double ping_timeout;
 	struct link_stats stats, last_stats;
 	uint32_t m_conv;
-	ev_tstamp uptime;
+	ev_tstamp started;
 	ev_tstamp last_stats_time;
 	ev_tstamp last_resolve_time;
 	clock_t clock, last_clock;
@@ -61,7 +66,8 @@ struct server *server_new(struct ev_loop *loop, struct config *conf);
 bool server_start(struct server *s);
 void server_ping(struct server *s);
 struct vbuffer *
-server_stats(struct server *s, struct vbuffer *buf, bool update, int level);
+server_stats_const(const struct server *s, struct vbuffer *buf, int level);
+struct vbuffer *server_stats(struct server *s, struct vbuffer *buf, int level);
 bool server_resolve(struct server *s);
 void server_stop(struct server *s);
 void server_free(struct server *s);

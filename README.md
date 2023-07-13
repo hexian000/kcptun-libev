@@ -96,7 +96,7 @@ In practice, we suggest user to use `--genpsk` command-line argument to generate
 
 *\* Specifically: x86 CPU with SSSE3, aesni and pclmul.*
 
-kcptun-libev ships with additional encryption methods to ensure that users have alternatives for specific reasons. In most cases, the recommended one is just what you need.
+kcptun-libev ships with additional encryption methods to ensure that users have alternatives for specific reasons. Although the strength of each method is discussed, in most cases the recommended one just works.
 
 ### Obfuscation
 

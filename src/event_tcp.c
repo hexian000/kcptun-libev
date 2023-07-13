@@ -68,26 +68,29 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 	struct server *restrict s = watcher->data;
 	struct config *restrict conf = s->conf;
-	sockaddr_max_t m_sa;
-	socklen_t sa_len = sizeof(m_sa);
-	int client_fd;
 
 	for (;;) {
-		sa_len = sizeof(m_sa);
+		sockaddr_max_t addr;
+		socklen_t addrlen = sizeof(addr);
 		/* accept client request */
-		client_fd = accept(watcher->fd, &m_sa.sa, &sa_len);
-		if (client_fd < 0) {
+		const int fd = accept(watcher->fd, &addr.sa, &addrlen);
+		if (fd < 0) {
 			const int err = errno;
 			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
 			LOGE_F("accept: %s", strerror(err));
-			/* sleep for a while, see ticker_cb */
+			/* sleep for a while, see listener_cb */
 			ev_io_stop(loop, watcher);
+			struct ev_timer *restrict w_timer =
+				&s->listener.w_timer;
+			if (!ev_is_active(w_timer)) {
+				ev_timer_start(loop, w_timer);
+			}
 			return;
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
-			if (close(client_fd) != 0) {
+			if (close(fd) != 0) {
 				const int err = errno;
 				LOGW_F("close: %s", strerror(err));
 			}
@@ -96,18 +99,16 @@ void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				"* max session count exceeded, new connections refused");
 			return;
 		}
-		if (!socket_set_nonblock(client_fd)) {
+		if (!socket_set_nonblock(fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
-			(void)close(client_fd);
+			(void)close(fd);
 			return;
 		}
-		socket_set_tcp(
-			client_fd, conf->tcp_nodelay, conf->tcp_keepalive);
-		socket_set_buffer(
-			client_fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
+		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
+		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 
-		accept_one((struct server *)watcher->data, client_fd, &m_sa.sa);
+		accept_one(s, fd, &addr.sa);
 	}
 }
 

@@ -92,6 +92,7 @@ void socket_bind_netdev(const int fd, const char *netdev)
 #ifdef SO_BINDTODEVICE
 	char ifname[IFNAMSIZ];
 	(void)strncpy(ifname, netdev, sizeof(ifname) - 1);
+	ifname[sizeof(ifname) - 1] = '\0';
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_BINDTODEVICE, ifname, sizeof(ifname))) {
 		const int err = errno;
@@ -223,20 +224,20 @@ static int format_sa_inet6(
 		buf, buf_size, "[%s%%%" PRIu32 "]:%" PRIu16, s, scope, port);
 }
 
-void format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
+int format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
 {
-	int ret = -1;
 	switch (sa->sa_family) {
 	case AF_INET:
-		ret = format_sa_inet((struct sockaddr_in *)sa, buf, buf_size);
-		break;
+		return format_sa_inet((struct sockaddr_in *)sa, buf, buf_size);
 	case AF_INET6:
-		ret = format_sa_inet6((struct sockaddr_in6 *)sa, buf, buf_size);
-		break;
+		return format_sa_inet6(
+			(struct sockaddr_in6 *)sa, buf, buf_size);
+
+	default:
+		return snprintf(
+			buf, buf_size, "<af:%jd>", (intmax_t)sa->sa_family);
 	}
-	if (ret < 0) {
-		strncpy(buf, "???", buf_size);
-	}
+	FAIL();
 }
 
 struct sockaddr *

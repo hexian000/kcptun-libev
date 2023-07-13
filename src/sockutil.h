@@ -33,7 +33,7 @@ socklen_t getsocklen(const struct sockaddr *sa);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);
 bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest);
 struct sockaddr *sa_clone(const struct sockaddr *src);
-void format_sa(const struct sockaddr *sa, char *s, size_t buf_size);
+int format_sa(const struct sockaddr *sa, char *buf, size_t buf_size);
 
 enum {
 	RESOLVE_TCP = 0x0,

@@ -3,7 +3,6 @@
 
 #include "event.h"
 #include "event_impl.h"
-#include "session.h"
 #include "utils/buffer.h"
 #include "utils/check.h"
 #include "utils/slog.h"
@@ -18,7 +17,6 @@
 #include <ev.h>
 
 #include <unistd.h>
-#include <strings.h>
 #include <sys/socket.h>
 
 #include <stddef.h>
@@ -70,9 +68,23 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct server *restrict s = watcher->data;
-	sockaddr_max_t m_sa;
-	socklen_t len = sizeof(m_sa);
-	const int fd = accept(watcher->fd, &m_sa.sa, &len);
+	sockaddr_max_t addr;
+	socklen_t addrlen = sizeof(addr);
+	const int fd = accept(watcher->fd, &addr.sa, &addrlen);
+	if (fd < 0) {
+		const int err = errno;
+		if (IS_TRANSIENT_ERROR(err)) {
+			return;
+		}
+		LOGE_F("accept: %s", strerror(err));
+		/* sleep for a while, see listener_cb */
+		ev_io_stop(loop, watcher);
+		struct ev_timer *restrict w_timer = &s->listener.w_timer;
+		if (!ev_is_active(w_timer)) {
+			ev_timer_start(loop, w_timer);
+		}
+		return;
+	}
 	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
@@ -88,12 +100,12 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		return;
 	}
-	ctx->loop = s->loop;
+	ctx->loop = loop;
 	ctx->data = s;
 	ctx->fd = fd;
 	ctx->http_msg = (struct http_message){ 0 };
 	ctx->http_nxt = NULL;
-	buf_init(&ctx->rbuf, HTTP_MAX_REQUEST);
+	BUF_INIT(ctx->rbuf, HTTP_MAX_REQUEST);
 	ctx->wbuf = NULL;
 
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -109,7 +121,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ev_timer_start(loop, w_timeout);
 	if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 		char addr_str[64];
-		format_sa(&m_sa.sa, addr_str, sizeof(addr_str));
+		format_sa(&addr.sa, addr_str, sizeof(addr_str));
 		LOGV_F("http: accept %s", addr_str);
 	}
 }
@@ -219,7 +231,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 	}
 	wbuf->len -= nbsend;
 	if (len > 0) {
-		buf_consume(wbuf, nbsend);
+		VBUF_CONSUME(wbuf, nbsend);
 		struct ev_io *restrict w_write = &ctx->w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(ctx->loop, w_write);
@@ -245,7 +257,7 @@ void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents
 
 static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)
 {
-	vbuf_free(ctx->wbuf);
+	VBUF_FREE(ctx->wbuf);
 	ctx->wbuf = buf;
 }
 
@@ -258,7 +270,7 @@ http_resphdr_init(struct vbuffer *buf, const uint16_t code)
 	if (buf != NULL) {
 		buf->len = 0;
 	}
-	return vbuf_appendf(
+	return VBUF_APPENDF(
 		buf,
 		"HTTP/1.0 %" PRIu16 " %s\r\n"
 		"Date: %.*s\r\n"
@@ -274,7 +286,7 @@ http_resphdr_init(struct vbuffer *buf, const uint16_t code)
 static void
 http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 {
-	struct vbuffer *restrict buf = vbuf_alloc(NULL, 512);
+	struct vbuffer *restrict buf = VBUF_NEW(512);
 	if (buf == NULL) {
 		LOGOOM();
 		return;
@@ -299,7 +311,6 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		return;
 	}
 	const struct http_message *restrict hdr = &ctx->http_msg;
-
 	bool stateless;
 	if (strcmp(hdr->req.method, "GET") == 0) {
 		stateless = true;
@@ -322,19 +333,26 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 				banner = false;
 			}
 		} else if (strcmp(key, "sessions") == 0) {
-			if (strcmp(value, "none") == 0) {
+			if (strcmp(value, "0") == 0 ||
+			    strcmp(value, "none") == 0) {
 				state_level = -1;
-			} else if (strcmp(value, "connected") == 0) {
+			} else if (
+				strcmp(value, "1") == 0 ||
+				strcmp(value, "connected") == 0) {
 				state_level = STATE_CONNECTED;
-			} else if (strcmp(value, "active") == 0) {
+			} else if (
+				strcmp(value, "2") == 0 ||
+				strcmp(value, "active") == 0) {
 				state_level = STATE_LINGER;
-			} else if (strcmp(value, "all") == 0) {
+			} else if (
+				strcmp(value, "3") == 0 ||
+				strcmp(value, "all") == 0) {
 				state_level = STATE_MAX;
 			}
 		}
 	}
 
-	struct vbuffer *restrict buf = vbuf_reserve(NULL, 4000);
+	struct vbuffer *restrict buf = VBUF_NEW(4000);
 	if (buf == NULL) {
 		LOGOOM();
 		return;
@@ -357,22 +375,25 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		(void)strftime(
 			timestamp, sizeof(timestamp), "%FT%T%z",
 			localtime(&server_time));
-		buf = vbuf_appendf(buf, "server time: %s\n\n", timestamp);
+		buf = VBUF_APPENDF(buf, "server time: %s\n\n", timestamp);
 	}
 
 	struct server *restrict s = ctx->data;
-	buf = server_stats(s, buf, !stateless, state_level);
-
 	if (stateless) {
-		http_set_wbuf(ctx, buf);
-		return;
+		buf = server_stats_const(s, buf, state_level);
+	} else {
+		buf = server_stats(s, buf, state_level);
 	}
 
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
 		buf = VBUF_APPENDCONST(buf, "\n");
-		buf = obfs_stats(obfs, buf);
+		if (stateless) {
+			buf = obfs_stats_const(obfs, buf);
+		} else {
+			buf = obfs_stats(obfs, buf);
+		}
 	}
 #endif
 #if MCACHE_STATS
@@ -381,7 +402,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		static size_t last_query = 0;
 		const size_t hit = msgpool->hit - last_hit;
 		const size_t query = msgpool->query - last_query;
-		buf = vbuf_appendf(
+		buf = VBUF_APPENDF(
 			buf,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
 			msgpool->num_elem, msgpool->cache_size, hit,
@@ -417,7 +438,11 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 		return;
 	}
 	if (strcmp(segment, "healthy") == 0) {
-		struct vbuffer *restrict buf = vbuf_alloc(NULL, 512);
+		if (uri.path != NULL) {
+			http_resp_errpage(ctx, HTTP_NOT_FOUND);
+			return;
+		}
+		struct vbuffer *restrict buf = VBUF_NEW(512);
 		if (buf == NULL) {
 			LOGOOM();
 			return;

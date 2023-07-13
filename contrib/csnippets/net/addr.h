@@ -7,13 +7,21 @@
 #include <stdbool.h>
 
 /**
+ * @defgroup addr
+ * @brief Utilities to process network address strings.
+ * @{
+ */
+
+/**
  * @brief Split a socket address into host & port.
  * @details No allocations, the raw string is destructed.
  * @param str Socket address string, will be destructed.
- * @param host [OUT] Host name string. IPv6 brackets are removed.
- * @param port [OUT] Port number or service string.
+ * @param[out] host Host name string. IPv6 brackets are removed.
+ * @param[out] port Port number or service string.
  * @return false if no colon in str. Only in this case, str is not destructed.
  */
 bool splithostport(char *str, char **host, char **port);
+
+/** @} */
 
 #endif /* NET_ADDR_H */

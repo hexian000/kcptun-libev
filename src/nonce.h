@@ -22,11 +22,14 @@ struct ppbloom {
 struct noncegen {
 	enum noncegen_method method;
 	struct ppbloom ppbloom;
-	struct vbuffer *nonce_buf;
+	struct {
+		BUFFER_HDR;
+		unsigned char data[32];
+	} buf;
 };
 
 struct noncegen *
-noncegen_create(enum noncegen_method method, size_t nonce_len, bool server);
+noncegen_create(enum noncegen_method method, size_t nonce_len, bool strict);
 void noncegen_init(struct noncegen *g);
 const unsigned char *noncegen_next(struct noncegen *g);
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce);

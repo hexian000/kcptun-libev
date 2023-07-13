@@ -3,11 +3,16 @@
 
 #ifndef ALGO_HASHTABLE_H
 #define ALGO_HASHTABLE_H
-/* hashtable is an unordered map whose keys are of fixed length */
 
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+/**
+ * @defgroup hashtable
+ * @brief Unordered map whose keys are of fixed length.
+ * @{
+ */
 
 #ifndef HASHKEY_LEN
 #define HASHKEY_LEN 32
@@ -101,5 +106,7 @@ void table_iterate(struct hashtable *table, table_iterate_cb f, void *data);
  * @return Number of items in the table.
  */
 int table_size(struct hashtable *table);
+
+/** @} */
 
 #endif /* ALGO_HASHTABLE_H */

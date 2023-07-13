@@ -32,32 +32,25 @@ ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 
 struct noncegen *noncegen_create(
 	const enum noncegen_method method, const size_t nonce_len,
-	const bool server)
+	const bool strict)
 {
 	struct noncegen *restrict g = malloc(sizeof(struct noncegen));
 	if (g == NULL) {
 		LOGOOM();
 		return NULL;
 	}
-	struct vbuffer *restrict buf = vbuf_alloc(NULL, nonce_len);
-	if (buf == NULL) {
-		LOGOOM();
-		free(g);
-		return NULL;
-	}
 
-	const size_t entries = server ? 1u << 20u : 1u << 14u;
-	const double error = server ? 0x1p-20 : 0x1p-30;
-	*g = (struct noncegen){
-		.method = method,
-		.ppbloom =
-			(struct ppbloom){
-				.bloom_count = { 0, 0 },
-				.current = 0,
-				.entries = entries,
-			},
-		.nonce_buf = buf,
+	const size_t entries = strict ? 1u << 20u : 1u << 14u;
+	const double error = strict ? 0x1p-20 : 0x1p-30;
+	g->method = method;
+	g->ppbloom = (struct ppbloom){
+		.bloom_count = { 0, 0 },
+		.current = 0,
+		.entries = entries,
 	};
+	BUF_INIT(g->buf, sizeof(g->buf.data));
+	CHECKMSG(nonce_len <= g->buf.cap, "nonce too long");
+	g->buf.len = nonce_len;
 	if (bloom_init(&g->ppbloom.bloom[0], (int)entries, error)) {
 		noncegen_free(g);
 		return NULL;
@@ -72,24 +65,20 @@ struct noncegen *noncegen_create(
 
 void noncegen_init(struct noncegen *restrict g)
 {
-	struct vbuffer *restrict buf = g->nonce_buf;
-	buf->len = buf->cap;
 	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
 	if (g->method == noncegen_counter) {
-		randombytes_buf(buf->data, buf->len);
+		randombytes_buf(g->buf.data, g->buf.len);
 	}
 }
 
 static void noncegen_fill_counter(struct noncegen *restrict g)
 {
-	struct vbuffer *restrict buf = g->nonce_buf;
-	sodium_increment(buf->data, buf->len);
+	sodium_increment(g->buf.data, g->buf.len);
 }
 
 static void noncegen_fill_random(struct noncegen *restrict g)
 {
-	struct vbuffer *restrict buf = g->nonce_buf;
-	randombytes_buf(buf->data, buf->len);
+	randombytes_buf(g->buf.data, g->buf.len);
 }
 
 const unsigned char *noncegen_next(struct noncegen *restrict g)
@@ -102,12 +91,12 @@ const unsigned char *noncegen_next(struct noncegen *restrict g)
 		noncegen_fill_counter(g);
 		break;
 	}
-	return g->nonce_buf->data;
+	return g->buf.data;
 }
 
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce)
 {
-	return !ppbloom_check_add(&g->ppbloom, nonce, g->nonce_buf->len);
+	return !ppbloom_check_add(&g->ppbloom, nonce, g->buf.len);
 }
 
 void noncegen_free(struct noncegen *g)
@@ -117,7 +106,6 @@ void noncegen_free(struct noncegen *g)
 	}
 	bloom_free(&g->ppbloom.bloom[0]);
 	bloom_free(&g->ppbloom.bloom[1]);
-	vbuf_free(g->nonce_buf);
 	free(g);
 }
 

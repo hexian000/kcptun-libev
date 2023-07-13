@@ -26,7 +26,6 @@
 
 #include <ev.h>
 #include <unistd.h>
-#include <strings.h>
 #include <sys/socket.h>
 #include <netinet/if_ether.h>
 #include <netinet/in.h>
@@ -54,7 +53,8 @@ struct obfs {
 	struct server *server;
 	struct hashtable *contexts;
 	struct ev_io w_accept;
-	struct ev_timer w_timer;
+	struct ev_timer w_listener;
+	struct ev_timer w_timeout;
 	struct obfs_ctx *client; /* for reference only, no ownership */
 	int redial_count;
 	struct ev_timer w_redial;
@@ -142,7 +142,7 @@ obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 
-static void obfs_redial(struct obfs *restrict obfs);
+static void obfs_sched_redial(struct obfs *restrict obfs);
 
 static void obfs_tcp_setup(const int fd)
 {
@@ -488,8 +488,8 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	ctx->http_keepalive = false;
 	ctx->num_ecn = ctx->num_ece = 0;
 	ctx->created = ctx->last_seen = TSTAMP_NIL;
-	buf_init(&ctx->rbuf, OBFS_MAX_REQUEST);
-	buf_init(&ctx->wbuf, OBFS_MAX_REQUEST);
+	BUF_INIT(ctx->rbuf, OBFS_MAX_REQUEST);
+	BUF_INIT(ctx->wbuf, OBFS_MAX_REQUEST);
 	return ctx;
 }
 
@@ -516,7 +516,7 @@ static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
 	(void)table_del(obfs->contexts, &key, NULL);
 	if (obfs->client == ctx) {
-		obfs_redial(obfs);
+		obfs_sched_redial(obfs);
 	}
 	if (!ctx->authenticated) {
 		assert(obfs->unauthenticated > 0u);
@@ -561,7 +561,7 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 	ctx->wbuf.len += nbsend;
 	struct ev_io *restrict w_write = &ctx->w_write;
 	if (len > 0) {
-		buf_consume(&ctx->wbuf, nbsend);
+		BUF_CONSUME(ctx->wbuf, nbsend);
 		if (!ev_is_active(w_write)) {
 			ev_io_start(loop, w_write);
 		}
@@ -730,7 +730,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	return true;
 }
 
-void obfs_redial(struct obfs *restrict obfs)
+void obfs_sched_redial(struct obfs *restrict obfs)
 {
 	struct server *restrict s = obfs->server;
 	struct config *restrict conf = s->conf;
@@ -789,7 +789,7 @@ static bool obfs_ctx_timeout_filt(
 			LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	}
 	if (obfs->client == ctx) {
-		obfs_redial(obfs);
+		obfs_sched_redial(obfs);
 	}
 	if (!ctx->authenticated) {
 		assert(obfs->unauthenticated > 0u);
@@ -797,21 +797,6 @@ static bool obfs_ctx_timeout_filt(
 	}
 	obfs_ctx_free(loop, ctx);
 	return false;
-}
-
-static void tick_listener(struct obfs *restrict obfs)
-{
-	/* check & restart accept watcher */
-	struct ev_io *restrict w_accept = &obfs->w_accept;
-	if (obfs->fd != -1 && !ev_is_active(w_accept)) {
-		ev_io_start(obfs->server->loop, w_accept);
-	}
-}
-
-static void tick_timeout(struct obfs *restrict obfs)
-{
-	/* context timeout */
-	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 }
 
 static void
@@ -834,13 +819,25 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 }
 
 static void
-obfs_ticker_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+obfs_listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	const ev_tstamp now = ev_now(loop);
 	struct obfs *restrict obfs = (struct obfs *)watcher->data;
-	RATELIMIT(now, 5.0, tick_listener(obfs));
-	RATELIMIT(now, 10.0, tick_timeout(obfs));
+	/* check & restart accept watcher */
+	struct ev_io *restrict w_accept = &obfs->w_accept;
+	if (obfs->fd != -1 && !ev_is_active(w_accept)) {
+		ev_io_start(loop, w_accept);
+	}
+}
+
+static void
+obfs_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	UNUSED(loop);
+	struct obfs *restrict obfs = (struct obfs *)watcher->data;
+	/* context timeout */
+	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 }
 
 struct obfs *obfs_new(struct server *restrict s)
@@ -883,7 +880,7 @@ bool obfs_resolve(struct obfs *obfs)
 			return false;
 		}
 	} else if (conf->mode & MODE_CLIENT) {
-		obfs_redial(obfs);
+		obfs_sched_redial(obfs);
 	}
 	return true;
 }
@@ -898,21 +895,51 @@ static bool print_ctx_iter(
 {
 	UNUSED(t);
 	UNUSED(key);
-	struct obfs_stats_ctx *restrict stats_ctx = user;
-	struct obfs_ctx *restrict ctx = value;
+	const struct obfs_ctx *restrict ctx = value;
+	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-	if (!ctx->captured) {
-		stats_ctx->buf = vbuf_appendf(
-			stats_ctx->buf, "[%s] ? seen=%.0lfs\n", addr_str,
-			stats_ctx->now - ctx->last_seen);
-		return true;
+	char state = '?';
+	if (ctx->captured) {
+		state = ctx->authenticated ? '-' : '>';
 	}
-	stats_ctx->buf = vbuf_appendf(
-		stats_ctx->buf, "[%s] %c seen=%.0lfs ecn(rx/tx)=%ju/%ju\n",
-		addr_str, ctx->authenticated ? '-' : '>',
-		stats_ctx->now - ctx->last_seen, ctx->num_ecn, ctx->num_ece);
+	stats->buf = VBUF_APPENDF(
+		stats->buf, "[%s] %c seen=%.0lfs ecn(rx/tx)=%ju/%ju\n",
+		addr_str, state, stats->now - ctx->last_seen, ctx->num_ecn,
+		ctx->num_ece);
 	return true;
+}
+
+struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
+{
+	const ev_tstamp now = ev_now(obfs->server->loop);
+
+	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
+		.now = now,
+		.buf = buf,
+	};
+	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
+	buf = stats_ctx.buf;
+
+	const int num_ctx = table_size(obfs->contexts);
+	const size_t unauthenticated = obfs->unauthenticated;
+	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
+	const size_t authenticated = (size_t)num_ctx - unauthenticated;
+
+	const struct obfs_stats *restrict stats = &obfs->stats;
+
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
+	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
+
+#undef FORMAT_BYTES
+
+	buf = VBUF_APPENDF(
+		buf, "  = %zu(+%zu) contexts; drop %s\n", authenticated,
+		unauthenticated, byt_drop);
+	return buf;
 }
 
 struct vbuffer *
@@ -920,14 +947,12 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 {
 	const ev_tstamp now = ev_now(obfs->server->loop);
 
-	{
-		struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
-			.now = now,
-			.buf = buf,
-		};
-		table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
-		buf = stats_ctx.buf;
-	}
+	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
+		.now = now,
+		.buf = buf,
+	};
+	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
+	buf = stats_ctx.buf;
 
 	const double dt = now - obfs->last_stats_time;
 	const struct obfs_stats *restrict stats = &obfs->stats;
@@ -941,7 +966,6 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 		.byt_tx = stats->byt_tx - last_stats->byt_tx,
 	};
 
-	const double dpkt_cap = (double)(dstats.pkt_cap) / dt;
 	const int num_ctx = table_size(obfs->contexts);
 	const size_t unauthenticated = obfs->unauthenticated;
 	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
@@ -951,17 +975,15 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
-	FORMAT_BYTES(dbyt_cap, (double)dstats.byt_cap / dt);
-	FORMAT_BYTES(dbyt_rx, (double)dstats.byt_rx / dt);
-	FORMAT_BYTES(dbyt_tx, (double)dstats.byt_tx / dt);
+	const double dpkt_drop = (double)(dstats.pkt_cap - dstats.pkt_rx) / dt;
+	FORMAT_BYTES(dbyt_drop, (double)(dstats.byt_cap - dstats.byt_rx) / dt);
 	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
 
-	buf = vbuf_appendf(
-		buf,
-		"  = %zu(+%zu) contexts, rx %s/s, tx %s/s, capture %.1lf/s (%s/s), drop %s\n",
-		authenticated, unauthenticated, dbyt_rx, dbyt_tx, dpkt_cap,
-		dbyt_cap, byt_drop);
 #undef FORMAT_BYTES
+
+	buf = VBUF_APPENDF(
+		buf, "  = %zu(+%zu) contexts; drop %.1lf/s (%s/s), %s\n",
+		authenticated, unauthenticated, dpkt_drop, dbyt_drop, byt_drop);
 
 	/* rotate stats */
 	obfs->last_stats = obfs->stats;
@@ -1025,12 +1047,15 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		ev_io_start(s->loop, w_accept);
 	}
 	{
-		struct ev_timer *restrict w_timer = &obfs->w_timer;
-		ev_timer_init(w_timer, obfs_ticker_cb, 5.0, 5.0);
-		w_timer->data = obfs;
-		ev_timer_start(s->loop, w_timer);
-	}
-	{
+		struct ev_timer *restrict w_listener = &obfs->w_listener;
+		ev_timer_init(w_listener, obfs_listener_cb, 0.5, 0.0);
+		w_listener->data = obfs;
+
+		struct ev_timer *restrict w_timeout = &obfs->w_timeout;
+		ev_timer_init(w_timeout, obfs_timeout_cb, 10.0, 10.0);
+		w_timeout->data = obfs;
+		ev_timer_start(s->loop, w_timeout);
+
 		struct ev_timer *restrict w_redial = &obfs->w_redial;
 		ev_timer_init(w_redial, obfs_redial_cb, 5.0, 0.0);
 		w_redial->data = obfs;
@@ -1045,8 +1070,7 @@ static bool obfs_shutdown_filt(
 	UNUSED(key);
 	struct obfs_ctx *restrict ctx = (struct obfs_ctx *)value;
 	struct obfs *restrict obfs = (struct obfs *)user;
-	struct ev_loop *loop = obfs->server->loop;
-	obfs_ctx_free(loop, ctx);
+	obfs_ctx_free(obfs->server->loop, ctx);
 	return false;
 }
 
@@ -1056,13 +1080,10 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 	table_filter(obfs->contexts, obfs_shutdown_filt, obfs);
 	obfs->client = NULL;
 	struct ev_loop *loop = obfs->server->loop;
-	{
-		struct ev_timer *restrict w_timer = &obfs->w_timer;
-		ev_timer_stop(loop, w_timer);
-	}
+	ev_timer_stop(loop, &obfs->w_listener);
+	ev_timer_stop(loop, &obfs->w_timeout);
 	if (obfs->fd != -1) {
-		struct ev_io *restrict w_accept = &obfs->w_accept;
-		ev_io_stop(loop, w_accept);
+		ev_io_stop(loop, &obfs->w_accept);
 		if (close(obfs->fd) != 0) {
 			const int err = errno;
 			LOGW_F("close: %s", strerror(err));
@@ -1070,8 +1091,7 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		obfs->fd = -1;
 	}
 	if (obfs->cap_fd != -1) {
-		struct ev_io *restrict w_read = &pkt->w_read;
-		ev_io_stop(loop, w_read);
+		ev_io_stop(loop, &pkt->w_read);
 		if (close(obfs->cap_fd) != 0) {
 			const int err = errno;
 			LOGW_F("close: %s", strerror(err));
@@ -1079,8 +1099,7 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		obfs->cap_fd = -1;
 	}
 	if (obfs->raw_fd != -1) {
-		struct ev_io *restrict w_write = &pkt->w_write;
-		ev_io_stop(loop, w_write);
+		ev_io_stop(loop, &pkt->w_write);
 		if (close(obfs->raw_fd) != 0) {
 			const int err = errno;
 			LOGW_F("close: %s", strerror(err));
@@ -1596,8 +1615,9 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 				break;
 			}
 			LOGE_F("accept: %s", strerror(err));
-			/* sleep for a while, see obfs_ticker_cb */
+			/* sleep for a while, see obfs_listener_cb */
 			ev_io_stop(loop, watcher);
+			ev_timer_start(loop, &obfs->w_listener);
 			return;
 		}
 		if (is_startup_limited(obfs)) {
@@ -1790,13 +1810,13 @@ void obfs_client_read_cb(
 		}
 		LOGE_F("read: %s", strerror(err));
 		obfs_ctx_stop(loop, ctx);
-		obfs_redial(obfs);
+		obfs_sched_redial(obfs);
 		return;
 	}
 	if (nbrecv == 0) {
 		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "got server eof");
 		obfs_ctx_stop(loop, ctx);
-		obfs_redial(obfs);
+		obfs_sched_redial(obfs);
 		return;
 	}
 	ctx->rbuf.len += nbrecv;
@@ -1849,7 +1869,7 @@ void obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	obfs_ctx_stop(loop, ctx);
-	obfs_redial(ctx->obfs);
+	obfs_sched_redial(ctx->obfs);
 }
 
 void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)

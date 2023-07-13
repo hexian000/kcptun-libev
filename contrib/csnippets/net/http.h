@@ -8,6 +8,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/**
+ * @defgroup http
+ * @brief RFC 1945: Hypertext Transfer Protocol -- HTTP/1.0
+ * @{
+ */
+
 enum http_status_code {
 	HTTP_CONTINUE = 100,
 	HTTP_OK = 200,
@@ -53,7 +59,7 @@ struct http_message {
  * @brief Parse a HTTP request/response line.
  * @details No allocations, the raw message until next position is destructed.
  * @param buf Raw message buffer.
- * @param msg [OUT] Parsed header fields.
+ * @param[out] msg Parsed header fields.
  * @return The start position of next parsing, or NULL when parsing failed.
  * If the position is not moved, wait for more data.
  */
@@ -63,8 +69,8 @@ char *http_parse(char *buf, struct http_message *msg);
  * @brief Parse a HTTP header line.
  * @details No allocations, the raw message until next position is destructed.
  * @param buf HTTP header line start.
- * @param key [OUT] Header key, or NULL when HTTP header ends.
- * @param value [OUT] Header value, or NULL when HTTP header ends.
+ * @param[out] key Header key, or NULL when HTTP header ends.
+ * @param[out] value Header value, or NULL when HTTP header ends.
  * @return The start position of next parsing, or NULL when parsing failed.
  * If the position is not moved, wait for more data.
  */
@@ -80,7 +86,7 @@ const char *http_status(uint16_t code);
 
 /**
  * @brief Generate a date string in RFC 1123 format.
- * @param buf [OUT] string buffer
+ * @param[out] buf string buffer
  * @param buf_size size of string buffer
  * @return Length of the generated string.
  */
@@ -88,12 +94,14 @@ size_t http_date(char *buf, size_t buf_size);
 
 /**
  * @brief Generate an error response.
- * @param buf [OUT] string buffer
+ * @param[out] buf string buffer
  * @param buf_size size of string buffer
  * @param code HTTP status code
  * @return snprintf result, or 0 if the code is unknown.
  * @see enum http_status_code
  */
 int http_error(char *buf, size_t buf_size, uint16_t code);
+
+/** @} */
 
 #endif /* NET_HTTP_H */

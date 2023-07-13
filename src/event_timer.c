@@ -15,7 +15,6 @@
 #include <ev.h>
 
 #include <inttypes.h>
-#include <math.h>
 
 static bool
 timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
@@ -78,66 +77,99 @@ timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
 	return true;
 }
 
-static void tick_keepalive(struct server *restrict s)
+void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	if ((s->conf->mode & MODE_CLIENT) == 0) {
-		return;
+	CHECK_EV_ERROR(revents);
+	struct listener *restrict l = (struct listener *)watcher->data;
+	/* check & restart accept watchers */
+	struct ev_io *restrict w_accept = &l->w_accept;
+	if (l->fd != -1 && !ev_is_active(w_accept)) {
+		ev_io_start(loop, w_accept);
 	}
-	if (!isnormal(s->keepalive) || signbit(s->keepalive)) {
-		return;
+	struct ev_io *restrict w_accept_http = &l->w_accept_http;
+	if (l->fd_http != -1 && !ev_is_active(w_accept_http)) {
+		ev_io_start(loop, w_accept_http);
 	}
-	const ev_tstamp now = ev_now(s->loop);
+}
+
+void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	struct server *restrict s = (struct server *)watcher->data;
+	const ev_tstamp now = ev_now(loop);
+
 	if (s->pkt.inflight_ping != TSTAMP_NIL) {
-		if (now - s->pkt.inflight_ping < 4.0) {
+		const double next = s->pkt.inflight_ping + s->ping_timeout;
+		if (now < next) {
+			watcher->repeat = next - now;
+			ev_timer_again(loop, watcher);
 			return;
 		}
 		LOGD("ping timeout");
 		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
-	if (now - s->last_resolve_time > s->timeout &&
-	    (s->pkt.last_recv_time == TSTAMP_NIL ||
-	     now - s->pkt.last_recv_time > s->timeout)) {
-		LOGW("peer is not responding, try resolve addresses");
-		(void)server_resolve(s);
-#if WITH_CRYPTO
-		struct noncegen *restrict noncegen = s->pkt.queue->noncegen;
-		if (noncegen != NULL) {
-			noncegen_init(noncegen);
+
+	if (s->pkt.last_send_time != TSTAMP_NIL) {
+		const double next = s->pkt.last_send_time + s->keepalive;
+		if (now < next) {
+			watcher->repeat = next - now;
+			ev_timer_again(loop, watcher);
+			return;
 		}
-#endif
-		s->last_resolve_time = now;
 	}
-	if (s->pkt.last_send_time != TSTAMP_NIL &&
-	    now - s->pkt.last_send_time < s->keepalive) {
-		return;
-	}
+
 	server_ping(s);
+	watcher->repeat = s->ping_timeout;
+	ev_timer_again(loop, watcher);
 }
 
-static void tick_listener(struct server *restrict s)
+void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	/* check & restart accept watchers */
-	struct ev_io *restrict w_accept = &s->listener.w_accept;
-	if (s->listener.fd != -1 && !ev_is_active(w_accept)) {
-		ev_io_start(s->loop, w_accept);
+	CHECK_EV_ERROR(revents);
+	struct server *restrict s = (struct server *)watcher->data;
+	const ev_tstamp now = ev_now(loop);
+
+	if (s->last_resolve_time != TSTAMP_NIL) {
+		const double next = s->last_resolve_time + s->timeout;
+		if (now < next) {
+			watcher->repeat = next - now;
+			ev_timer_again(loop, watcher);
+			return;
+		}
 	}
+
+	if (s->pkt.last_recv_time != TSTAMP_NIL) {
+		const double next = s->pkt.last_recv_time + s->timeout;
+		if (now < next) {
+			watcher->repeat = next - now;
+			ev_timer_again(loop, watcher);
+			return;
+		}
+	}
+
+	LOGW("peer is not responding, try resolve addresses");
+	(void)server_resolve(s);
+#if WITH_CRYPTO
+	struct noncegen *restrict noncegen = s->pkt.queue->noncegen;
+	if (noncegen != NULL) {
+		noncegen_init(noncegen);
+	}
+#endif
+	s->last_resolve_time = now;
+
+	watcher->repeat = s->timeout;
+	ev_timer_again(loop, watcher);
 }
 
-static void tick_timeout(struct server *restrict s)
+void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
+	CHECK_EV_ERROR(revents);
+	UNUSED(loop);
+	struct server *restrict s = (struct server *)watcher->data;
+
 	/* session timeout */
 	table_filter(s->sessions, timeout_filt, s);
 
 	/* mcache maintenance */
 	mcache_shrink(msgpool, 1);
-}
-
-void ticker_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
-{
-	CHECK_EV_ERROR(revents);
-	const ev_tstamp now = ev_now(loop);
-	struct server *restrict s = (struct server *)watcher->data;
-	RATELIMIT(now, 1.0, tick_keepalive(s));
-	RATELIMIT(now, 5.0, tick_listener(s));
-	RATELIMIT(now, 10.0, tick_timeout(s));
 }

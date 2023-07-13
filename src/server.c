@@ -109,6 +109,9 @@ static bool listener_start(struct server *restrict s)
 		}
 	}
 
+	struct ev_timer *restrict w_listener = &s->listener.w_timer;
+	ev_timer_init(w_listener, listener_cb, 0.5, 0.0);
+	w_listener->data = l;
 	return true;
 }
 
@@ -227,7 +230,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	if (s == NULL) {
 		return NULL;
 	}
-	const ev_tstamp now = ev_now(loop);
+	const double ping_timeout = 4.0;
 	*s = (struct server){
 		.loop = loop,
 		.conf = conf,
@@ -240,27 +243,41 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 				.last_send_time = TSTAMP_NIL,
 				.last_recv_time = TSTAMP_NIL,
 			},
-		.uptime = now,
-		.last_resolve_time = now,
-		.last_stats_time = now,
+		.started = TSTAMP_NIL,
+		.last_resolve_time = TSTAMP_NIL,
+		.last_stats_time = TSTAMP_NIL,
 		.interval = conf->kcp_interval * 1e-3,
 		.linger = conf->linger,
 		.dial_timeout = 30.0,
 		.session_timeout = conf->timeout,
 		.session_keepalive = conf->timeout / 2.0,
 		.keepalive = conf->keepalive,
-		.timeout = CLAMP(s->keepalive * 3.0, 60.0, 1800.0),
+		.timeout = CLAMP(
+			conf->keepalive * 3.0 + ping_timeout, 60.0, 1800.0),
+		.ping_timeout = ping_timeout,
 		.time_wait = conf->time_wait,
 		.clock = (clock_t)(-1),
 		.last_clock = (clock_t)(-1),
 	};
 
-	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
-	ev_timer_init(w_kcp_update, kcp_update_cb, s->interval, s->interval);
-	w_kcp_update->data = s;
-	struct ev_timer *restrict w_timer = &s->w_timer;
-	ev_timer_init(w_timer, ticker_cb, 1.0, 1.0);
-	w_timer->data = s;
+	{
+		struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
+		ev_timer_init(
+			w_kcp_update, kcp_update_cb, s->interval, s->interval);
+		w_kcp_update->data = s;
+
+		struct ev_timer *restrict w_keepalive = &s->w_keepalive;
+		ev_timer_init(w_keepalive, keepalive_cb, 0.0, s->keepalive);
+		w_keepalive->data = s;
+
+		struct ev_timer *restrict w_resolve = &s->w_resolve;
+		ev_timer_init(w_resolve, resolve_cb, s->timeout, s->timeout);
+		w_resolve->data = s;
+
+		struct ev_timer *restrict w_timeout = &s->w_timeout;
+		ev_timer_init(w_timeout, timeout_cb, 10.0, 10.0);
+		w_timeout->data = s;
+	}
 
 	if (conf->mode == MODE_SERVER) {
 		s->sessions = table_new(TABLE_FAST);
@@ -283,18 +300,24 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 bool server_start(struct server *s)
 {
 	struct ev_loop *loop = s->loop;
+	const ev_tstamp now = ev_now(loop);
 	struct config *restrict conf = s->conf;
 	if (!listener_start(s)) {
 		return false;
 	}
+	s->started = now;
+	s->last_stats_time = now;
 	if (conf->connect.str != NULL &&
 	    !resolve_netaddr(&conf->connect, RESOLVE_TCP)) {
 		return false;
 	}
-	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
-	ev_timer_start(loop, w_kcp_update);
-	struct ev_timer *restrict w_timer = &s->w_timer;
-	ev_timer_start(loop, w_timer);
+	s->last_resolve_time = now;
+	ev_timer_start(loop, &s->w_kcp_update);
+	if ((s->conf->mode & MODE_CLIENT) && conf->keepalive > 0.0) {
+		ev_timer_start(loop, &s->w_keepalive);
+		ev_timer_start(loop, &s->w_resolve);
+	}
+	ev_timer_start(loop, &s->w_timeout);
 
 #if WITH_OBFS
 	struct pktqueue *restrict q = s->pkt.queue;
@@ -364,20 +387,18 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 		}
 		l->fd_http = -1;
 	}
+	ev_timer_stop(loop, &l->w_timer);
 }
 
 void server_stop(struct server *restrict s)
 {
-	listener_stop(s->loop, &s->listener);
+	struct ev_loop *loop = s->loop;
+	listener_stop(loop, &s->listener);
 	session_close_all(s->sessions);
-	struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
-	if (ev_is_active(w_kcp_update)) {
-		ev_timer_stop(s->loop, w_kcp_update);
-	}
-	struct ev_timer *restrict w_timer = &s->w_timer;
-	if (ev_is_active(w_timer)) {
-		ev_timer_stop(s->loop, w_timer);
-	}
+	ev_timer_stop(loop, &s->w_kcp_update);
+	ev_timer_stop(loop, &s->w_keepalive);
+	ev_timer_stop(loop, &s->w_resolve);
+	ev_timer_stop(loop, &s->w_timeout);
 #if WITH_OBFS
 	if (s->pkt.queue->obfs != NULL) {
 		obfs_stop(s->pkt.queue->obfs, s);
@@ -465,7 +486,7 @@ static bool print_session_iter(
 
 	FORMAT_BYTES(kcp_rx, (double)ss->stats.tcp_tx);
 	FORMAT_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
-	ctx->buf = vbuf_appendf(
+	ctx->buf = VBUF_APPENDF(
 		ctx->buf,
 		"[%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%" PRIu32 " "
@@ -488,7 +509,7 @@ static struct vbuffer *print_session_table(
 		.buf = buf,
 	};
 	table_iterate(s->sessions, &print_session_iter, &ctx);
-	return vbuf_appendf(
+	return VBUF_APPENDF(
 		ctx.buf,
 		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n\n",
 		table_size(s->sessions), ctx.num_in_state[STATE_CONNECT],
@@ -513,34 +534,69 @@ static bool update_load(
 	return ok;
 }
 
-struct vbuffer *server_stats(
-	struct server *restrict s, struct vbuffer *restrict buf,
-	const bool update, const int level)
+struct vbuffer *
+server_stats_const(const struct server *s, struct vbuffer *buf, int level)
 {
 	buf = print_session_table(s, buf, level);
 
 	const ev_tstamp now = ev_now(s->loop);
 	char uptime[16];
 	(void)format_duration(
-		uptime, sizeof(uptime), make_duration(now - s->uptime));
-	const double dt = now - s->last_stats_time;
+		uptime, sizeof(uptime), make_duration(now - s->started));
 	const struct link_stats *restrict stats = &s->stats;
-
-	if (update) {
-		const struct link_stats *restrict last_stats = &s->last_stats;
-		const struct link_stats dstats = (struct link_stats){
-			.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
-			.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
-			.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
-			.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
-			.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
-			.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
-		};
 
 #define FORMAT_BYTES(name, value)                                              \
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
+	{
+		FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
+		FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
+		FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
+		FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
+		FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
+		FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
+		buf = VBUF_APPENDF(
+			buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
+			tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+	}
+
+#undef FORMAT_BYTES
+
+	buf = VBUF_APPENDF(buf, "  = uptime: %s\n", uptime);
+	return buf;
+}
+
+struct vbuffer *server_stats(
+	struct server *restrict s, struct vbuffer *restrict buf,
+	const int level)
+{
+	buf = print_session_table(s, buf, level);
+
+	const ev_tstamp now = ev_now(s->loop);
+	char uptime[16];
+	(void)format_duration(
+		uptime, sizeof(uptime), make_duration(now - s->started));
+	const double dt = now - s->last_stats_time;
+	const struct link_stats *restrict stats = &s->stats;
+
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
+	const struct link_stats *restrict last_stats = &s->last_stats;
+	const struct link_stats dstats = (struct link_stats){
+		.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
+		.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
+		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,
+		.kcp_tx = stats->kcp_tx - last_stats->kcp_tx,
+		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
+		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
+	};
+	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
+	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
+
+	{
 		FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
 		FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
 		FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
@@ -550,35 +606,37 @@ struct vbuffer *server_stats(
 		const double deff_tx =
 			(double)dstats.tcp_rx * 100.0 / (double)dstats.kcp_tx;
 
-		buf = vbuf_appendf(
+		buf = VBUF_APPENDF(
 			buf,
 			"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1lf%%, %.1lf%%\n",
 			dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx);
 	}
 
-	FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
-	FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
-	FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
-	FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
-	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
-	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
-	buf = vbuf_appendf(
-		buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n", tcp_rx,
-		tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
-#undef FORMAT_BYTES
+	{
+		FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
+		FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
+		FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
+		FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
+		FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
+		FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
+		buf = VBUF_APPENDF(
+			buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
+			tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+	}
 
 	char load_buf[16];
 	const char *load_str = "(unknown)";
-	if (update && update_load(s, load_buf, sizeof(load_buf), dt)) {
+	if (update_load(s, load_buf, sizeof(load_buf), dt)) {
 		load_str = load_buf;
 	}
-	buf = vbuf_appendf(buf, "  = load: %s, uptime: %s\n", load_str, uptime);
+	buf = VBUF_APPENDF(
+		buf, "  = pkt: %s/s, %s/s; load: %s; uptime: %s\n", dpkt_rx,
+		dpkt_tx, load_str, uptime);
+#undef FORMAT_BYTES
 
 	/* rotate stats */
-	if (update) {
-		s->last_clock = s->clock;
-		s->last_stats = s->stats;
-		s->last_stats_time = ev_now(s->loop);
-	}
+	s->last_clock = s->clock;
+	s->last_stats = s->stats;
+	s->last_stats_time = ev_now(s->loop);
 	return buf;
 }

@@ -82,7 +82,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 				const struct sockaddr *sa = msg->hdr.msg_name;
 				char addr_str[64];
 				format_sa(sa, addr_str, sizeof(addr_str));
-				LOGV_F("kcp recv: %" PRIu16 " bytes from %s",
+				LOGV_F("pkt recv: %" PRIu16 " bytes from %s",
 				       msg->len, addr_str);
 			}
 		}
@@ -139,7 +139,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			const struct sockaddr *sa = msg->hdr.msg_name;
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("kcp recv: %" PRIu16 " bytes from %s", msg->len,
+			LOGV_F("pkt recv: %" PRIu16 " bytes from %s", msg->len,
 			       addr_str);
 		}
 		s->stats.pkt_rx += nbrecv;
@@ -218,7 +218,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 				const struct sockaddr *sa = msg->hdr.msg_name;
 				char addr_str[64];
 				format_sa(sa, addr_str, sizeof(addr_str));
-				LOGV_F("kcp send: %" PRIu16 " bytes to %s",
+				LOGV_F("pkt send: %" PRIu16 " bytes to %s",
 				       msg->len, addr_str);
 			}
 			msgframe_delete(q, msg);
@@ -275,7 +275,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 			const struct sockaddr *sa = msg->hdr.msg_name;
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("kcp send: %" PRIu16 " bytes to %s", msg->len,
+			LOGV_F("pkt send: %" PRIu16 " bytes to %s", msg->len,
 			       addr_str);
 		}
 		msgframe_delete(q, msg);
