@@ -6,26 +6,47 @@
 
 #include <stdint.h>
 
-/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
-static inline uint32_t xorshift32(uint32_t x)
-{
-	x ^= x << 13u;
-	x ^= x >> 17u;
-	x ^= x << 5u;
-	return x;
-}
+/**
+ * @defgroup rand
+ * @brief Random number generators.
+ * @details These generators are cryptographically unsafe.
+ * @{
+ */
 
-static inline uint64_t xorshift64(uint64_t x)
-{
-	x ^= x << 13u;
-	x ^= x >> 7u;
-	x ^= x << 17u;
-	return x;
-}
-
-uint32_t rand32(void);
+/**
+ * @brief Generate uniformly distributed uint64_t.
+ * @details Algorithm `xoshiro256**` from Blackman & Vigna,
+ * "Scrambled linear pseudorandom number generators".
+ */
 uint64_t rand64(void);
+
+/**
+ * @brief Seed `rand64` for reproducible random sequences.
+ * @see rand64
+ */
+void srand64(uint64_t seed);
+
+/**
+ * @brief Generate uniformly distributed uint64_t in [0, n].
+ * @details Based on `rand64`.
+ * @see rand64
+ */
+uint64_t randn64(uint64_t n);
+
+/**
+ * @brief Generate uniformly distributed float in [0, 1).
+ * @details Based on `rand64`.
+ * @see rand64
+ */
 float frandf(void);
+
+/**
+ * @brief Generate uniformly distributed double in [0, 1).
+ * @details Based on `rand64`.
+ * @see rand64
+ */
 double frand(void);
+
+/** @} */
 
 #endif /* ALGO_RAND_H */

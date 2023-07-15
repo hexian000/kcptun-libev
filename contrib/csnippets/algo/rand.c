@@ -8,17 +8,13 @@
 #include <stdint.h>
 #include <time.h>
 
-uint32_t rand32(void)
+/** @details Algorithm `xor64` from p. 4 of Marsaglia, "Xorshift RNGs". */
+static inline uint64_t xorshift64(uint64_t x)
 {
-	static _Thread_local struct {
-		uint32_t x;
-	} state = { .x = UINT32_C(0) };
-	if (state.x == UINT32_C(0)) {
-		state.x = xorshift32(time(NULL)) ^
-			  xorshift32((uintptr_t)(&state));
-	}
-	state.x = xorshift32(state.x);
-	return state.x;
+	x ^= x << 13u;
+	x ^= x >> 7u;
+	x ^= x << 17u;
+	return x;
 }
 
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
@@ -31,22 +27,32 @@ static inline uint64_t splitmix64(uint64_t *restrict state)
 	return result ^ (result >> 31u);
 }
 
-/* Algorithm "xoshiro256**" from Blackman & Vigna, "Scrambled linear pseudorandom number generators" */
+static _Thread_local struct {
+	uint64_t s[4];
+	bool init : 1;
+} xoshiro256ss = { .init = false };
+
+void srand64(uint64_t seed)
+{
+	uint64_t *restrict s = xoshiro256ss.s;
+	s[0] = splitmix64(&seed);
+	s[1] = splitmix64(&seed);
+	s[2] = splitmix64(&seed);
+	s[3] = splitmix64(&seed);
+	xoshiro256ss.init = true;
+}
+
 uint64_t rand64(void)
 {
-	static _Thread_local struct {
-		bool init;
-		uint64_t s[4];
-	} state = { .init = false };
-	uint64_t *restrict s = state.s;
-	if (!state.init) {
-		uint64_t seed = xorshift64(time(NULL)) ^
-				xorshift64((uintptr_t)(&state));
+	uint64_t *restrict s = xoshiro256ss.s;
+	if (!xoshiro256ss.init) {
+		uint64_t seed = xorshift64((uint64_t)time(NULL)) ^
+				xorshift64((uint64_t)(uintptr_t)s);
 		s[0] = splitmix64(&seed);
 		s[1] = splitmix64(&seed);
 		s[2] = splitmix64(&seed);
 		s[3] = splitmix64(&seed);
-		state.init = true;
+		xoshiro256ss.init = true;
 	}
 
 	const uint64_t result =
@@ -63,9 +69,31 @@ uint64_t rand64(void)
 	return result;
 }
 
+uint64_t randn64(const uint64_t n)
+{
+	if ((n & (n + UINT64_C(1))) == UINT64_C(0)) {
+		return rand64() & n;
+	}
+
+	uint64_t mask = n;
+	mask |= (mask >> 1u);
+	mask |= (mask >> 2u);
+	mask |= (mask >> 4u);
+	mask |= (mask >> 8u);
+	mask |= (mask >> 16u);
+	mask |= (mask >> 32u);
+
+	/* rejection sampling */
+	uint64_t x;
+	for (x = rand64() & mask; x > n; x &= mask) {
+		x = rand64();
+	}
+	return x;
+}
+
 float frandf(void)
 {
-	return (float)(rand32() >> (32 - FLT_MANT_DIG)) *
+	return (float)(((uint32_t)rand64()) >> (32 - FLT_MANT_DIG)) *
 	       (0.5f / ((uint32_t)1 << (FLT_MANT_DIG - 1)));
 }
 

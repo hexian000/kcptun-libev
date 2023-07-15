@@ -47,6 +47,7 @@
 struct obfs_stats {
 	uintmax_t pkt_cap, pkt_rx, pkt_tx;
 	uintmax_t byt_cap, byt_rx, byt_tx;
+	uintmax_t byt_drop;
 };
 
 struct obfs {
@@ -932,7 +933,7 @@ struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
-	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
+	FORMAT_BYTES(byt_drop, (double)(stats->byt_drop));
 
 #undef FORMAT_BYTES
 
@@ -964,6 +965,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 		.byt_rx = stats->byt_rx - last_stats->byt_rx,
 		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
 		.byt_tx = stats->byt_tx - last_stats->byt_tx,
+		.byt_drop = stats->byt_drop - last_stats->byt_drop,
 	};
 
 	const int num_ctx = table_size(obfs->contexts);
@@ -976,8 +978,8 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
 	const double dpkt_drop = (double)(dstats.pkt_cap - dstats.pkt_rx) / dt;
-	FORMAT_BYTES(dbyt_drop, (double)(dstats.byt_cap - dstats.byt_rx) / dt);
-	FORMAT_BYTES(byt_drop, (double)(stats->byt_cap - stats->byt_rx));
+	FORMAT_BYTES(dbyt_drop, (double)(dstats.byt_drop) / dt);
+	FORMAT_BYTES(byt_drop, (double)(stats->byt_drop));
 
 #undef FORMAT_BYTES
 
@@ -1385,10 +1387,12 @@ obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		ctx = obfs_open_ipv6(obfs, msg);
 		break;
 	}
-	if (ctx != NULL) {
-		obfs->stats.pkt_rx++;
-		obfs->stats.byt_rx += msg->len;
+	if (ctx == NULL) {
+		obfs->stats.byt_drop += msg->len;
+		return NULL;
 	}
+	obfs->stats.pkt_rx++;
+	obfs->stats.byt_rx += msg->len;
 	return ctx;
 }
 
@@ -1406,7 +1410,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.ihl = sizeof(struct iphdr) / 4u,
 		.tos = ECN_ECT0,
 		.tot_len = htons(sizeof(struct iphdr) + plen),
-		.id = (uint16_t)rand32(),
+		.id = (uint16_t)rand64(),
 		.frag_off = htons(UINT16_C(0x4000)),
 		.ttl = UINT8_C(64),
 		.protocol = IPPROTO_TCP,

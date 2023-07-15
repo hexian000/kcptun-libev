@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <time.h>
 
 static int tcp_listen(const struct config *restrict conf, struct netaddr *addr)
@@ -234,7 +235,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	*s = (struct server){
 		.loop = loop,
 		.conf = conf,
-		.m_conv = rand32(),
+		.m_conv = (uint32_t)rand64(),
 		.listener = (struct listener){ .fd = -1 },
 		.pkt =
 			(struct pktconn){
@@ -436,14 +437,16 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 	hashkey_t key;
 	conv_make_key(&key, sa, conv);
 	if (table_find(s->sessions, &key, NULL)) {
-		/* first conflict, try random */
-		conv = rand32();
-		conv_make_key(&key, sa, conv);
-		while (table_find(s->sessions, &key, NULL)) {
-			/* many conflicts, do scan */
-			conv = conv_next(conv);
+		const double usage =
+			(double)table_size(s->sessions) / (double)INT_MAX;
+		do {
+			if (usage < 1e-3) {
+				conv = (uint32_t)rand64();
+			} else {
+				conv = conv_next(conv);
+			}
 			conv_make_key(&key, sa, conv);
-		}
+		} while (table_find(s->sessions, &key, NULL));
 	}
 	s->m_conv = conv;
 	return conv;

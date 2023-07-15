@@ -180,7 +180,7 @@ static inline void table_grow(struct hashtable *restrict table)
 
 static inline void table_reseed(struct hashtable *restrict table)
 {
-	table->seed = rand32();
+	table->seed = (uint32_t)rand64();
 #if HASHTABLE_LOG
 	fprintf(stderr, "table reseed: size=%d new_seed=%" PRIX32 "\n",
 		table->size, table->seed);
@@ -342,7 +342,7 @@ struct hashtable *table_new(const int flags)
 		.capacity = 0,
 		.max_load = 0,
 		.freelist = -1,
-		.seed = rand32(),
+		.seed = (uint32_t)rand64(),
 		.flags = flags,
 #ifndef NDEBUG
 		.version = 0,

@@ -8,7 +8,13 @@
 #include <stdint.h>
 
 /**
- * @brief Format byte count as a human-readable string in IEC units.
+ * @brief Format the value with human-readable SI metric prefix.
+ * @return Same as snprintf.
+ */
+int format_si_metric(char *buf, size_t bufsize, double value);
+
+/**
+ * @brief Format byte count as a human-readable string in IEC unit.
  * @return Same as snprintf.
  */
 int format_iec_bytes(char *buf, size_t bufsize, double value);
