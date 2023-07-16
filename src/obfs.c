@@ -618,6 +618,9 @@ static bool obfs_ctx_start(
 			assert(obfs->unauthenticated > 0u);
 			obfs->unauthenticated--;
 		}
+		/* free all related sessions */
+		table_filter(
+			obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
 		obfs_ctx_free(loop, old_ctx);
 	}
 	const bool ok = table_set(obfs->contexts, &key, ctx);
@@ -796,6 +799,8 @@ static bool obfs_ctx_timeout_filt(
 		assert(obfs->unauthenticated > 0u);
 		obfs->unauthenticated--;
 	}
+	/* free all related sessions */
+	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
 	obfs_ctx_free(loop, ctx);
 	return false;
 }
