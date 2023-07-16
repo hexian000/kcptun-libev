@@ -52,7 +52,8 @@ static bool crypto_open_inplace(
 		return false;
 	}
 	if (!noncegen_verify(q->noncegen, nonce)) {
-		LOGV("nonce reuse detected");
+		LOG_BIN(LOG_LEVEL_VERBOSE, nonce, nonce_size,
+			"nonce reuse detected");
 		return false;
 	}
 	*len = dst_len;
