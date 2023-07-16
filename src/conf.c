@@ -3,6 +3,7 @@
 
 #include "conf.h"
 #include "utils/arraysize.h"
+#include "utils/check.h"
 #include "utils/slog.h"
 #include "net/addr.h"
 #include "util.h"
@@ -240,11 +241,11 @@ const char *runmode_str(const int mode)
 
 bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 {
-	char *hostname = NULL;
-	char *service = NULL;
+	char *hostname, *service;
 	char *str = strdup(addr->str);
 	if (str == NULL) {
-		return NULL;
+		LOGOOM();
+		return false;
 	}
 	if (!splithostport(str, &hostname, &service)) {
 		LOGE_F("failed splitting address: \"%s\"", addr->str);
@@ -252,7 +253,7 @@ bool resolve_netaddr(struct netaddr *restrict addr, int flags)
 		return false;
 	}
 	if (hostname[0] == '\0') {
-		hostname = "0.0.0.0";
+		hostname = NULL;
 	}
 	struct sockaddr *sa = resolve_sa(hostname, service, flags);
 	if (sa == NULL) {

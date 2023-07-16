@@ -633,8 +633,8 @@ struct vbuffer *server_stats(
 		load_str = load_buf;
 	}
 	buf = VBUF_APPENDF(
-		buf, "  = pkt: %s/s, %s/s; load: %s; uptime: %s\n", dpkt_rx,
-		dpkt_tx, load_str, uptime);
+		buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n", load_str,
+		dpkt_rx, dpkt_tx, uptime);
 #undef FORMAT_BYTES
 
 	/* rotate stats */

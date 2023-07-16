@@ -25,7 +25,7 @@
 #include <inttypes.h>
 #include <limits.h>
 
-bool socket_set_nonblock(int fd)
+bool socket_set_nonblock(const int fd)
 {
 	const int flags = fcntl(fd, F_GETFL, 0);
 	return fcntl(fd, F_SETFL, flags | O_CLOEXEC | O_NONBLOCK) != -1;
@@ -68,18 +68,20 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 	}
 }
 
-void socket_set_buffer(int fd, size_t send, size_t recv)
+void socket_set_buffer(const int fd, const size_t send, const size_t recv)
 {
+	CHECKMSGF(send <= INT_MAX, "invalid send buffer size: %zu", send);
+	CHECKMSGF(recv <= INT_MAX, "invalid recv buffer size: %zu", recv);
 	int val;
 	if (send > 0) {
-		val = (int)MIN(send, INT_MAX);
+		val = (int)send;
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_SNDBUF: %s", strerror(err));
 		}
 	}
 	if (recv > 0) {
-		val = (int)MIN(recv, INT_MAX);
+		val = (int)recv;
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_RCVBUF: %s", strerror(err));
@@ -198,25 +200,25 @@ struct sockaddr *sa_clone(const struct sockaddr *src)
 }
 
 static int
-format_sa_inet(const struct sockaddr_in *addr, char *buf, const size_t buf_size)
+format_sa_inet(const struct sockaddr_in *sa, char *buf, const size_t buf_size)
 {
 	char s[INET_ADDRSTRLEN];
-	if (inet_ntop(AF_INET, &(addr->sin_addr), s, sizeof(s)) == NULL) {
+	if (inet_ntop(AF_INET, &(sa->sin_addr), s, sizeof(s)) == NULL) {
 		return -1;
 	}
-	const uint16_t port = ntohs(addr->sin_port);
+	const uint16_t port = ntohs(sa->sin_port);
 	return snprintf(buf, buf_size, "%s:%" PRIu16, s, port);
 }
 
-static int format_sa_inet6(
-	const struct sockaddr_in6 *addr, char *buf, const size_t buf_size)
+static int
+format_sa_inet6(const struct sockaddr_in6 *sa, char *buf, const size_t buf_size)
 {
 	char s[INET6_ADDRSTRLEN];
-	if (inet_ntop(AF_INET6, &(addr->sin6_addr), s, sizeof(s)) == NULL) {
+	if (inet_ntop(AF_INET6, &(sa->sin6_addr), s, sizeof(s)) == NULL) {
 		return -1;
 	}
-	const uint16_t port = ntohs(addr->sin6_port);
-	const uint32_t scope = addr->sin6_scope_id;
+	const uint16_t port = ntohs(sa->sin6_port);
+	const uint32_t scope = sa->sin6_scope_id;
 	if (scope == 0) {
 		return snprintf(buf, buf_size, "[%s]:%" PRIu16, s, port);
 	}
