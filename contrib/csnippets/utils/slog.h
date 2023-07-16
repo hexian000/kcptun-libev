@@ -29,6 +29,7 @@ enum {
 
 extern int slog_level;
 extern FILE *slog_file;
+void slog_write_txt(const void *data, size_t n);
 void slog_write_bin(const void *data, size_t n);
 
 #if defined(_MSC_VER)
@@ -64,6 +65,19 @@ void slog_write_bin(const void *data, size_t n);
 #define LOG_F(level, format, ...)                                              \
 	LOG_WRITE(level, __FILE__, __LINE__, format, __VA_ARGS__);
 #define LOG(level, message) LOG_F(level, "%s", message)
+
+/* LOG_TXT: Log a ASCII buffer, usually for debugging. */
+#define LOG_TXT_F(level, txt, maxlen, format, ...)                             \
+	do {                                                                   \
+		if (LOGLEVEL(level)) {                                         \
+			LOG_WRITE(                                             \
+				level, __FILE__, __LINE__, format,             \
+				__VA_ARGS__);                                  \
+			slog_write_txt((txt), (maxlen));                       \
+		}                                                              \
+	} while (0)
+#define LOG_TXT(level, txt, maxlen, message)                                   \
+	LOG_TXT_F(level, txt, maxlen, "%s", message)
 
 /* LOG_BIN: Log a binary buffer, usually for debugging. */
 #define LOG_BIN_F(level, bin, len, format, ...)                                \
