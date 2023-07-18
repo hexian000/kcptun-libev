@@ -19,22 +19,21 @@ void slog_write_txt(const void *data, const size_t n)
 	const char *restrict s = data;
 	size_t line = 1, wrap = 0;
 	for (size_t i = 0; s[i] != '\0' && i < n; i++) {
+		if (wrap == 0) {
+			fprintf(log_fp, "%4zu ", line);
+		}
 		const unsigned char ch = s[i];
 		if (ch == '\n') {
 			/* soft wrap */
+			fputc('\n', log_fp);
 			line++;
 			wrap = 0;
-			fputc('\n', log_fp);
 			continue;
 		}
 		if (wrap >= (80 - STRLEN("  0000 ") - STRLEN(" +"))) {
 			/* hard wrap */
-			line++;
+			fputs(" +\n     ", log_fp);
 			wrap = 0;
-			fputs(" +\n", log_fp);
-		}
-		if (wrap == 0) {
-			fprintf(log_fp, "%4zu ", line);
 		}
 		fputc(isprint(ch) ? ch : '?', log_fp);
 		wrap++;

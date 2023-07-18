@@ -10,7 +10,7 @@
 
 /**
  * @defgroup http
- * @brief RFC 1945: Hypertext Transfer Protocol -- HTTP/1.0
+ * @brief RFC 7231: Hypertext Transfer Protocol (HTTP/1.1)
  * @{
  */
 
@@ -85,7 +85,7 @@ char *http_parsehdr(char *buf, char **key, char **value);
 const char *http_status(uint16_t code);
 
 /**
- * @brief Generate a date string in RFC 1123 format.
+ * @brief Generate a date string in IMF-fixdate format.
  * @param[out] buf string buffer
  * @param buf_size size of string buffer
  * @return Length of the generated string.

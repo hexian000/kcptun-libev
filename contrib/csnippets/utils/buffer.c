@@ -3,7 +3,6 @@
 
 #include "buffer.h"
 
-#include <assert.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -11,7 +10,6 @@
 
 int buf_appendf(struct vbuffer *restrict buf, const char *format, ...)
 {
-	assert(buf->len <= buf->cap);
 	char *b = (char *)(buf->data + buf->len);
 	const size_t maxlen = buf->cap - buf->len;
 	if (maxlen == 0) {
@@ -35,7 +33,6 @@ struct vbuffer *vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
 	}
 	size_t len = 0;
 	if (vbuf != NULL) {
-		assert(vbuf->len <= vbuf->cap);
 		len = vbuf->len;
 	}
 	struct vbuffer *restrict newbuf =
@@ -79,7 +76,6 @@ static struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 struct vbuffer *
 vbuf_append(struct vbuffer *restrict vbuf, const unsigned char *data, size_t n)
 {
-	assert(vbuf == NULL || vbuf->len <= vbuf->cap);
 	if (n == 0) {
 		return vbuf;
 	}
@@ -107,7 +103,6 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
 	char *b = NULL;
 	size_t maxlen = 0;
 	if (vbuf != NULL) {
-		assert(vbuf->len <= vbuf->cap);
 		b = (char *)(vbuf->data + vbuf->len);
 		maxlen = vbuf->cap - vbuf->len;
 	}
@@ -142,7 +137,6 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
 			return NULL;
 		}
 	}
-	assert(vbuf->cap == want);
 	maxlen = vbuf->cap - vbuf->len;
 	b = (char *)(vbuf->data + vbuf->len);
 	ret = vsnprintf(b, maxlen, format, args);

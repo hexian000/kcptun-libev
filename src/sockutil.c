@@ -33,19 +33,18 @@ bool socket_set_nonblock(const int fd)
 
 void socket_set_reuseport(const int fd, const bool reuseport)
 {
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int))) {
+	int val = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val))) {
 		const int err = errno;
 		LOGW_F("SO_REUSEADDR: %s", strerror(err));
 	}
 #ifdef SO_REUSEPORT
-	if (setsockopt(
-		    fd, SOL_SOCKET, SO_REUSEPORT, &(int){ reuseport ? 1 : 0 },
-		    sizeof(int))) {
+	val = reuseport ? 1 : 0;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(val))) {
 		const int err = errno;
 		LOGW_F("SO_REUSEPORT: %s", strerror(err));
 	}
 #else
-	UNUSED(fd);
 	if (reuseport) {
 		LOGW("reuseport: not supported in current build");
 	}
@@ -54,15 +53,13 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 
 void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 {
-	if (setsockopt(
-		    fd, IPPROTO_TCP, TCP_NODELAY, &(int){ nodelay ? 1 : 0 },
-		    sizeof(int))) {
+	int val = nodelay ? 1 : 0;
+	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val))) {
 		const int err = errno;
 		LOGW_F("TCP_NODELAY: %s", strerror(err));
 	}
-	if (setsockopt(
-		    fd, SOL_SOCKET, SO_KEEPALIVE, &(int){ keepalive ? 1 : 0 },
-		    sizeof(int))) {
+	val = keepalive ? 1 : 0;
+	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val))) {
 		const int err = errno;
 		LOGW_F("SO_KEEPALIVE: %s", strerror(err));
 	}
@@ -70,10 +67,10 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 
 void socket_set_buffer(const int fd, const size_t send, const size_t recv)
 {
-	CHECKMSGF(send <= INT_MAX, "invalid send buffer size: %zu", send);
-	CHECKMSGF(recv <= INT_MAX, "invalid recv buffer size: %zu", recv);
 	int val;
 	if (send > 0) {
+		CHECKMSGF(
+			send <= INT_MAX, "invalid send buffer size: %zu", send);
 		val = (int)send;
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
 			const int err = errno;
@@ -81,6 +78,8 @@ void socket_set_buffer(const int fd, const size_t send, const size_t recv)
 		}
 	}
 	if (recv > 0) {
+		CHECKMSGF(
+			recv <= INT_MAX, "invalid recv buffer size: %zu", recv);
 		val = (int)recv;
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
 			const int err = errno;
@@ -234,12 +233,10 @@ int format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
 	case AF_INET6:
 		return format_sa_inet6(
 			(struct sockaddr_in6 *)sa, buf, buf_size);
-
 	default:
-		return snprintf(
-			buf, buf_size, "<af:%jd>", (intmax_t)sa->sa_family);
+		break;
 	}
-	FAIL();
+	return snprintf(buf, buf_size, "<af:%jd>", (intmax_t)sa->sa_family);
 }
 
 struct sockaddr *

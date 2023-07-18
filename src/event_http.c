@@ -203,7 +203,7 @@ void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		LOGV_F("http: header %s: %s", key, value);
 	}
-	/* HTTP/1.0 only, close after serve */
+	/* Connection: close */
 	ev_io_stop(loop, watcher);
 	http_serve(ctx);
 }
@@ -261,27 +261,38 @@ static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)
 	ctx->wbuf = buf;
 }
 
-static struct vbuffer *
-http_resphdr_init(struct vbuffer *buf, const uint16_t code)
-{
-	char date_str[32];
-	size_t date_len = http_date(date_str, sizeof(date_str));
-	const char *status = http_status(code);
-	if (buf != NULL) {
-		buf->len = 0;
-	}
-	return VBUF_APPENDF(
-		buf,
-		"HTTP/1.0 %" PRIu16 " %s\r\n"
-		"Date: %.*s\r\n"
-		"Connection: close\r\n",
-		code, status ? status : "", (int)date_len, date_str);
-}
+#define RESPHDR_WRITE(buf, code, hdr)                                          \
+	do {                                                                   \
+		char date_str[32];                                             \
+		const size_t date_len = http_date(date_str, sizeof(date_str)); \
+		const char *status = http_status((code));                      \
+		if ((buf) != NULL) {                                           \
+			(buf)->len = 0;                                        \
+		}                                                              \
+		(buf) = VBUF_APPENDF(                                          \
+			(buf),                                                 \
+			"HTTP/1.1 %" PRIu16 " %s\r\n"                          \
+			"Date: %.*s\r\n"                                       \
+			"Connection: close\r\n"                                \
+			"%s\r\n",                                              \
+			code, status ? status : "", (int)date_len, date_str,   \
+			(hdr));                                                \
+	} while (0)
 
-#define RESPHDR_ADD(buf, key, value)                                           \
-	VBUF_APPENDCONST((buf), key ": " value "\r\n")
+#define RESPHDR_CODE(buf, code) RESPHDR_WRITE((buf), (code), "")
 
-#define RESPHDR_END(buf) VBUF_APPENDCONST((buf), "\r\n")
+#define RESPHDR_POST(buf, code)                                                \
+	RESPHDR_WRITE(                                                         \
+		(buf), (code),                                                 \
+		"Content-Type: text/plain; charset=utf-8\r\n"                  \
+		"X-Content-Type-Options: nosniff\r\n")
+
+#define RESPHDR_GET(buf, code)                                                 \
+	RESPHDR_WRITE(                                                         \
+		(buf), (code),                                                 \
+		"Content-Type: text/plain; charset=utf-8\r\n"                  \
+		"X-Content-Type-Options: nosniff\r\n"                          \
+		"Cache-Control: no-store\r\n")
 
 static void
 http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
@@ -294,8 +305,7 @@ http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 	const int len = http_error((char *)buf->data, buf->cap, code);
 	if (len <= 0) {
 		/* can't generate error page, reply with code only */
-		buf = http_resphdr_init(buf, code);
-		buf = RESPHDR_END(buf);
+		RESPHDR_CODE(buf, code);
 		http_set_wbuf(ctx, buf);
 		return;
 	}
@@ -311,15 +321,6 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		return;
 	}
 	const struct http_message *restrict hdr = &ctx->http_msg;
-	bool stateless;
-	if (strcmp(hdr->req.method, "GET") == 0) {
-		stateless = true;
-	} else if (strcmp(hdr->req.method, "POST") == 0) {
-		stateless = false;
-	} else {
-		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
-		return;
-	}
 	bool banner = true;
 	int state_level = STATE_CONNECTED;
 	while (uri->query != NULL) {
@@ -357,13 +358,18 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		LOGOOM();
 		return;
 	}
-	buf = http_resphdr_init(buf, HTTP_OK);
-	buf = RESPHDR_ADD(buf, "Content-Type", "text/plain; charset=utf-8");
-	buf = RESPHDR_ADD(buf, "X-Content-Type-Options", "nosniff");
-	if (stateless) {
-		buf = RESPHDR_ADD(buf, "Cache-Control", "no-store");
+	bool stateless;
+	if (strcmp(hdr->req.method, "GET") == 0) {
+		RESPHDR_GET(buf, HTTP_OK);
+		stateless = true;
+	} else if (strcmp(hdr->req.method, "POST") == 0) {
+		RESPHDR_POST(buf, HTTP_OK);
+		stateless = false;
+	} else {
+		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
+		return;
 	}
-	buf = RESPHDR_END(buf);
+
 	if (banner) {
 		buf = VBUF_APPENDCONST(
 			buf, "" PROJECT_NAME " " PROJECT_VER "\n"
@@ -447,8 +453,7 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 			LOGOOM();
 			return;
 		}
-		buf = http_resphdr_init(buf, HTTP_OK);
-		buf = RESPHDR_END(buf);
+		RESPHDR_CODE(buf, HTTP_OK);
 		http_set_wbuf(ctx, buf);
 		return;
 	}

@@ -112,7 +112,7 @@ char *http_parsehdr(char *buf, char **key, char **value)
 
 size_t http_date(char *buf, const size_t buf_size)
 {
-	/* RFC 1123: Section 5.2.14 */
+	/* RFC 7231: Section 7.1.1.1 */
 	static const char fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
 	const time_t now = time(NULL);
 	const struct tm *gmt = gmtime(&now);
@@ -150,7 +150,7 @@ int http_error(char *buf, size_t buf_size, const uint16_t code)
 	const size_t date_len = http_date(date_str, sizeof(date_str));
 	return snprintf(
 		buf, buf_size,
-		"HTTP/1.0 %" PRIu16 " %s\r\n"
+		"HTTP/1.1 %" PRIu16 " %s\r\n"
 		"Date: %.*s\r\n"
 		"Connection: close\r\n"
 		"Content-type: text/html\r\n\r\n"
