@@ -6,7 +6,7 @@
 #include "utils/buffer.h"
 #include "utils/formats.h"
 #include "algo/hashtable.h"
-#include "algo/rand.h"
+#include "math/rand.h"
 #include "conf.h"
 #include "event.h"
 #include "pktqueue.h"
@@ -442,9 +442,8 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 		do {
 			if (usage < 1e-3) {
 				conv = (uint32_t)rand64();
-			} else {
-				conv = conv_next(conv);
 			}
+			conv = conv_next(conv);
 			conv_make_key(&key, sa, conv);
 		} while (table_find(s->sessions, &key, NULL));
 	}
@@ -640,6 +639,6 @@ struct vbuffer *server_stats(
 	/* rotate stats */
 	s->last_clock = s->clock;
 	s->last_stats = s->stats;
-	s->last_stats_time = ev_now(s->loop);
+	s->last_stats_time = now;
 	return buf;
 }

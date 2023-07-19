@@ -13,7 +13,7 @@
 #include "utils/slog.h"
 #include "utils/check.h"
 #include "algo/hashtable.h"
-#include "algo/rand.h"
+#include "math/rand.h"
 #include "net/http.h"
 #include "conf.h"
 #include "pktqueue.h"
@@ -21,6 +21,7 @@
 #include "sockutil.h"
 #include "util.h"
 #include "server.h"
+#include "crypto.h"
 #include "event.h"
 #include "event_impl.h"
 
@@ -1415,7 +1416,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.ihl = sizeof(struct iphdr) / 4u,
 		.tos = ECN_ECT0,
 		.tot_len = htons(sizeof(struct iphdr) + plen),
-		.id = (uint16_t)rand64(),
+		.id = (uint16_t)crypto_rand32(),
 		.frag_off = htons(UINT16_C(0x4000)),
 		.ttl = UINT8_C(64),
 		.protocol = IPPROTO_TCP,

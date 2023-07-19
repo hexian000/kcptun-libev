@@ -8,15 +8,6 @@
 #include <stdint.h>
 #include <time.h>
 
-/** @details Algorithm `xor64` from p. 4 of Marsaglia, "Xorshift RNGs". */
-static inline uint64_t xorshift64(uint64_t x)
-{
-	x ^= x << 13u;
-	x ^= x >> 7u;
-	x ^= x << 17u;
-	return x;
-}
-
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
 
 static inline uint64_t splitmix64(uint64_t *restrict state)
@@ -27,33 +18,25 @@ static inline uint64_t splitmix64(uint64_t *restrict state)
 	return result ^ (result >> 31u);
 }
 
-static _Thread_local struct {
-	uint64_t s[4];
-	bool init : 1;
-} xoshiro256ss = { .init = false };
+static _Thread_local uint64_t xoshiro256ss[4] = {
+	UINT64_C(0x910A2DEC89025CC1),
+	UINT64_C(0xBEEB8DA1658EEC67),
+	UINT64_C(0xF893A2EEFB32555E),
+	UINT64_C(0x71C18690EE42C90B),
+};
 
 void srand64(uint64_t seed)
 {
-	uint64_t *restrict s = xoshiro256ss.s;
+	uint64_t *restrict s = xoshiro256ss;
 	s[0] = splitmix64(&seed);
 	s[1] = splitmix64(&seed);
 	s[2] = splitmix64(&seed);
 	s[3] = splitmix64(&seed);
-	xoshiro256ss.init = true;
 }
 
 uint64_t rand64(void)
 {
-	uint64_t *restrict s = xoshiro256ss.s;
-	if (!xoshiro256ss.init) {
-		uint64_t seed = xorshift64((uint64_t)time(NULL)) ^
-				xorshift64((uint64_t)(uintptr_t)s);
-		s[0] = splitmix64(&seed);
-		s[1] = splitmix64(&seed);
-		s[2] = splitmix64(&seed);
-		s[3] = splitmix64(&seed);
-		xoshiro256ss.init = true;
-	}
+	uint64_t *restrict s = xoshiro256ss;
 
 	const uint64_t result =
 		ROTL(s[1] * UINT64_C(5), UINT64_C(7)) * UINT64_C(9);

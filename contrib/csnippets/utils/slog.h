@@ -66,7 +66,7 @@ void slog_write_bin(const void *data, size_t n);
 	LOG_WRITE(level, __FILE__, __LINE__, format, __VA_ARGS__);
 #define LOG(level, message) LOG_F(level, "%s", message)
 
-/* LOG_TXT: Log a ASCII buffer, usually for debugging. */
+/* LOG_TXT: Log a text buffer, usually for debugging. */
 #define LOG_TXT_F(level, txt, maxlen, format, ...)                             \
 	do {                                                                   \
 		if (LOGLEVEL(level)) {                                         \

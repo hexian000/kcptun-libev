@@ -3,7 +3,7 @@
 
 #include "hashtable.h"
 #include "algo/murmurhash.h"
-#include "algo/rand.h"
+#include "math/rand.h"
 #include "utils/arraysize.h"
 
 #include <assert.h>

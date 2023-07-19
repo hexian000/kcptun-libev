@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,11 @@ static bool crypto_init(void)
 	}
 	sodium_init_done = true;
 	return true;
+}
+
+uint32_t crypto_rand32(void)
+{
+	return randombytes_random();
 }
 
 static int

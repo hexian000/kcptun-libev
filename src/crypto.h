@@ -29,6 +29,7 @@ bool crypto_password(struct crypto *, char *password);
 bool crypto_b64psk(struct crypto *, char *b64);
 void crypto_free(struct crypto *);
 
+uint32_t crypto_rand32(void);
 bool crypto_keygen(struct crypto *, char *b64, size_t b64_len);
 
 size_t crypto_seal(

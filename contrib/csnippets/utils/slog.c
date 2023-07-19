@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <inttypes.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 int slog_level = LOG_LEVEL_VERBOSE;
@@ -22,7 +23,7 @@ void slog_write_txt(const void *data, const size_t n)
 		if (wrap == 0) {
 			fprintf(log_fp, "%4zu ", line);
 		}
-		const unsigned char ch = s[i];
+		const char ch = s[i];
 		if (ch == '\n') {
 			/* soft wrap */
 			fputc('\n', log_fp);
@@ -48,7 +49,7 @@ void slog_write_bin(const void *data, const size_t n)
 {
 	FILE *log_fp = slog_file ? slog_file : stdout;
 	const size_t wrap = 16;
-	const unsigned char *restrict b = data;
+	const uint8_t *restrict b = data;
 	for (size_t i = 0; i < n; i += wrap) {
 		fprintf(log_fp, "  %p: ", (void *)(b + i));
 		for (size_t j = 0; j < wrap; j++) {
@@ -60,9 +61,9 @@ void slog_write_bin(const void *data, const size_t n)
 		}
 		fputc(' ', log_fp);
 		for (size_t j = 0; j < wrap; j++) {
-			unsigned char ch = ' ';
+			char ch = ' ';
 			if ((i + j) < n) {
-				ch = b[i + j];
+				ch = (char)b[i + j];
 				if (!isprint(ch)) {
 					ch = '.';
 				}
