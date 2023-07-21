@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 #include "bloom.h"
-#include "algo/murmurhash.h"
+#include "algo/cityhash.h"
 
 #define MAKESTRING(n) STRING(n)
 #define STRING(n) #n
@@ -54,8 +54,8 @@ static int bloom_check_add(struct bloom * bloom,
   }
 
   int hits = 0;
-  register unsigned int a = murmurhash3_32(buffer, len, 0x9747b28c);
-  register unsigned int b = murmurhash3_32(buffer, len, a);
+  register unsigned int a = cityhash64low_32(buffer, len, 0x9747b28c);
+  register unsigned int b = cityhash64low_32(buffer, len, a);
   register unsigned int x;
   register unsigned int i;
 

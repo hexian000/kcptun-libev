@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "session.h"
+#include "utils/check.h"
 #include "utils/formats.h"
 #include "utils/slog.h"
 #include "algo/hashtable.h"
@@ -408,11 +409,12 @@ bool ss0_send(
 	struct server *restrict s, const struct sockaddr *sa,
 	const uint16_t what, const unsigned char *b, const size_t n)
 {
-	struct pktqueue *restrict q = s->pkt.queue;
-	struct msgframe *restrict msg = msgframe_new(q, sa);
+	struct msgframe *restrict msg = msgframe_new(s->pkt.queue);
 	if (msg == NULL) {
+		LOGOOM();
 		return false;
 	}
+	memcpy(&msg->addr.sa, sa, getsocklen(sa));
 	unsigned char *packet = msg->buf + msg->off;
 	ss0_header_write(
 		packet, (struct session0_header){
@@ -421,7 +423,7 @@ bool ss0_send(
 			});
 	memcpy(packet + SESSION0_HEADER_SIZE, b, n);
 	msg->len = SESSION0_HEADER_SIZE + n;
-	return queue_send(q, s, msg);
+	return queue_send(s, msg);
 }
 
 static void
@@ -437,7 +439,7 @@ ss0_on_ping(struct server *restrict s, struct msgframe *restrict msg)
 	/* send echo message */
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	ss0_send(s, msg->hdr.msg_name, S0MSG_PONG, b, sizeof(b));
+	ss0_send(s, &msg->addr.sa, S0MSG_PONG, b, sizeof(b));
 }
 
 static void

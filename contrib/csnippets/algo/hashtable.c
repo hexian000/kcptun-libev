@@ -2,7 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "hashtable.h"
-#include "algo/murmurhash.h"
+#include "algo/cityhash.h"
 #include "math/rand.h"
 #include "utils/arraysize.h"
 
@@ -74,7 +74,7 @@ static inline void key_set(hashkey_t *dst, const hashkey_t *src)
 
 static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
 {
-	const uint32_t h = murmurhash3_32(x, sizeof(hashkey_t), seed);
+	const uint32_t h = cityhash64low_32(x, sizeof(hashkey_t), seed);
 	return (int)(h & (uint32_t)INT_MAX);
 }
 

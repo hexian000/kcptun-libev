@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define NONCE_MAX_LENGTH (32)
+
 struct ppbloom {
 	struct bloom bloom[2];
 	size_t bloom_count[2];
@@ -24,7 +26,7 @@ struct noncegen {
 	struct ppbloom ppbloom;
 	struct {
 		BUFFER_HDR;
-		unsigned char data[32];
+		unsigned char data[NONCE_MAX_LENGTH];
 	} buf;
 };
 

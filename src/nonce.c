@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 static bool
 ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)

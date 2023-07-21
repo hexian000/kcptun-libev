@@ -3,7 +3,6 @@
 
 #include "pktqueue.h"
 #include "algo/hashtable.h"
-#include "utils/mcache.h"
 #include "utils/check.h"
 #include "utils/slog.h"
 #include "conf.h"
@@ -83,49 +82,6 @@ static bool crypto_seal_inplace(
 	return true;
 }
 #endif /* WITH_CRYPTO */
-
-struct msgframe *
-msgframe_new(struct pktqueue *restrict q, const struct sockaddr *sa)
-{
-	UNUSED(q);
-	struct msgframe *restrict msg = mcache_get(msgpool);
-	if (msg == NULL) {
-		LOGE("out of memory");
-		return NULL;
-	}
-	msg->hdr = (struct msghdr){
-		.msg_name = &msg->addr,
-		.msg_namelen = sizeof(msg->addr),
-		.msg_iov = &msg->iov,
-		.msg_iovlen = 1,
-		.msg_control = NULL,
-		.msg_controllen = 0,
-		.msg_flags = 0,
-	};
-	msg->iov = (struct iovec){
-		.iov_base = msg->buf,
-		.iov_len = sizeof(msg->buf),
-	};
-	memset(&msg->addr, 0, sizeof(msg->addr));
-	if (sa != NULL) {
-		const socklen_t len = getsocklen(sa);
-		memcpy(&msg->addr, sa, len);
-		msg->hdr.msg_namelen = len;
-	}
-	msg->off = 0;
-#if WITH_OBFS
-	if (q->obfs != NULL) {
-		msg->off = obfs_offset(q->obfs);
-	}
-#endif
-	return msg;
-}
-
-void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
-{
-	UNUSED(q);
-	mcache_put(msgpool, msg);
-}
 
 static void
 queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
@@ -213,8 +169,9 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	session_read_cb(ss);
 }
 
-size_t queue_recv(struct pktqueue *restrict q, struct server *s)
+size_t queue_recv(struct server *restrict s)
 {
+	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->mq_recv_len == 0) {
 		return 0;
 	}
@@ -259,10 +216,9 @@ size_t queue_recv(struct pktqueue *restrict q, struct server *s)
 	return nbrecv;
 }
 
-bool queue_send(
-	struct pktqueue *restrict q, struct server *s,
-	struct msgframe *restrict msg)
+bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 {
+	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
 		size_t cap = MAX_PACKET_SIZE - msg->off;
@@ -294,8 +250,6 @@ bool queue_send(
 		return false;
 	}
 	msg->ts = now;
-	msg->hdr.msg_namelen = getsocklen(msg->hdr.msg_name);
-	msg->iov.iov_len = msg->len;
 	q->mq_send[q->mq_send_len++] = msg;
 	if (q->mq_send_len < q->mq_send_cap) {
 		struct ev_io *restrict w_write = &s->pkt.w_write;
@@ -352,13 +306,14 @@ struct pktqueue *queue_new(struct server *restrict s)
 	if (q == NULL) {
 		return NULL;
 	}
-	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, 128);
-	const size_t recv_cap = 128;
+	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, MMSG_BATCH_SIZE);
+	const size_t recv_cap = MAX(conf->kcp_rcvwnd, MMSG_BATCH_SIZE);
 	*q = (struct pktqueue){
 		.mq_send = malloc(send_cap * sizeof(struct msgframe *)),
 		.mq_send_cap = send_cap,
 		.mq_recv = malloc(recv_cap * sizeof(struct msgframe *)),
 		.mq_recv_cap = recv_cap,
+		.msg_offset = 0,
 	};
 	if (q->mq_send == NULL || q->mq_recv == NULL) {
 		LOGOOM();

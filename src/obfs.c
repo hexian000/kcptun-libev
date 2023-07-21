@@ -1136,10 +1136,9 @@ uint16_t obfs_offset(struct obfs *obfs)
 	case AF_INET6:
 		return sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
 	default:
-		FAIL();
 		break;
 	}
-	return 0;
+	FAIL();
 }
 
 /* RFC 1071 */
@@ -1416,7 +1415,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.ihl = sizeof(struct iphdr) / 4u,
 		.tos = ECN_ECT0,
 		.tot_len = htons(sizeof(struct iphdr) + plen),
-		.id = (uint16_t)crypto_rand32(),
+		.id = (uint16_t)rand64(),
 		.frag_off = htons(UINT16_C(0x4000)),
 		.ttl = UINT8_C(64),
 		.protocol = IPPROTO_TCP,

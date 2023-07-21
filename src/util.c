@@ -72,7 +72,7 @@ void init(void)
 	const size_t size =
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
-	msgpool = mcache_new(256, size);
+	msgpool = mcache_new(MMSG_BATCH_SIZE * 2, size);
 	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
 }

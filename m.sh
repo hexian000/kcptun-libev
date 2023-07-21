@@ -51,7 +51,7 @@ case "$1" in
     ls -lh "build/src/kcptun-libev"
     ;;
 "p")
-    # rebuild for profiling/benchmarking
+    # rebuild for profiling
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
@@ -78,7 +78,6 @@ case "$1" in
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_C_COMPILER="clang" \
-        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     nice cmake --build "build"
@@ -96,6 +95,19 @@ case "$1" in
         -S "." -B "build"
     nice cmake --build "build"
     ls -lh "build/src/kcptun-libev"
+    ;;
+"single")
+    # rebuild as single file
+    rm -rf "build" && mkdir -p "build/src"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -S "." -B "build"
+    find contrib src -name '*.c' | while read -r FILE; do
+        echo "#include \"${FILE}\""
+    done | gcc -pipe -O2 -g -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=gnu11 \
+        -Icontrib/csnippets -Icontrib -Isrc -include build/src/config.h \
+        -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
     ;;
 "c")
     # clean artifacts

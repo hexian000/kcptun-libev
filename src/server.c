@@ -323,7 +323,9 @@ bool server_start(struct server *s)
 #if WITH_OBFS
 	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->obfs != NULL) {
-		return obfs_start(q->obfs, s);
+		const bool ok = obfs_start(q->obfs, s);
+		q->msg_offset = obfs_offset(q->obfs);
+		return ok;
 	}
 #endif
 	return udp_start(s);

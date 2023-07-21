@@ -281,4 +281,4 @@ Thanks to:
 - [libsodium](https://github.com/jedisct1/libsodium)
 - [json-parser](https://github.com/udp/json-parser)
 - [libbloom](https://github.com/jvirkki/libbloom) (with modifications)
-- [smhasher](https://github.com/aappleby/smhasher) (for murmurhash3, with modifications)
+- [cityhash](https://github.com/google/cityhash) (with modifications)

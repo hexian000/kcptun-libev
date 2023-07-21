@@ -5,19 +5,21 @@
 #define PACKET_H
 
 #include "utils/mcache.h"
+#include "utils/slog.h"
 #include "sockutil.h"
+#include "util.h"
 
 #include <ev.h>
+#include <sys/socket.h>
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #define MAX_PACKET_SIZE 1500
+#define MMSG_BATCH_SIZE 128
 
 struct msgframe {
-	struct msghdr hdr;
-	struct iovec iov;
 	sockaddr_max_t addr;
 	uint16_t len;
 	uint16_t off;
@@ -30,6 +32,7 @@ struct pktqueue {
 	size_t mq_send_len, mq_send_cap;
 	struct msgframe **mq_recv;
 	size_t mq_recv_len, mq_recv_cap;
+	uint16_t msg_offset;
 #if WITH_CRYPTO
 	struct crypto *crypto;
 	struct noncegen *noncegen;
@@ -44,13 +47,26 @@ struct server;
 struct pktqueue *queue_new(struct server *s);
 void queue_free(struct pktqueue *q);
 
-struct msgframe *msgframe_new(struct pktqueue *q, const struct sockaddr *sa);
-void msgframe_delete(struct pktqueue *q, struct msgframe *msg);
+static inline struct msgframe *msgframe_new(struct pktqueue *restrict q)
+{
+	struct msgframe *restrict msg = mcache_get(msgpool);
+	if (msg == NULL) {
+		return NULL;
+	}
+	msg->off = q->msg_offset;
+	return msg;
+}
+
+static inline void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
+{
+	UNUSED(q);
+	mcache_put(msgpool, msg);
+}
 
 /* process mq_recv */
-size_t queue_recv(struct pktqueue *q, struct server *s);
+size_t queue_recv(struct server *s);
 
 /* send a plain packet */
-bool queue_send(struct pktqueue *q, struct server *s, struct msgframe *msg);
+bool queue_send(struct server *s, struct msgframe *msg);
 
 #endif /* PACKET_H */

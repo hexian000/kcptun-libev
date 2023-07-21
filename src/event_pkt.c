@@ -3,12 +3,30 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "sockutil.h"
+#include "util.h"
+#include "utils/check.h"
 #include "utils/slog.h"
 #include "server.h"
 #include "pktqueue.h"
 
+#include <ev.h>
+
 #include <inttypes.h>
 #include <stddef.h>
+#include <string.h>
+#include <sys/socket.h>
+
+#define MSG_LOGV(what, msg)                                                    \
+	do {                                                                   \
+		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {                             \
+			char addr[64];                                         \
+			format_sa(&(msg)->addr.sa, addr, sizeof(addr));        \
+			LOG_F(LOG_LEVEL_VERBOSE,                               \
+			      what ": %" PRIu16 " bytes to %s", (msg)->len,    \
+			      addr);                                           \
+		}                                                              \
+	} while (0)
 
 static void udp_reset(struct server *restrict s)
 {
@@ -21,13 +39,30 @@ static void udp_reset(struct server *restrict s)
 }
 
 #if HAVE_RECVMMSG || HAVE_SENDMMSG
-#define MMSG_BATCH_SIZE 128
-static struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
+struct iovec iovecs[MMSG_BATCH_SIZE];
+struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
 #endif
+
+#define RECVMSG_HDR(msg, iov)                                                  \
+	((struct msghdr){                                                      \
+		.msg_name = &msg->addr,                                        \
+		.msg_namelen = sizeof(msg->addr),                              \
+		.msg_iov = (iov),                                              \
+		.msg_iovlen = 1,                                               \
+		.msg_control = NULL,                                           \
+		.msg_controllen = 0,                                           \
+		.msg_flags = 0,                                                \
+	})
+
+#define RECVMSG_IOV(msg)                                                       \
+	((struct iovec){                                                       \
+		.iov_base = (msg)->buf,                                        \
+		.iov_len = sizeof((msg)->buf),                                 \
+	})
 
 #if HAVE_RECVMMSG
 
-static size_t pkt_recv(const int fd, struct server *restrict s)
+static size_t pkt_recv(struct server *restrict s, const int fd)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	size_t navail = q->mq_recv_cap - q->mq_recv_len;
@@ -37,28 +72,33 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 	const ev_tstamp now = ev_now(s->loop);
 	size_t nrecv = 0;
 	size_t nbatch;
-	struct msgframe *frames[MMSG_BATCH_SIZE];
-	size_t num_frames = 0;
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
-		for (size_t i = num_frames; i < nbatch; i++) {
-			struct msgframe *msg = msgframe_new(q, NULL);
+		struct msgframe *restrict frames[nbatch];
+		for (size_t i = 0; i < nbatch; i++) {
+			struct msgframe *restrict msg = msgframe_new(q);
 			if (msg == NULL) {
+				LOGOOM();
+				if (i == 0) {
+					/* no frame could be allocated */
+					return nrecv;
+				}
 				nbatch = i;
 				break;
 			}
-			frames[num_frames++] = msg;
+			frames[i] = msg;
+			iovecs[i] = RECVMSG_IOV(msg);
 			mmsgs[i] = (struct mmsghdr){
-				.msg_hdr = msg->hdr,
+				.msg_hdr = RECVMSG_HDR(msg, &iovecs[i]),
+				.msg_len = 0,
 			};
-		}
-		if (nbatch == 0) {
-			/* no frame could be allocated */
-			break;
 		}
 
 		const int ret = recvmmsg(fd, mmsgs, nbatch, 0, NULL);
 		if (ret < 0) {
+			for (size_t i = 0; i < nbatch; i++) {
+				msgframe_delete(q, frames[i]);
+			}
 			const int err = errno;
 			if (IS_TRANSIENT_ERROR(err)) {
 				break;
@@ -70,6 +110,9 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			LOGE_F("recvmmsg: %s", strerror(err));
 			break;
 		} else if (ret == 0) {
+			for (size_t i = 0; i < nbatch; i++) {
+				msgframe_delete(q, frames[i]);
+			}
 			break;
 		}
 		const size_t n = (size_t)ret;
@@ -78,32 +121,21 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 			msg->len = (size_t)mmsgs[i].msg_len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
-			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-				const struct sockaddr *sa = msg->hdr.msg_name;
-				char addr_str[64];
-				format_sa(sa, addr_str, sizeof(addr_str));
-				LOGV_F("pkt recv: %" PRIu16 " bytes from %s",
-				       msg->len, addr_str);
-			}
+			MSG_LOGV("pkt recv", msg);
 		}
 		/* collect unused frames */
-		num_frames = nbatch - n;
-		for (size_t i = 0; i < num_frames; i++) {
-			frames[i] = frames[i + n];
+		for (size_t i = n; i < nbatch; i++) {
+			msgframe_delete(q, frames[i]);
 		}
 		nrecv += n;
 		navail -= n;
 	} while (navail > 0);
-	/* delete unused frames */
-	for (size_t i = 0; i < num_frames; i++) {
-		msgframe_delete(q, frames[i]);
-	}
 	return nrecv;
 }
 
 #else /* HAVE_RECVMMSG */
 
-static size_t pkt_recv(const int fd, struct server *restrict s)
+static size_t pkt_recv(struct server *restrict s, const int fd)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	size_t navail = q->mq_recv_cap - q->mq_recv_len;
@@ -114,11 +146,14 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 	const ev_tstamp now = ev_now(s->loop);
 	size_t nrecv = 0;
 	do {
-		struct msgframe *restrict msg = msgframe_new(q, NULL);
+		struct msgframe *restrict msg = msgframe_new(q);
 		if (msg == NULL) {
+			LOGOOM();
 			return 0;
 		}
-		const ssize_t nbrecv = recvmsg(fd, &msg->hdr, 0);
+		struct iovec iov = RECVMSG_IOV(msg);
+		struct msghdr hdr = RECVMSG_HDR(msg, &iov);
+		const ssize_t nbrecv = recvmsg(fd, &hdr, 0);
 		if (nbrecv < 0) {
 			const int err = errno;
 			msgframe_delete(q, msg);
@@ -135,13 +170,7 @@ static size_t pkt_recv(const int fd, struct server *restrict s)
 		msg->len = (size_t)nbrecv;
 		msg->ts = now;
 		q->mq_recv[q->mq_recv_len++] = msg;
-		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-			const struct sockaddr *sa = msg->hdr.msg_name;
-			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("pkt recv: %" PRIu16 " bytes from %s", msg->len,
-			       addr_str);
-		}
+		MSG_LOGV("pkt recv", msg);
 		s->stats.pkt_rx += nbrecv;
 		nrecv++;
 		navail--;
@@ -156,10 +185,9 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
-	struct pktqueue *restrict q = s->pkt.queue;
 	size_t nbrecv = 0;
-	while (pkt_recv(watcher->fd, s) > 0) {
-		nbrecv += queue_recv(q, s);
+	while (pkt_recv(s, watcher->fd) > 0) {
+		nbrecv += queue_recv(s);
 	}
 	if (nbrecv > 0 && s->conf->kcp_flush >= 2) {
 		kcp_notify_update(s);
@@ -176,9 +204,26 @@ static size_t pkt_send_drop(struct pktqueue *restrict q)
 	return count;
 }
 
+#define SENDMSG_IOV(msg)                                                       \
+	((struct iovec){                                                       \
+		.iov_base = (msg)->buf,                                        \
+		.iov_len = (msg)->len,                                         \
+	})
+
+#define SENDMSG_HDR(msg, iov)                                                  \
+	((struct msghdr){                                                      \
+		.msg_name = &msg->addr,                                        \
+		.msg_namelen = getsocklen(&msg->addr.sa),                      \
+		.msg_iov = (iov),                                              \
+		.msg_iovlen = 1,                                               \
+		.msg_control = NULL,                                           \
+		.msg_controllen = 0,                                           \
+		.msg_flags = 0,                                                \
+	})
+
 #if HAVE_SENDMMSG
 
-static size_t pkt_send(const int fd, struct server *restrict s)
+static size_t pkt_send(struct server *restrict s, const int fd)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	size_t navail = q->mq_send_len;
@@ -192,10 +237,13 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
 		for (size_t i = 0; i < nbatch; i++) {
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
+			iovecs[i] = SENDMSG_IOV(msg);
 			mmsgs[i] = (struct mmsghdr){
-				.msg_hdr = msg->hdr,
+				.msg_hdr = SENDMSG_HDR(msg, &iovecs[i]),
+				.msg_len = msg->len,
 			};
 		}
+
 		const int ret = sendmmsg(fd, mmsgs, nbatch, 0);
 		if (ret < 0) {
 			const int err = errno;
@@ -212,15 +260,9 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 		const size_t n = (size_t)ret;
 		/* delete sent messages */
 		for (size_t i = 0; i < n; i++) {
-			nbsend += mmsgs[i].msg_len;
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
-			if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-				const struct sockaddr *sa = msg->hdr.msg_name;
-				char addr_str[64];
-				format_sa(sa, addr_str, sizeof(addr_str));
-				LOGV_F("pkt send: %" PRIu16 " bytes to %s",
-				       msg->len, addr_str);
-			}
+			nbsend += msg->len;
+			MSG_LOGV("pkt send", msg);
 			msgframe_delete(q, msg);
 		}
 		nsend += n;
@@ -242,7 +284,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 
 #else /* HAVE_SENDMMSG */
 
-static size_t pkt_send(const int fd, struct server *restrict s)
+static size_t pkt_send(struct server *restrict s, const int fd)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	const size_t count = q->mq_send_len;
@@ -252,8 +294,10 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	bool drop = false;
 	size_t nsend = 0, nbsend = 0;
 	for (size_t i = 0; i < count; i++) {
-		struct msgframe *msg = q->mq_send[i];
-		const ssize_t ret = sendmsg(fd, &msg->hdr, 0);
+		struct msgframe *restrict msg = q->mq_send[i];
+		struct iovec iov = SENDMSG_IOV(msg);
+		struct msghdr hdr = SENDMSG_HDR(msg, &iov);
+		const ssize_t ret = sendmsg(fd, &hdr, 0);
 		if (ret < 0) {
 			const int err = errno;
 			if (IS_TRANSIENT_ERROR(err)) {
@@ -271,13 +315,7 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 	}
 	for (size_t i = 0; i < nsend; i++) {
 		struct msgframe *restrict msg = q->mq_send[i];
-		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
-			const struct sockaddr *sa = msg->hdr.msg_name;
-			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGV_F("pkt send: %" PRIu16 " bytes to %s", msg->len,
-			       addr_str);
-		}
+		MSG_LOGV("pkt send", msg);
 		msgframe_delete(q, msg);
 	}
 	const size_t remain = count - nsend;
@@ -298,10 +336,9 @@ static size_t pkt_send(const int fd, struct server *restrict s)
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	UNUSED(loop);
 	struct server *restrict s = (struct server *)watcher->data;
 	struct pktqueue *restrict q = s->pkt.queue;
-	while (pkt_send(watcher->fd, s) > 0) {
+	while (pkt_send(s, watcher->fd) > 0) {
 		if (q->mq_send_len == 0) {
 			kcp_notify_update(s);
 		}
@@ -315,7 +352,7 @@ void pkt_flush(struct server *restrict s)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	struct ev_io *restrict w_write = &s->pkt.w_write;
-	(void)pkt_send(w_write->fd, s);
+	(void)pkt_send(s, w_write->fd);
 	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
 		ev_io_start(s->loop, w_write);
 	}

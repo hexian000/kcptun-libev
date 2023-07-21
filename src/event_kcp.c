@@ -3,6 +3,8 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "sockutil.h"
+#include "utils/check.h"
 #include "utils/slog.h"
 #include "session.h"
 #include "util.h"
@@ -18,6 +20,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
@@ -25,17 +28,18 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	assert(len > 0 && len < MAX_PACKET_SIZE);
 	struct session *restrict ss = (struct session *)user;
 	struct server *restrict s = ss->server;
-	struct pktqueue *q = s->pkt.queue;
-	struct msgframe *restrict msg = msgframe_new(q, &ss->raddr.sa);
+	struct msgframe *restrict msg = msgframe_new(s->pkt.queue);
 	if (msg == NULL) {
+		LOGOOM();
 		return -1;
 	}
+	memcpy(&msg->addr.sa, &ss->raddr.sa, getsocklen(&ss->raddr.sa));
 	unsigned char *kcp_packet = msg->buf + msg->off;
 	memcpy(kcp_packet, buf, len);
 	msg->len = len;
 	s->stats.kcp_tx += len;
 	ss->stats.kcp_tx += len;
-	return queue_send(q, s, msg) ? len : -1;
+	return queue_send(s, msg) ? len : -1;
 }
 
 void kcp_reset(struct session *ss)
