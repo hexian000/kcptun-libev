@@ -40,34 +40,38 @@ static const uint64_t k0 = UINT64_C(0xc3a5c85c97cb3127);
 static const uint64_t k1 = UINT64_C(0xb492b66fbe98f273);
 static const uint64_t k2 = UINT64_C(0x9ae16a3b2f90404f);
 
-#define SWAP(a, b)                                                             \
+#ifndef INTSWAP
+#define INTSWAP(a, b)                                                          \
 	do {                                                                   \
 		(a) ^= (b), (b) ^= (a), (a) ^= (b);                            \
 	} while (0)
-
-#ifdef __has_builtin
-#if __has_builtin(__builtin_bswap64)
-#define bswap_64 __builtin_bswap64
-#endif
-#endif
-
-#ifndef bswap_64
-static inline uint64_t bswap_64(uint64_t v)
-{
-	uint8_t *restrict b = (uint8_t *)&v;
-	SWAP(b[0], b[7]);
-	SWAP(b[1], b[6]);
-	SWAP(b[2], b[5]);
-	SWAP(b[3], b[4]);
-	return v;
-}
 #endif
 
 #define PERMUTE3(a, b, c)                                                      \
 	do {                                                                   \
-		SWAP(a, c);                                                    \
-		SWAP(b, c);                                                    \
+		INTSWAP(a, c);                                                 \
+		INTSWAP(b, c);                                                 \
 	} while (0)
+
+#ifdef __has_builtin
+#if __has_builtin(__builtin_bswap64)
+#define BSWAP64 __builtin_bswap64
+#endif
+#endif
+
+#ifndef BSWAP64
+static inline uint64_t bswap64(uint64_t x)
+{
+	uint8_t *restrict b = (uint8_t *)&(x);
+	INTSWAP(b[0], b[7]);
+	INTSWAP(b[1], b[6]);
+	INTSWAP(b[2], b[5]);
+	INTSWAP(b[3], b[4]);
+	return x;
+}
+
+#define BSWAP64 bswap64
+#endif
 
 // Bitwise right rotate.  Normally this will compile to a single
 // instruction, especially if the shift is a manifest constant.
@@ -189,11 +193,11 @@ static inline uint64_t HashLen33to64(const unsigned char *s, size_t len)
 	uint64_t h = read_uint64(s + len - 16) * mul;
 	uint64_t u = ROTR(a + g, 43) + (ROTR(b, 30) + c) * 9;
 	uint64_t v = ((a + g) ^ d) + f + 1;
-	uint64_t w = bswap_64((u + v) * mul) + h;
+	uint64_t w = BSWAP64((u + v) * mul) + h;
 	uint64_t x = ROTR(e + f, 42) + c;
-	uint64_t y = (bswap_64((v + w) * mul) + g) * mul;
+	uint64_t y = (BSWAP64((v + w) * mul) + g) * mul;
 	uint64_t z = e + f + c;
-	a = bswap_64((x + z) * mul + y) + b;
+	a = BSWAP64((x + z) * mul + y) + b;
 	b = shift_mix((z + a) * mul + d + h) * mul;
 	return b + x;
 }
@@ -234,7 +238,7 @@ static uint64_t CityHash64(const void *ptr, size_t len)
 		WeakHashLen32WithSeedsStr(v, s, v[1] * k1, x + w[0]);
 		WeakHashLen32WithSeedsStr(
 			w, s + 32, z + w[1], y + read_uint64(s + 16));
-		SWAP(z, x);
+		INTSWAP(z, x);
 		s += 64;
 		len -= 64;
 	} while (len != 0);
@@ -322,7 +326,7 @@ static void CityHash128WithSeed(
 		WeakHashLen32WithSeedsStr(v, s, v[1] * k1, x + w[0]);
 		WeakHashLen32WithSeedsStr(
 			w, s + 32, z + w[1], y + read_uint64(s + 16));
-		SWAP(z, x);
+		INTSWAP(z, x);
 		s += 64;
 		x = ROTR(x + y + v[0] + read_uint64(s + 8), 37) * k1;
 		y = ROTR(y + v[1] + read_uint64(s + 48), 42) * k1;
@@ -332,7 +336,7 @@ static void CityHash128WithSeed(
 		WeakHashLen32WithSeedsStr(v, s, v[1] * k1, x + w[0]);
 		WeakHashLen32WithSeedsStr(
 			w, s + 32, z + w[1], y + read_uint64(s + 16));
-		SWAP(z, x);
+		INTSWAP(z, x);
 		s += 64;
 		len -= 128;
 	} while (LIKELY(len >= 128));
