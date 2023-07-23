@@ -39,8 +39,8 @@ static void udp_reset(struct server *restrict s)
 }
 
 #if HAVE_RECVMMSG || HAVE_SENDMMSG
-struct iovec iovecs[MMSG_BATCH_SIZE];
-struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
+static struct iovec iovecs[MMSG_BATCH_SIZE];
+static struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
 #endif
 
 #define RECVMSG_HDR(msg, iov)                                                  \
@@ -74,7 +74,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 	size_t nbatch;
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
-		struct msgframe *restrict frames[nbatch];
+		struct msgframe *frames[nbatch];
 		for (size_t i = 0; i < nbatch; i++) {
 			struct msgframe *restrict msg = msgframe_new(q);
 			if (msg == NULL) {
