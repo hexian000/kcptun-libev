@@ -211,11 +211,13 @@ static bool udp_start(struct server *restrict s)
 
 	struct ev_io *restrict w_read = &udp->w_read;
 	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
+	ev_set_priority(w_read, EV_MINPRI);
 	w_read->data = s;
 	ev_io_start(s->loop, w_read);
 
 	struct ev_io *restrict w_write = &udp->w_write;
 	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
+	ev_set_priority(w_write, EV_MAXPRI);
 	w_write->data = s;
 	ev_io_start(s->loop, w_write);
 

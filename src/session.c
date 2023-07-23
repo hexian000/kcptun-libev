@@ -13,6 +13,7 @@
 #include "pktqueue.h"
 #include "sockutil.h"
 #include "util.h"
+#include "kcp/ikcp.h"
 
 #include <ev.h>
 #include <sys/socket.h>
@@ -118,12 +119,14 @@ void session_start(struct session *restrict ss, const int fd)
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_init(w_read, read_cb, fd, EV_READ);
+	ev_set_priority(w_read, EV_MINPRI);
 	w_read->data = ss;
 	if (ss->tcp_state == STATE_CONNECTED) {
 		ev_io_start(loop, w_read);
 	}
 	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_init(w_write, write_cb, fd, EV_WRITE);
+	ev_set_priority(w_write, EV_MAXPRI);
 	w_write->data = ss;
 	ev_io_start(loop, w_write);
 
@@ -361,9 +364,8 @@ bool session_send(struct session *restrict ss)
 		LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
 		ss->kcp_state = STATE_LINGER;
 	}
-	if (ss->kcp_flush >= 1) {
-		ss->need_flush = true;
-		kcp_update(ss);
+	if (ss->kcp_flush >= 1 || ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
+		ikcp_flush(ss->kcp);
 	}
 	return true;
 }

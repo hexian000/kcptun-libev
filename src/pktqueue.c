@@ -163,9 +163,6 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		/* flush acks */
 		ss->need_flush = true;
 	}
-	if (ikcp_peeksize(ss->kcp) <= 0) {
-		return;
-	}
 	session_read_cb(ss);
 }
 
@@ -251,7 +248,7 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	msg->ts = now;
 	q->mq_send[q->mq_send_len++] = msg;
-	if (q->mq_send_len < q->mq_send_cap) {
+	if (q->mq_send_len < MMSG_BATCH_SIZE) {
 		struct ev_io *restrict w_write = &s->pkt.w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(s->loop, w_write);
@@ -306,7 +303,7 @@ struct pktqueue *queue_new(struct server *restrict s)
 	if (q == NULL) {
 		return NULL;
 	}
-	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, MMSG_BATCH_SIZE);
+	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, MMSG_BATCH_SIZE * 2);
 	const size_t recv_cap = MAX(conf->kcp_rcvwnd, MMSG_BATCH_SIZE);
 	*q = (struct pktqueue){
 		.mq_send = malloc(send_cap * sizeof(struct msgframe *)),
