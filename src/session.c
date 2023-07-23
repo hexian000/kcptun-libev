@@ -366,6 +366,7 @@ bool session_send(struct session *restrict ss)
 	}
 	if (ss->kcp_flush >= 1 || ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
 		ikcp_flush(ss->kcp);
+		ss->need_flush = false;
 	}
 	return true;
 }
