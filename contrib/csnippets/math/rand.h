@@ -35,17 +35,17 @@ void srand64(uint64_t seed);
  * @details Based on rand64().
  * @see rand64
  */
-uint64_t randn64(uint64_t n);
+uint64_t rand64n(uint64_t n);
 
 /**
- * @brief Generate uniformly distributed float in [0, 1).
+ * @brief Generate uniformly distributed float in [0.0f, 1.0f).
  * @details Based on rand64().
  * @see rand64
  */
 float frandf(void);
 
 /**
- * @brief Generate uniformly distributed double in [0, 1).
+ * @brief Generate uniformly distributed double in [0.0, 1.0).
  * @details Based on rand64().
  * @see rand64
  */

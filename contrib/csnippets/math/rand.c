@@ -52,7 +52,7 @@ uint64_t rand64(void)
 	return result;
 }
 
-uint64_t randn64(const uint64_t n)
+uint64_t rand64n(const uint64_t n)
 {
 	if ((n & (n + UINT64_C(1))) == UINT64_C(0)) {
 		return rand64() & n;
