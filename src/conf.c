@@ -342,7 +342,9 @@ static bool conf_check(struct config *restrict conf)
 		conf_check_range("linger", conf->linger, 5, 600) &&
 		conf_check_range("keepalive", conf->keepalive, 0, 600) &&
 		conf_check_range("time_wait", conf->time_wait, 5, 3600) &&
-		conf_check_range("log_level", conf->log_level, 0, 6);
+		conf_check_range(
+			"log_level", conf->log_level, LOG_LEVEL_SILENCE,
+			LOG_LEVEL_VERBOSE);
 	if (!range_ok) {
 		return false;
 	}

@@ -2,10 +2,12 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "util.h"
+#include "math/rand.h"
 #include "utils/slog.h"
 #include "utils/check.h"
 #include "utils/minmax.h"
 #include "utils/mcache.h"
+#include "utils/posixtime.h"
 #include "crypto.h"
 #include "pktqueue.h"
 #include "kcp/ikcp.h"
@@ -75,6 +77,8 @@ void init(void)
 	msgpool = mcache_new(MMSG_BATCH_SIZE * 2, size);
 	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
+
+	srand64((uint64_t)clock_monotonic());
 }
 
 void uninit(void)

@@ -11,6 +11,7 @@ target_sources(csnippets
     "${CMAKE_CURRENT_SOURCE_DIR}/likely.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcache.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/minmax.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/posixtime.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/serialize.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/slog.h"
 )
