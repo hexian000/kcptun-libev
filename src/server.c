@@ -80,7 +80,7 @@ static bool listener_start(struct server *restrict s)
 		}
 		/* Initialize and start a watcher to accepts client requests */
 		struct ev_io *restrict w_accept = &l->w_accept;
-		ev_io_init(w_accept, accept_cb, fd, EV_READ);
+		ev_io_init(w_accept, tcp_accept_cb, fd, EV_READ);
 		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);

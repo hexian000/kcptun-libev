@@ -60,7 +60,7 @@ static void accept_one(
 	session_start(ss, fd);
 }
 
-void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 
@@ -154,7 +154,7 @@ static int tcp_recv(struct session *restrict ss)
 	return TCPRECV_OK;
 }
 
-void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
@@ -266,7 +266,7 @@ static bool on_connected(struct session *restrict ss)
 	return true;
 }
 
-void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 

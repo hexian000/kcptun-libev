@@ -94,9 +94,9 @@ struct session *session_new(
 	ss->tcp_state = STATE_INIT;
 	ss->kcp_state = STATE_INIT;
 	ss->tcp_fd = -1;
-	ev_io_init(&ss->w_read, read_cb, -1, EV_READ);
+	ev_io_init(&ss->w_read, tcp_read_cb, -1, EV_READ);
 	ss->w_read.data = ss;
-	ev_io_init(&ss->w_write, write_cb, -1, EV_WRITE);
+	ev_io_init(&ss->w_write, tcp_write_cb, -1, EV_WRITE);
 	ss->w_write.data = ss;
 	ev_idle_init(&ss->w_update, ss_update_cb);
 	ss->w_update.data = ss;

@@ -19,9 +19,9 @@ struct ev_io;
 struct ev_timer;
 struct IKCPCB;
 
-void accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void pkt_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents);
