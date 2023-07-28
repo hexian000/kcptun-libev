@@ -20,7 +20,7 @@
 
 #define BUFFER_HDR                                                             \
 	struct {                                                               \
-		const size_t cap;                                              \
+		size_t cap;                                                    \
 		size_t len;                                                    \
 	}
 
@@ -72,14 +72,14 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
  * 	BUFFER_HDR;
  * 	unsigned char data[8192];
  * } rbuf, wbuf;
- * BUF_INIT(rbuf, sizeof(rbuf.data));
- * BUF_INIT(wbuf, sizeof(wbuf.data));
+ * BUF_INIT(rbuf, 0);
+ * BUF_INIT(wbuf, 0);
  * ```
  */
-#define BUF_INIT(buf, size)                                                    \
+#define BUF_INIT(buf, n)                                                       \
 	do {                                                                   \
-		*((size_t *)&(buf).cap) = (size);                              \
-		(buf).len = 0;                                                 \
+		(buf).cap = sizeof((buf).data);                                \
+		(buf).len = (n);                                               \
 	} while (0)
 
 /**
@@ -177,7 +177,7 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
  * @brief Free vbuffer object.
  * @param vbuf If NULL, no operation is performed.
  * @return Always NULL.
- * @details usage: `vbuf = VBUF_FREE(vbuf, 100);`
+ * @details usage: `vbuf = VBUF_FREE(vbuf);`
  */
 #define VBUF_FREE(vbuf) vbuf_alloc((vbuf), 0)
 

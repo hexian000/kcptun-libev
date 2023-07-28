@@ -66,7 +66,7 @@ struct obfs {
 	int cap_fd, raw_fd;
 	int fd;
 	int domain;
-	size_t unauthenticated;
+	size_t num_authenticated;
 };
 
 #define OBFS_MAX_REQUEST 4096
@@ -75,7 +75,21 @@ struct obfs {
 #define OBFS_STARTUP_LIMIT_RATE 30
 #define OBFS_STARTUP_LIMIT_FULL 60
 
+#define OBFS_CTX_KEY_SIZE (sizeof(sockaddr_max_t))
+
+struct obfs_ctx_key {
+	BUFFER_HDR;
+	unsigned char data[OBFS_CTX_KEY_SIZE];
+};
+
+#define OBFS_CTX_MAKE_KEY(key, sa)                                             \
+	do {                                                                   \
+		BUF_INIT(key, getsocklen(sa));                                 \
+		memcpy((key).data, (sa), (key).len);                           \
+	} while (0)
+
 struct obfs_ctx {
+	struct obfs_ctx_key key;
 	struct obfs *obfs;
 	struct ev_io w_read, w_write;
 	sockaddr_max_t laddr, raddr;
@@ -490,52 +504,48 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	ctx->http_keepalive = false;
 	ctx->num_ecn = ctx->num_ece = 0;
 	ctx->created = ctx->last_seen = TSTAMP_NIL;
-	BUF_INIT(ctx->rbuf, OBFS_MAX_REQUEST);
-	BUF_INIT(ctx->wbuf, OBFS_MAX_REQUEST);
+	BUF_INIT(ctx->rbuf, 0);
+	BUF_INIT(ctx->wbuf, 0);
 	return ctx;
 }
 
 static bool ctx_del_filter(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
-	struct {
-		sockaddr_max_t sa;
-		uint32_t conv;
-	} *ep = (void *)key;
-	if (sa_equals(&ep->sa.sa, user)) {
-		session_free(value);
+	UNUSED(key);
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
+	if (sa_equals(&ss->raddr.sa, user)) {
+		session_free(element);
 		return false;
 	}
 	return true;
 }
 
-static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
+static void obfs_ctx_unlink(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 {
-	/* free all related sessions */
-	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
-	hashkey_t key;
-	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
-	(void)table_del(obfs->contexts, &key, NULL);
+	if (ctx->authenticated) {
+		assert(obfs->num_authenticated > 0u);
+		obfs->num_authenticated--;
+	}
 	if (obfs->client == ctx) {
 		obfs_sched_redial(obfs);
 	}
-	if (!ctx->authenticated) {
-		assert(obfs->unauthenticated > 0u);
-		obfs->unauthenticated--;
-	}
+	/* free all related sessions */
+	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
+}
+
+static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
+{
+	obfs_ctx_unlink(obfs, ctx);
+	(void)table_del(obfs->contexts, (hashkey_t *)&ctx->key);
 }
 
 static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 {
-	struct ev_io *restrict w_read = &ctx->w_read;
-	if (ev_is_active(w_read)) {
-		ev_io_stop(loop, w_read);
-	}
-	struct ev_io *restrict w_write = &ctx->w_write;
-	if (ev_is_active(w_write)) {
-		ev_io_stop(loop, w_write);
-	}
+	ev_io_stop(loop, &ctx->w_read);
+	ev_io_stop(loop, &ctx->w_write);
 }
 
 static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
@@ -611,25 +621,15 @@ static bool obfs_ctx_start(
 		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
 		LOGD_F("obfs: start %s <-> %s", laddr, raddr);
 	}
-	hashkey_t key;
-	conv_make_key(&key, &ctx->raddr.sa, UINT32_C(0));
-	struct obfs_ctx *restrict old_ctx = NULL;
-	if (table_del(obfs->contexts, &key, (void **)&old_ctx)) {
-		if (!old_ctx->authenticated) {
-			assert(obfs->unauthenticated > 0u);
-			obfs->unauthenticated--;
-		}
-		/* free all related sessions */
-		table_filter(
-			obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
+	OBFS_CTX_MAKE_KEY(ctx->key, &ctx->raddr.sa);
+	struct obfs_ctx *restrict old_ctx =
+		table_set(obfs->contexts, (hashkey_t *)&ctx->key, ctx);
+	if (old_ctx != NULL) {
+		obfs_ctx_stop(loop, old_ctx);
+		obfs_ctx_del(obfs, old_ctx);
 		obfs_ctx_free(loop, old_ctx);
 	}
-	const bool ok = table_set(obfs->contexts, &key, ctx);
-	if (!ok) {
-		obfs_ctx_stop(loop, ctx);
-	}
-	obfs->unauthenticated++;
-	return ok;
+	return true;
 }
 
 static bool
@@ -712,6 +712,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		return false;
 	}
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
+		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return false;
 	}
@@ -766,13 +767,14 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 }
 
 static bool obfs_ctx_timeout_filt(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct obfs *restrict obfs = user;
 	struct ev_loop *loop = obfs->server->loop;
-	struct obfs_ctx *restrict ctx = value;
+	struct obfs_ctx *restrict ctx = element;
+	assert(key == (hashkey_t *)&ctx->key);
 	const ev_tstamp now = ev_now(loop);
 	assert(now >= ctx->last_seen);
 	double not_seen, timeout;
@@ -793,15 +795,7 @@ static bool obfs_ctx_timeout_filt(
 		OBFS_CTX_LOG_F(
 			LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	}
-	if (obfs->client == ctx) {
-		obfs_sched_redial(obfs);
-	}
-	if (!ctx->authenticated) {
-		assert(obfs->unauthenticated > 0u);
-		obfs->unauthenticated--;
-	}
-	/* free all related sessions */
-	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
+	obfs_ctx_unlink(obfs, ctx);
 	obfs_ctx_free(loop, ctx);
 	return false;
 }
@@ -842,7 +836,7 @@ obfs_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct obfs *restrict obfs = (struct obfs *)watcher->data;
+	struct obfs *restrict obfs = watcher->data;
 	/* context timeout */
 	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 }
@@ -898,11 +892,12 @@ struct obfs_stats_ctx {
 };
 
 static bool print_ctx_iter(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
-	const struct obfs_ctx *restrict ctx = value;
+	const struct obfs_ctx *restrict ctx = element;
+	assert(key == (hashkey_t *)&ctx->key);
 	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
@@ -928,10 +923,9 @@ struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
 	table_iterate(obfs->contexts, print_ctx_iter, &stats_ctx);
 	buf = stats_ctx.buf;
 
-	const int num_ctx = table_size(obfs->contexts);
-	const size_t unauthenticated = obfs->unauthenticated;
-	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
-	const size_t authenticated = (size_t)num_ctx - unauthenticated;
+	const size_t num_contexts = (size_t)table_size(obfs->contexts);
+	const size_t authenticated = obfs->num_authenticated;
+	assert(authenticated <= num_contexts);
 
 	const struct obfs_stats *restrict stats = &obfs->stats;
 
@@ -945,7 +939,7 @@ struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
 
 	buf = VBUF_APPENDF(
 		buf, "  = %zu(+%zu) contexts; drop %s\n", authenticated,
-		unauthenticated, byt_drop);
+		num_contexts - authenticated, byt_drop);
 	return buf;
 }
 
@@ -974,10 +968,9 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 		.byt_drop = stats->byt_drop - last_stats->byt_drop,
 	};
 
-	const int num_ctx = table_size(obfs->contexts);
-	const size_t unauthenticated = obfs->unauthenticated;
-	assert(0 <= num_ctx && unauthenticated <= (size_t)num_ctx);
-	const size_t authenticated = (size_t)num_ctx - unauthenticated;
+	const size_t num_contexts = (size_t)table_size(obfs->contexts);
+	const size_t authenticated = obfs->num_authenticated;
+	assert(authenticated <= num_contexts);
 
 #define FORMAT_BYTES(name, value)                                              \
 	char name[16];                                                         \
@@ -991,7 +984,8 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 
 	buf = VBUF_APPENDF(
 		buf, "  = %zu(+%zu) contexts; drop %.1lf/s (%s/s), %s\n",
-		authenticated, unauthenticated, dpkt_drop, dbyt_drop, byt_drop);
+		authenticated, num_contexts - authenticated, dpkt_drop,
+		dbyt_drop, byt_drop);
 
 	/* rotate stats */
 	obfs->last_stats = obfs->stats;
@@ -1038,27 +1032,31 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	{
 		struct ev_io *restrict w_read = &pkt->w_read;
 		ev_io_init(w_read, &pkt_read_cb, obfs->cap_fd, EV_READ);
-		ev_set_priority(w_read, EV_MINPRI);
 		w_read->data = s;
 		ev_io_start(s->loop, w_read);
-	}
-	{
+
 		struct ev_io *restrict w_write = &pkt->w_write;
 		ev_io_init(w_write, &pkt_write_cb, obfs->raw_fd, EV_WRITE);
-		ev_set_priority(w_write, EV_MAXPRI);
 		w_write->data = s;
 		ev_io_start(s->loop, w_write);
+
+		struct ev_idle *restrict w_update = &pkt->w_update;
+		ev_idle_init(w_update, &pkt_update_cb);
+		ev_set_priority(w_update, EV_MINPRI);
+		w_update->data = s;
 	}
 
 	if (obfs->fd != -1) {
 		struct ev_io *restrict w_accept = &obfs->w_accept;
 		ev_io_init(w_accept, obfs_accept_cb, obfs->fd, EV_READ);
+		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = obfs;
 		ev_io_start(s->loop, w_accept);
 	}
 	{
 		struct ev_timer *restrict w_listener = &obfs->w_listener;
 		ev_timer_init(w_listener, obfs_listener_cb, 0.5, 0.0);
+		ev_set_priority(w_listener, EV_MINPRI);
 		w_listener->data = obfs;
 
 		struct ev_timer *restrict w_timeout = &obfs->w_timeout;
@@ -1074,11 +1072,12 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 }
 
 static bool obfs_shutdown_filt(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
-	struct obfs_ctx *restrict ctx = (struct obfs_ctx *)value;
+	struct obfs_ctx *restrict ctx = element;
+	assert(key == (hashkey_t *)&ctx->key);
 	struct obfs *restrict obfs = (struct obfs *)user;
 	obfs_ctx_free(obfs->server->loop, ctx);
 	return false;
@@ -1086,7 +1085,6 @@ static bool obfs_shutdown_filt(
 
 void obfs_stop(struct obfs *restrict obfs, struct server *s)
 {
-	struct pktconn *restrict pkt = &s->pkt;
 	table_filter(obfs->contexts, obfs_shutdown_filt, obfs);
 	obfs->client = NULL;
 	struct ev_loop *loop = obfs->server->loop;
@@ -1100,6 +1098,8 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		}
 		obfs->fd = -1;
 	}
+	struct pktconn *restrict pkt = &s->pkt;
+	ev_idle_stop(loop, &pkt->w_update);
 	if (obfs->cap_fd != -1) {
 		ev_io_stop(loop, &pkt->w_read);
 		if (close(obfs->cap_fd) != 0) {
@@ -1252,10 +1252,11 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		.sin_port = tcp.source,
 	};
 
-	struct obfs_ctx *restrict ctx;
-	hashkey_t key;
-	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
-	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
+	struct obfs_ctx_key key;
+	OBFS_CTX_MAKE_KEY(key, &msg->addr.sa);
+	struct obfs_ctx *restrict ctx =
+		table_find(obfs->contexts, (hashkey_t *)&key);
+	if (ctx == NULL) {
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
@@ -1341,10 +1342,11 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		.sin6_addr = ip6.ip6_src,
 	};
 
-	struct obfs_ctx *restrict ctx;
-	hashkey_t key;
-	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
-	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
+	struct obfs_ctx_key key;
+	OBFS_CTX_MAKE_KEY(key, &msg->addr.sa);
+	struct obfs_ctx *restrict ctx =
+		table_find(obfs->contexts, (hashkey_t *)&key);
+	if (ctx == NULL) {
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
@@ -1513,10 +1515,11 @@ obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 
 bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
-	hashkey_t key;
-	conv_make_key(&key, &msg->addr.sa, UINT32_C(0));
-	struct obfs_ctx *restrict ctx;
-	if (!table_find(obfs->contexts, &key, (void **)&ctx)) {
+	struct obfs_ctx_key key;
+	OBFS_CTX_MAKE_KEY(key, &msg->addr.sa);
+	struct obfs_ctx *restrict ctx =
+		table_find(obfs->contexts, (hashkey_t *)&key);
+	if (ctx == NULL) {
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		const ev_tstamp now = ev_now(obfs->server->loop);
@@ -1555,9 +1558,7 @@ void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
 	}
 	if (ok) {
 		OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "authenticated");
-		struct obfs *restrict obfs = ctx->obfs;
-		assert(obfs->unauthenticated > 0u);
-		obfs->unauthenticated--;
+		ctx->obfs->num_authenticated++;
 	}
 	ctx->authenticated = ok;
 }
@@ -1589,19 +1590,22 @@ static void obfs_accept_one(
 	w_read->data = ctx;
 	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "accepted");
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
+		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 	}
 }
 
 static bool is_startup_limited(struct obfs *restrict obfs)
 {
-	if (table_size(obfs->contexts) >= OBFS_MAX_CONTEXTS) {
+	const size_t num_contexts = (size_t)table_size(obfs->contexts);
+	if (num_contexts >= OBFS_MAX_CONTEXTS) {
 		return true;
 	}
-	if (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_FULL) {
+	const size_t halfopen = num_contexts - obfs->num_authenticated;
+	if (halfopen >= OBFS_STARTUP_LIMIT_FULL) {
 		return true;
 	}
-	if (obfs->unauthenticated >= OBFS_STARTUP_LIMIT_START) {
+	if (halfopen >= OBFS_STARTUP_LIMIT_START) {
 		const double rate = OBFS_STARTUP_LIMIT_RATE / 100.0;
 		if (frand() < rate) {
 			return true;

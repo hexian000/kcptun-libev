@@ -119,16 +119,9 @@ socklen_t getsocklen(const struct sockaddr *sa)
 	FAIL();
 }
 
-void conv_make_key(
-	hashkey_t *key, const struct sockaddr *sa, const uint32_t conv)
+void sa_set(sockaddr_max_t *dst, const struct sockaddr *src)
 {
-	memset(key, 0, sizeof(hashkey_t));
-	struct {
-		sockaddr_max_t sa;
-		uint32_t conv;
-	} *ep = (void *)key;
-	memcpy(&ep->sa, sa, getsocklen(sa));
-	ep->conv = conv;
+	memcpy(dst, src, getsocklen(src));
 }
 
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)

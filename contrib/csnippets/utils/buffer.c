@@ -41,7 +41,7 @@ struct vbuffer *vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
 		return vbuf;
 	}
 	vbuf = newbuf;
-	*((size_t *)&vbuf->cap) = cap;
+	vbuf->cap = cap;
 	vbuf->len = MIN(cap, len);
 	return vbuf;
 }

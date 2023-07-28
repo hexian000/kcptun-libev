@@ -2,8 +2,10 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "session.h"
+#include "utils/buffer.h"
 #include "utils/check.h"
 #include "utils/formats.h"
+#include "utils/serialize.h"
 #include "utils/slog.h"
 #include "algo/hashtable.h"
 #include "crypto.h"
@@ -66,6 +68,14 @@ kcp_new(struct session *restrict ss, struct config *restrict conf,
 	return kcp;
 }
 
+static void
+ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
+{
+	UNUSED(revents);
+	session_update(watcher->data);
+	ev_idle_stop(loop, watcher);
+}
+
 struct session *session_new(
 	struct server *restrict s, const struct sockaddr *addr,
 	const uint32_t conv)
@@ -76,21 +86,35 @@ struct session *session_new(
 		return NULL;
 	}
 	const ev_tstamp now = ev_now(s->loop);
-	*ss = (struct session){
-		.created = now,
-		.tcp_state = STATE_INIT,
-		.kcp_state = STATE_INIT,
-		.server = s,
-		.tcp_fd = -1,
-		.conv = conv,
-		.kcp_flush = s->conf->kcp_flush,
-		.last_send = TSTAMP_NIL,
-		.last_recv = TSTAMP_NIL,
-		.last_reset = TSTAMP_NIL,
-		.rbuf = malloc(SESSION_BUF_SIZE),
-		.wbuf = malloc(SESSION_BUF_SIZE),
-	};
-	if (ss->rbuf == NULL || ss->wbuf == NULL) {
+	SESSION_MAKE_KEY(ss->key, addr, conv);
+	ss->created = now;
+	ss->last_send = TSTAMP_NIL;
+	ss->last_recv = TSTAMP_NIL;
+	ss->last_reset = TSTAMP_NIL;
+	ss->tcp_state = STATE_INIT;
+	ss->kcp_state = STATE_INIT;
+	ss->tcp_fd = -1;
+	ev_io_init(&ss->w_read, read_cb, -1, EV_READ);
+	ss->w_read.data = ss;
+	ev_io_init(&ss->w_write, write_cb, -1, EV_WRITE);
+	ss->w_write.data = ss;
+	ev_idle_init(&ss->w_update, ss_update_cb);
+	ss->w_update.data = ss;
+	ss->server = s;
+	sa_set(&ss->raddr, addr);
+	ss->conv = conv;
+	ss->stats = (struct link_stats){ 0 };
+	ss->kcp_flush = s->conf->kcp_flush;
+	ss->is_accepted = false;
+	ss->event_read = ss->event_write = false;
+	ss->wbuf_next = ss->wbuf_flush = 0;
+	ss->rbuf = VBUF_NEW(SESSION_BUF_SIZE);
+	if (ss->rbuf == NULL) {
+		session_free(ss);
+		return NULL;
+	}
+	ss->wbuf = VBUF_NEW(SESSION_BUF_SIZE);
+	if (ss->wbuf == NULL) {
 		session_free(ss);
 		return NULL;
 	}
@@ -99,8 +123,6 @@ struct session *session_new(
 		session_free(ss);
 		return NULL;
 	}
-	memset(&ss->raddr, 0, sizeof(ss->raddr));
-	memcpy(&ss->raddr, addr, getsocklen(addr));
 	return ss;
 }
 
@@ -108,6 +130,7 @@ void session_free(struct session *restrict ss)
 {
 	session_stop(ss);
 	session_kcp_stop(ss);
+	ev_idle_stop(ss->server->loop, &ss->w_update);
 	free(ss);
 }
 
@@ -118,16 +141,12 @@ void session_start(struct session *restrict ss, const int fd)
 	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
-	ev_io_init(w_read, read_cb, fd, EV_READ);
-	ev_set_priority(w_read, EV_MINPRI);
-	w_read->data = ss;
+	ev_io_set(&ss->w_read, fd, EV_READ);
 	if (ss->tcp_state == STATE_CONNECTED) {
 		ev_io_start(loop, w_read);
 	}
 	struct ev_io *restrict w_write = &ss->w_write;
-	ev_io_init(w_write, write_cb, fd, EV_WRITE);
-	ev_set_priority(w_write, EV_MAXPRI);
-	w_write->data = ss;
+	ev_io_set(w_write, fd, EV_WRITE);
 	ev_io_start(loop, w_write);
 
 	const ev_tstamp now = ev_now(loop);
@@ -144,10 +163,8 @@ void session_stop(struct session *restrict ss)
 	LOGD_F("session [%08" PRIX32 "] tcp: stop, fd=%d", ss->conv,
 	       ss->tcp_fd);
 	struct ev_loop *restrict loop = ss->server->loop;
-	struct ev_io *restrict w_read = &ss->w_read;
-	ev_io_stop(loop, w_read);
-	struct ev_io *restrict w_write = &ss->w_write;
-	ev_io_stop(loop, w_write);
+	ev_io_stop(loop, &ss->w_read);
+	ev_io_stop(loop, &ss->w_write);
 	if (close(ss->tcp_fd) != 0) {
 		const int err = errno;
 		LOGE_F("close: %s", strerror(err));
@@ -162,17 +179,13 @@ void session_kcp_stop(struct session *restrict ss)
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
-	UTIL_SAFE_FREE(ss->rbuf);
-	UTIL_SAFE_FREE(ss->wbuf);
+	ss->rbuf = VBUF_FREE(ss->rbuf);
+	ss->wbuf = VBUF_FREE(ss->wbuf);
 }
 
-static void consume_wbuf(struct session *restrict ss, const size_t len)
+static void consume_wbuf(struct session *restrict ss, const size_t n)
 {
-	assert(len <= ss->wbuf_len);
-	ss->wbuf_len -= len;
-	if (ss->wbuf_len > 0) {
-		memmove(ss->wbuf, ss->wbuf + len, ss->wbuf_len);
-	}
+	VBUF_CONSUME(ss->wbuf, n);
 	ss->wbuf_flush = 0;
 	ss->wbuf_next = 0;
 }
@@ -294,16 +307,16 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 	return false;
 }
 
-void session_read_cb(struct session *ss)
+static void session_read_cb(struct session *ss)
 {
 	while (ss->kcp_state == STATE_CONNECT ||
 	       ss->kcp_state == STATE_CONNECTED) {
-		kcp_recv_cb(ss);
+		kcp_recv(ss);
 		if (ss->wbuf_next > ss->wbuf_flush) {
 			/* tcp flushing is in progress */
 			break;
 		}
-		if (ss->wbuf_len < TLV_HEADER_SIZE) {
+		if (ss->wbuf->len < TLV_HEADER_SIZE) {
 			/* no header available */
 			break;
 		}
@@ -311,7 +324,7 @@ void session_read_cb(struct session *ss)
 			/* tcp flushing is done */
 			consume_wbuf(ss, ss->wbuf_flush);
 		}
-		struct tlv_header header = tlv_header_read(ss->wbuf);
+		struct tlv_header header = tlv_header_read(ss->wbuf->data);
 		if (header.len < TLV_HEADER_SIZE &&
 		    header.len > TLV_MAX_LENGTH) {
 			LOGE_F("unexpected message length: %" PRIu16,
@@ -320,7 +333,7 @@ void session_read_cb(struct session *ss)
 			kcp_reset(ss);
 			return;
 		}
-		if (header.msg < SMSG_MAX && ss->wbuf_len < header.len) {
+		if (header.msg < SMSG_MAX && ss->wbuf->len < header.len) {
 			/* incomplete message */
 			break;
 		}
@@ -351,7 +364,7 @@ bool session_send(struct session *restrict ss)
 	default:
 		return false;
 	}
-	if (ss->rbuf_len > 0) {
+	if (ss->rbuf->len > 0) {
 		if (!kcp_push(ss)) {
 			return false;
 		}
@@ -364,20 +377,43 @@ bool session_send(struct session *restrict ss)
 		LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
 		ss->kcp_state = STATE_LINGER;
 	}
-	if (ss->kcp_flush >= 1 || ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
-		ikcp_flush(ss->kcp);
-		ss->need_flush = false;
+	ss->event_write = true;
+	if (ss->kcp_flush >= 1) {
+		session_notify(ss);
 	}
 	return true;
 }
 
-static bool
-shutdown_filt(struct hashtable *t, const hashkey_t *key, void *ss, void *user)
+void session_update(struct session *restrict ss)
+{
+	kcp_update(ss);
+	if (ss->event_read) {
+		session_read_cb(ss);
+		ss->event_read = false;
+	}
+}
+
+void session_notify(struct session *restrict ss)
+{
+	if (!ss->event_read && !ss->event_write) {
+		return;
+	}
+	struct ev_idle *restrict w_update = &ss->w_update;
+	if (ev_is_active(w_update)) {
+		return;
+	}
+	ev_idle_start(ss->server->loop, w_update);
+}
+
+static bool shutdown_filt(
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	UNUSED(user);
-	session_free((struct session *)ss);
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
+	session_free(ss);
 	return false;
 }
 
@@ -483,10 +519,11 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	const uint32_t conv = read_uint32(msgbuf);
-	hashkey_t key;
-	conv_make_key(&key, &msg->addr.sa, conv);
-	struct session *restrict ss = NULL;
-	if (!table_find(s->sessions, &key, (void **)&ss)) {
+	struct session_key key;
+	SESSION_MAKE_KEY(key, &msg->addr.sa, conv);
+	struct session *restrict ss =
+		table_find(s->sessions, (hashkey_t *)&key);
+	if (ss == NULL) {
 		return;
 	}
 	if (ss->kcp_state == STATE_TIME_WAIT) {

@@ -81,6 +81,7 @@ static bool listener_start(struct server *restrict s)
 		/* Initialize and start a watcher to accepts client requests */
 		struct ev_io *restrict w_accept = &l->w_accept;
 		ev_io_init(w_accept, accept_cb, fd, EV_READ);
+		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd = fd;
@@ -98,6 +99,7 @@ static bool listener_start(struct server *restrict s)
 		}
 		struct ev_io *restrict w_accept = &l->w_accept_http;
 		ev_io_init(w_accept, http_accept_cb, fd, EV_READ);
+		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd_http = fd;
@@ -112,6 +114,7 @@ static bool listener_start(struct server *restrict s)
 
 	struct ev_timer *restrict w_listener = &s->listener.w_timer;
 	ev_timer_init(w_listener, listener_cb, 0.5, 0.0);
+	ev_set_priority(w_listener, EV_MINPRI);
 	w_listener->data = l;
 	return true;
 }
@@ -211,15 +214,18 @@ static bool udp_start(struct server *restrict s)
 
 	struct ev_io *restrict w_read = &udp->w_read;
 	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
-	ev_set_priority(w_read, EV_MINPRI);
 	w_read->data = s;
 	ev_io_start(s->loop, w_read);
 
 	struct ev_io *restrict w_write = &udp->w_write;
 	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
-	ev_set_priority(w_write, EV_MAXPRI);
 	w_write->data = s;
 	ev_io_start(s->loop, w_write);
+
+	struct ev_idle *restrict w_update = &udp->w_update;
+	ev_idle_init(w_update, pkt_update_cb);
+	ev_set_priority(w_update, EV_MINPRI);
+	w_update->data = s;
 
 	const ev_tstamp now = ev_time();
 	udp->last_send_time = now;
@@ -271,14 +277,17 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 
 		struct ev_timer *restrict w_keepalive = &s->w_keepalive;
 		ev_timer_init(w_keepalive, keepalive_cb, 0.0, s->keepalive);
+		ev_set_priority(w_keepalive, EV_MINPRI);
 		w_keepalive->data = s;
 
 		struct ev_timer *restrict w_resolve = &s->w_resolve;
 		ev_timer_init(w_resolve, resolve_cb, s->timeout, s->timeout);
+		ev_set_priority(w_resolve, EV_MINPRI);
 		w_resolve->data = s;
 
 		struct ev_timer *restrict w_timeout = &s->w_timeout;
 		ev_timer_init(w_timeout, timeout_cb, 10.0, 10.0);
+		ev_set_priority(w_timeout, EV_MINPRI);
 		w_timeout->data = s;
 	}
 
@@ -348,10 +357,9 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	if (conn->fd == -1) {
 		return;
 	}
-	struct ev_io *restrict w_read = &conn->w_read;
-	ev_io_stop(loop, w_read);
-	struct ev_io *restrict w_write = &conn->w_write;
-	ev_io_stop(loop, w_write);
+	ev_io_stop(loop, &conn->w_read);
+	ev_io_stop(loop, &conn->w_write);
+	ev_idle_stop(loop, &conn->w_update);
 	if (close(conn->fd) != 0) {
 		const int err = errno;
 		LOGW_F("close: %s", strerror(err));
@@ -438,9 +446,9 @@ static uint32_t conv_next(uint32_t conv)
 uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 {
 	uint32_t conv = conv_next(s->m_conv);
-	hashkey_t key;
-	conv_make_key(&key, sa, conv);
-	if (table_find(s->sessions, &key, NULL)) {
+	struct session_key key;
+	SESSION_MAKE_KEY(key, sa, conv);
+	if (table_find(s->sessions, (hashkey_t *)&key) != NULL) {
 		const double usage =
 			(double)table_size(s->sessions) / (double)INT_MAX;
 		do {
@@ -448,8 +456,8 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 				conv = (uint32_t)rand64();
 			}
 			conv = conv_next(conv);
-			conv_make_key(&key, sa, conv);
-		} while (table_find(s->sessions, &key, NULL));
+			SESSION_MAKE_KEY(key, sa, conv);
+		} while (table_find(s->sessions, (hashkey_t *)&key) != NULL);
 	}
 	s->m_conv = conv;
 	return conv;
@@ -463,11 +471,12 @@ struct server_stats_ctx {
 };
 
 static bool print_session_iter(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
-	struct session *restrict ss = value;
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;

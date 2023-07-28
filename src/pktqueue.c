@@ -93,11 +93,12 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 
-	hashkey_t sskey;
 	const struct sockaddr *sa = &msg->addr.sa;
-	conv_make_key(&sskey, sa, conv);
-	struct session *restrict ss;
-	if (!table_find(s->sessions, &sskey, (void **)&ss)) {
+	struct session_key sskey;
+	SESSION_MAKE_KEY(sskey, sa, conv);
+	struct session *restrict ss =
+		table_find(s->sessions, (hashkey_t *)&sskey);
+	if (ss == NULL) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOG_RATELIMITEDF(
 				LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
@@ -112,7 +113,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 			return;
 		}
 		ss->is_accepted = true;
-		table_set(s->sessions, &sskey, ss);
+		table_set(s->sessions, (hashkey_t *)&ss->key, ss);
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
@@ -159,11 +160,12 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
+	ss->event_read = true;
 	if (ss->kcp_flush >= 2) {
 		/* flush acks */
-		ss->need_flush = true;
+		ss->event_write = true;
 	}
-	session_read_cb(ss);
+	session_notify(ss);
 }
 
 size_t queue_recv(struct server *restrict s)

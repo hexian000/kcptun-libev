@@ -41,6 +41,4 @@
 
 struct server;
 
-void kcp_notify_update(struct server *s);
-
 #endif /* EVENT_IMPL_H */

@@ -4,28 +4,25 @@
 #ifndef ALGO_HASHTABLE_H
 #define ALGO_HASHTABLE_H
 
+#include "utils/buffer.h"
+
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 /**
  * @defgroup hashtable
- * @brief Unordered map whose keys are of fixed length.
+ * @brief An unordered map container implemented with a hash table.
  * @{
  */
 
-#ifndef HASHKEY_LEN
-#define HASHKEY_LEN 32
-#endif
-
-typedef struct {
-	unsigned char raw[HASHKEY_LEN];
-} hashkey_t;
+typedef struct vbuffer hashkey_t;
 
 struct hashtable;
 
 typedef bool (*table_iterate_cb)(
-	struct hashtable *table, const hashkey_t *key, void *value, void *data);
+	struct hashtable *table, const hashkey_t *key, void *element,
+	void *data);
 
 enum table_flags {
 	TABLE_DEFAULT = 0,
@@ -56,39 +53,37 @@ void table_free(struct hashtable *table);
 void table_reserve(struct hashtable *table, int new_size);
 
 /**
- * @brief Insert or assign to an item in the table.
+ * @brief Insert or assign to an element in the table.
  * @param table Pointer to the table.
- * @param key The key to insert or assign to.
- * @param value The new value.
- * @return false only if table size will exceed INT_MAX
+ * @param key The key of the new element.
+ * @param element The new element where the key should be stored, not NULL.
+ * @return When success, the existing element or NULL. If allocation failed or
+ * the table size will exceed INT_MAX, no operation is performed and the new
+ * element is returned.
  */
-bool table_set(struct hashtable *table, const hashkey_t *key, void *value);
+void *table_set(struct hashtable *table, const hashkey_t *key, void *element);
 
 /**
- * @brief Find an item by key.
+ * @brief Find an element by key.
  * @param table Pointer to the table.
  * @param key The key to find.
- * @param value Stores value of the found item. Pass NULL if you don't care
- * about the value. If the key can't be found, the value is unchanged.
- * @return true if the key can be found.
+ * @return The existing element or NULL.
  */
-bool table_find(struct hashtable *table, const hashkey_t *key, void **value);
+void *table_find(struct hashtable *table, const hashkey_t *key);
 
 /**
- * @brief Delete an item by key.
+ * @brief Delete an element by key.
  * @param table Pointer to the table.
  * @param key The key to find and delete.
- * @param value Stores old value of the item. Pass NULL if you don't care
- * about the value. If the key can't be found, the value is unchanged.
- * @return true if the key can be found.
+ * @return The existing element or NULL.
  */
-bool table_del(struct hashtable *table, const hashkey_t *key, void **value);
+void *table_del(struct hashtable *table, const hashkey_t *key);
 
 /**
- * @brief Delete items while iterating over the table.
+ * @brief Delete elements while iterating over the table.
  * @param table Pointer to the table.
  * @param f Callback function, return false to delete.
- * @param data Directly passed to f
+ * @param data Transparently passed to f
  */
 void table_filter(struct hashtable *table, table_iterate_cb f, void *data);
 
@@ -96,14 +91,14 @@ void table_filter(struct hashtable *table, table_iterate_cb f, void *data);
  * @brief Iterate over a table.
  * @param table Pointer to the table.
  * @param f Callback function, return true to continue.
- * @param data Directly passed to f
+ * @param data Transparently passed to f
  */
 void table_iterate(struct hashtable *table, table_iterate_cb f, void *data);
 
 /**
- * @brief Get the item count in a table.
- * @param table Pointer to the table.
- * @return Number of items in the table.
+ * @brief Get the number of elements in a table.
+ * @param table Pointer to a table.
+ * @return The number of elements in the table.
  */
 int table_size(struct hashtable *table);
 

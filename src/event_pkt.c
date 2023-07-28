@@ -3,6 +3,7 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "session.h"
 #include "sockutil.h"
 #include "util.h"
 #include "utils/check.h"
@@ -45,8 +46,8 @@ static struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
 
 #define RECVMSG_HDR(msg, iov)                                                  \
 	((struct msghdr){                                                      \
-		.msg_name = &msg->addr,                                        \
-		.msg_namelen = sizeof(msg->addr),                              \
+		.msg_name = &(msg)->addr,                                      \
+		.msg_namelen = sizeof((msg)->addr),                            \
 		.msg_iov = (iov),                                              \
 		.msg_iovlen = 1,                                               \
 		.msg_control = NULL,                                           \
@@ -184,13 +185,9 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct server *restrict s = (struct server *)watcher->data;
-	size_t nbrecv = 0;
+	struct server *restrict s = watcher->data;
 	while (pkt_recv(s, watcher->fd) > 0) {
-		nbrecv += queue_recv(s);
-	}
-	if (nbrecv > 0 && s->conf->kcp_flush >= 2) {
-		kcp_notify_update(s);
+		(void)queue_recv(s);
 	}
 }
 
@@ -212,8 +209,8 @@ static size_t pkt_send_drop(struct pktqueue *restrict q)
 
 #define SENDMSG_HDR(msg, iov)                                                  \
 	((struct msghdr){                                                      \
-		.msg_name = &msg->addr,                                        \
-		.msg_namelen = getsocklen(&msg->addr.sa),                      \
+		.msg_name = &(msg)->addr,                                      \
+		.msg_namelen = getsocklen(&(msg)->addr.sa),                    \
 		.msg_iov = (iov),                                              \
 		.msg_iovlen = 1,                                               \
 		.msg_control = NULL,                                           \
@@ -336,14 +333,19 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	struct server *restrict s = (struct server *)watcher->data;
+	const int fd = watcher->fd;
+	struct server *restrict s = watcher->data;
 	struct pktqueue *restrict q = s->pkt.queue;
-	while (pkt_send(s, watcher->fd) > 0) {
-		if (q->mq_send_len == 0) {
-			kcp_notify_update(s);
+	while (q->mq_send_len > 0) {
+		if (pkt_send(s, fd) == 0) {
+			break;
 		}
 	}
 	if (q->mq_send_len == 0) {
+		struct ev_idle *restrict w_update = &s->pkt.w_update;
+		if (!ev_is_active(w_update)) {
+			ev_idle_start(loop, w_update);
+		}
 		ev_io_stop(loop, watcher);
 	}
 }
@@ -356,4 +358,24 @@ void pkt_flush(struct server *restrict s)
 	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
 		ev_io_start(s->loop, w_write);
 	}
+}
+
+static bool pkt_update_iter(
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
+	session_update(ss);
+	return true;
+}
+
+void pkt_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	struct server *restrict s = watcher->data;
+	table_iterate(s->sessions, pkt_update_iter, s);
+	ev_idle_stop(loop, watcher);
 }

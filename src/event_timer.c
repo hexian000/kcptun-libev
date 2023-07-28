@@ -16,14 +16,15 @@
 
 #include <inttypes.h>
 
-static bool
-timeout_filt(struct hashtable *t, const hashkey_t *key, void *value, void *user)
+static bool timeout_filt(
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
-	struct session *restrict ss = value;
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
 	ev_tstamp not_seen = now - ss->created;
 	switch (ss->kcp_state) {
 	case STATE_INIT:

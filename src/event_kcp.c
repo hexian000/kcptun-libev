@@ -83,21 +83,21 @@ bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg)
 
 bool kcp_push(struct session *restrict ss)
 {
-	assert(ss->rbuf_len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
-	const size_t len = TLV_HEADER_SIZE + ss->rbuf_len;
+	assert(ss->rbuf->len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
+	const size_t len = TLV_HEADER_SIZE + ss->rbuf->len;
 	struct tlv_header header = (struct tlv_header){
 		.msg = SMSG_PUSH,
 		.len = (uint16_t)len,
 	};
-	tlv_header_write(ss->rbuf, header);
-	ss->rbuf_len = 0;
-	return kcp_send(ss, ss->rbuf, len);
+	tlv_header_write(ss->rbuf->data, header);
+	ss->rbuf->len = 0;
+	return kcp_send(ss, ss->rbuf->data, len);
 }
 
-void kcp_recv_cb(struct session *restrict ss)
+void kcp_recv(struct session *restrict ss)
 {
-	unsigned char *start = ss->wbuf + ss->wbuf_len;
-	size_t cap = SESSION_BUF_SIZE - ss->wbuf_len;
+	unsigned char *start = ss->wbuf->data + ss->wbuf->len;
+	size_t cap = SESSION_BUF_SIZE - ss->wbuf->len;
 	size_t nrecv = 0;
 	while (cap > 0) {
 		int r = ikcp_recv(ss->kcp, (char *)start, (int)cap);
@@ -109,7 +109,7 @@ void kcp_recv_cb(struct session *restrict ss)
 		cap -= r;
 	}
 	if (nrecv > 0) {
-		ss->wbuf_len += nrecv;
+		ss->wbuf->len += nrecv;
 		ss->last_recv = ev_now(ss->server->loop);
 		LOGV_F("session [%08" PRIX32 "] kcp: "
 		       "recv %zu bytes, cap: %zu bytes",
@@ -128,32 +128,37 @@ void kcp_update(struct session *restrict ss)
 		return;
 	}
 	struct server *restrict s = ss->server;
-	if (ss->need_flush) {
+	struct pktqueue *restrict q = s->pkt.queue;
+	if (q->mq_send_len == q->mq_send_cap) {
+		return;
+	}
+	if (ss->event_write) {
 		ikcp_flush(ss->kcp);
-		ss->need_flush = false;
+		ss->event_write = false;
 	} else {
 		const ev_tstamp now = ev_now(s->loop);
 		const uint32_t now_ms = tstamp2ms(now);
 		ikcp_update(ss->kcp, now_ms);
 	}
-	if (ss->tcp_fd != -1 && ss->tcp_state != STATE_LINGER) {
+	if (ss->tcp_fd != -1 && ss->tcp_state != STATE_LINGER &&
+	    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
 		struct ev_io *restrict w_read = &ss->w_read;
-		if (!ev_is_active(w_read) &&
-		    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
+		if (!ev_is_active(w_read)) {
 			ev_io_start(s->loop, w_read);
 		}
 	}
 }
 
 static bool kcp_update_iter(
-	struct hashtable *t, const hashkey_t *key, void *value, void *user)
+	struct hashtable *t, const hashkey_t *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
-	struct session *restrict ss = value;
+	UNUSED(user);
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
 	kcp_update(ss);
-	struct pktqueue *restrict q = user;
-	return q->mq_send_len < q->mq_send_cap;
+	return true;
 }
 
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
@@ -161,10 +166,5 @@ void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct server *restrict s = watcher->data;
-	table_iterate(s->sessions, kcp_update_iter, s->pkt.queue);
-}
-
-void kcp_notify_update(struct server *restrict s)
-{
-	table_iterate(s->sessions, kcp_update_iter, s->pkt.queue);
+	table_iterate(s->sessions, kcp_update_iter, NULL);
 }

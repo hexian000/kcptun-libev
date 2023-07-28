@@ -5,6 +5,7 @@
 #include "algo/cityhash.h"
 #include "math/rand.h"
 #include "utils/arraysize.h"
+#include "utils/buffer.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -47,8 +48,8 @@ static inline int ceil_capacity(int x)
 struct hash_item {
 	int bucket;
 	int hash, next;
-	hashkey_t key;
-	void *value;
+	const hashkey_t *key;
+	void *element;
 };
 
 struct hashtable {
@@ -62,19 +63,11 @@ struct hashtable {
 #endif
 };
 
-static inline bool key_equals(const hashkey_t *a, const hashkey_t *b)
-{
-	return memcmp(a, b, sizeof(hashkey_t)) == 0;
-}
-
-static inline void key_set(hashkey_t *dst, const hashkey_t *src)
-{
-	memcpy(dst, src, sizeof(hashkey_t));
-}
+#define KEY_EQUALS(a, b) VBUF_EQUALS(a, b)
 
 static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
 {
-	const uint32_t h = cityhash64low_32(x, sizeof(hashkey_t), seed);
+	const uint32_t h = cityhash64low_32(x->data, x->len, seed);
 	return (int)(h & (uint32_t)INT_MAX);
 }
 
@@ -105,8 +98,8 @@ static inline void table_compact(struct hashtable *restrict table)
 		if (r > w) {
 			struct hash_item *restrict q = &(table->p[w]);
 			q->hash = p->hash;
-			key_set(&q->key, &p->key);
-			q->value = p->value;
+			q->key = p->key;
+			q->element = p->element;
 			p->hash = -1;
 		}
 		w++;
@@ -124,7 +117,7 @@ static inline void table_rehash(struct hashtable *restrict table)
 	const uint32_t seed = table->seed;
 	for (int i = 0; i < size; i++) {
 		struct hash_item *restrict p = &(table->p[i]);
-		const int hash = get_hash(&p->key, seed);
+		const int hash = get_hash(p->key, seed);
 		const int bucket = hash % capacity;
 		p->hash = hash;
 		p->next = table->p[bucket].bucket;
@@ -189,24 +182,27 @@ static inline void table_reseed(struct hashtable *restrict table)
 	table_rehash(table);
 }
 
-bool table_set(
-	struct hashtable *restrict table, const hashkey_t *key, void *value)
+void *
+table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 {
+	assert(element != NULL);
 	const int hash = get_hash(key, table->seed);
 	int bucket = hash % table->capacity;
 	int collision = 0;
 	for (int i = table->p[bucket].bucket; i >= 0; i = table->p[i].next) {
 		struct hash_item *restrict p = &(table->p[i]);
-		if (p->hash == hash && key_equals(&p->key, key)) {
+		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
 			/* overwrite */
-			p->value = value;
+			void *old_elem = p->element;
+			p->key = key;
+			p->element = element;
 #ifndef NDEBUG
 			table->version++;
 #endif
 			if (collision > COLLISION_THRESHOLD) {
 				table_reseed(table);
 			}
-			return true;
+			return old_elem;
 		}
 		collision++;
 	}
@@ -221,8 +217,8 @@ bool table_set(
 		if (table->size >= table->max_load) {
 			table_grow(table);
 			if (table->size == table->capacity) {
-				/* no space, return failure */
-				return false;
+				/* allocation failed */
+				return element;
 			}
 			bucket = hash % table->capacity;
 		}
@@ -231,8 +227,8 @@ bool table_set(
 	}
 
 	struct hash_item *restrict p = &(table->p[index]);
-	key_set(&p->key, key);
-	p->value = value;
+	p->key = key;
+	p->element = element;
 	p->hash = hash;
 	int *old_bucket = &(table->p[bucket].bucket);
 	p->next = *old_bucket;
@@ -244,39 +240,31 @@ bool table_set(
 	if (collision > COLLISION_THRESHOLD) {
 		table_reseed(table);
 	}
-	return true;
+	return NULL;
 }
 
-bool table_find(
-	struct hashtable *restrict table, const hashkey_t *key, void **value)
+void *table_find(struct hashtable *restrict table, const hashkey_t *key)
 {
 	const int hash = get_hash(key, table->seed);
-	int bucket = hash % table->capacity;
+	const int bucket = hash % table->capacity;
 	for (int i = table->p[bucket].bucket; i >= 0; i = table->p[i].next) {
 		struct hash_item *restrict p = &(table->p[i]);
-		if (p->hash == hash && key_equals(&p->key, key)) {
+		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
 			/* found */
-			if (value != NULL) {
-				*value = p->value;
-			}
-			return true;
+			return p->element;
 		}
 	}
-	return false;
+	return NULL;
 }
 
-bool table_del(
-	struct hashtable *restrict table, const hashkey_t *key, void **value)
+void *table_del(struct hashtable *restrict table, const hashkey_t *key)
 {
 	const int hash = get_hash(key, table->seed);
 	int bucket = hash % table->capacity;
 	int *last_next = &(table->p[bucket].bucket);
 	for (int i = *last_next; i >= 0; i = *last_next) {
 		struct hash_item *restrict p = &(table->p[i]);
-		if (p->hash == hash && key_equals(&p->key, key)) {
-			if (value != NULL) {
-				*value = p->value;
-			}
+		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
 			*last_next = p->next;
 			p->hash = -1;
 			p->next = table->freelist;
@@ -285,11 +273,11 @@ bool table_del(
 #ifndef NDEBUG
 			table->version++;
 #endif
-			return true;
+			return p->element;
 		}
 		last_next = &(p->next);
 	}
-	return false;
+	return NULL;
 }
 
 void table_free(struct hashtable *restrict table)
@@ -369,9 +357,11 @@ void table_filter(
 	for (int bucket = 0; bucket < capacity; bucket++) {
 		int *last_next = &(table->p[bucket].bucket);
 		for (int i = *last_next; i >= 0; i = *last_next) {
+#ifndef NDEBUG
 			assert(version == table->version);
+#endif
 			struct hash_item *restrict p = &(table->p[i]);
-			const bool ok = f(table, &p->key, p->value, data);
+			const bool ok = f(table, p->key, p->element, data);
 			if (ok) {
 				last_next = &(p->next);
 				continue;
@@ -397,12 +387,14 @@ void table_iterate(
 #endif
 	const int capacity = table->capacity;
 	for (int i = 0; i < capacity; i++) {
+#ifndef NDEBUG
 		assert(version == table->version);
+#endif
 		struct hash_item *restrict p = &(table->p[i]);
 		if (p->hash < 0) {
 			continue;
 		}
-		if (!f(table, &p->key, p->value, data)) {
+		if (!f(table, p->key, p->element, data)) {
 			return;
 		}
 	}

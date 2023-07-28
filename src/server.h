@@ -29,6 +29,7 @@ struct listener {
 
 struct pktconn {
 	struct ev_io w_read, w_write;
+	struct ev_idle w_update;
 	int fd;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;

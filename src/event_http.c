@@ -10,7 +10,6 @@
 #include "net/url.h"
 #include "util.h"
 #include "server.h"
-#include "pktqueue.h"
 #include "nonce.h"
 #include "obfs.h"
 
@@ -105,7 +104,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ctx->fd = fd;
 	ctx->http_msg = (struct http_message){ 0 };
 	ctx->http_nxt = NULL;
-	BUF_INIT(ctx->rbuf, HTTP_MAX_REQUEST);
+	BUF_INIT(ctx->rbuf, 0);
 	ctx->wbuf = NULL;
 
 	struct ev_io *restrict w_read = &ctx->w_read;

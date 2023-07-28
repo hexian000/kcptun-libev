@@ -17,9 +17,6 @@ typedef union {
 	struct sockaddr_in in;
 	struct sockaddr_in6 in6;
 } sockaddr_max_t;
-_Static_assert(
-	sizeof(sockaddr_max_t) <= sizeof(uint32_t[7]),
-	"unexpected sockaddr size");
 
 bool socket_set_nonblock(int fd);
 void socket_set_reuseport(int fd, bool reuseport);
@@ -27,9 +24,8 @@ void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
 void socket_bind_netdev(int fd, const char *netdev);
 
-void conv_make_key(hashkey_t *key, const struct sockaddr *sa, uint32_t conv);
-
 socklen_t getsocklen(const struct sockaddr *sa);
+void sa_set(sockaddr_max_t *dst, const struct sockaddr *src);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);
 bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest);
 struct sockaddr *sa_clone(const struct sockaddr *src);

@@ -49,7 +49,7 @@ struct noncegen *noncegen_create(
 		.current = 0,
 		.entries = entries,
 	};
-	BUF_INIT(g->buf, sizeof(g->buf.data));
+	BUF_INIT(g->buf, 0);
 	CHECKMSG(nonce_len <= g->buf.cap, "nonce too long");
 	g->buf.len = nonce_len;
 	if (bloom_init(&g->ppbloom.bloom[0], (int)entries, error)) {

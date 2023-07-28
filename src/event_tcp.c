@@ -50,9 +50,7 @@ static void accept_one(
 		session_free(ss);
 		return;
 	}
-	hashkey_t key;
-	conv_make_key(&key, sa, conv);
-	table_set(s->sessions, &key, ss);
+	table_set(s->sessions, (hashkey_t *)&ss->key, ss);
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(client_sa, addr_str, sizeof(addr_str));
@@ -122,12 +120,12 @@ enum tcp_recv_ret {
 static int tcp_recv(struct session *restrict ss)
 {
 	/* reserve some space to encode header in place */
-	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf_len;
+	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf->len;
 	if (cap == 0) {
 		return TCPRECV_OK;
 	}
 
-	unsigned char *buf = ss->rbuf + TLV_HEADER_SIZE + ss->rbuf_len;
+	unsigned char *buf = ss->rbuf->data + TLV_HEADER_SIZE + ss->rbuf->len;
 	size_t len = 0;
 	/* Receive message from client socket */
 	const ssize_t nread = recv(ss->tcp_fd, buf, cap, 0);
@@ -135,11 +133,6 @@ static int tcp_recv(struct session *restrict ss)
 		const int err = errno;
 		if (IS_TRANSIENT_ERROR(err)) {
 			return TCPRECV_AGAIN;
-		}
-		if (err == ECONNREFUSED || err == ECONNRESET) {
-			LOGD_F("session [%08" PRIX32 "] tcp recv: %s", ss->conv,
-			       strerror(err));
-			return TCPRECV_ERROR;
 		}
 		LOGE_F("session [%08" PRIX32 "] tcp recv: %s", ss->conv,
 		       strerror(err));
@@ -149,7 +142,7 @@ static int tcp_recv(struct session *restrict ss)
 		return TCPRECV_EOF;
 	}
 	cap -= nread, len += nread;
-	ss->rbuf_len += len;
+	ss->rbuf->len += len;
 
 	if (len > 0) {
 		ss->stats.tcp_rx += len;
@@ -169,7 +162,7 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	assert(watcher == &ss->w_read);
 	assert(watcher->fd == ss->tcp_fd);
 
-	while (ss->tcp_fd != -1 && ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
+	while (ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
 		switch (tcp_recv(ss)) {
 		case TCPRECV_OK:
 			break;
@@ -196,13 +189,16 @@ void read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			return;
 		}
 	}
+
 	ev_io_stop(loop, watcher);
+
+	session_notify(ss);
 }
 
 static int tcp_flush(struct session *restrict ss)
 {
 	assert(ss->wbuf_next >= ss->wbuf_flush);
-	unsigned char *payload = ss->wbuf;
+	unsigned char *payload = ss->wbuf->data;
 	unsigned char *buf = payload + ss->wbuf_flush;
 	const size_t len = ss->wbuf_next - ss->wbuf_flush;
 	size_t nsend = 0;
@@ -227,6 +223,8 @@ static int tcp_flush(struct session *restrict ss)
 		LOGV_F("session [%08" PRIX32 "] tcp: "
 		       "send %zu/%zu bytes",
 		       ss->conv, nsend, len);
+		ss->event_read = true;
+		session_notify(ss);
 		return 1;
 	}
 	return 0;
@@ -248,7 +246,7 @@ int tcp_send(struct session *restrict ss)
 	return ret;
 }
 
-static bool connected_cb(struct session *restrict ss)
+static bool on_connected(struct session *restrict ss)
 {
 	int sockerr = 0;
 	if (getsockopt(
@@ -276,22 +274,19 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	assert(watcher == &ss->w_write);
 	assert(watcher->fd == ss->tcp_fd);
 	if (ss->tcp_state == STATE_CONNECT) {
-		connected_cb(ss);
+		on_connected(ss);
 		ss->tcp_state = STATE_CONNECTED;
 	}
 
-	while (ss->tcp_fd != -1 && ss->wbuf_next > ss->wbuf_flush) {
+	while (ss->wbuf_next > ss->wbuf_flush) {
 		const int ret = tcp_flush(ss);
 		if (ret < 0) {
 			session_stop(ss);
 			kcp_reset(ss);
 			return;
-		}
-		if (ret == 0) {
+		} else if (ret == 0) {
+			/* wait next event */
 			return;
-		}
-		if (ss->wbuf_flush == ss->wbuf_next) {
-			session_read_cb(ss);
 		}
 	}
 
@@ -303,5 +298,6 @@ void write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		session_stop(ss);
 		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
 		ss->tcp_state = STATE_TIME_WAIT;
+		return;
 	}
 }

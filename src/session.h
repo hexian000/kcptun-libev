@@ -5,6 +5,7 @@
 #define SESSION_H
 
 #include "conf.h"
+#include "utils/buffer.h"
 #include "utils/serialize.h"
 #include "algo/hashtable.h"
 #include "sockutil.h"
@@ -74,25 +75,41 @@ struct IKCPCB;
 
 #define SESSION_BUF_SIZE 16384
 
+#define SESSION_KEY_SIZE (sizeof(uint32_t) + sizeof(sockaddr_max_t))
+
+struct session_key {
+	BUFFER_HDR;
+	unsigned char data[SESSION_KEY_SIZE];
+};
+
+#define SESSION_MAKE_KEY(key, sa, conv)                                        \
+	do {                                                                   \
+		const size_t n = getsocklen(sa);                               \
+		BUF_INIT(key, sizeof(uint32_t) + n);                           \
+		write_uint32((key).data, conv);                                \
+		memcpy((key).data + sizeof(uint32_t), (sa), n);                \
+	} while (0)
+
 struct session {
+	struct session_key key;
 	ev_tstamp created;
 	ev_tstamp last_send, last_recv;
 	ev_tstamp last_reset;
 	int tcp_state, kcp_state;
 	int tcp_fd;
 	struct ev_io w_read, w_write;
+	struct ev_idle w_update;
 	struct server *server;
 	sockaddr_max_t raddr;
 	uint32_t conv;
 	struct link_stats stats;
 	struct IKCPCB *kcp;
 	int kcp_flush;
-	bool is_accepted;
-	bool need_flush;
-	unsigned char *rbuf;
-	size_t rbuf_len;
-	unsigned char *wbuf;
-	size_t wbuf_flush, wbuf_next, wbuf_len;
+	bool is_accepted : 1;
+	bool event_read : 1;
+	bool event_write : 1;
+	size_t wbuf_flush, wbuf_next;
+	struct vbuffer *rbuf, *wbuf;
 };
 
 struct session *
@@ -103,8 +120,9 @@ void session_start(struct session *ss, int fd);
 void session_stop(struct session *ss);
 void session_kcp_stop(struct session *ss);
 
-void session_read_cb(struct session *ss);
 bool session_send(struct session *ss);
+void session_update(struct session *ss);
+void session_notify(struct session *ss);
 
 void session_close_all(struct hashtable *t);
 
