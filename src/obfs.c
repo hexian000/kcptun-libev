@@ -805,7 +805,7 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct obfs *restrict obfs = (struct obfs *)watcher->data;
+	struct obfs *restrict obfs = watcher->data;
 	struct config *restrict conf = obfs->server->conf;
 	if (obfs->client != NULL) {
 		return;
@@ -823,7 +823,7 @@ static void
 obfs_listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	struct obfs *restrict obfs = (struct obfs *)watcher->data;
+	struct obfs *restrict obfs = watcher->data;
 	/* check & restart accept watcher */
 	struct ev_io *restrict w_accept = &obfs->w_accept;
 	if (obfs->fd != -1 && !ev_is_active(w_accept)) {

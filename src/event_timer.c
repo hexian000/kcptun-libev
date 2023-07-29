@@ -81,7 +81,7 @@ static bool timeout_filt(
 void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	struct listener *restrict l = (struct listener *)watcher->data;
+	struct listener *restrict l = watcher->data;
 	/* check & restart accept watchers */
 	struct ev_io *restrict w_accept = &l->w_accept;
 	if (l->fd != -1 && !ev_is_active(w_accept)) {
@@ -96,7 +96,7 @@ void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	struct server *restrict s = (struct server *)watcher->data;
+	struct server *restrict s = watcher->data;
 	const ev_tstamp now = ev_now(loop);
 
 	if (s->pkt.inflight_ping != TSTAMP_NIL) {
@@ -127,7 +127,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	struct server *restrict s = (struct server *)watcher->data;
+	struct server *restrict s = watcher->data;
 	const ev_tstamp now = ev_now(loop);
 
 	if (s->last_resolve_time != TSTAMP_NIL) {
@@ -166,7 +166,7 @@ void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct server *restrict s = (struct server *)watcher->data;
+	struct server *restrict s = watcher->data;
 
 	/* session timeout */
 	table_filter(s->sessions, timeout_filt, s);

@@ -158,7 +158,7 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
-	struct session *restrict ss = (struct session *)watcher->data;
+	struct session *restrict ss = watcher->data;
 	assert(watcher == &ss->w_read);
 	assert(watcher->fd == ss->tcp_fd);
 
@@ -270,7 +270,7 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 
-	struct session *restrict ss = (struct session *)watcher->data;
+	struct session *restrict ss = watcher->data;
 	assert(watcher == &ss->w_write);
 	assert(watcher->fd == ss->tcp_fd);
 	if (ss->tcp_state == STATE_CONNECT) {
