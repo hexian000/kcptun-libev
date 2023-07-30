@@ -222,11 +222,6 @@ static bool udp_start(struct server *restrict s)
 	w_write->data = s;
 	ev_io_start(s->loop, w_write);
 
-	struct ev_idle *restrict w_update = &udp->w_update;
-	ev_idle_init(w_update, pkt_update_cb);
-	ev_set_priority(w_update, EV_MINPRI);
-	w_update->data = s;
-
 	const ev_tstamp now = ev_time();
 	udp->last_send_time = now;
 	udp->last_recv_time = now;
@@ -359,7 +354,6 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	}
 	ev_io_stop(loop, &conn->w_read);
 	ev_io_stop(loop, &conn->w_write);
-	ev_idle_stop(loop, &conn->w_update);
 	if (close(conn->fd) != 0) {
 		const int err = errno;
 		LOGW_F("close: %s", strerror(err));

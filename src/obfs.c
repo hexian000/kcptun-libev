@@ -1039,11 +1039,6 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		ev_io_init(w_write, &pkt_write_cb, obfs->raw_fd, EV_WRITE);
 		w_write->data = s;
 		ev_io_start(s->loop, w_write);
-
-		struct ev_idle *restrict w_update = &pkt->w_update;
-		ev_idle_init(w_update, &pkt_update_cb);
-		ev_set_priority(w_update, EV_MINPRI);
-		w_update->data = s;
 	}
 
 	if (obfs->fd != -1) {
@@ -1099,7 +1094,6 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 		obfs->fd = -1;
 	}
 	struct pktconn *restrict pkt = &s->pkt;
-	ev_idle_stop(loop, &pkt->w_update);
 	if (obfs->cap_fd != -1) {
 		ev_io_stop(loop, &pkt->w_read);
 		if (close(obfs->cap_fd) != 0) {

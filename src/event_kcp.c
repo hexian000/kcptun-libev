@@ -117,7 +117,7 @@ void kcp_recv(struct session *restrict ss)
 	}
 }
 
-void kcp_update(struct session *restrict ss)
+static void kcp_update(struct session *restrict ss)
 {
 	switch (ss->kcp_state) {
 	case STATE_CONNECT:
@@ -128,19 +128,10 @@ void kcp_update(struct session *restrict ss)
 		return;
 	}
 	struct server *restrict s = ss->server;
-	struct pktqueue *restrict q = s->pkt.queue;
-	if (q->mq_send_len == q->mq_send_cap) {
-		return;
-	}
-	if (ss->event_write) {
-		ikcp_flush(ss->kcp);
-		ss->event_write = false;
-	} else {
-		const ev_tstamp now = ev_now(s->loop);
-		const uint32_t now_ms = tstamp2ms(now);
-		ikcp_update(ss->kcp, now_ms);
-	}
-	if (ss->tcp_fd != -1 && ss->tcp_state != STATE_LINGER &&
+	const ev_tstamp now = ev_now(s->loop);
+	const uint32_t now_ms = tstamp2ms(now);
+	ikcp_update(ss->kcp, now_ms);
+	if (ss->tcp_state == STATE_CONNECTED &&
 	    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
 		struct ev_io *restrict w_read = &ss->w_read;
 		if (!ev_is_active(w_read)) {

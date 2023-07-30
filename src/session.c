@@ -377,16 +377,25 @@ bool session_send(struct session *restrict ss)
 		LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
 		ss->kcp_state = STATE_LINGER;
 	}
-	ss->event_write = true;
 	if (ss->kcp_flush >= 1) {
-		session_notify(ss);
+		ss->event_write = true;
 	}
 	return true;
 }
 
 void session_update(struct session *restrict ss)
 {
-	kcp_update(ss);
+	if (ss->event_write) {
+		ikcp_flush(ss->kcp);
+		if (ss->tcp_state == STATE_CONNECTED &&
+		    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
+			struct ev_io *restrict w_read = &ss->w_read;
+			if (!ev_is_active(w_read)) {
+				ev_io_start(ss->server->loop, w_read);
+			}
+		}
+		ss->event_write = false;
+	}
 	if (ss->event_read) {
 		session_read_cb(ss);
 		ss->event_read = false;
@@ -395,9 +404,6 @@ void session_update(struct session *restrict ss)
 
 void session_notify(struct session *restrict ss)
 {
-	if (!ss->event_read && !ss->event_write) {
-		return;
-	}
 	struct ev_idle *restrict w_update = &ss->w_update;
 	if (ev_is_active(w_update)) {
 		return;

@@ -342,10 +342,6 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 	}
 	if (q->mq_send_len == 0) {
-		struct ev_idle *restrict w_update = &s->pkt.w_update;
-		if (!ev_is_active(w_update)) {
-			ev_idle_start(loop, w_update);
-		}
 		ev_io_stop(loop, watcher);
 	}
 }

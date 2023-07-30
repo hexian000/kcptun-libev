@@ -167,6 +167,7 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		case TCPRECV_OK:
 			break;
 		case TCPRECV_AGAIN:
+			session_notify(ss);
 			return;
 		case TCPRECV_EOF:
 			ss->tcp_state = STATE_LINGER;
@@ -177,6 +178,8 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			if (!session_send(ss)) {
 				kcp_reset(ss);
 			}
+			ss->event_write = true;
+			session_notify(ss);
 			return;
 		case TCPRECV_ERROR:
 			session_stop(ss);
@@ -190,9 +193,8 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 	}
 
-	ev_io_stop(loop, watcher);
-
 	session_notify(ss);
+	ev_io_stop(loop, watcher);
 }
 
 static int tcp_flush(struct session *restrict ss)
