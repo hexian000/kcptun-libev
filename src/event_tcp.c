@@ -193,6 +193,7 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 	}
 
+	ss->event_write = true;
 	session_notify(ss);
 	ev_io_stop(loop, watcher);
 }
