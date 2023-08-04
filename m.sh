@@ -79,6 +79,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+	-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld --rtlib=compiler-rt" \
         -S "." -B "build"
     nice cmake --build "build"
     (cd "build/src" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
