@@ -93,8 +93,8 @@ struct session_key {
 struct session {
 	struct session_key key;
 	ev_tstamp created;
-	ev_tstamp last_send, last_recv;
 	ev_tstamp last_reset;
+	ev_tstamp last_send, last_recv;
 	int tcp_state, kcp_state;
 	int tcp_fd;
 	struct ev_io w_read, w_write;
@@ -132,13 +132,6 @@ enum session0_messages {
 	S0MSG_PONG = 0x0001,
 	S0MSG_RESET = 0x0002,
 };
-
-struct session0_header {
-	uint32_t zero;
-	uint16_t what;
-};
-
-#define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
 
 bool ss0_send(
 	struct server *s, const struct sockaddr *sa, uint16_t what,

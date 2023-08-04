@@ -46,7 +46,7 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 	}
 #else
 	if (reuseport) {
-		LOGW("reuseport: not supported in current build");
+		LOGW_F("SO_REUSEPORT: %s", "not supported in current build");
 	}
 #endif
 }
@@ -70,7 +70,7 @@ void socket_set_buffer(const int fd, const size_t send, const size_t recv)
 	int val;
 	if (send > 0) {
 		CHECKMSGF(
-			send <= INT_MAX, "invalid send buffer size: %zu", send);
+			recv <= INT_MAX, "SO_SNDBUF: %s", "value out of range");
 		val = (int)send;
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
 			const int err = errno;
@@ -79,7 +79,7 @@ void socket_set_buffer(const int fd, const size_t send, const size_t recv)
 	}
 	if (recv > 0) {
 		CHECKMSGF(
-			recv <= INT_MAX, "invalid recv buffer size: %zu", recv);
+			recv <= INT_MAX, "SO_RCVBUF: %s", "value out of range");
 		val = (int)recv;
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
 			const int err = errno;
@@ -101,8 +101,9 @@ void socket_bind_netdev(const int fd, const char *netdev)
 	}
 #else
 	UNUSED(fd);
-	UNUSED(netdev);
-	LOGW("netdev: not supported in current build");
+	if (netdev[0] != '\0') {
+		LOGW_F("SO_BINDTODEVICE: %s", "not supported in current build");
+	}
 #endif
 }
 

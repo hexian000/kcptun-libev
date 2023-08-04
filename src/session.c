@@ -428,6 +428,13 @@ void session_close_all(struct hashtable *t)
 	table_filter(t, shutdown_filt, NULL);
 }
 
+struct session0_header {
+	uint32_t zero;
+	uint16_t what;
+};
+
+#define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
+
 static inline struct session0_header ss0_header_read(const unsigned char *d)
 {
 	return (struct session0_header){

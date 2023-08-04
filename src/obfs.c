@@ -103,6 +103,8 @@ struct obfs_ctx {
 	bool authenticated : 1;
 	bool http_keepalive : 1;
 	uintmax_t num_ecn, num_ece;
+	uintmax_t pkt_rx, pkt_tx;
+	uintmax_t byt_rx, byt_tx;
 	ev_tstamp created;
 	ev_tstamp last_seen;
 	struct {
@@ -503,6 +505,8 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	ctx->authenticated = false;
 	ctx->http_keepalive = false;
 	ctx->num_ecn = ctx->num_ece = 0;
+	ctx->pkt_rx = ctx->pkt_tx = 0;
+	ctx->byt_rx = ctx->byt_tx = 0;
 	ctx->created = ctx->last_seen = TSTAMP_NIL;
 	BUF_INIT(ctx->rbuf, 0);
 	BUF_INIT(ctx->wbuf, 0);
@@ -905,10 +909,20 @@ static bool print_ctx_iter(
 	if (ctx->captured) {
 		state = ctx->authenticated ? '-' : '>';
 	}
+
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
+	FORMAT_BYTES(byt_rx, (double)(ctx->byt_rx));
+	FORMAT_BYTES(byt_tx, (double)(ctx->byt_tx));
+
+#undef FORMAT_BYTES
+
 	stats->buf = VBUF_APPENDF(
-		stats->buf, "[%s] %c seen=%.0lfs ecn(rx/tx)=%ju/%ju\n",
-		addr_str, state, stats->now - ctx->last_seen, ctx->num_ecn,
-		ctx->num_ece);
+		stats->buf, "[%s] %c seen=%.0lfs rx/tx=%s/%s ecn/ece=%ju/%ju\n",
+		addr_str, state, stats->now - ctx->last_seen, byt_rx, byt_tx,
+		ctx->num_ecn, ctx->num_ece);
 	return true;
 }
 
@@ -1394,6 +1408,8 @@ obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		obfs->stats.byt_drop += msg->len;
 		return NULL;
 	}
+	ctx->pkt_rx++;
+	ctx->byt_rx += msg->len;
 	obfs->stats.pkt_rx++;
 	obfs->stats.byt_rx += msg->len;
 	return ctx;
@@ -1539,6 +1555,8 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 		break;
 	}
 	if (ok) {
+		ctx->pkt_tx++;
+		ctx->byt_tx += msg->len;
 		obfs->stats.pkt_tx++;
 		obfs->stats.byt_tx += msg->len;
 	}
