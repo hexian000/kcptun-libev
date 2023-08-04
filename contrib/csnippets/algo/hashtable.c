@@ -192,7 +192,7 @@ table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 	for (int i = table->p[bucket].bucket; i >= 0; i = table->p[i].next) {
 		struct hash_item *restrict p = &(table->p[i]);
 		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
-			/* overwrite */
+			/* replace existing element */
 			void *old_elem = p->element;
 			p->key = key;
 			p->element = element;

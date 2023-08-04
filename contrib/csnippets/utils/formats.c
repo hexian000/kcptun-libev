@@ -5,66 +5,41 @@
 #include "utils/arraysize.h"
 #include "utils/minmax.h"
 
+#include <float.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
-static char *si_metrics_pos[] = {
+static char *si_prefix_pos[] = {
 	"k", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q",
 };
 
-static char *si_metrics_neg[] = {
+static char *si_prefix_neg[] = {
 	"m", "μ", "n", "p", "f", "a", "z", "y", "r", "q",
 };
 
-int format_si_metric(char *buf, const size_t bufsize, const double value)
+int format_si_prefix(char *buf, const size_t bufsize, const double value)
 {
 	if (!isnormal(value)) {
 		return snprintf(buf, bufsize, "%.0f", value);
 	}
 	const int e = (int)floor(log10(value) / 3.0);
 	if (e == 0) {
-		if (value < 10.0) {
-			return snprintf(buf, bufsize, "%.04f", value);
-		}
-		if (value < 100.0) {
-			return snprintf(buf, bufsize, "%.03f", value);
-		}
-		return snprintf(buf, bufsize, "%.02f", value);
+		return snprintf(buf, bufsize, "%.6g", value);
 	}
 	if (e < 0) {
-		const size_t i = MIN((size_t)-e, ARRAY_SIZE(si_metrics_neg));
+		const size_t i = MIN((size_t)-e, ARRAY_SIZE(si_prefix_neg));
 		const double v = value / pow(10, -3.0 * (double)i);
-		const char *unit = si_metrics_neg[i - 1];
-		if (v < 1.0) {
-			return snprintf(buf, bufsize, "%g %s", v, unit);
-		}
-		if (v < 10.0) {
-			return snprintf(buf, bufsize, "%.04f %s", v, unit);
-		}
-		if (v < 100.0) {
-			return snprintf(buf, bufsize, "%.03f %s", v, unit);
-		}
-		if (v < 1000.0) {
-			return snprintf(buf, bufsize, "%.02f %s", v, unit);
-		}
-		return snprintf(buf, bufsize, "%g %s", v, unit);
+		const char *prefix = si_prefix_neg[i - 1];
+		return snprintf(buf, bufsize, "%.6g%s", v, prefix);
 	}
-	const size_t i = MIN((size_t)e, ARRAY_SIZE(si_metrics_pos));
+	const size_t i = MIN((size_t)e, ARRAY_SIZE(si_prefix_pos));
 	const double v = value / pow(10, 3.0 * (double)i);
-	const char *unit = si_metrics_pos[i - 1];
-	if (v < 10.0) {
-		return snprintf(buf, bufsize, "%.04f %s", v, unit);
-	}
-	if (v < 100.0) {
-		return snprintf(buf, bufsize, "%.03f %s", v, unit);
-	}
-	if (v < 1000.0) {
-		return snprintf(buf, bufsize, "%.02f %s", v, unit);
-	}
-	return snprintf(buf, bufsize, "%g %s", v, unit);
+	const char *prefix = si_prefix_pos[i - 1];
+	return snprintf(buf, bufsize, "%.6g%s", v, prefix);
 }
 
 static const char *iec_units[] = {
@@ -73,7 +48,10 @@ static const char *iec_units[] = {
 
 int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 {
-	if (!isfinite(value) || (value < 8192.0)) {
+	if (!isnormal(value)) {
+		return snprintf(buf, bufsize, "%.0f", value);
+	}
+	if (value < 8192.0) {
 		return snprintf(buf, bufsize, "%.0f %s", value, iec_units[0]);
 	}
 	const int x = ((int)log2(value) - 3) / 10;
@@ -81,10 +59,10 @@ int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 	const int i = (x <= n ? x : n);
 	const double v = ldexp(value, i * -10);
 	if (v < 10.0) {
-		return snprintf(buf, bufsize, "%.02f %s", v, iec_units[i]);
+		return snprintf(buf, bufsize, "%.2f %s", v, iec_units[i]);
 	}
 	if (v < 100.0) {
-		return snprintf(buf, bufsize, "%.01f %s", v, iec_units[i]);
+		return snprintf(buf, bufsize, "%.1f %s", v, iec_units[i]);
 	}
 	return snprintf(buf, bufsize, "%.0f %s", v, iec_units[i]);
 }
@@ -98,16 +76,16 @@ struct duration make_duration(double value)
 	} else {
 		d.sign = 1;
 	}
-	d.nanos = (unsigned int)fmod(value * 1e+9, 1000.0);
-	d.micros = (unsigned int)fmod(value * 1e+6, 1000.0);
-	d.millis = (unsigned int)fmod(value * 1e+3, 1000.0);
-	d.seconds = (unsigned int)fmod(value, 60.0);
+	d.nano = (unsigned int)fmod(value * 1e+9, 1000.0);
+	d.micro = (unsigned int)fmod(value * 1e+6, 1000.0);
+	d.milli = (unsigned int)fmod(value * 1e+3, 1000.0);
+	d.second = (unsigned int)fmod(value, 60.0);
 	value /= 60.0;
-	d.minutes = (unsigned int)fmod(value, 60.0);
+	d.minute = (unsigned int)fmod(value, 60.0);
 	value /= 60.0;
-	d.hours = (unsigned int)fmod(value, 24.0);
+	d.hour = (unsigned int)fmod(value, 24.0);
 	value /= 24.0;
-	d.days = (unsigned int)value;
+	d.day = (unsigned int)value;
 	return d;
 }
 
@@ -119,20 +97,20 @@ struct duration make_duration_nanos(int64_t value)
 	} else {
 		d.sign = 1;
 	}
-	d.nanos = (unsigned int)(value % 1000 * d.sign);
+	d.nano = (unsigned int)(value % 1000 * d.sign);
 	value /= 1000;
 	value *= d.sign;
-	d.micros = (unsigned int)(value % 1000);
+	d.micro = (unsigned int)(value % 1000);
 	value /= 1000;
-	d.millis = (unsigned int)(value % 1000);
+	d.milli = (unsigned int)(value % 1000);
 	value /= 1000;
-	d.seconds = (unsigned int)(value % 60);
+	d.second = (unsigned int)(value % 60);
 	value /= 60;
-	d.minutes = (unsigned int)(value % 60);
+	d.minute = (unsigned int)(value % 60);
 	value /= 60;
-	d.hours = (unsigned int)(value % 24);
+	d.hour = (unsigned int)(value % 24);
 	value /= 24;
-	d.days = (unsigned int)value;
+	d.day = (unsigned int)value;
 	return d;
 }
 
@@ -140,127 +118,128 @@ struct duration make_duration_nanos(int64_t value)
 
 int format_duration_seconds(char *b, const size_t size, const struct duration d)
 {
-	if (d.days) {
+	if (d.day) {
 		return snprintf(
-			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02u"),
-			d.days, d.hours, d.minutes, d.seconds);
+			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02u"), d.day,
+			d.hour, d.minute, d.second);
 	}
-	if (d.hours) {
+	if (d.hour) {
 		return snprintf(
-			b, size, SIGNED_STR(d.sign, "%u:%02u:%02u"), d.hours,
-			d.minutes, d.seconds);
+			b, size, SIGNED_STR(d.sign, "%u:%02u:%02u"), d.hour,
+			d.minute, d.second);
 	}
 	return snprintf(
-		b, size, SIGNED_STR(d.sign, "%u:%02u"), d.minutes, d.seconds);
+		b, size, SIGNED_STR(d.sign, "%u:%02u"), d.minute, d.second);
 }
 
 int format_duration_millis(char *b, const size_t size, const struct duration d)
 {
-	if (d.days) {
+	if (d.day) {
 		return snprintf(
 			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02u.%03u"),
-			d.days, d.hours, d.minutes, d.seconds, d.millis);
+			d.day, d.hour, d.minute, d.second, d.milli);
 	}
-	if (d.hours) {
+	if (d.hour) {
 		return snprintf(
 			b, size, SIGNED_STR(d.sign, "%u:%02u:%02u.%03u"),
-			d.hours, d.minutes, d.seconds, d.millis);
+			d.hour, d.minute, d.second, d.milli);
 	}
 	return snprintf(
-		b, size, SIGNED_STR(d.sign, "%u:%02u.%03u"), d.minutes,
-		d.seconds, d.millis);
+		b, size, SIGNED_STR(d.sign, "%u:%02u.%03u"), d.minute, d.second,
+		d.milli);
 }
 
 int format_duration_nanos(char *b, const size_t size, const struct duration d)
 {
-	if (d.days) {
+	if (d.day) {
 		return snprintf(
 			b, size,
 			SIGNED_STR(d.sign, "%ud%02u:%02u:%02u.%03u%03u%03u"),
-			d.days, d.hours, d.minutes, d.seconds, d.millis,
-			d.micros, d.nanos);
+			d.day, d.hour, d.minute, d.second, d.milli, d.micro,
+			d.nano);
 	}
-	if (d.hours) {
+	if (d.hour) {
 		return snprintf(
 			b, size,
-			SIGNED_STR(d.sign, "%u:%02u:%02u.%03u%03u%03u"),
-			d.hours, d.minutes, d.seconds, d.millis, d.micros,
-			d.nanos);
+			SIGNED_STR(d.sign, "%u:%02u:%02u.%03u%03u%03u"), d.hour,
+			d.minute, d.second, d.milli, d.micro, d.nano);
 	}
 	return snprintf(
-		b, size, SIGNED_STR(d.sign, "%u:%02u.%03u%03u%03u"), d.minutes,
-		d.seconds, d.millis, d.micros, d.nanos);
+		b, size, SIGNED_STR(d.sign, "%u:%02u.%03u%03u%03u"), d.minute,
+		d.second, d.milli, d.micro, d.nano);
 }
 
 int format_duration(char *b, size_t size, struct duration d)
 {
-	if (d.days) {
-		const double seconds = d.seconds + d.millis * 1e-3 +
-				       d.micros * 1e-6 + d.nanos * 1e-9;
+	if (d.day) {
+		const double seconds = d.second + d.milli * 1e-3 +
+				       d.micro * 1e-6 + d.nano * 1e-9;
 		return snprintf(
 			b, size, SIGNED_STR(d.sign, "%ud%02u:%02u:%02.0f"),
-			d.days, d.hours, d.minutes, seconds);
+			d.day, d.hour, d.minute, seconds);
 	}
-	if (d.hours) {
-		const double seconds = d.seconds + d.millis * 1e-3 +
-				       d.micros * 1e-6 + d.nanos * 1e-9;
+	if (d.hour) {
+		const double seconds = d.second + d.milli * 1e-3 +
+				       d.micro * 1e-6 + d.nano * 1e-9;
 		return snprintf(
-			b, size, SIGNED_STR(d.sign, "%u:%02u:%02.0f"), d.hours,
-			d.minutes, seconds);
+			b, size, SIGNED_STR(d.sign, "%u:%02u:%02.0f"), d.hour,
+			d.minute, seconds);
 	}
-	if (d.minutes) {
-		const double seconds = d.seconds + d.millis * 1e-3 +
-				       d.micros * 1e-6 + d.nanos * 1e-9;
-		if (d.minutes >= 10) {
+	if (d.minute) {
+		const double seconds = d.second + d.milli * 1e-3 +
+				       d.micro * 1e-6 + d.nano * 1e-9;
+		if (d.minute >= 10) {
 			return snprintf(
 				b, size, SIGNED_STR(d.sign, "%u:%02.0f"),
-				d.minutes, seconds);
+				d.minute, seconds);
 		}
 		return snprintf(
-			b, size, SIGNED_STR(d.sign, "%u:%04.01f"), d.minutes,
+			b, size, SIGNED_STR(d.sign, "%u:%04.1f"), d.minute,
 			seconds);
 	}
-	if (d.seconds) {
-		if (d.seconds >= 10) {
-			const double seconds = d.seconds + d.millis * 1e-3 +
-					       d.micros * 1e-6 + d.nanos * 1e-9;
+	if (d.second) {
+		if (d.second >= 10) {
+			const double seconds = d.second + d.milli * 1e-3 +
+					       d.micro * 1e-6 + d.nano * 1e-9;
 			return snprintf(
-				b, size, SIGNED_STR(d.sign, "%.02fs"), seconds);
+				b, size, SIGNED_STR(d.sign, "%.2fs"), seconds);
 		}
-		const double millis = d.seconds * 1e+3 + d.millis +
-				      d.micros * 1e-3 + d.nanos * 1e-6;
+		const double millis = d.second * 1e+3 + d.milli +
+				      d.micro * 1e-3 + d.nano * 1e-6;
 		return snprintf(b, size, SIGNED_STR(d.sign, "%.0fms"), millis);
 	}
-	if (d.millis) {
-		if (d.millis >= 100) {
+	if (d.milli) {
+		if (d.milli >= 100) {
 			const double millis =
-				d.millis + d.micros * 1e-3 + d.nanos * 1e-6;
+				d.milli + d.micro * 1e-3 + d.nano * 1e-6;
 			return snprintf(
-				b, size, SIGNED_STR(d.sign, "%.01fms"), millis);
+				b, size, SIGNED_STR(d.sign, "%.1fms"), millis);
 		}
-		if (d.millis >= 10) {
+		if (d.milli >= 10) {
 			const double millis =
-				d.millis + d.micros * 1e-3 + d.nanos * 1e-6;
+				d.milli + d.micro * 1e-3 + d.nano * 1e-6;
 			return snprintf(
-				b, size, SIGNED_STR(d.sign, "%.02fms"), millis);
+				b, size, SIGNED_STR(d.sign, "%.2fms"), millis);
 		}
-		const double micros =
-			d.millis * 1e+3 + d.micros + d.nanos * 1e-3;
+		const double micros = d.milli * 1e+3 + d.micro + d.nano * 1e-3;
 		return snprintf(b, size, SIGNED_STR(d.sign, "%.0fµs"), micros);
 	}
-	if (d.micros) {
-		if (d.micros >= 100) {
-			const double micros = d.micros + d.nanos * 1e-3;
+	if (d.micro) {
+		if (d.micro >= 100) {
+			const double micros = d.micro + d.nano * 1e-3;
 			return snprintf(
-				b, size, SIGNED_STR(d.sign, "%.01fµs"), micros);
+				b, size, SIGNED_STR(d.sign, "%.1fµs"), micros);
 		}
-		if (d.micros >= 10) {
-			const double micros = d.micros + d.nanos * 1e-3;
+		if (d.micro >= 10) {
+			const double micros = d.micro + d.nano * 1e-3;
 			return snprintf(
-				b, size, SIGNED_STR(d.sign, "%.02fµs"), micros);
+				b, size, SIGNED_STR(d.sign, "%.2fµs"), micros);
 		}
-		const unsigned int nanos = d.micros * 1000u + d.nanos;
+		const unsigned int nanos = d.micro * 1000u + d.nano;
 		return snprintf(b, size, SIGNED_STR(d.sign, "%uns"), nanos);
 	}
-	return snprintf(b, size, SIGNED_STR(d.sign, "%uns"), d.nanos);
+	if (d.nano) {
+		return snprintf(b, size, SIGNED_STR(d.sign, "%uns"), d.nano);
+	}
+	return snprintf(b, size, SIGNED_STR(d.sign, "0"));
 }

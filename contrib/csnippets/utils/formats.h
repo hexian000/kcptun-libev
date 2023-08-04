@@ -11,7 +11,7 @@
  * @brief Format the value with human-readable SI metric prefix.
  * @return Same as snprintf.
  */
-int format_si_metric(char *buf, size_t bufsize, double value);
+int format_si_prefix(char *buf, size_t bufsize, double value);
 
 /**
  * @brief Format byte count as a human-readable string in IEC unit.
@@ -21,13 +21,13 @@ int format_iec_bytes(char *buf, size_t bufsize, double value);
 
 struct duration {
 	signed int sign; /* +1 or -1, 0 is null, otherwise undefined */
-	unsigned int days;
-	unsigned int hours;
-	unsigned int minutes;
-	unsigned int seconds;
-	unsigned int millis;
-	unsigned int micros;
-	unsigned int nanos;
+	unsigned int day;
+	unsigned int hour;
+	unsigned int minute;
+	unsigned int second;
+	unsigned int milli;
+	unsigned int micro;
+	unsigned int nano;
 };
 
 /**
