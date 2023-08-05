@@ -51,10 +51,10 @@ int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 	if (!isnormal(value)) {
 		return snprintf(buf, bufsize, "%.0f", value);
 	}
-	if (value < 8192.0) {
+	if (value < 2048.0) {
 		return snprintf(buf, bufsize, "%.0f %s", value, iec_units[0]);
 	}
-	const int x = ((int)log2(value) - 3) / 10;
+	const int x = ((int)log2(value) - 1) / 10;
 	const int n = (int)ARRAY_SIZE(iec_units) - 1;
 	const int i = (x <= n ? x : n);
 	const double v = ldexp(value, i * -10);
