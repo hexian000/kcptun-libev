@@ -355,23 +355,3 @@ void pkt_flush(struct server *restrict s)
 		ev_io_start(s->loop, w_write);
 	}
 }
-
-static bool pkt_update_iter(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
-{
-	UNUSED(t);
-	UNUSED(key);
-	UNUSED(user);
-	struct session *restrict ss = element;
-	assert(key == (hashkey_t *)&ss->key);
-	session_update(ss);
-	return true;
-}
-
-void pkt_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
-{
-	CHECK_EV_ERROR(revents);
-	struct server *restrict s = watcher->data;
-	table_iterate(s->sessions, pkt_update_iter, s);
-	ev_idle_stop(loop, watcher);
-}
