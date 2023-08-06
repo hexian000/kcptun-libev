@@ -168,14 +168,15 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			session_notify(ss);
 			return;
 		case TCPRECV_EOF:
-			ss->tcp_state = STATE_LINGER;
 			LOGI_F("session [%08" PRIX32 "] tcp: "
 			       "connection closed by peer",
 			       ss->conv);
 			session_tcp_stop(ss);
 			if (!session_kcp_send(ss)) {
 				kcp_reset(ss);
+				return;
 			}
+			session_kcp_close(ss);
 			return;
 		case TCPRECV_ERROR:
 			session_tcp_stop(ss);
@@ -234,8 +235,6 @@ static int tcp_send(struct session *restrict ss)
 	LOGV_F("session [%08" PRIX32 "] tcp: "
 	       "send %zd/%zu bytes",
 	       ss->conv, ret, len);
-	ss->event_read = true;
-	session_notify(ss);
 	return 1;
 }
 
@@ -281,15 +280,16 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 	}
 
-	const bool need_write = ss->wbuf_flush < ss->wbuf_next;
-	if (ss->tcp_state == STATE_LINGER && !need_write) {
+	const bool has_data = ss->wbuf_flush < ss->wbuf_next;
+	if (!has_data && ss->tcp_state == STATE_LINGER) {
 		/* no more data, close */
 		session_tcp_stop(ss);
 		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
-		ss->tcp_state = STATE_TIME_WAIT;
 		return;
 	}
-	ev_io_set_active(loop, watcher, need_write);
+	ev_io_set_active(loop, watcher, has_data);
+	ss->event_read = true;
+	session_notify(ss);
 }
 
 void tcp_flush(struct session *restrict ss)

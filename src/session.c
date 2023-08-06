@@ -342,24 +342,40 @@ bool session_kcp_send(struct session *restrict ss)
 	default:
 		return false;
 	}
-	if (ss->rbuf->len > 0) {
-		if (!kcp_push(ss)) {
-			return false;
-		}
+	if (ss->rbuf->len == 0) {
+		return true;
 	}
-	/* pass eof */
-	if (ss->tcp_state == STATE_LINGER || ss->tcp_state == STATE_TIME_WAIT) {
-		if (!kcp_sendmsg(ss, SMSG_EOF)) {
-			return false;
-		}
-		LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
-		ss->kcp_state = STATE_LINGER;
+	if (!kcp_push(ss)) {
+		return false;
 	}
 	if (ss->kcp_flush >= 1) {
 		ss->event_flush = true;
 		session_notify(ss);
 	}
 	return true;
+}
+
+void session_kcp_close(struct session *restrict ss)
+{
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
+		kcp_reset(ss);
+		return;
+	}
+	/* pass eof */
+	if (!kcp_sendmsg(ss, SMSG_EOF)) {
+		kcp_reset(ss);
+		return;
+	}
+	LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
+	ss->kcp_state = STATE_LINGER;
+	if (ss->kcp_flush >= 1) {
+		ss->event_flush = true;
+		session_notify(ss);
+	}
 }
 
 static void ss_flush_cb(struct session *restrict ss)

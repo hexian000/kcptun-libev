@@ -128,6 +128,7 @@ void session_tcp_stop(struct session *ss);
 void session_kcp_stop(struct session *ss);
 
 bool session_kcp_send(struct session *ss);
+void session_kcp_close(struct session *ss);
 void session_notify(struct session *ss);
 
 void session_close_all(struct hashtable *t);
