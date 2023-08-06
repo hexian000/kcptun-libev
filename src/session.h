@@ -107,7 +107,7 @@ struct session {
 	int kcp_flush;
 	bool is_accepted : 1;
 	bool event_read : 1;
-	bool event_write : 1;
+	bool event_flush : 1;
 	size_t wbuf_flush, wbuf_next;
 	struct vbuffer *rbuf, *wbuf;
 };
@@ -117,10 +117,10 @@ session_new(struct server *s, const struct sockaddr *addr, uint32_t conv);
 void session_free(struct session *ss);
 
 void session_start(struct session *ss, int fd);
-void session_stop(struct session *ss);
+void session_tcp_stop(struct session *ss);
 void session_kcp_stop(struct session *ss);
 
-bool session_send(struct session *ss);
+bool session_kcp_send(struct session *ss);
 void session_notify(struct session *ss);
 
 void session_close_all(struct hashtable *t);

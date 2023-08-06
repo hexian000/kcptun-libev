@@ -101,7 +101,7 @@ struct session *session_new(
 	ss->stats = (struct link_stats){ 0 };
 	ss->kcp_flush = s->conf->kcp_flush;
 	ss->is_accepted = false;
-	ss->event_read = ss->event_write = false;
+	ss->event_read = ss->event_flush = false;
 	ss->wbuf_next = ss->wbuf_flush = 0;
 	ss->rbuf = VBUF_NEW(SESSION_BUF_SIZE);
 	if (ss->rbuf == NULL) {
@@ -123,7 +123,7 @@ struct session *session_new(
 
 void session_free(struct session *restrict ss)
 {
-	session_stop(ss);
+	session_tcp_stop(ss);
 	session_kcp_stop(ss);
 	ev_idle_stop(ss->server->loop, &ss->w_update);
 	free(ss);
@@ -149,7 +149,7 @@ void session_start(struct session *restrict ss, const int fd)
 	ikcp_update(ss->kcp, now_ms);
 }
 
-void session_stop(struct session *restrict ss)
+void session_tcp_stop(struct session *restrict ss)
 {
 	ss->tcp_state = STATE_TIME_WAIT;
 	if (ss->tcp_fd == -1) {
@@ -337,7 +337,7 @@ static int session_recv(struct session *restrict ss)
 	return 1;
 }
 
-bool session_send(struct session *restrict ss)
+bool session_kcp_send(struct session *restrict ss)
 {
 	switch (ss->kcp_state) {
 	case STATE_CONNECT:
@@ -360,9 +360,40 @@ bool session_send(struct session *restrict ss)
 		ss->kcp_state = STATE_LINGER;
 	}
 	if (ss->kcp_flush >= 1) {
-		ss->event_write = true;
+		ss->event_flush = true;
+		session_notify(ss);
 	}
 	return true;
+}
+
+static void ss_flush_cb(struct session *restrict ss)
+{
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
+		return;
+	}
+	ikcp_flush(ss->kcp);
+	tcp_notify_read(ss);
+}
+
+static void ss_read_cb(struct session *restrict ss)
+{
+	while (ss->kcp_state == STATE_CONNECT ||
+	       ss->kcp_state == STATE_CONNECTED) {
+		kcp_recv(ss);
+		const int ret = session_recv(ss);
+		if (ret < 0) {
+			session_tcp_stop(ss);
+			kcp_reset(ss);
+			return;
+		} else if (ret == 0) {
+			break;
+		}
+	}
 }
 
 static void
@@ -370,36 +401,20 @@ ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
 {
 	UNUSED(revents);
 	struct session *restrict ss = watcher->data;
-	if (ss->event_write) {
-		ss->event_write = false;
-		if (ss->kcp_state == STATE_CONNECT ||
-		    ss->kcp_state == STATE_CONNECTED ||
-		    ss->kcp_state == STATE_LINGER) {
-			ikcp_flush(ss->kcp);
-		}
-		tcp_notify_read(ss);
+	if (ss->event_flush) {
+		ss->event_flush = false;
+		ss_flush_cb(ss);
 	}
 	if (ss->event_read) {
 		ss->event_read = false;
-		while (ss->kcp_state == STATE_CONNECT ||
-		       ss->kcp_state == STATE_CONNECTED) {
-			kcp_recv(ss);
-			const int ret = session_recv(ss);
-			if (ret < 0) {
-				session_stop(ss);
-				kcp_reset(ss);
-				break;
-			} else if (ret == 0) {
-				break;
-			}
-		}
+		ss_read_cb(ss);
 	}
 	ev_idle_stop(loop, watcher);
 }
 
 void session_notify(struct session *restrict ss)
 {
-	if (!(ss->event_read || ss->event_write)) {
+	if (!(ss->event_read || ss->event_flush)) {
 		return;
 	}
 	struct ev_idle *restrict w_update = &ss->w_update;
@@ -541,7 +556,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	LOGI_F("session [%08" PRIX32 "] kcp: reset by peer", conv);
-	session_stop(ss);
+	session_tcp_stop(ss);
 	session_kcp_stop(ss);
 }
 

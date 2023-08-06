@@ -172,27 +172,23 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			LOGI_F("session [%08" PRIX32 "] tcp: "
 			       "connection closed by peer",
 			       ss->conv);
-			session_stop(ss);
-			if (!session_send(ss)) {
+			session_tcp_stop(ss);
+			if (!session_kcp_send(ss)) {
 				kcp_reset(ss);
 			}
-			ss->event_write = true;
-			session_notify(ss);
 			return;
 		case TCPRECV_ERROR:
-			session_stop(ss);
+			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return;
 		}
-		if (!session_send(ss)) {
-			session_stop(ss);
+		if (!session_kcp_send(ss)) {
+			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return;
 		}
 	}
 
-	ss->event_write = true;
-	session_notify(ss);
 	ev_io_stop(loop, watcher);
 }
 
@@ -251,7 +247,7 @@ static bool on_connected(struct session *restrict ss)
 		    &(socklen_t){ sizeof(sockerr) }) == 0) {
 		if (sockerr != 0) {
 			LOGE_F("SO_ERROR: %s", strerror(sockerr));
-			session_stop(ss);
+			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return false;
 		}
@@ -276,7 +272,7 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	for (;;) {
 		const int ret = tcp_send(ss);
 		if (ret < 0) {
-			session_stop(ss);
+			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return;
 		} else if (ret == 0) {
@@ -288,7 +284,7 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	const bool need_write = ss->wbuf_flush < ss->wbuf_next;
 	if (ss->tcp_state == STATE_LINGER && !need_write) {
 		/* no more data, close */
-		session_stop(ss);
+		session_tcp_stop(ss);
 		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
 		ss->tcp_state = STATE_TIME_WAIT;
 		return;

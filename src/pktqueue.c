@@ -163,7 +163,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	ss->event_read = true;
 	if (ss->kcp_flush >= 2) {
 		/* flush acks */
-		ss->event_write = true;
+		ss->event_flush = true;
 	}
 	session_notify(ss);
 }

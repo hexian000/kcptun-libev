@@ -32,7 +32,7 @@ static bool timeout_filt(
 		if (not_seen > s->dial_timeout) {
 			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
 			       ss->conv);
-			session_stop(ss);
+			session_tcp_stop(ss);
 			kcp_reset(ss);
 			break;
 		}
@@ -45,7 +45,7 @@ static bool timeout_filt(
 			LOGW_F("session [%08" PRIX32 "] "
 			       "timeout: not seen in %.01fs",
 			       ss->conv, not_seen);
-			session_stop(ss);
+			session_tcp_stop(ss);
 			session_kcp_stop(ss);
 			break;
 		}
