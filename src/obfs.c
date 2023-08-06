@@ -54,19 +54,23 @@ struct obfs_stats {
 struct obfs {
 	struct server *server;
 	struct hashtable *contexts;
-	struct ev_io w_accept;
-	struct ev_timer w_listener;
-	struct ev_timer w_timeout;
-	struct obfs_ctx *client; /* for reference only, no ownership */
-	int redial_count;
-	struct ev_timer w_redial;
-	struct obfs_stats stats, last_stats;
-	ev_tstamp last_stats_time;
-	sockaddr_max_t bind_addr;
 	int cap_fd, raw_fd;
 	int fd;
 	int domain;
+	sockaddr_max_t bind_addr;
 	size_t num_authenticated;
+	struct {
+		struct ev_io w_accept;
+		struct ev_timer w_listener;
+		struct ev_timer w_timeout;
+		struct ev_timer w_redial;
+	};
+	struct obfs_ctx *client; /* for reference only, no ownership */
+	int redial_count;
+	struct {
+		struct obfs_stats stats, last_stats;
+		ev_tstamp last_stats_time;
+	};
 };
 
 #define OBFS_MAX_REQUEST 4096
@@ -93,20 +97,25 @@ struct obfs_ctx {
 	struct obfs *obfs;
 	struct ev_io w_read, w_write;
 	sockaddr_max_t laddr, raddr;
-	int fd;
 	struct http_message http_msg;
 	char *http_nxt;
+	int fd;
 	uint32_t cap_flow;
 	uint32_t cap_seq, cap_ack_seq;
-	bool cap_ecn : 1;
-	bool captured : 1;
-	bool authenticated : 1;
-	bool http_keepalive : 1;
-	uintmax_t num_ecn, num_ece;
-	uintmax_t pkt_rx, pkt_tx;
-	uintmax_t byt_rx, byt_tx;
-	ev_tstamp created;
-	ev_tstamp last_seen;
+	struct {
+		bool cap_ecn : 1;
+		bool captured : 1;
+		bool authenticated : 1;
+		bool http_keepalive : 1;
+	};
+	struct {
+		uintmax_t num_ecn, num_ece;
+		uintmax_t pkt_rx, pkt_tx;
+		uintmax_t byt_rx, byt_tx;
+
+		ev_tstamp created;
+		ev_tstamp last_seen;
+	};
 	struct {
 		BUFFER_HDR;
 		unsigned char data[OBFS_MAX_REQUEST];

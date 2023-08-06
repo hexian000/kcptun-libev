@@ -20,12 +20,10 @@
 
 struct listener {
 	struct ev_io w_accept;
-	int fd;
-
 	struct ev_io w_accept_http;
-	int fd_http;
-
 	struct ev_timer w_timer;
+	int fd;
+	int fd_http;
 };
 
 struct pktconn {

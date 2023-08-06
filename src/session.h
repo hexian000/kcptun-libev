@@ -92,24 +92,31 @@ struct session_key {
 
 struct session {
 	struct session_key key;
-	ev_tstamp created;
-	ev_tstamp last_reset;
-	ev_tstamp last_send, last_recv;
+	struct server *server;
+	struct IKCPCB *kcp;
 	int tcp_state, kcp_state;
 	int tcp_fd;
-	struct ev_io w_read, w_write;
-	struct ev_idle w_update;
-	struct server *server;
-	sockaddr_max_t raddr;
-	uint32_t conv;
-	struct link_stats stats;
-	struct IKCPCB *kcp;
 	int kcp_flush;
-	bool is_accepted : 1;
-	bool event_read : 1;
-	bool event_flush : 1;
-	size_t wbuf_flush, wbuf_next;
+	uint32_t conv;
+	sockaddr_max_t raddr;
+	struct {
+		struct ev_io w_read, w_write;
+		struct ev_idle w_update;
+	};
+	struct {
+		ev_tstamp created;
+		ev_tstamp last_reset;
+		ev_tstamp last_send, last_recv;
+	};
+	struct {
+		bool is_accepted : 1;
+		bool event_read : 1;
+		bool event_flush : 1;
+	};
 	struct vbuffer *rbuf, *wbuf;
+	size_t wbuf_flush, wbuf_next;
+
+	struct link_stats stats;
 };
 
 struct session *
