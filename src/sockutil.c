@@ -6,6 +6,7 @@
 #include "utils/slog.h"
 #include "utils/check.h"
 #include "algo/hashtable.h"
+#include "net/addr.h"
 #include "util.h"
 
 #include <fcntl.h>
@@ -182,16 +183,6 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 	FAIL();
 }
 
-struct sockaddr *sa_clone(const struct sockaddr *src)
-{
-	const socklen_t len = getsocklen(src);
-	struct sockaddr *dst = malloc(len);
-	if (dst != NULL) {
-		memcpy(dst, src, len);
-	}
-	return dst;
-}
-
 static int
 format_sa_inet(const struct sockaddr_in *sa, char *buf, const size_t buf_size)
 {
@@ -233,14 +224,50 @@ int format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
 	return snprintf(buf, buf_size, "<af:%jd>", (intmax_t)sa->sa_family);
 }
 
-struct sockaddr *
-resolve_sa(const char *hostname, const char *service, const int flags)
+static bool find_addrinfo(sockaddr_max_t *sa, const struct addrinfo *it)
 {
+	for (; it != NULL; it = it->ai_next) {
+		switch (it->ai_family) {
+		case AF_INET:
+			CHECK(it->ai_addrlen == sizeof(struct sockaddr_in));
+			sa->in = *(struct sockaddr_in *)it->ai_addr;
+			break;
+		case AF_INET6:
+			CHECK(it->ai_addrlen == sizeof(struct sockaddr_in6));
+			sa->in6 = *(struct sockaddr_in6 *)it->ai_addr;
+			break;
+		default:
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+/* RFC 1035: Section 2.3.4 */
+#define FQDN_MAX_LENGTH ((size_t)(255))
+
+bool resolve_sa(sockaddr_max_t *sa, const char *s, const int flags)
+{
+	const size_t addrlen = strlen(s);
+	char buf[FQDN_MAX_LENGTH + 1 + 5 + 1];
+	if (addrlen >= sizeof(buf)) {
+		return false;
+	}
+	memcpy(buf, s, addrlen);
+	buf[addrlen] = '\0';
+	char *hoststr, *portstr;
+	if (!splithostport(buf, &hoststr, &portstr)) {
+		return false;
+	}
+	if (hoststr[0] == '\0') {
+		hoststr = NULL;
+	}
 	struct addrinfo hints = {
 		.ai_family = PF_UNSPEC,
 		.ai_socktype = SOCK_STREAM,
 		.ai_protocol = IPPROTO_TCP,
-		.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG,
+		.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG | AI_PASSIVE,
 	};
 	if (flags & RESOLVE_UDP) {
 		hints.ai_socktype = SOCK_DGRAM;
@@ -250,23 +277,12 @@ resolve_sa(const char *hostname, const char *service, const int flags)
 		hints.ai_flags |= AI_PASSIVE;
 	}
 	struct addrinfo *result = NULL;
-	if (getaddrinfo(hostname, service, &hints, &result) != 0) {
-		const int err = errno;
-		LOGE_F("resolve: %s", strerror(err));
-		return NULL;
+	const int err = getaddrinfo(hoststr, portstr, &hints, &result);
+	if (err != 0) {
+		LOGE_F("resolve: %s", gai_strerror(err));
+		return false;
 	}
-	struct sockaddr *sa = NULL;
-	for (const struct addrinfo *it = result; it; it = it->ai_next) {
-		switch (it->ai_family) {
-		case AF_INET:
-		case AF_INET6:
-			break;
-		default:
-			continue;
-		}
-		sa = sa_clone(it->ai_addr);
-		break;
-	}
+	const bool ok = find_addrinfo(sa, result);
 	freeaddrinfo(result);
-	return sa;
+	return ok;
 }

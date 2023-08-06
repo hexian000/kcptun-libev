@@ -6,6 +6,7 @@
 
 #include "conf.h"
 #include "algo/hashtable.h"
+#include "sockutil.h"
 #include "utils/buffer.h"
 #include "session.h"
 #include "util.h"
@@ -29,37 +30,45 @@ struct listener {
 
 struct pktconn {
 	struct ev_io w_read, w_write;
+	struct pktqueue *queue;
 	int fd;
+	sockaddr_max_t kcp_connect;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;
-	struct pktqueue *queue;
 	ev_tstamp inflight_ping;
 };
 
 #define MAX_SESSIONS 65535
 
 struct server {
-	struct config *conf;
+	const struct config *conf;
 	struct ev_loop *loop;
 	struct listener listener;
 	struct pktconn pkt;
-	struct hashtable *sessions;
-	struct ev_timer w_kcp_update;
-	struct ev_timer w_keepalive;
-	struct ev_timer w_resolve;
-	struct ev_timer w_timeout;
-	double interval;
-	double dial_timeout;
-	double session_timeout, session_keepalive;
-	double linger, time_wait;
-	double keepalive, timeout;
-	double ping_timeout;
-	struct link_stats stats, last_stats;
 	uint32_t m_conv;
-	ev_tstamp started;
-	ev_tstamp last_stats_time;
-	ev_tstamp last_resolve_time;
-	clock_t clock, last_clock;
+	struct hashtable *sessions;
+	struct {
+		sockaddr_max_t connect;
+
+		double dial_timeout;
+		double session_timeout, session_keepalive;
+		double linger, time_wait;
+		double keepalive, timeout;
+		double ping_timeout;
+	};
+	struct {
+		struct ev_timer w_kcp_update;
+		struct ev_timer w_keepalive;
+		struct ev_timer w_resolve;
+		struct ev_timer w_timeout;
+	};
+	struct {
+		struct link_stats stats, last_stats;
+		ev_tstamp started;
+		ev_tstamp last_stats_time;
+		ev_tstamp last_resolve_time;
+		clock_t clock, last_clock;
+	};
 };
 
 struct server *server_new(struct ev_loop *loop, struct config *conf);

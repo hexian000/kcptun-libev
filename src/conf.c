@@ -162,24 +162,24 @@ static bool main_scope_cb(void *ud, const json_object_entry *entry)
 		return walk_json_object(conf, value, tcp_scope_cb);
 	}
 	if (strcmp(name, "listen") == 0) {
-		conf->listen.str = parse_string_json(value);
-		return conf->listen.str != NULL;
+		conf->listen = parse_string_json(value);
+		return conf->listen != NULL;
 	}
 	if (strcmp(name, "connect") == 0) {
-		conf->connect.str = parse_string_json(value);
-		return conf->connect.str != NULL;
+		conf->connect = parse_string_json(value);
+		return conf->connect != NULL;
 	}
 	if (strcmp(name, "kcp_bind") == 0) {
-		conf->kcp_bind.str = parse_string_json(value);
-		return conf->kcp_bind.str != NULL;
+		conf->kcp_bind = parse_string_json(value);
+		return conf->kcp_bind != NULL;
 	}
 	if (strcmp(name, "kcp_connect") == 0) {
-		conf->kcp_connect.str = parse_string_json(value);
-		return conf->kcp_connect.str != NULL;
+		conf->kcp_connect = parse_string_json(value);
+		return conf->kcp_connect != NULL;
 	}
 	if (strcmp(name, "http_listen") == 0) {
-		conf->http_listen.str = parse_string_json(value);
-		return conf->http_listen.str != NULL;
+		conf->http_listen = parse_string_json(value);
+		return conf->http_listen != NULL;
 	}
 	if (strcmp(name, "netdev") == 0) {
 		conf->netdev = parse_string_json(value);
@@ -239,39 +239,6 @@ const char *runmode_str(const int mode)
 	return str[mode];
 }
 
-bool resolve_netaddr(struct netaddr *restrict addr, int flags)
-{
-	char *hostname, *service;
-	char *str = strdup(addr->str);
-	if (str == NULL) {
-		LOGOOM();
-		return false;
-	}
-	if (!splithostport(str, &hostname, &service)) {
-		LOGE_F("failed splitting address: \"%s\"", addr->str);
-		free(str);
-		return false;
-	}
-	if (hostname[0] == '\0') {
-		hostname = NULL;
-	}
-	struct sockaddr *sa = resolve_sa(hostname, service, flags);
-	if (sa == NULL) {
-		LOGE_F("failed resolving address: \"%s\"", addr->str);
-		free(str);
-		return false;
-	}
-	UTIL_SAFE_FREE(addr->sa);
-	addr->sa = sa;
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGD_F("resolve: \"%s\" is %s", addr->str, addr_str);
-	}
-	free(str);
-	return true;
-}
-
 static struct config conf_default(void)
 {
 	return (struct config){
@@ -308,10 +275,10 @@ static bool conf_check(struct config *restrict conf)
 {
 	/* 1. network address check */
 	int mode = 0;
-	if (conf->kcp_bind.str != NULL && conf->connect.str != NULL) {
+	if (conf->kcp_bind != NULL && conf->connect != NULL) {
 		mode |= MODE_SERVER;
 	}
-	if (conf->listen.str != NULL && conf->kcp_connect.str != NULL) {
+	if (conf->listen != NULL && conf->kcp_connect != NULL) {
 		mode |= MODE_CLIENT;
 	}
 	if (mode != MODE_SERVER && mode != MODE_CLIENT) {
@@ -378,19 +345,13 @@ struct config *conf_read(const char *filename)
 	return conf;
 }
 
-static void netaddr_safe_free(struct netaddr *restrict addr)
-{
-	UTIL_SAFE_FREE(addr->str);
-	UTIL_SAFE_FREE(addr->sa);
-}
-
 void conf_free(struct config *conf)
 {
-	netaddr_safe_free(&conf->listen);
-	netaddr_safe_free(&conf->connect);
-	netaddr_safe_free(&conf->kcp_bind);
-	netaddr_safe_free(&conf->kcp_connect);
-	netaddr_safe_free(&conf->http_listen);
+	UTIL_SAFE_FREE(conf->listen);
+	UTIL_SAFE_FREE(conf->connect);
+	UTIL_SAFE_FREE(conf->kcp_bind);
+	UTIL_SAFE_FREE(conf->kcp_connect);
+	UTIL_SAFE_FREE(conf->http_listen);
 	UTIL_SAFE_FREE(conf->netdev);
 	UTIL_SAFE_FREE(conf->user);
 #if WITH_CRYPTO

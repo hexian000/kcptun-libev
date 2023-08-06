@@ -28,7 +28,6 @@ socklen_t getsocklen(const struct sockaddr *sa);
 void sa_set(sockaddr_max_t *dst, const struct sockaddr *src);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);
 bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest);
-struct sockaddr *sa_clone(const struct sockaddr *src);
 int format_sa(const struct sockaddr *sa, char *buf, size_t buf_size);
 
 enum {
@@ -36,8 +35,6 @@ enum {
 	RESOLVE_UDP = 0x1,
 	RESOLVE_PASSIVE = 0x2,
 };
-
-struct sockaddr *
-resolve_sa(const char *hostname, const char *service, int flags);
+bool resolve_sa(sockaddr_max_t *sa, const char *s, const int flags);
 
 #endif /* SOCKUTIL_H */

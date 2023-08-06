@@ -29,7 +29,7 @@ static void accept_one(
 {
 	/* Initialize and start watcher to read client requests */
 	struct session *restrict ss;
-	const struct sockaddr *sa = s->conf->kcp_connect.sa;
+	const struct sockaddr *sa = &s->pkt.kcp_connect.sa;
 	uint32_t conv = conv_new(s, sa);
 	ss = session_new(s, sa, conv);
 	if (ss == NULL) {
@@ -66,7 +66,7 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct server *restrict s = watcher->data;
-	struct config *restrict conf = s->conf;
+	const struct config *restrict conf = s->conf;
 
 	for (;;) {
 		sockaddr_max_t addr;

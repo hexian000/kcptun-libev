@@ -41,7 +41,7 @@ static void kcp_log(const char *log, struct IKCPCB *kcp, void *user)
 }
 
 static ikcpcb *
-kcp_new(struct session *restrict ss, struct config *restrict conf,
+kcp_new(struct session *restrict ss, const struct config *restrict conf,
 	uint32_t conv)
 {
 	ikcpcb *restrict kcp = ikcp_create(conv, ss);
@@ -201,7 +201,7 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 		return false;
 	}
 	{
-		struct config *restrict conf = ss->server->conf;
+		const struct config *restrict conf = ss->server->conf;
 		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
 		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	}
@@ -240,11 +240,7 @@ static bool session_on_msg(
 		if (ss->tcp_state != STATE_INIT) {
 			break;
 		}
-		struct sockaddr *sa = ss->server->conf->connect.sa;
-		if (sa == NULL) {
-			break;
-		}
-		if (!proxy_dial(ss, sa)) {
+		if (!proxy_dial(ss, &ss->server->connect.sa)) {
 			break;
 		}
 		return true;

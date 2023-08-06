@@ -214,9 +214,9 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 			LOGE_F("failed to read config: %s", args.conf_path);
 			return;
 		}
-		conf_free(s->conf);
-		s->conf = conf;
+		conf_free((struct config *)s->conf);
 		slog_level = conf->log_level;
+		s->conf = conf;
 		(void)server_resolve(s);
 		LOGI("config successfully reloaded");
 	} break;

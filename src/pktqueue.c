@@ -203,7 +203,7 @@ size_t queue_recv(struct server *restrict s)
 		}
 #endif
 #if WITH_OBFS
-		if (q->obfs != NULL && ctx != NULL) {
+		if (ctx != NULL) {
 			obfs_ctx_auth(ctx, true);
 		}
 #endif
@@ -262,8 +262,8 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 }
 
 #if WITH_CRYPTO
-static bool
-queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
+static bool queue_new_crypto(
+	struct pktqueue *restrict q, const struct config *restrict conf)
 {
 	if (conf->method == NULL) {
 		return true;
@@ -278,14 +278,12 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 			q->crypto = NULL;
 			return false;
 		}
-		UTIL_SAFE_FREE(conf->psk);
 	} else if (conf->password) {
 		if (!crypto_password(q->crypto, conf->password)) {
 			crypto_free(q->crypto);
 			q->crypto = NULL;
 			return false;
 		}
-		UTIL_SAFE_FREE(conf->password);
 	}
 	q->noncegen = noncegen_create(
 		q->crypto->noncegen_method, q->crypto->nonce_size,
@@ -300,7 +298,7 @@ queue_new_crypto(struct pktqueue *restrict q, struct config *restrict conf)
 
 struct pktqueue *queue_new(struct server *restrict s)
 {
-	struct config *restrict conf = s->conf;
+	const struct config *restrict conf = s->conf;
 	struct pktqueue *q = malloc(sizeof(struct pktqueue));
 	if (q == NULL) {
 		return NULL;

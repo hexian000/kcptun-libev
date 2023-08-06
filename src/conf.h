@@ -9,11 +9,6 @@
 
 struct sockaddr;
 
-struct netaddr {
-	char *str;
-	struct sockaddr *sa;
-};
-
 enum runmode {
 	MODE_SERVER = 1 << 0,
 	MODE_CLIENT = 1 << 1,
@@ -23,11 +18,11 @@ const char *runmode_str(int mode);
 
 struct config {
 	const char *netdev;
-	struct netaddr listen;
-	struct netaddr connect;
-	struct netaddr kcp_bind;
-	struct netaddr kcp_connect;
-	struct netaddr http_listen;
+	const char *listen;
+	const char *connect;
+	const char *kcp_bind;
+	const char *kcp_connect;
+	const char *http_listen;
 
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
@@ -56,7 +51,5 @@ struct config {
 
 struct config *conf_read(const char *path);
 void conf_free(struct config *conf);
-
-bool resolve_netaddr(struct netaddr *restrict addr, int flags);
 
 #endif /* CONF_H */

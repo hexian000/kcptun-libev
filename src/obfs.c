@@ -407,7 +407,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 static bool obfs_raw_start(struct obfs *restrict obfs)
 {
 	const int domain = obfs->domain;
-	struct config *restrict conf = obfs->server->conf;
+	const struct config *restrict conf = obfs->server->conf;
 	uint16_t protocol;
 	switch (domain) {
 	case AF_INET:
@@ -743,7 +743,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 void obfs_sched_redial(struct obfs *restrict obfs)
 {
 	struct server *restrict s = obfs->server;
-	struct config *restrict conf = s->conf;
+	const struct config *restrict conf = s->conf;
 	if (!(conf->mode & MODE_CLIENT)) {
 		return;
 	}
@@ -810,17 +810,19 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
 	struct obfs *restrict obfs = watcher->data;
-	struct config *restrict conf = obfs->server->conf;
+	struct server *restrict s = obfs->server;
+	const struct config *restrict conf = s->conf;
 	if (obfs->client != NULL) {
 		return;
 	}
 	obfs->redial_count++;
-	struct netaddr *addr = &conf->kcp_connect;
-	LOGI_F("obfs: redial #%d to \"%s\"", obfs->redial_count, addr->str);
-	if (!resolve_netaddr(addr, RESOLVE_TCP)) {
+	LOGI_F("obfs: redial #%d to \"%s\"", obfs->redial_count,
+	       conf->kcp_connect);
+	struct pktconn *restrict pkt = &s->pkt;
+	if (!resolve_sa(&pkt->kcp_connect, conf->kcp_connect, RESOLVE_TCP)) {
 		return;
 	}
-	(void)obfs_ctx_dial(obfs, addr->sa);
+	(void)obfs_ctx_dial(obfs, &pkt->kcp_connect.sa);
 }
 
 static void
@@ -878,7 +880,7 @@ struct obfs *obfs_new(struct server *restrict s)
 
 bool obfs_resolve(struct obfs *obfs)
 {
-	struct config *restrict conf = obfs->server->conf;
+	const struct config *restrict conf = obfs->server->conf;
 	if (conf->mode & MODE_SERVER) {
 		const struct sockaddr *sa = &obfs->bind_addr.sa;
 		if (!obfs_bind(obfs, sa)) {
@@ -1009,31 +1011,33 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 {
-	struct config *restrict conf = obfs->server->conf;
+	const struct config *restrict conf = obfs->server->conf;
 	struct pktconn *restrict pkt = &s->pkt;
 	if (conf->mode & MODE_SERVER) {
-		struct netaddr *restrict addr = &conf->kcp_bind;
-		if (!resolve_netaddr(addr, RESOLVE_TCP | RESOLVE_PASSIVE)) {
+		sockaddr_max_t addr;
+		if (!resolve_sa(
+			    &addr, conf->kcp_bind,
+			    RESOLVE_TCP | RESOLVE_PASSIVE)) {
 			return false;
 		}
-		const struct sockaddr *restrict sa = addr->sa;
-		const int domain = sa->sa_family;
-		obfs->domain = domain;
+		obfs->domain = addr.sa.sa_family;
 		if (!obfs_raw_start(obfs)) {
 			return false;
 		}
-		if (!obfs_bind(obfs, sa)) {
+		if (!obfs_bind(obfs, &addr.sa)) {
 			return false;
 		}
-		if (!obfs_tcp_listen(obfs, sa)) {
+		if (!obfs_tcp_listen(obfs, &addr.sa)) {
 			return false;
 		}
 	}
 	if (conf->mode & MODE_CLIENT) {
-		if (!resolve_netaddr(&conf->kcp_connect, RESOLVE_TCP)) {
+		if (!resolve_sa(
+			    &pkt->kcp_connect, conf->kcp_connect,
+			    RESOLVE_TCP)) {
 			return false;
 		}
-		const struct sockaddr *sa = conf->kcp_connect.sa;
+		const struct sockaddr *sa = &pkt->kcp_connect.sa;
 		obfs->domain = sa->sa_family;
 		if (!obfs_raw_start(obfs)) {
 			return false;
