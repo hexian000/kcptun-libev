@@ -214,6 +214,7 @@ static bool udp_start(struct server *restrict s)
 
 	struct ev_io *restrict w_read = &udp->w_read;
 	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
+	ev_set_priority(w_read, EV_MAXPRI);
 	w_read->data = s;
 	ev_io_start(s->loop, w_read);
 
@@ -340,7 +341,7 @@ bool server_start(struct server *s)
 void server_ping(struct server *restrict s)
 {
 	const ev_tstamp now = ev_now(s->loop);
-	const uint32_t tstamp = tstamp2ms(now);
+	const uint32_t tstamp = TSTAMP2MS(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, s->conf->kcp_connect.sa, S0MSG_PING, b, sizeof(b));

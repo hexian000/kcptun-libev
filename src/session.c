@@ -69,12 +69,7 @@ kcp_new(struct session *restrict ss, struct config *restrict conf,
 }
 
 static void
-ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
-{
-	UNUSED(revents);
-	session_update(watcher->data);
-	ev_idle_stop(loop, watcher);
-}
+ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents);
 
 struct session *session_new(
 	struct server *restrict s, const struct sockaddr *addr,
@@ -150,7 +145,7 @@ void session_start(struct session *restrict ss, const int fd)
 	ev_io_start(loop, w_write);
 
 	const ev_tstamp now = ev_now(loop);
-	const uint32_t now_ms = tstamp2ms(now);
+	const uint32_t now_ms = TSTAMP2MS(now);
 	ikcp_update(ss->kcp, now_ms);
 }
 
@@ -233,8 +228,8 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	return true;
 }
 
-static bool
-session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
+static bool session_on_msg(
+	struct session *restrict ss, const struct tlv_header *restrict hdr)
 {
 	switch (hdr->msg) {
 	case SMSG_DIAL: {
@@ -265,9 +260,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		if (navail > 0) {
 			ss->wbuf_flush = TLV_HEADER_SIZE;
 			ss->wbuf_next = TLV_HEADER_SIZE + navail;
-			if (tcp_send(ss) < 0) {
-				return false;
-			}
+			tcp_flush(ss);
 		}
 		return true;
 	}
@@ -282,9 +275,7 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 		ss->tcp_state = STATE_LINGER;
 		/* pass eof */
 		if (ss->tcp_fd != -1) {
-			if (tcp_send(ss) < 0) {
-				return false;
-			}
+			tcp_flush(ss);
 		}
 		return true;
 	}
@@ -307,52 +298,43 @@ session_on_msg(struct session *restrict ss, struct tlv_header *restrict hdr)
 	return false;
 }
 
-static void session_read_cb(struct session *ss)
+static int session_recv(struct session *restrict ss)
 {
-	while (ss->kcp_state == STATE_CONNECT ||
-	       ss->kcp_state == STATE_CONNECTED) {
-		kcp_recv(ss);
-		if (ss->wbuf_next > ss->wbuf_flush) {
-			/* tcp flushing is in progress */
-			break;
-		}
-		if (ss->wbuf->len < TLV_HEADER_SIZE) {
-			/* no header available */
-			break;
-		}
-		if (ss->wbuf_flush > 0) {
-			/* tcp flushing is done */
-			consume_wbuf(ss, ss->wbuf_flush);
-		}
-		struct tlv_header header = tlv_header_read(ss->wbuf->data);
-		if (header.len < TLV_HEADER_SIZE &&
-		    header.len > TLV_MAX_LENGTH) {
-			LOGE_F("unexpected message length: %" PRIu16,
-			       header.len);
-			session_stop(ss);
-			kcp_reset(ss);
-			return;
-		}
-		if (header.msg < SMSG_MAX && ss->wbuf->len < header.len) {
-			/* incomplete message */
-			break;
-		}
-		if (!session_on_msg(ss, &header)) {
-			/* malformed message */
-			session_stop(ss);
-			kcp_reset(ss);
-			return;
-		}
-		if (ss->wbuf_next != ss->wbuf_flush) {
-			/* set write_cb */
-			struct ev_io *restrict w_write = &ss->w_write;
-			if (!ev_is_active(w_write)) {
-				ev_io_start(ss->server->loop, w_write);
-			}
-		} else {
-			consume_wbuf(ss, header.len);
-		}
+	if (ss->wbuf_next > ss->wbuf_flush) {
+		/* tcp flushing is in progress */
+		return 0;
 	}
+	if (ss->wbuf->len < TLV_HEADER_SIZE) {
+		/* no header available */
+		return 0;
+	}
+	if (ss->wbuf_flush > 0) {
+		/* tcp flushing is done */
+		consume_wbuf(ss, ss->wbuf_flush);
+	}
+	const struct tlv_header hdr = tlv_header_read(ss->wbuf->data);
+	if (hdr.len < TLV_HEADER_SIZE && hdr.len > TLV_MAX_LENGTH) {
+		LOGE_F("unexpected message length: %" PRIu16, hdr.len);
+		return -1;
+	}
+	if (hdr.msg < SMSG_MAX && ss->wbuf->len < hdr.len) {
+		/* incomplete message */
+		return 0;
+	}
+	if (!session_on_msg(ss, &hdr)) {
+		/* malformed message */
+		return -1;
+	}
+	if (ss->wbuf_next != ss->wbuf_flush) {
+		/* set write_cb */
+		struct ev_io *restrict w_write = &ss->w_write;
+		if (!ev_is_active(w_write)) {
+			ev_io_start(ss->server->loop, w_write);
+		}
+	} else {
+		consume_wbuf(ss, hdr.len);
+	}
+	return 1;
 }
 
 bool session_send(struct session *restrict ss)
@@ -383,27 +365,43 @@ bool session_send(struct session *restrict ss)
 	return true;
 }
 
-void session_update(struct session *restrict ss)
+static void
+ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
 {
+	UNUSED(revents);
+	struct session *restrict ss = watcher->data;
 	if (ss->event_write) {
-		ikcp_flush(ss->kcp);
-		if (ss->tcp_state == STATE_CONNECTED &&
-		    ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
-			struct ev_io *restrict w_read = &ss->w_read;
-			if (!ev_is_active(w_read)) {
-				ev_io_start(ss->server->loop, w_read);
-			}
-		}
 		ss->event_write = false;
+		if (ss->kcp_state == STATE_CONNECT ||
+		    ss->kcp_state == STATE_CONNECTED ||
+		    ss->kcp_state == STATE_LINGER) {
+			ikcp_flush(ss->kcp);
+		}
+		tcp_notify_read(ss);
 	}
 	if (ss->event_read) {
-		session_read_cb(ss);
 		ss->event_read = false;
+		while (ss->kcp_state == STATE_CONNECT ||
+		       ss->kcp_state == STATE_CONNECTED) {
+			kcp_recv(ss);
+			const int ret = session_recv(ss);
+			if (ret < 0) {
+				session_stop(ss);
+				kcp_reset(ss);
+				break;
+			} else if (ret == 0) {
+				break;
+			}
+		}
 	}
+	ev_idle_stop(loop, watcher);
 }
 
 void session_notify(struct session *restrict ss)
 {
+	if (!(ss->event_read || ss->event_write)) {
+		return;
+	}
 	struct ev_idle *restrict w_update = &ss->w_update;
 	if (ev_is_active(w_update)) {
 		return;
@@ -506,7 +504,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	const uint32_t tstamp = read_uint32(msgbuf);
 	/* calculate RTT & estimated bandwidth */
-	const uint32_t now_ms = tstamp2ms(ev_time());
+	const uint32_t now_ms = TSTAMP2MS(ev_time());
 	const double rtt = (now_ms - tstamp) * 1e-3;
 	const struct config *restrict conf = s->conf;
 	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / rtt;

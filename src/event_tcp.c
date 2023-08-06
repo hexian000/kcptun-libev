@@ -19,6 +19,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <inttypes.h>
 #include <limits.h>
 
@@ -157,11 +158,8 @@ static int tcp_recv(struct session *restrict ss)
 void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
-	UNUSED(loop);
-	struct session *restrict ss = watcher->data;
-	assert(watcher == &ss->w_read);
-	assert(watcher->fd == ss->tcp_fd);
 
+	struct session *restrict ss = watcher->data;
 	while (ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
 		switch (tcp_recv(ss)) {
 		case TCPRECV_OK:
@@ -198,55 +196,51 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ev_io_stop(loop, watcher);
 }
 
-static int tcp_flush(struct session *restrict ss)
+void tcp_notify_read(struct session *restrict ss)
 {
-	assert(ss->wbuf_next >= ss->wbuf_flush);
-	unsigned char *payload = ss->wbuf->data;
-	unsigned char *buf = payload + ss->wbuf_flush;
-	const size_t len = ss->wbuf_next - ss->wbuf_flush;
-	size_t nsend = 0;
-	if (len > 0) {
-		const ssize_t ret = send(ss->tcp_fd, buf, len, 0);
-		if (ret < 0) {
-			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
-				return 0;
-			}
-			LOGE_F("session [%08" PRIX32 "] tcp send: %s", ss->conv,
-			       strerror(err));
-			return -1;
-		}
-		assert(0 <= ret && ret <= INT_MAX);
-		nsend = (size_t)ret;
+	if (ss->tcp_state != STATE_CONNECTED) {
+		return;
 	}
-	if (nsend > 0) {
-		ss->wbuf_flush += nsend;
-		ss->stats.tcp_tx += nsend;
-		ss->server->stats.tcp_tx += nsend;
-		LOGV_F("session [%08" PRIX32 "] tcp: "
-		       "send %zu/%zu bytes",
-		       ss->conv, nsend, len);
-		ss->event_read = true;
-		session_notify(ss);
-		return 1;
+	if (ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
+		return;
 	}
-	return 0;
+	struct ev_io *restrict w_read = &ss->w_read;
+	if (ev_is_active(w_read)) {
+		return;
+	}
+	ev_io_start(ss->server->loop, w_read);
 }
 
-int tcp_send(struct session *restrict ss)
+static int tcp_send(struct session *restrict ss)
 {
-	const int ret = tcp_flush(ss);
+	assert(ss->wbuf_next >= ss->wbuf_flush);
+	unsigned char *buf = ss->wbuf->data + ss->wbuf_flush;
+	const size_t len = ss->wbuf_next - ss->wbuf_flush;
+	if (len == 0) {
+		return 0;
+	}
+	const ssize_t ret = send(ss->tcp_fd, buf, len, 0);
 	if (ret < 0) {
-		return ret;
-	}
-	if (ss->wbuf_next > ss->wbuf_flush || ss->tcp_state == STATE_LINGER) {
-		/* has more data or eof, start write watcher */
-		struct ev_io *restrict w_write = &ss->w_write;
-		if (!ev_is_active(w_write)) {
-			ev_io_start(ss->server->loop, w_write);
+		const int err = errno;
+		if (IS_TRANSIENT_ERROR(err)) {
+			return 0;
 		}
+		LOGE_F("session [%08" PRIX32 "] tcp send: %s", ss->conv,
+		       strerror(err));
+		return -1;
+	} else if (ret == 0) {
+		return 0;
 	}
-	return ret;
+	assert(ret <= INT_MAX);
+	ss->wbuf_flush += (size_t)ret;
+	ss->stats.tcp_tx += (uintmax_t)ret;
+	ss->server->stats.tcp_tx += (uintmax_t)ret;
+	LOGV_F("session [%08" PRIX32 "] tcp: "
+	       "send %zd/%zu bytes",
+	       ss->conv, ret, len);
+	ss->event_read = true;
+	session_notify(ss);
+	return 1;
 }
 
 static bool on_connected(struct session *restrict ss)
@@ -274,33 +268,43 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct session *restrict ss = watcher->data;
-	assert(watcher == &ss->w_write);
-	assert(watcher->fd == ss->tcp_fd);
-	if (ss->tcp_state == STATE_CONNECT) {
+	if ((revents & EV_WRITE) && (ss->tcp_state == STATE_CONNECT)) {
 		on_connected(ss);
 		ss->tcp_state = STATE_CONNECTED;
 	}
 
-	while (ss->wbuf_next > ss->wbuf_flush) {
-		const int ret = tcp_flush(ss);
+	for (;;) {
+		const int ret = tcp_send(ss);
 		if (ret < 0) {
 			session_stop(ss);
 			kcp_reset(ss);
 			return;
 		} else if (ret == 0) {
 			/* wait next event */
-			return;
+			break;
 		}
 	}
 
-	/* stop write watcher */
-	ev_io_stop(loop, watcher);
-
-	if (ss->tcp_state == STATE_LINGER) {
+	const bool need_write = ss->wbuf_flush < ss->wbuf_next;
+	if (ss->tcp_state == STATE_LINGER && !need_write) {
 		/* no more data, close */
 		session_stop(ss);
 		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
 		ss->tcp_state = STATE_TIME_WAIT;
 		return;
 	}
+	ev_io_set_active(loop, watcher, need_write);
+}
+
+void tcp_flush(struct session *restrict ss)
+{
+	switch (ss->tcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
+		return;
+	}
+	ev_invoke(ss->server->loop, &ss->w_write, EV_CUSTOM);
 }

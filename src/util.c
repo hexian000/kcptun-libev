@@ -27,9 +27,17 @@
 #include <string.h>
 #include <time.h>
 
-uint32_t tstamp2ms(const ev_tstamp t)
+void ev_io_set_active(
+	struct ev_loop *loop, struct ev_io *restrict watcher, const bool active)
 {
-	return (uint32_t)fmod(t * 1e+3, UINT32_MAX + 1.0);
+	if (!!ev_is_active(watcher) == active) {
+		return;
+	}
+	if (active) {
+		ev_io_start(loop, watcher);
+	} else {
+		ev_io_stop(loop, watcher);
+	}
 }
 
 bool check_rate_limit(

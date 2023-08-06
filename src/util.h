@@ -14,6 +14,8 @@
 
 #define UNUSED(x) (void)(x)
 
+void ev_io_set_active(struct ev_loop *loop, struct ev_io *watcher, bool active);
+
 #define TSTAMP_NIL (-1.0)
 
 extern struct mcache *msgpool;
@@ -26,7 +28,8 @@ extern struct mcache *msgpool;
 		}                                                              \
 	} while (0)
 
-uint32_t tstamp2ms(ev_tstamp t);
+#define TSTAMP2MS(t) ((uint32_t)fmod((t)*1e+3, UINT32_MAX + 1.0))
+
 bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 
 #define RATELIMIT(now, interval, expr)                                         \

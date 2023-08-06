@@ -1046,6 +1046,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	{
 		struct ev_io *restrict w_read = &pkt->w_read;
 		ev_io_init(w_read, &pkt_read_cb, obfs->cap_fd, EV_READ);
+		ev_set_priority(w_read, EV_MAXPRI);
 		w_read->data = s;
 		ev_io_start(s->loop, w_read);
 
@@ -1070,11 +1071,13 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 
 		struct ev_timer *restrict w_timeout = &obfs->w_timeout;
 		ev_timer_init(w_timeout, obfs_timeout_cb, 10.0, 10.0);
+		ev_set_priority(w_timeout, EV_MINPRI);
 		w_timeout->data = obfs;
 		ev_timer_start(s->loop, w_timeout);
 
 		struct ev_timer *restrict w_redial = &obfs->w_redial;
 		ev_timer_init(w_redial, obfs_redial_cb, 5.0, 0.0);
+		ev_set_priority(w_redial, EV_MINPRI);
 		w_redial->data = obfs;
 	}
 	return true;

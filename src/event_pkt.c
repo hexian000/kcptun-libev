@@ -335,23 +335,16 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	const int fd = watcher->fd;
 	struct server *restrict s = watcher->data;
-	struct pktqueue *restrict q = s->pkt.queue;
-	while (q->mq_send_len > 0) {
-		if (pkt_send(s, fd) == 0) {
+	for (;;) {
+		const size_t nsend = pkt_send(s, fd);
+		if (nsend == 0) {
 			break;
 		}
 	}
-	if (q->mq_send_len == 0) {
-		ev_io_stop(loop, watcher);
-	}
+	ev_io_set_active(loop, watcher, s->pkt.queue->mq_send_len > 0);
 }
 
 void pkt_flush(struct server *restrict s)
 {
-	struct pktqueue *restrict q = s->pkt.queue;
-	struct ev_io *restrict w_write = &s->pkt.w_write;
-	(void)pkt_send(s, w_write->fd);
-	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
-		ev_io_start(s->loop, w_write);
-	}
+	ev_invoke(s->loop, &s->pkt.w_write, EV_CUSTOM);
 }
