@@ -144,9 +144,6 @@ static bool udp_init(
 static bool
 udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 {
-	if (conf->netdev != NULL) {
-		socket_bind_netdev(udp->fd, conf->netdev);
-	}
 	if (conf->kcp_bind != NULL) {
 		sockaddr_max_t addr;
 		if (!resolve_sa(
@@ -188,6 +185,9 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOGI_F("udp connect: %s", addr_str);
+	}
+	if (conf->netdev != NULL) {
+		socket_bind_netdev(udp->fd, conf->netdev);
 	}
 	return true;
 }
