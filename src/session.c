@@ -69,7 +69,7 @@ kcp_new(struct session *restrict ss, const struct config *restrict conf,
 }
 
 static void
-ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents);
+ss_update_cb(struct ev_loop *loop, struct ev_watcher *watcher, int revents);
 
 struct session *session_new(
 	struct server *restrict s, const struct sockaddr *addr,
@@ -93,7 +93,8 @@ struct session *session_new(
 	ss->w_read.data = ss;
 	ev_io_init(&ss->w_write, tcp_write_cb, -1, EV_WRITE);
 	ss->w_write.data = ss;
-	ev_idle_init(&ss->w_update, ss_update_cb);
+	ev_init(&ss->w_update, ss_update_cb);
+	ev_set_priority(&ss->w_update, EV_MINPRI);
 	ss->w_update.data = ss;
 	ss->server = s;
 	sa_set(&ss->raddr, addr);
@@ -125,7 +126,7 @@ void session_free(struct session *restrict ss)
 {
 	session_tcp_stop(ss);
 	session_kcp_stop(ss);
-	ev_idle_stop(ss->server->loop, &ss->w_update);
+	ev_clear_pending(ss->server->loop, &ss->w_update);
 	free(ss);
 }
 
@@ -321,13 +322,7 @@ static int session_recv(struct session *restrict ss)
 		/* malformed message */
 		return -1;
 	}
-	if (ss->wbuf_next != ss->wbuf_flush) {
-		/* set write_cb */
-		struct ev_io *restrict w_write = &ss->w_write;
-		if (!ev_is_active(w_write)) {
-			ev_io_start(ss->server->loop, w_write);
-		}
-	} else {
+	if (ss->wbuf_next == ss->wbuf_flush) {
 		consume_wbuf(ss, hdr.len);
 	}
 	return 1;
@@ -389,7 +384,6 @@ static void ss_flush_cb(struct session *restrict ss)
 		return;
 	}
 	ikcp_flush(ss->kcp);
-	tcp_notify_read(ss);
 }
 
 static void ss_read_cb(struct session *restrict ss)
@@ -409,8 +403,9 @@ static void ss_read_cb(struct session *restrict ss)
 }
 
 static void
-ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
+ss_update_cb(struct ev_loop *loop, struct ev_watcher *watcher, int revents)
 {
+	UNUSED(loop);
 	UNUSED(revents);
 	struct session *restrict ss = watcher->data;
 	if (ss->event_flush) {
@@ -421,7 +416,7 @@ ss_update_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
 		ss->event_read = false;
 		ss_read_cb(ss);
 	}
-	ev_idle_stop(loop, watcher);
+	tcp_notify_read(ss);
 }
 
 void session_notify(struct session *restrict ss)
@@ -429,11 +424,11 @@ void session_notify(struct session *restrict ss)
 	if (!(ss->event_read || ss->event_flush)) {
 		return;
 	}
-	struct ev_idle *restrict w_update = &ss->w_update;
-	if (ev_is_active(w_update)) {
+	struct ev_watcher *restrict w_update = &ss->w_update;
+	if (ev_is_pending(w_update)) {
 		return;
 	}
-	ev_idle_start(ss->server->loop, w_update);
+	ev_feed_event(ss->server->loop, w_update, EV_CUSTOM);
 }
 
 static bool shutdown_filt(

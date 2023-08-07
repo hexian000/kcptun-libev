@@ -101,7 +101,7 @@ struct session {
 	sockaddr_max_t raddr;
 	struct {
 		struct ev_io w_read, w_write;
-		struct ev_idle w_update;
+		struct ev_watcher w_update;
 	};
 	struct {
 		ev_tstamp created;
