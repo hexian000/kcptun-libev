@@ -100,9 +100,12 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		table_find(s->sessions, (hashkey_t *)&sskey);
 	if (ss == NULL) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
-			LOG_RATELIMITEDF(
-				LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
-				"* session %08" PRIX32 " not found", conv);
+			if (LOGLEVEL(LOG_LEVEL_WARNING)) {
+				LOG_RATELIMITED_F(
+					LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
+					"* session %08" PRIX32 " not found",
+					conv);
+			}
 			ss0_reset(s, sa, conv);
 			return;
 		}
@@ -117,8 +120,9 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOGD_F("session [%08" PRIX32 "] kcp: accepted %s", conv,
-			       addr_str);
+			LOG_F(LOG_LEVEL_DEBUG,
+			      "session [%08" PRIX32 "] kcp: accepted %s", conv,
+			      addr_str);
 		}
 		ss->kcp_state = STATE_CONNECT;
 	}
@@ -241,10 +245,13 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 
 	const ev_tstamp now = ev_now(s->loop);
 	if (q->mq_send_len >= q->mq_send_cap) {
-		LOG_RATELIMITEDF(
-			LOG_LEVEL_WARNING, now, 1.0,
-			"* mq_send is full, %" PRIu16 " bytes discarded",
-			msg->len);
+		if (LOGLEVEL(LOG_LEVEL_WARNING)) {
+			LOG_RATELIMITED_F(
+				LOG_LEVEL_WARNING, now, 1.0,
+				"* mq_send is full, %" PRIu16
+				" bytes discarded",
+				msg->len);
+		}
 		msgframe_delete(q, msg);
 		return false;
 	}

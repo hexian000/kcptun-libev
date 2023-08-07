@@ -28,16 +28,11 @@
 	((err) == EINTR || (err) == EAGAIN || (err) == EWOULDBLOCK ||          \
 	 (err) == ENOBUFS || (err) == ENOMEM)
 
-#define LOG_RATELIMITEDF(level, now, rate, format, ...)                        \
-	do {                                                                   \
-		if (LOGLEVEL(level)) {                                         \
-			RATELIMIT(                                             \
-				now, rate, LOG_F(level, format, __VA_ARGS__)); \
-		}                                                              \
-	} while (0)
+#define LOG_RATELIMITED_F(level, now, rate, format, ...)                       \
+	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__));
 
 #define LOG_RATELIMITED(level, now, rate, message)                             \
-	LOG_RATELIMITEDF(level, now, rate, "%s", message)
+	LOG_RATELIMITED_F(level, now, rate, "%s", message)
 
 struct server;
 

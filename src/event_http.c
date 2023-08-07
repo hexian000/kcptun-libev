@@ -121,7 +121,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
 		char addr_str[64];
 		format_sa(&addr.sa, addr_str, sizeof(addr_str));
-		LOGV_F("http: accept %s", addr_str);
+		LOG_F(LOG_LEVEL_VERBOSE, "http: accept %s", addr_str);
 	}
 }
 

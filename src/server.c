@@ -89,7 +89,7 @@ static bool listener_start(struct server *restrict s)
 		if (LOGLEVEL(LOG_LEVEL_INFO)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOGI_F("listen at: %s", addr_str);
+			LOG_F(LOG_LEVEL_INFO, "listen at: %s", addr_str);
 		}
 	}
 
@@ -111,7 +111,7 @@ static bool listener_start(struct server *restrict s)
 		if (LOGLEVEL(LOG_LEVEL_INFO)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOGI_F("http listen at: %s", addr_str);
+			LOG_F(LOG_LEVEL_INFO, "http listen at: %s", addr_str);
 		}
 	}
 

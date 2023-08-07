@@ -125,10 +125,10 @@ struct obfs_ctx {
 #define OBFS_CTX_LOG_F(level, ctx, format, ...)                                \
 	do {                                                                   \
 		if (LOGLEVEL(level)) {                                         \
-			char addr_str[64];                                     \
-			format_sa(                                             \
-				&(ctx)->raddr.sa, addr_str, sizeof(addr_str)); \
-			LOG_F(level, "obfs: peer=%s " format, addr_str,        \
+			char laddr[64], raddr[64];                             \
+			format_sa(&(ctx)->laddr.sa, laddr, sizeof(laddr));     \
+			format_sa(&(ctx)->raddr.sa, raddr, sizeof(raddr));     \
+			LOG_F(level, "obfs %s<->%s: " format, laddr, raddr,    \
 			      __VA_ARGS__);                                    \
 		}                                                              \
 	} while (0)
@@ -393,7 +393,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGD_F("obfs: cap bind %s", addr_str);
+		LOG_F(LOG_LEVEL_DEBUG, "obfs: cap bind %s", addr_str);
 	}
 	struct sock_filter filter[32];
 	struct sock_fprog fprog = (struct sock_fprog){
@@ -632,7 +632,7 @@ static bool obfs_ctx_start(
 		char laddr[64], raddr[64];
 		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
 		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
-		LOGD_F("obfs: start %s <-> %s", laddr, raddr);
+		LOG_F(LOG_LEVEL_DEBUG, "obfs: start %s <-> %s", laddr, raddr);
 	}
 	OBFS_CTX_MAKE_KEY(ctx->key, &ctx->raddr.sa);
 	struct obfs_ctx *restrict old_ctx =
@@ -675,7 +675,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOGI_F("obfs: tcp listen %s", addr_str);
+		LOG_F(LOG_LEVEL_INFO, "obfs: tcp listen %s", addr_str);
 	}
 	return true;
 }
@@ -801,13 +801,7 @@ static bool obfs_ctx_timeout_filt(
 	if (not_seen < timeout) {
 		return true;
 	}
-	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		char laddr[64], raddr[64];
-		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
-		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
-		OBFS_CTX_LOG_F(
-			LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
-	}
+	OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	obfs_ctx_unlink(obfs, ctx);
 	obfs_ctx_free(loop, ctx);
 	return false;
@@ -1284,7 +1278,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 			const ev_tstamp now = ev_now(obfs->server->loop);
-			LOG_RATELIMITEDF(
+			LOG_RATELIMITED_F(
 				LOG_LEVEL_DEBUG, now, 1.0,
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
@@ -1297,7 +1291,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		const ev_tstamp now = ev_now(obfs->server->loop);
-		LOG_RATELIMITEDF(
+		LOG_RATELIMITED_F(
 			LOG_LEVEL_DEBUG, now, 1.0, "* obfs: rst from %s",
 			addr_str);
 		return NULL;
@@ -1374,7 +1368,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			char addr_str[64];
 			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 			const ev_tstamp now = ev_now(obfs->server->loop);
-			LOG_RATELIMITEDF(
+			LOG_RATELIMITED_F(
 				LOG_LEVEL_DEBUG, now, 1.0,
 				"* obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
@@ -1387,7 +1381,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		char addr_str[64];
 		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
 		const ev_tstamp now = ev_now(obfs->server->loop);
-		LOG_RATELIMITEDF(
+		LOG_RATELIMITED_F(
 			LOG_LEVEL_DEBUG, now, 1.0, "* obfs: rst from %s",
 			addr_str);
 		return NULL;
@@ -1545,13 +1539,16 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 	struct obfs_ctx *restrict ctx =
 		table_find(obfs->contexts, (hashkey_t *)&key);
 	if (ctx == NULL) {
-		char addr_str[64];
-		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
-		const ev_tstamp now = ev_now(obfs->server->loop);
-		LOG_RATELIMITEDF(
-			LOG_LEVEL_WARNING, now, 1.0,
-			"* obfs: can't send %" PRIu16 " bytes to unrelated %s",
-			msg->len, addr_str);
+		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+			char addr_str[64];
+			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			const ev_tstamp now = ev_now(obfs->server->loop);
+			LOG_RATELIMITED_F(
+				LOG_LEVEL_WARNING, now, 1.0,
+				"* obfs: can't send %" PRIu16
+				" bytes to unrelated %s",
+				msg->len, addr_str);
+		}
 		return false;
 	}
 	if (!ctx->captured) {

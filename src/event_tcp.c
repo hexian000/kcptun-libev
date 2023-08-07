@@ -55,8 +55,9 @@ static void accept_one(
 	if (LOGLEVEL(LOG_LEVEL_INFO)) {
 		char addr_str[64];
 		format_sa(client_sa, addr_str, sizeof(addr_str));
-		LOGI_F("session [%08" PRIX32 "] tcp: accepted %s", conv,
-		       addr_str);
+		LOG_F(LOG_LEVEL_INFO,
+		      "session [%08" PRIX32 "] tcp: accepted %s", conv,
+		      addr_str);
 	}
 	session_start(ss, fd);
 }
