@@ -187,7 +187,7 @@ void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	struct server *restrict s = watcher->data;
 	while (pkt_recv(s, watcher->fd) > 0) {
-		(void)queue_recv(s);
+		(void)queue_dispatch(s);
 	}
 }
 

@@ -64,7 +64,7 @@ static inline void msgframe_delete(struct pktqueue *q, struct msgframe *msg)
 }
 
 /* process mq_recv */
-size_t queue_recv(struct server *s);
+size_t queue_dispatch(struct server *s);
 
 /* send a plain packet */
 bool queue_send(struct server *s, struct msgframe *msg);

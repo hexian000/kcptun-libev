@@ -85,11 +85,11 @@ static void noncegen_fill_random(struct noncegen *restrict g)
 const unsigned char *noncegen_next(struct noncegen *restrict g)
 {
 	switch (g->method) {
-	case noncegen_random:
-		noncegen_fill_random(g);
-		break;
 	case noncegen_counter:
 		noncegen_fill_counter(g);
+		break;
+	case noncegen_random:
+		noncegen_fill_random(g);
 		break;
 	}
 	return g->buf.data;

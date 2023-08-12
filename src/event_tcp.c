@@ -196,7 +196,8 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 void tcp_notify_read(struct session *restrict ss)
 {
-	if (ss->tcp_state != STATE_CONNECTED) {
+	if (ss->tcp_state != STATE_CONNECTED ||
+	    ss->kcp_state != STATE_CONNECTED) {
 		return;
 	}
 	if (ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
@@ -265,7 +266,9 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 	struct session *restrict ss = watcher->data;
 	if ((revents & EV_WRITE) && (ss->tcp_state == STATE_CONNECT)) {
-		on_connected(ss);
+		if (!on_connected(ss)) {
+			return;
+		}
 		ss->tcp_state = STATE_CONNECTED;
 	}
 

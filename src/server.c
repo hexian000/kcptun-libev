@@ -463,6 +463,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 
 struct server_stats_ctx {
 	size_t num_in_state[STATE_MAX];
+	size_t waitsnd;
 	int level;
 	ev_tstamp now;
 	struct vbuffer *restrict buf;
@@ -478,6 +479,8 @@ static bool print_session_iter(
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;
+	const size_t waitsnd = (ss->kcp != NULL) ? ikcp_waitsnd(ss->kcp) : 0;
+	ctx->waitsnd += waitsnd;
 	if (ss->kcp_state > ctx->level) {
 		return true;
 	}
@@ -502,11 +505,9 @@ static bool print_session_iter(
 	ctx->buf = VBUF_APPENDF(
 		ctx->buf,
 		"[%08" PRIX32 "] %c peer=%s seen=%.0lfs "
-		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%" PRIu32 " "
-		"rx/tx=%s/%s\n",
+		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%zu rx/tx=%s/%s\n",
 		ss->conv, session_state_char[state], addr_str, not_seen,
-		ss->kcp->rx_srtt, ss->kcp->rx_rto, ikcp_waitsnd(ss->kcp),
-		kcp_rx, kcp_tx);
+		ss->kcp->rx_srtt, ss->kcp->rx_rto, waitsnd, kcp_rx, kcp_tx);
 #undef FORMAT_BYTES
 
 	return true;
@@ -524,11 +525,42 @@ static struct vbuffer *print_session_table(
 	table_iterate(s->sessions, &print_session_iter, &ctx);
 	return VBUF_APPENDF(
 		ctx.buf,
-		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait\n\n",
+		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; waitsnd=%zu\n\n",
 		table_size(s->sessions), ctx.num_in_state[STATE_CONNECT],
 		ctx.num_in_state[STATE_CONNECTED],
 		ctx.num_in_state[STATE_LINGER],
-		ctx.num_in_state[STATE_TIME_WAIT]);
+		ctx.num_in_state[STATE_TIME_WAIT], ctx.waitsnd);
+}
+
+static struct vbuffer *append_traffic_stats(
+	struct vbuffer *buf, const double uptime,
+	const struct link_stats *restrict stats)
+{
+	const double uptime_hrs = uptime / 3600.0;
+
+#define FORMAT_BYTES(name, value)                                              \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
+	FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
+	FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
+	FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
+	FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
+	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
+	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
+
+	FORMAT_BYTES(avgtcp_rx, (double)(stats->tcp_rx) / uptime_hrs);
+	FORMAT_BYTES(avgtcp_tx, (double)(stats->tcp_tx) / uptime_hrs);
+	FORMAT_BYTES(avgpkt_rx, (double)(stats->pkt_rx) / uptime_hrs);
+	FORMAT_BYTES(avgpkt_tx, (double)(stats->pkt_tx) / uptime_hrs);
+
+#undef FORMAT_BYTES
+	return VBUF_APPENDF(
+		buf,
+		"[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n"
+		"[avgbw] tcp: %s/hrs, %s/hrs; pkt: %s/hrs, %s/hrs\n",
+		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx,
+		/* avgbw */ avgtcp_rx, avgtcp_tx, avgpkt_rx, avgpkt_tx);
 }
 
 static bool update_load(
@@ -553,30 +585,12 @@ server_stats_const(const struct server *s, struct vbuffer *buf, int level)
 	buf = print_session_table(s, buf, level);
 
 	const ev_tstamp now = ev_now(s->loop);
-	char uptime[16];
+	const double uptime = now - s->started;
+	char uptime_str[16];
 	(void)format_duration(
-		uptime, sizeof(uptime), make_duration(now - s->started));
-	const struct link_stats *restrict stats = &s->stats;
-
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
-
-	{
-		FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
-		FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
-		FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
-		FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
-		FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
-		FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
-		buf = VBUF_APPENDF(
-			buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
-			tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
-	}
-
-#undef FORMAT_BYTES
-
-	buf = VBUF_APPENDF(buf, "  = uptime: %s\n", uptime);
+		uptime_str, sizeof(uptime_str), make_duration(uptime));
+	buf = append_traffic_stats(buf, uptime, &s->stats);
+	buf = VBUF_APPENDF(buf, "  = uptime: %s\n", uptime_str);
 	return buf;
 }
 
@@ -587,9 +601,10 @@ struct vbuffer *server_stats(
 	buf = print_session_table(s, buf, level);
 
 	const ev_tstamp now = ev_now(s->loop);
-	char uptime[16];
+	const double uptime = now - s->started;
+	char uptime_str[16];
 	(void)format_duration(
-		uptime, sizeof(uptime), make_duration(now - s->started));
+		uptime_str, sizeof(uptime_str), make_duration(uptime));
 	const double dt = now - s->last_stats_time;
 	const struct link_stats *restrict stats = &s->stats;
 
@@ -606,9 +621,6 @@ struct vbuffer *server_stats(
 		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
 		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
 	};
-	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
-	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
-
 	{
 		FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
 		FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
@@ -621,30 +633,24 @@ struct vbuffer *server_stats(
 
 		buf = VBUF_APPENDF(
 			buf,
-			"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1lf%%, %.1lf%%\n",
+			"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1f%%, %.1f%%\n",
 			dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx);
 	}
 
-	{
-		FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
-		FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
-		FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
-		FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
-		FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
-		FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
-		buf = VBUF_APPENDF(
-			buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
-			tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
-	}
+	buf = append_traffic_stats(buf, uptime, &s->stats);
 
-	char load_buf[16];
-	const char *load_str = "(unknown)";
-	if (update_load(s, load_buf, sizeof(load_buf), dt)) {
-		load_str = load_buf;
+	{
+		char load_buf[16];
+		const char *load_str = "(unknown)";
+		if (update_load(s, load_buf, sizeof(load_buf), dt)) {
+			load_str = load_buf;
+		}
+		FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
+		FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
+		buf = VBUF_APPENDF(
+			buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n",
+			load_str, dpkt_rx, dpkt_tx, uptime_str);
 	}
-	buf = VBUF_APPENDF(
-		buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n", load_str,
-		dpkt_rx, dpkt_tx, uptime);
 #undef FORMAT_BYTES
 
 	/* rotate stats */

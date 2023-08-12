@@ -59,7 +59,7 @@ static bool crypto_open_inplace(
 	return true;
 }
 
-/* caller should ensure buffer is large enough */
+/* caller should ensure the buffer is large enough */
 static bool crypto_seal_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
 	const size_t size)
@@ -83,8 +83,7 @@ static bool crypto_seal_inplace(
 }
 #endif /* WITH_CRYPTO */
 
-static void
-queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
+static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 {
 	const unsigned char *kcp_packet = msg->buf + msg->off;
 	uint32_t conv = ikcp_getconv(kcp_packet);
@@ -172,7 +171,7 @@ queue_recv_one(struct server *restrict s, struct msgframe *restrict msg)
 	session_notify(ss);
 }
 
-size_t queue_recv(struct server *restrict s)
+size_t queue_dispatch(struct server *restrict s)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->mq_recv_len == 0) {
@@ -211,7 +210,7 @@ size_t queue_recv(struct server *restrict s)
 			obfs_ctx_auth(ctx, true);
 		}
 #endif
-		queue_recv_one(s, msg);
+		queue_recv(s, msg);
 		nbrecv += msg->len;
 		msgframe_delete(q, msg);
 	}
