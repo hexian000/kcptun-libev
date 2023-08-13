@@ -17,7 +17,8 @@
 #include <inttypes.h>
 
 static bool timeout_filt(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);

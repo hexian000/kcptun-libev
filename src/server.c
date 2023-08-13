@@ -224,7 +224,6 @@ static bool udp_start(struct server *restrict s)
 	struct ev_io *restrict w_write = &udp->w_write;
 	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
 	w_write->data = s;
-	ev_io_start(s->loop, w_write);
 
 	const ev_tstamp now = ev_time();
 	udp->last_send_time = now;
@@ -401,11 +400,24 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 	ev_timer_stop(loop, &l->w_timer);
 }
 
+static bool shutdown_filt(
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	struct session *restrict ss = element;
+	assert(key == (hashkey_t *)&ss->key);
+	session_free(ss);
+	return false;
+}
+
 void server_stop(struct server *restrict s)
 {
 	struct ev_loop *loop = s->loop;
 	listener_stop(loop, &s->listener);
-	session_close_all(s->sessions);
+	table_filter(s->sessions, shutdown_filt, NULL);
 	ev_timer_stop(loop, &s->w_kcp_update);
 	ev_timer_stop(loop, &s->w_keepalive);
 	ev_timer_stop(loop, &s->w_resolve);
@@ -470,7 +482,8 @@ struct server_stats_ctx {
 };
 
 static bool print_session_iter(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);

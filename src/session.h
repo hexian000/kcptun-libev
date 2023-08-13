@@ -131,8 +131,6 @@ bool session_kcp_send(struct session *ss);
 void session_kcp_close(struct session *ss);
 void session_notify(struct session *ss);
 
-void session_close_all(struct hashtable *t);
-
 /* session 0 messages */
 enum session0_messages {
 	S0MSG_PING = 0x0000,

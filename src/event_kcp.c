@@ -135,7 +135,8 @@ static void kcp_update(struct session *restrict ss)
 }
 
 static bool kcp_update_iter(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);

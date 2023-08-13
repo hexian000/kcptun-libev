@@ -21,7 +21,7 @@ typedef struct vbuffer hashkey_t;
 struct hashtable;
 
 typedef bool (*table_iterate_cb)(
-	struct hashtable *table, const hashkey_t *key, void *element,
+	const struct hashtable *table, const hashkey_t *key, void *element,
 	void *data);
 
 enum table_flags {
@@ -69,7 +69,7 @@ void *table_set(struct hashtable *table, const hashkey_t *key, void *element);
  * @param key The key to find.
  * @return The existing element or NULL.
  */
-void *table_find(struct hashtable *table, const hashkey_t *key);
+void *table_find(const struct hashtable *table, const hashkey_t *key);
 
 /**
  * @brief Delete an element by key.
@@ -93,14 +93,15 @@ void table_filter(struct hashtable *table, table_iterate_cb f, void *data);
  * @param f Callback function, return true to continue.
  * @param data Transparently passed to f
  */
-void table_iterate(struct hashtable *table, table_iterate_cb f, void *data);
+void table_iterate(
+	const struct hashtable *table, table_iterate_cb f, void *data);
 
 /**
  * @brief Get the number of elements in a table.
  * @param table Pointer to a table.
  * @return The number of elements in the table.
  */
-int table_size(struct hashtable *table);
+int table_size(const struct hashtable *table);
 
 /** @} */
 

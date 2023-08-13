@@ -431,23 +431,6 @@ void session_notify(struct session *restrict ss)
 	ev_feed_event(ss->server->loop, w_update, EV_CUSTOM);
 }
 
-static bool shutdown_filt(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
-{
-	UNUSED(t);
-	UNUSED(key);
-	UNUSED(user);
-	struct session *restrict ss = element;
-	assert(key == (hashkey_t *)&ss->key);
-	session_free(ss);
-	return false;
-}
-
-void session_close_all(struct hashtable *t)
-{
-	table_filter(t, shutdown_filt, NULL);
-}
-
 struct session0_header {
 	uint32_t zero;
 	uint16_t what;

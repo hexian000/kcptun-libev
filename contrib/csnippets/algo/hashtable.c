@@ -243,7 +243,7 @@ table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 	return NULL;
 }
 
-void *table_find(struct hashtable *restrict table, const hashkey_t *key)
+void *table_find(const struct hashtable *restrict table, const hashkey_t *key)
 {
 	const int hash = get_hash(key, table->seed);
 	const int bucket = hash % table->capacity;
@@ -377,7 +377,7 @@ void table_filter(
 }
 
 void table_iterate(
-	struct hashtable *restrict table, table_iterate_cb f, void *data)
+	const struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
 	if (table->size == 0) {
 		return;
@@ -400,7 +400,7 @@ void table_iterate(
 	}
 }
 
-int table_size(struct hashtable *restrict table)
+int table_size(const struct hashtable *restrict table)
 {
 	return table->size;
 }

@@ -97,24 +97,24 @@ struct obfs_ctx {
 	struct obfs *obfs;
 	struct ev_io w_read, w_write;
 	sockaddr_max_t laddr, raddr;
+	ev_tstamp created;
+	ev_tstamp last_seen;
 	struct http_message http_msg;
 	char *http_nxt;
 	int fd;
-	uint32_t cap_flow;
-	uint32_t cap_seq, cap_ack_seq;
 	struct {
-		bool cap_ecn : 1;
+		bool in_table : 1;
 		bool captured : 1;
 		bool authenticated : 1;
 		bool http_keepalive : 1;
-	};
-	struct {
+		bool cap_ecn : 1;
+
+		uint32_t cap_flow;
+		uint32_t cap_seq, cap_ack_seq;
+
 		uintmax_t num_ecn, num_ece;
 		uintmax_t pkt_rx, pkt_tx;
 		uintmax_t byt_rx, byt_tx;
-
-		ev_tstamp created;
-		ev_tstamp last_seen;
 	};
 	struct {
 		BUFFER_HDR;
@@ -164,8 +164,6 @@ static void
 obfs_server_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 obfs_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-static void
-obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 static void
 obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 
@@ -523,7 +521,8 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 }
 
 static bool ctx_del_filter(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
@@ -536,7 +535,8 @@ static bool ctx_del_filter(
 	return true;
 }
 
-static void obfs_ctx_unlink(struct obfs *obfs, struct obfs_ctx *restrict ctx)
+static void
+obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 {
 	if (ctx->authenticated) {
 		assert(obfs->num_authenticated > 0u);
@@ -547,12 +547,10 @@ static void obfs_ctx_unlink(struct obfs *obfs, struct obfs_ctx *restrict ctx)
 	}
 	/* free all related sessions */
 	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
-}
-
-static void obfs_ctx_del(struct obfs *obfs, struct obfs_ctx *restrict ctx)
-{
-	obfs_ctx_unlink(obfs, ctx);
-	(void)table_del(obfs->contexts, (hashkey_t *)&ctx->key);
+	if (ctx->in_table) {
+		(void)table_del(obfs->contexts, (hashkey_t *)&ctx->key);
+		ctx->in_table = false;
+	}
 }
 
 static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
@@ -606,26 +604,40 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 static bool obfs_ctx_start(
 	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
 {
-	ctx->fd = fd;
-	struct ev_loop *loop = obfs->server->loop;
-	if (obfs->server->conf->mode & MODE_CLIENT) {
-		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, obfs_client_read_cb, fd, EV_READ);
-		w_read->data = ctx;
-		ev_io_start(loop, w_read);
-		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
-		w_write->data = ctx;
-	} else {
-		struct ev_io *restrict w_read = &ctx->w_read;
-		ev_io_init(w_read, obfs_server_read_cb, fd, EV_READ);
-		w_read->data = ctx;
-		ev_io_start(loop, w_read);
-		struct ev_io *restrict w_write = &ctx->w_write;
-		ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
-		w_write->data = ctx;
+	OBFS_CTX_MAKE_KEY(ctx->key, &ctx->raddr.sa);
+	struct server *restrict s = obfs->server;
+
+	if ((s->conf->mode & MODE_SERVER) &&
+	    table_find(obfs->contexts, (hashkey_t *)&ctx->key) != NULL) {
+		/* replacing ctx is not allowed in server */
+		return false;
 	}
-	const ev_tstamp now = ev_now(loop);
+
+	struct obfs_ctx *restrict old_ctx =
+		table_set(obfs->contexts, (hashkey_t *)&ctx->key, ctx);
+	if (old_ctx != NULL) {
+		old_ctx->in_table = false;
+		OBFS_CTX_LOG(LOG_LEVEL_DEBUG, old_ctx, "context replaced");
+		obfs_ctx_stop(s->loop, old_ctx);
+		obfs_ctx_del(obfs, old_ctx);
+		obfs_ctx_free(s->loop, old_ctx);
+	}
+	ctx->in_table = true;
+
+	ctx->fd = fd;
+	void (*const obfs_read_cb)(
+		struct ev_loop * loop, struct ev_io * watcher, int revents) =
+		(s->conf->mode & MODE_CLIENT) ? obfs_client_read_cb :
+						obfs_server_read_cb;
+	struct ev_io *restrict w_read = &ctx->w_read;
+	ev_io_init(w_read, obfs_read_cb, fd, EV_READ);
+	w_read->data = ctx;
+	ev_io_start(s->loop, w_read);
+	struct ev_io *restrict w_write = &ctx->w_write;
+	ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
+	w_write->data = ctx;
+
+	const ev_tstamp now = ev_now(s->loop);
 	ctx->created = now;
 	ctx->last_seen = now;
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
@@ -633,14 +645,6 @@ static bool obfs_ctx_start(
 		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
 		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
 		LOG_F(LOG_LEVEL_DEBUG, "obfs: start %s <-> %s", laddr, raddr);
-	}
-	OBFS_CTX_MAKE_KEY(ctx->key, &ctx->raddr.sa);
-	struct obfs_ctx *restrict old_ctx =
-		table_set(obfs->contexts, (hashkey_t *)&ctx->key, ctx);
-	if (old_ctx != NULL) {
-		obfs_ctx_stop(loop, old_ctx);
-		obfs_ctx_del(obfs, old_ctx);
-		obfs_ctx_free(loop, old_ctx);
 	}
 	return true;
 }
@@ -725,7 +729,6 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		return false;
 	}
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
-		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return false;
 	}
@@ -762,25 +765,26 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 	}
 	obfs->client = NULL;
 	struct ev_loop *loop = s->loop;
-	const int i = obfs->redial_count - 1;
-	if (i < 0) {
+	const int redial_count = obfs->redial_count;
+	if (redial_count < 1) {
 		ev_feed_event(loop, w_redial, EV_TIMER);
 		return;
 	}
 	static const double wait_schedule[] = { 5.0, 10.0, 30.0, 60.0 };
-	const double wait_time =
-		wait_schedule[CLAMP(i, 0, (int)ARRAY_SIZE(wait_schedule) - 1)];
+	const double wait_time = wait_schedule[CLAMP(
+		redial_count - 1, 0, (int)ARRAY_SIZE(wait_schedule) - 1)];
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
 		LOG_F(LOG_LEVEL_DEBUG,
-		      "obfs: scheduled redial #%d after %.0lfs",
-		      obfs->redial_count + 1, wait_time);
+		      "obfs: scheduled redial #%d after %.0lfs", redial_count,
+		      wait_time);
 	}
 	ev_timer_set(w_redial, wait_time, 0.0);
 	ev_timer_start(loop, w_redial);
 }
 
 static bool obfs_ctx_timeout_filt(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
@@ -802,7 +806,8 @@ static bool obfs_ctx_timeout_filt(
 		return true;
 	}
 	OBFS_CTX_LOG_F(LOG_LEVEL_DEBUG, ctx, "timeout after %.1lfs", not_seen);
-	obfs_ctx_unlink(obfs, ctx);
+	ctx->in_table = false;
+	obfs_ctx_del(obfs, ctx);
 	obfs_ctx_free(loop, ctx);
 	return false;
 }
@@ -818,9 +823,8 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (obfs->client != NULL) {
 		return;
 	}
-	obfs->redial_count++;
-	LOGI_F("obfs: redial #%d to \"%s\"", obfs->redial_count,
-	       conf->kcp_connect);
+	const int redial_count = ++obfs->redial_count;
+	LOGI_F("obfs: redial #%d to \"%s\"", redial_count, conf->kcp_connect);
 	struct pktconn *restrict pkt = &s->pkt;
 	if (!resolve_sa(&pkt->kcp_connect, conf->kcp_connect, RESOLVE_TCP)) {
 		return;
@@ -901,7 +905,8 @@ struct obfs_stats_ctx {
 };
 
 static bool print_ctx_iter(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
@@ -910,9 +915,9 @@ static bool print_ctx_iter(
 	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
-	char state = '?';
+	char state = '>';
 	if (ctx->captured) {
-		state = ctx->authenticated ? '-' : '>';
+		state = ctx->authenticated ? '-' : '?';
 	}
 
 #define FORMAT_BYTES(name, value)                                              \
@@ -1090,7 +1095,8 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 }
 
 static bool obfs_shutdown_filt(
-	struct hashtable *t, const hashkey_t *key, void *element, void *user)
+	const struct hashtable *t, const hashkey_t *key, void *element,
+	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
@@ -1720,6 +1726,32 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 	return 0;
 }
 
+void obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+{
+	CHECK_EV_ERROR(revents);
+	struct obfs_ctx *restrict ctx = watcher->data;
+	obfs_ctx_stop(loop, ctx);
+	obfs_sched_redial(ctx->obfs);
+}
+
+static void obfs_on_ready(struct obfs_ctx *restrict ctx)
+{
+	ev_set_cb(&ctx->w_read, obfs_fail_cb);
+	obfs_tcp_quickack(ctx->fd, false);
+
+	struct obfs *restrict obfs = ctx->obfs;
+	struct server *restrict s = obfs->server;
+	const bool is_client = !!(s->conf->mode & MODE_CLIENT);
+	OBFS_CTX_LOG_F(
+		LOG_LEVEL_DEBUG, ctx, "%s ready",
+		is_client ? "client" : "server");
+	if (!is_client) {
+		return;
+	}
+	obfs->redial_count = 0;
+	server_ping(s);
+}
+
 void obfs_server_read_cb(
 	struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
@@ -1761,7 +1793,7 @@ void obfs_server_read_cb(
 	ctx->rbuf.len += nbrecv;
 	cap -= nbrecv;
 
-	int ret = obfs_parse_http(ctx);
+	const int ret = obfs_parse_http(ctx);
 	if (ret < 0) {
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
@@ -1786,7 +1818,7 @@ void obfs_server_read_cb(
 		return;
 	}
 	if (strcmp(msg->req.method, "GET") != 0) {
-		ret = http_error(
+		const int ret = http_error(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap,
 			HTTP_BAD_REQUEST);
 		CHECK(ret > 0);
@@ -1799,7 +1831,7 @@ void obfs_server_read_cb(
 	}
 	char *url = msg->req.url;
 	if (strcmp(url, "/generate_204") != 0) {
-		ret = http_error(
+		const int ret = http_error(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap, HTTP_NOT_FOUND);
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
@@ -1814,7 +1846,7 @@ void obfs_server_read_cb(
 	{
 		char date_str[32];
 		const size_t date_len = http_date(date_str, sizeof(date_str));
-		ret = snprintf(
+		const int ret = snprintf(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap,
 			"HTTP/1.1 204 No Content\r\n"
 			"Date: %.*s\r\n"
@@ -1827,8 +1859,7 @@ void obfs_server_read_cb(
 	ctx->http_keepalive = true;
 	obfs_ctx_write(ctx, loop);
 
-	ev_set_cb(watcher, obfs_fail_cb);
-	obfs_tcp_quickack(ctx->fd, false);
+	obfs_on_ready(ctx);
 }
 
 void obfs_client_read_cb(
@@ -1894,21 +1925,8 @@ void obfs_client_read_cb(
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
-	OBFS_CTX_LOG(LOG_LEVEL_DEBUG, ctx, "client ready");
 
-	ev_set_cb(watcher, obfs_fail_cb);
-	obfs_tcp_quickack(ctx->fd, false);
-	obfs->redial_count = 0;
-
-	server_ping(ctx->obfs->server);
-}
-
-void obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
-{
-	CHECK_EV_ERROR(revents);
-	struct obfs_ctx *restrict ctx = watcher->data;
-	obfs_ctx_stop(loop, ctx);
-	obfs_sched_redial(ctx->obfs);
+	obfs_on_ready(ctx);
 }
 
 void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
