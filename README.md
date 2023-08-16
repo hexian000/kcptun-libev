@@ -149,7 +149,9 @@ We use [semantic versioning](https://semver.org/).
 
 ```sh
 # Debian & Ubuntu
-sudo apt install -y libev-dev libsodium-dev
+sudo apt install libev-dev libsodium-dev
+# Alpine Linux
+apk add libev-dev libsodium-dev
 ```
 
 ### Build on Unix-like systems
@@ -172,7 +174,7 @@ If you downloaded a *-static build in the [Releases](https://github.com/hexian00
 
 ```sh
 # Debian & Ubuntu
-sudo apt install -y libev4 libsodium23
+sudo apt install libev4 libsodium23
 # OpenWRT
 opkg install libev libsodium
 ```

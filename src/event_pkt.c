@@ -3,7 +3,6 @@
 
 #include "event.h"
 #include "event_impl.h"
-#include "session.h"
 #include "sockutil.h"
 #include "util.h"
 #include "utils/check.h"

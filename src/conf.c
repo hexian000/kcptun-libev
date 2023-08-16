@@ -3,14 +3,9 @@
 
 #include "conf.h"
 #include "utils/arraysize.h"
-#include "utils/check.h"
 #include "utils/slog.h"
-#include "net/addr.h"
 #include "util.h"
-#include "sockutil.h"
 #include "jsonutil.h"
-
-#include <sys/socket.h>
 
 #include <assert.h>
 #include <stdbool.h>

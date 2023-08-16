@@ -97,7 +97,7 @@ struct session *session_new(
 	ev_set_priority(&ss->w_update, EV_MINPRI);
 	ss->w_update.data = ss;
 	ss->server = s;
-	sa_set(&ss->raddr, addr);
+	memcpy(&ss->raddr, addr, getsocklen(addr));
 	ss->conv = conv;
 	ss->stats = (struct link_stats){ 0 };
 	ss->kcp_flush = s->conf->kcp_flush;

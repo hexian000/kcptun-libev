@@ -5,7 +5,6 @@
 #include "utils/minmax.h"
 #include "utils/slog.h"
 #include "utils/check.h"
-#include "algo/hashtable.h"
 #include "net/addr.h"
 #include "util.h"
 
@@ -18,6 +17,7 @@
 #include <netinet/tcp.h>
 #include <net/if.h>
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -119,11 +119,6 @@ socklen_t getsocklen(const struct sockaddr *sa)
 		break;
 	}
 	FAIL();
-}
-
-void sa_set(sockaddr_max_t *dst, const struct sockaddr *src)
-{
-	memcpy(dst, src, getsocklen(src));
 }
 
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
@@ -247,10 +242,11 @@ static bool find_addrinfo(sockaddr_max_t *sa, const struct addrinfo *it)
 /* RFC 1035: Section 2.3.4 */
 #define FQDN_MAX_LENGTH ((size_t)(255))
 
-bool resolve_sa(sockaddr_max_t *sa, const char *s, const int flags)
+bool resolve_addr(sockaddr_max_t *sa, const char *s, const int flags)
 {
 	const size_t addrlen = strlen(s);
-	char buf[FQDN_MAX_LENGTH + 1 + 5 + 1];
+	assert(addrlen <= FQDN_MAX_LENGTH + 1 + 5);
+	char buf[addrlen + 1];
 	if (addrlen >= sizeof(buf)) {
 		return false;
 	}
@@ -267,7 +263,7 @@ bool resolve_sa(sockaddr_max_t *sa, const char *s, const int flags)
 		.ai_family = PF_UNSPEC,
 		.ai_socktype = SOCK_STREAM,
 		.ai_protocol = IPPROTO_TCP,
-		.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG | AI_PASSIVE,
+		.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG,
 	};
 	if (flags & RESOLVE_UDP) {
 		hints.ai_socktype = SOCK_DGRAM;
@@ -279,7 +275,7 @@ bool resolve_sa(sockaddr_max_t *sa, const char *s, const int flags)
 	struct addrinfo *result = NULL;
 	const int err = getaddrinfo(hoststr, portstr, &hints, &result);
 	if (err != 0) {
-		LOGE_F("resolve: %s", gai_strerror(err));
+		LOGE_F("getaddrinfo: %s", gai_strerror(err));
 		return false;
 	}
 	const bool ok = find_addrinfo(sa, result);

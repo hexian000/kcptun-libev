@@ -40,11 +40,11 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
-target_link_libraries(kcptun-libev kcp json bloom csnippets)
+target_link_libraries(kcptun-libev PRIVATE kcp json bloom csnippets)
 
 find_library(LIBM NAMES m)
 if(LIBM)
-    target_link_libraries(kcptun-libev ${LIBM})
+    target_link_libraries(kcptun-libev PRIVATE ${LIBM})
 endif()
 
 # find libev
@@ -54,13 +54,12 @@ if(BUILD_STATIC OR LINK_STATIC_LIBS)
 else()
     find_library(LIBEV_LIBRARY NAMES ev)
 endif()
-if((EXISTS ${LIBEV_INCLUDE_DIR}) AND (EXISTS ${LIBEV_LIBRARY}))
-    message(STATUS "libev: ${LIBEV_LIBRARY}")
-else()
+if((NOT EXISTS ${LIBEV_INCLUDE_DIR}) OR (NOT EXISTS ${LIBEV_LIBRARY}))
     message(FATAL_ERROR "libev not found")
 endif()
+message(STATUS "libev: ${LIBEV_LIBRARY}")
 target_include_directories(kcptun-libev SYSTEM PRIVATE ${LIBEV_INCLUDE_DIR})
-target_link_libraries(kcptun-libev ${LIBEV_LIBRARY})
+target_link_libraries(kcptun-libev PRIVATE ${LIBEV_LIBRARY})
 
 # find libsodium
 find_path(SODIUM_INCLUDE_DIR NAMES sodium.h)
@@ -69,13 +68,13 @@ if(BUILD_STATIC OR LINK_STATIC_LIBS)
 else()
     find_library(SODIUM_LIBRARY NAMES sodium)
 endif()
-if((EXISTS ${SODIUM_INCLUDE_DIR}) AND (EXISTS ${SODIUM_LIBRARY}))
+if((NOT EXISTS ${SODIUM_INCLUDE_DIR}) OR (NOT EXISTS ${SODIUM_LIBRARY}))
+    message(WARNING "libsodium not found, crypto features are unavailable")
+else()
     message(STATUS "libsodium: ${SODIUM_LIBRARY}")
     set(WITH_SODIUM 1)
     target_include_directories(kcptun-libev SYSTEM PRIVATE ${SODIUM_INCLUDE_DIR})
-    target_link_libraries(kcptun-libev ${SODIUM_LIBRARY})
-else()
-    message(WARNING "libsodium not found, crypto features are unavailable")
+    target_link_libraries(kcptun-libev PRIVATE ${SODIUM_LIBRARY})
 endif()
 
 install(TARGETS kcptun-libev DESTINATION bin)

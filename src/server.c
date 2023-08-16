@@ -72,7 +72,7 @@ static bool listener_start(struct server *restrict s)
 
 	if (conf->listen != NULL) {
 		sockaddr_max_t addr;
-		if (!resolve_sa(&addr, conf->listen, RESOLVE_PASSIVE)) {
+		if (!resolve_addr(&addr, conf->listen, RESOLVE_PASSIVE)) {
 			return false;
 		}
 		const int fd = tcp_listen(conf, &addr.sa);
@@ -95,7 +95,7 @@ static bool listener_start(struct server *restrict s)
 
 	if (conf->http_listen != NULL) {
 		sockaddr_max_t addr;
-		if (!resolve_sa(&addr, conf->http_listen, RESOLVE_PASSIVE)) {
+		if (!resolve_addr(&addr, conf->http_listen, RESOLVE_PASSIVE)) {
 			return false;
 		}
 		const int fd = tcp_listen(conf, &addr.sa);
@@ -146,7 +146,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 {
 	if (conf->kcp_bind != NULL) {
 		sockaddr_max_t addr;
-		if (!resolve_sa(
+		if (!resolve_addr(
 			    &addr, conf->kcp_bind,
 			    RESOLVE_UDP | RESOLVE_PASSIVE)) {
 			return false;
@@ -166,7 +166,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		LOGI_F("udp bind: %s", addr_str);
 	}
 	if (conf->kcp_connect != NULL) {
-		if (!resolve_sa(
+		if (!resolve_addr(
 			    &udp->kcp_connect, conf->kcp_connect,
 			    RESOLVE_UDP)) {
 			return false;
@@ -196,7 +196,7 @@ bool server_resolve(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
 	if (conf->connect != NULL) {
-		if (!resolve_sa(&s->connect, conf->connect, RESOLVE_TCP)) {
+		if (!resolve_addr(&s->connect, conf->connect, RESOLVE_TCP)) {
 			return false;
 		}
 	}
@@ -317,7 +317,7 @@ bool server_start(struct server *s)
 	s->last_stats_time = now;
 	const struct config *restrict conf = s->conf;
 	if (conf->connect != NULL) {
-		if (!resolve_sa(&s->connect, conf->connect, RESOLVE_TCP)) {
+		if (!resolve_addr(&s->connect, conf->connect, RESOLVE_TCP)) {
 			return false;
 		}
 	}
