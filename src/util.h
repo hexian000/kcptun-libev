@@ -42,9 +42,11 @@ bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 
 void init(void);
 
-void daemonize(void);
-void drop_privileges(const char *user);
-
+#if WITH_CRYPTO
 void genpsk(const char *method);
+#endif
+
+void drop_privileges(const char *user);
+void daemonize(const char *user);
 
 #endif /* UTIL_H */

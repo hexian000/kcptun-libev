@@ -715,9 +715,6 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			return false;
 		}
 	}
-	memcpy(&ctx->raddr, sa, getsocklen(sa));
-	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "connect");
-
 	socklen_t len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		const int err = errno;
@@ -725,6 +722,9 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		obfs_ctx_free(loop, ctx);
 		return false;
 	}
+	memcpy(&ctx->raddr, sa, getsocklen(sa));
+	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "connect");
+
 	if (!obfs_bind(obfs, &ctx->laddr.sa)) {
 		return false;
 	}

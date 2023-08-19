@@ -95,88 +95,29 @@ void uninit(void)
 	ikcp_segment_pool = msgpool = NULL;
 }
 
-void daemonize(void)
+#if WITH_CRYPTO
+void genpsk(const char *method)
 {
-	/* Create an anonymous pipe for communicating with daemon process. */
-	int fd[2];
-	if (pipe(fd) == -1) {
-		const int err = errno;
-		FAILMSGF("pipe: %s", strerror(err));
+	struct crypto *crypto = crypto_new(method);
+	if (crypto == NULL) {
+		LOGF("failed to initialize crypto");
+		exit(EXIT_FAILURE);
 	}
-	/* First fork(). */
-	{
-		const pid_t pid = fork();
-		if (pid < 0) {
-			const int err = errno;
-			FAILMSGF("fork: %s", strerror(err));
-		} else if (pid > 0) {
-			(void)close(fd[1]);
-			char buf[32];
-			/* Wait for the daemon process to be started. */
-			const ssize_t nread = read(fd[0], buf, sizeof(buf));
-			CHECK(nread > 0);
-			LOGI_F("daemon process has started with pid %.*s",
-			       (int)nread, buf);
-			/* Finally, call exit() in the original process. */
-			exit(EXIT_SUCCESS);
-		} else {
-			(void)close(fd[0]);
-		}
+	char key[256];
+	if (!crypto_keygen(crypto, key, sizeof(key))) {
+		LOGF("failed to generate random key");
+		exit(EXIT_FAILURE);
 	}
-	/* In the child, call setsid(). */
-	if (setsid() < 0) {
-		const int err = errno;
-		LOGE_F("setsid: %s", strerror(err));
-	}
-	/* In the child, call fork() again. */
-	{
-		const pid_t pid = fork();
-		if (pid < 0) {
-			const int err = errno;
-			FAILMSGF("fork: %s", strerror(err));
-		} else if (pid > 0) {
-			/* Call exit() in the first child. */
-			exit(EXIT_SUCCESS);
-		}
-	}
-	/* In the daemon process, connect /dev/null to standard input, output, and error. */
-	FILE *f;
-	f = freopen("/dev/null", "r", stdin);
-	assert(f == stdin);
-	f = freopen("/dev/null", "w", stdout);
-	assert(f == stdout);
-	f = freopen("/dev/null", "w", stderr);
-	assert(f == stderr);
-	(void)f;
-	/* In the daemon process, reset the umask to 0. */
-	(void)umask(0);
-	/* From the daemon process, notify the original process started
-           that initialization is complete. */
-	char buf[32] = { 0 };
-	const int n = snprintf(buf, sizeof(buf), "%jd", (intmax_t)getpid());
-	assert(n > 0 && (size_t)n < sizeof(buf));
-	const ssize_t nwritten = write(fd[1], buf, n);
-	assert(nwritten == n);
-	(void)nwritten;
-	/* Close the anonymous pipe. */
-	(void)close(fd[1]);
-
-	/* Disable logging to avoid unnecessary string formatting. */
-	slog_level = LOG_LEVEL_SILENCE;
+	fprintf(stdout, "%s\n", key);
+	fflush(stdout);
+	crypto_free(crypto);
 }
+#endif
 
 void drop_privileges(const char *user)
 {
 	if (getuid() != 0) {
 		return;
-	}
-	if (user == NULL) {
-		LOGW("running as root, please consider set \"user\" field in config");
-		return;
-	}
-	if (chdir("/") != 0) {
-		const int err = errno;
-		LOGW_F("chdir: %s", strerror(err));
 	}
 	struct passwd *restrict pw = getpwnam(user);
 	if (pw == NULL) {
@@ -205,21 +146,84 @@ void drop_privileges(const char *user)
 	}
 }
 
-#if WITH_CRYPTO
-void genpsk(const char *method)
+void daemonize(const char *user)
 {
-	struct crypto *crypto = crypto_new(method);
-	if (crypto == NULL) {
-		LOGF("failed to initialize crypto");
-		exit(EXIT_FAILURE);
+	/* Create an anonymous pipe for communicating with daemon process. */
+	int fd[2];
+	if (pipe(fd) == -1) {
+		const int err = errno;
+		FAILMSGF("pipe: %s", strerror(err));
 	}
-	char key[256];
-	if (!crypto_keygen(crypto, key, sizeof(key))) {
-		LOGF("failed to generate random key");
-		exit(EXIT_FAILURE);
+	/* First fork(). */
+	{
+		const pid_t pid = fork();
+		if (pid < 0) {
+			const int err = errno;
+			FAILMSGF("fork: %s", strerror(err));
+		} else if (pid > 0) {
+			(void)close(fd[1]);
+			char buf[256];
+			/* Wait for the daemon process to be started. */
+			const ssize_t nread = read(fd[0], buf, sizeof(buf));
+			CHECK(nread > 0);
+			LOGI_F("%.*s", (int)nread, buf);
+			/* Finally, call exit() in the original process. */
+			exit(EXIT_SUCCESS);
+		} else {
+			(void)close(fd[0]);
+		}
 	}
-	fprintf(stdout, "%s\n", key);
-	fflush(stdout);
-	crypto_free(crypto);
+	/* In the child, call setsid(). */
+	if (setsid() < 0) {
+		const int err = errno;
+		LOGW_F("setsid: %s", strerror(err));
+	}
+	/* In the child, call fork() again. */
+	{
+		const pid_t pid = fork();
+		if (pid < 0) {
+			const int err = errno;
+			FAILMSGF("fork: %s", strerror(err));
+		} else if (pid > 0) {
+			/* Call exit() in the first child. */
+			exit(EXIT_SUCCESS);
+		}
+	}
+	/* In the daemon process, connect /dev/null to standard input, output, and error. */
+	FILE *f;
+	f = freopen("/dev/null", "r", stdin);
+	assert(f == stdin);
+	f = freopen("/dev/null", "w", stdout);
+	assert(f == stdout);
+	f = freopen("/dev/null", "w", stderr);
+	assert(f == stderr);
+	(void)f;
+	/* In the daemon process, reset the umask to 0. */
+	(void)umask(0);
+	/* In the daemon process, change the current directory to the
+           root directory (/), in order to avoid that the daemon
+           involuntarily blocks mount points from being unmounted. */
+	if (chdir("/") != 0) {
+		const int err = errno;
+		LOGW_F("chdir: %s", strerror(err));
+	}
+	/* In the daemon process, drop privileges */
+	if (user != NULL) {
+		drop_privileges(user);
+	}
+	/* From the daemon process, notify the original process started
+           that initialization is complete. */
+	char buf[256] = { 0 };
+	const int n = snprintf(
+		buf, sizeof(buf), "daemon process has started with pid %jd",
+		(intmax_t)getpid());
+	assert(n > 0 && (size_t)n < sizeof(buf));
+	const ssize_t nwritten = write(fd[1], buf, n);
+	assert(nwritten == n);
+	(void)nwritten;
+	/* Close the anonymous pipe. */
+	(void)close(fd[1]);
+
+	/* Disable logging to avoid unnecessary string formatting. */
+	slog_level = LOG_LEVEL_SILENCE;
 }
-#endif

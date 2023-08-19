@@ -138,16 +138,12 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	struct config *conf = conf_read(args.conf_path);
+	struct config *restrict conf = conf_read(args.conf_path);
 	if (conf == NULL) {
 		LOGF("failed to read config");
 		return EXIT_FAILURE;
 	}
 	slog_level = conf->log_level + args.verbosity;
-
-	if (args.daemonize) {
-		daemonize();
-	}
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
@@ -165,7 +161,13 @@ int main(int argc, char **argv)
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
-	drop_privileges(args.user_name ? args.user_name : conf->user);
+
+	const char *user = args.user_name ? args.user_name : conf->user;
+	if (args.daemonize) {
+		daemonize(user);
+	} else if (user != NULL) {
+		drop_privileges(user);
+	}
 
 	/* signal watchers */
 	{
@@ -190,14 +192,12 @@ int main(int argc, char **argv)
 	LOGI_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
-	ev_signal_stop(loop, &app.w_sighup);
-	ev_signal_stop(loop, &app.w_sigint);
-	ev_signal_stop(loop, &app.w_sigterm);
-
 	server_stop(s);
 	server_free(s);
 	LOGI_F("%s shutdown", runmode_str(conf->mode));
+	ev_loop_destroy(loop);
 	conf_free(conf);
+
 	LOGI("program terminated normally.");
 	return EXIT_SUCCESS;
 }
