@@ -241,7 +241,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 	1. Should be tuned according to RTT.
 	2. For enthusiasts, you can start an idle client with loglevel >= 5 and wait 1 minute to check the theoretical bandwidth of current window values.
 	3. On systems with very little memory, you may need to reduce it to save memory.
-- "kcp.nodelay": Default to 1.
+- "kcp.nodelay": Enabled by default. Note that this is not an equivalent to `TCP_NODELAY`.
 - "kcp.interval":
 	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
 	2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
@@ -250,7 +250,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 
 Again, there is some kcptun-libev specific options:
 
-- "kcp.flush": 0 - periodic only, 1 - flush after sending (default), 2 - also flush acks (for benchmarking)
+- "kcp.flush": 0 - periodic only, 1 - flush after sending (behaves like `TCP_NODELAY`), 2 - also flush acks (for benchmarking)
 - "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
 	1. Normally, default value just works.
 	2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
