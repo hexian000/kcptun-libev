@@ -441,16 +441,16 @@ struct session0_header {
 static inline struct session0_header ss0_header_read(const unsigned char *d)
 {
 	return (struct session0_header){
-		.zero = read_uint32((const uint8_t *)d),
-		.what = read_uint16((const uint8_t *)d + sizeof(uint32_t)),
+		.zero = read_uint32(d),
+		.what = read_uint16(d + sizeof(uint32_t)),
 	};
 }
 
 static inline void
 ss0_header_write(unsigned char *d, struct session0_header header)
 {
-	write_uint32((uint8_t *)d, header.zero);
-	write_uint16((uint8_t *)d + sizeof(uint32_t), header.what);
+	write_uint32(d, header.zero);
+	write_uint16(d + sizeof(uint32_t), header.what);
 }
 
 void ss0_reset(struct server *s, const struct sockaddr *sa, uint32_t conv)

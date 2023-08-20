@@ -53,7 +53,7 @@ const uint32_t IKCP_FASTACK_LIMIT = 5; // max times to trigger fastack
 /* encode 8 bits unsigned int */
 static inline char *ikcp_encode8u(char *p, uint8_t c)
 {
-	write_uint8((unsigned char *)p, c);
+	write_uint8(p, c);
 	p += sizeof(uint8_t);
 	return p;
 }
@@ -61,7 +61,7 @@ static inline char *ikcp_encode8u(char *p, uint8_t c)
 /* decode 8 bits unsigned int */
 static inline const char *ikcp_decode8u(const char *p, uint8_t *c)
 {
-	*c = read_uint8((unsigned char *)p);
+	*c = read_uint8(p);
 	p += sizeof(uint8_t);
 	return p;
 }
@@ -69,7 +69,7 @@ static inline const char *ikcp_decode8u(const char *p, uint8_t *c)
 /* encode 16 bits unsigned int */
 static inline char *ikcp_encode16u(char *p, uint16_t w)
 {
-	write_uint16((unsigned char *)p, w);
+	write_uint16(p, w);
 	p += sizeof(uint16_t);
 	return p;
 }
@@ -77,7 +77,7 @@ static inline char *ikcp_encode16u(char *p, uint16_t w)
 /* decode 16 bits unsigned int */
 static inline const char *ikcp_decode16u(const char *p, uint16_t *w)
 {
-	*w = read_uint16((unsigned char *)p);
+	*w = read_uint16(p);
 	p += sizeof(uint16_t);
 	return p;
 }
@@ -85,7 +85,7 @@ static inline const char *ikcp_decode16u(const char *p, uint16_t *w)
 /* encode 32 bits unsigned int */
 static inline char *ikcp_encode32u(char *p, uint32_t l)
 {
-	write_uint32((unsigned char *)p, l);
+	write_uint32(p, l);
 	p += sizeof(uint32_t);
 	return p;
 }
@@ -93,7 +93,7 @@ static inline char *ikcp_encode32u(char *p, uint32_t l)
 /* decode 32 bits unsigned int */
 static inline const char *ikcp_decode32u(const char *p, uint32_t *l)
 {
-	*l = read_uint32((unsigned char *)p);
+	*l = read_uint32(p);
 	p += sizeof(uint32_t);
 	return p;
 }
