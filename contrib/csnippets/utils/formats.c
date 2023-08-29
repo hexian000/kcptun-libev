@@ -26,7 +26,7 @@ int format_si_prefix(char *buf, const size_t bufsize, const double value)
 	if (!isnormal(value)) {
 		return snprintf(buf, bufsize, "%.0f", value);
 	}
-	const int e = (int)floor(log10(value) / 3.0);
+	const int e = (int)floor(log10(fabs(value)) / 3.0);
 	if (e == 0) {
 		return snprintf(buf, bufsize, "%.6g", value);
 	}
@@ -51,18 +51,18 @@ int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 	if (!isnormal(value)) {
 		return snprintf(buf, bufsize, "%.0f", value);
 	}
-	if (value < 2048.0) {
-		return snprintf(buf, bufsize, "%.0f %s", value, iec_units[0]);
-	}
-	const int x = ((int)log2(value) - 1) / 10;
-	const int n = (int)ARRAY_SIZE(iec_units) - 1;
-	const int i = (x <= n ? x : n);
+	const int e = ((int)log2(fabs(value)) - 1) / 10;
+	const int i = CLAMP(e, 0, (int)ARRAY_SIZE(iec_units) - 1);
 	const double v = ldexp(value, i * -10);
-	if (v < 10.0) {
-		return snprintf(buf, bufsize, "%.2f %s", v, iec_units[i]);
-	}
-	if (v < 100.0) {
-		return snprintf(buf, bufsize, "%.1f %s", v, iec_units[i]);
+	if (i > 0) {
+		if (-10.0 < v && v < 10.0) {
+			return snprintf(
+				buf, bufsize, "%.2f %s", v, iec_units[i]);
+		}
+		if (-100.0 < v && v < 100.0) {
+			return snprintf(
+				buf, bufsize, "%.1f %s", v, iec_units[i]);
+		}
 	}
 	return snprintf(buf, bufsize, "%.0f %s", v, iec_units[i]);
 }
