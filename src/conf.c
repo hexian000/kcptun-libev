@@ -311,6 +311,14 @@ static bool conf_check(struct config *restrict conf)
 		return false;
 	}
 
+	if ((conf->tcp_sndbuf != 0 && conf->tcp_sndbuf < 4096) ||
+	    (conf->tcp_rcvbuf != 0 && conf->tcp_rcvbuf < 4096)) {
+		LOGW("config: probably too small tcp buffer");
+	}
+	if ((conf->udp_sndbuf != 0 && conf->udp_sndbuf < 4096) ||
+	    (conf->udp_rcvbuf != 0 && conf->udp_rcvbuf < 4096)) {
+		LOGW("config: probably too small udp buffer");
+	}
 	return true;
 }
 

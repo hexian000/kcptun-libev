@@ -56,6 +56,15 @@ static void print_usage(char *argv0)
 
 static void parse_args(int argc, char **argv)
 {
+#define OPT_REQUIRE_ARG(argc, argv, i)                                         \
+	do {                                                                   \
+		if ((i) + 1 >= (argc)) {                                       \
+			LOGF_F("option \"%s\" requires an argument",           \
+			       (argv)[(i)]);                                   \
+			exit(EXIT_FAILURE);                                    \
+		}                                                              \
+	} while (false)
+
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0 ||
 		    strcmp(argv[i], "--help") == 0) {
@@ -64,25 +73,13 @@ static void parse_args(int argc, char **argv)
 		}
 		if (strcmp(argv[i], "-c") == 0 ||
 		    strcmp(argv[i], "--config") == 0) {
-			if (i + 1 >= argc) {
-				fprintf(stderr,
-					"option \"%s\" requires an argument\n",
-					argv[i]);
-				print_usage(argv[0]);
-				exit(EXIT_FAILURE);
-			}
+			OPT_REQUIRE_ARG(argc, argv, i);
 			args.conf_path = argv[++i];
 			continue;
 		}
 		if (strcmp(argv[i], "-u") == 0 ||
 		    strcmp(argv[i], "--user") == 0) {
-			if (i + 1 >= argc) {
-				fprintf(stderr,
-					"option \"%s\" requires an argument\n",
-					argv[i]);
-				print_usage(argv[0]);
-				exit(EXIT_FAILURE);
-			}
+			OPT_REQUIRE_ARG(argc, argv, i);
 			args.user_name = argv[++i];
 			continue;
 		}
@@ -92,13 +89,7 @@ static void parse_args(int argc, char **argv)
 			exit(EXIT_FAILURE);
 		}
 		if (strcmp(argv[i], "--genpsk") == 0) {
-			if (i + 1 >= argc) {
-				fprintf(stderr,
-					"option \"%s\" requires an argument\n",
-					argv[i]);
-				print_usage(argv[0]);
-				exit(EXIT_FAILURE);
-			}
+			OPT_REQUIRE_ARG(argc, argv, i);
 			genpsk(argv[++i]);
 			exit(EXIT_SUCCESS);
 		}
@@ -119,12 +110,14 @@ static void parse_args(int argc, char **argv)
 			continue;
 		}
 		if (strcmp(argv[i], "--") == 0) {
-			continue;
+			break;
 		}
 		LOGF_F("unknown argument: \"%s\"", argv[i]);
 		print_usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
+
+#undef OPT_REQUIRE_ARG
 }
 
 int main(int argc, char **argv)
@@ -143,7 +136,9 @@ int main(int argc, char **argv)
 		LOGF("failed to read config");
 		return EXIT_FAILURE;
 	}
-	slog_level = conf->log_level + args.verbosity;
+	slog_level =
+		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
+		      LOG_LEVEL_VERBOSE);
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
