@@ -244,7 +244,7 @@ static struct config conf_default(void)
 		.kcp_interval = 50,
 		.kcp_resend = 0,
 		.kcp_nc = 1,
-		.kcp_flush = 1,
+		.kcp_flush = 0,
 		.timeout = 600,
 		.linger = 30,
 		.keepalive = 25,

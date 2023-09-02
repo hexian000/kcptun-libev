@@ -250,7 +250,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 
 Again, there is some kcptun-libev specific options:
 
-- "kcp.flush": 0 - periodic only, 1 - flush after sending (behaves like `TCP_NODELAY`), 2 - also flush acks (for benchmarking)
+- "kcp.flush": 0 - periodic only, 1 - flush after sending, 2 - also flush acks (for benchmarking)
 - "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
 	1. Normally, default value just works.
 	2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
