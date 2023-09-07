@@ -4,23 +4,31 @@
 #ifndef JSONUTIL_H
 #define JSONUTIL_H
 
-#include "json/json.h"
-
 #include <stdbool.h>
 #include <stddef.h>
 
-json_value *parse_json(const json_char *json, size_t length);
+struct jutil_value; /* opaque */
 
-typedef bool (*walk_json_object_cb)(void *, const json_object_entry *);
-bool walk_json_object(void *ud, const json_value *obj, walk_json_object_cb cb);
+struct jutil_value *jutil_parse(const char *json, size_t length);
 
-typedef bool (*walk_json_array_cb)(void *, const json_value *);
-bool walk_json_array(void *ud, const json_value *obj, walk_json_array_cb cb);
+void jutil_free(struct jutil_value *value);
 
-bool parse_bool_json(bool *b, const json_value *v);
+typedef bool (*jutil_walk_object_cb)(
+	void *ud, const char *name, size_t namelen,
+	const struct jutil_value *value);
+bool jutil_walk_object(
+	void *ud, const struct jutil_value *obj, jutil_walk_object_cb cb);
 
-bool parse_int_json(int *i, const json_value *v);
+typedef bool (*jutil_walk_array_cb)(void *ud, const struct jutil_value *value);
+bool jutil_walk_array(
+	void *ud, const struct jutil_value *arr, jutil_walk_array_cb cb);
 
-char *parse_string_json(const json_value *value);
+bool jutil_get_bool(const struct jutil_value *value, bool *b);
+
+bool jutil_get_int(const struct jutil_value *value, int *i);
+
+const char *jutil_get_string(const struct jutil_value *value, size_t *len);
+
+char *jutil_strdup(const struct jutil_value *value);
 
 #endif /* JSONUTIL_H */

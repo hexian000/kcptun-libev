@@ -15,7 +15,7 @@
 
 #define MAX_CONF_SIZE 65536
 
-static json_value *conf_parse(const char *filename)
+static struct jutil_value *conf_parse(const char *filename)
 {
 	FILE *f = fopen(filename, "r");
 	if (f == NULL) {
@@ -61,7 +61,7 @@ static json_value *conf_parse(const char *filename)
 		return NULL;
 	}
 	buf[nread] = '\0';
-	json_value *obj = parse_json(buf, nread);
+	struct jutil_value *obj = jutil_parse(buf, nread);
 	free(buf);
 	if (obj == NULL) {
 		LOGF("conf_parse: json parse failed");
@@ -70,158 +70,137 @@ static json_value *conf_parse(const char *filename)
 	return obj;
 }
 
-static bool kcp_scope_cb(void *ud, const json_object_entry *entry)
+#define CASE_NAME(c)                                                           \
+	(namelen == (ARRAY_SIZE(c) - 1) &&                                     \
+	 memcmp(name, c, (ARRAY_SIZE(c) - 1) * sizeof(c[0])) == 0)
+
+static bool kcp_scope_cb(
+	void *ud, const char *name, const size_t namelen,
+	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	const char *name = entry->name;
-	const json_value *value = entry->value;
-	if (strcmp(name, "mtu") == 0) {
-		return parse_int_json(&conf->kcp_mtu, value);
-	}
-	if (strcmp(name, "sndwnd") == 0) {
-		return parse_int_json(&conf->kcp_sndwnd, value);
-	}
-	if (strcmp(name, "rcvwnd") == 0) {
-		return parse_int_json(&conf->kcp_rcvwnd, value);
-	}
-	if (strcmp(name, "nodelay") == 0) {
-		return parse_int_json(&conf->kcp_nodelay, value);
-	}
-	if (strcmp(name, "interval") == 0) {
-		return parse_int_json(&conf->kcp_interval, value);
-	}
-	if (strcmp(name, "resend") == 0) {
-		return parse_int_json(&conf->kcp_resend, value);
-	}
-	if (strcmp(name, "nc") == 0) {
-		return parse_int_json(&conf->kcp_nc, value);
-	}
-	if (strcmp(name, "flush") == 0) {
-		return parse_int_json(&conf->kcp_flush, value);
+	if (CASE_NAME("mtu")) {
+		return jutil_get_int(value, &conf->kcp_mtu);
+	} else if (CASE_NAME("sndwnd")) {
+		return jutil_get_int(value, &conf->kcp_sndwnd);
+	} else if (CASE_NAME("rcvwnd")) {
+		return jutil_get_int(value, &conf->kcp_rcvwnd);
+	} else if (CASE_NAME("nodelay")) {
+		return jutil_get_int(value, &conf->kcp_nodelay);
+	} else if (CASE_NAME("interval")) {
+		return jutil_get_int(value, &conf->kcp_interval);
+	} else if (CASE_NAME("resend")) {
+		return jutil_get_int(value, &conf->kcp_resend);
+	} else if (CASE_NAME("nc")) {
+		return jutil_get_int(value, &conf->kcp_nc);
+	} else if (CASE_NAME("flush")) {
+		return jutil_get_int(value, &conf->kcp_flush);
 	}
 	LOGW_F("unknown config: \"kcp.%s\"", name);
 	return true;
 }
 
-static bool tcp_scope_cb(void *ud, const json_object_entry *entry)
+static bool tcp_scope_cb(
+	void *ud, const char *name, const size_t namelen,
+	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	const char *name = entry->name;
-	const json_value *value = entry->value;
-	if (strcmp(name, "reuseport") == 0) {
-		return parse_bool_json(&conf->tcp_reuseport, value);
-	}
-	if (strcmp(name, "keepalive") == 0) {
-		return parse_bool_json(&conf->tcp_keepalive, value);
-	}
-	if (strcmp(name, "nodelay") == 0) {
-		return parse_bool_json(&conf->tcp_nodelay, value);
-	}
-	if (strcmp(name, "sndbuf") == 0) {
-		return parse_int_json(&conf->tcp_sndbuf, value);
-	}
-	if (strcmp(name, "rcvbuf") == 0) {
-		return parse_int_json(&conf->tcp_rcvbuf, value);
+	if (CASE_NAME("reuseport")) {
+		return jutil_get_bool(value, &conf->tcp_reuseport);
+	} else if (CASE_NAME("keepalive")) {
+		return jutil_get_bool(value, &conf->tcp_keepalive);
+	} else if (CASE_NAME("nodelay")) {
+		return jutil_get_bool(value, &conf->tcp_nodelay);
+	} else if (CASE_NAME("sndbuf")) {
+		return jutil_get_int(value, &conf->tcp_sndbuf);
+	} else if (CASE_NAME("rcvbuf")) {
+		return jutil_get_int(value, &conf->tcp_rcvbuf);
 	}
 	LOGW_F("unknown config: \"tcp.%s\"", name);
 	return true;
 }
 
-static bool udp_scope_cb(void *ud, const json_object_entry *entry)
+static bool udp_scope_cb(
+	void *ud, const char *name, const size_t namelen,
+	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	const char *name = entry->name;
-	const json_value *value = entry->value;
-	if (strcmp(name, "sndbuf") == 0) {
-		return parse_int_json(&conf->udp_sndbuf, value);
-	}
-	if (strcmp(name, "rcvbuf") == 0) {
-		return parse_int_json(&conf->udp_rcvbuf, value);
+	if (CASE_NAME("sndbuf")) {
+		return jutil_get_int(value, &conf->udp_sndbuf);
+	} else if (CASE_NAME("rcvbuf")) {
+		return jutil_get_int(value, &conf->udp_rcvbuf);
 	}
 	LOGW_F("unknown config: \"udp.%s\"", name);
 	return true;
 }
 
-static bool main_scope_cb(void *ud, const json_object_entry *entry)
+static bool main_scope_cb(
+	void *ud, const char *name, const size_t namelen,
+	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	const char *name = entry->name;
-	const json_value *value = entry->value;
-	if (strcmp(name, "kcp") == 0) {
-		return walk_json_object(conf, value, kcp_scope_cb);
-	}
-	if (strcmp(name, "udp") == 0) {
-		return walk_json_object(conf, value, udp_scope_cb);
-	}
-	if (strcmp(name, "tcp") == 0) {
-		return walk_json_object(conf, value, tcp_scope_cb);
-	}
-	if (strcmp(name, "listen") == 0) {
-		conf->listen = parse_string_json(value);
+	if (CASE_NAME("kcp")) {
+		return jutil_walk_object(conf, value, kcp_scope_cb);
+	} else if (CASE_NAME("udp")) {
+		return jutil_walk_object(conf, value, udp_scope_cb);
+	} else if (CASE_NAME("tcp")) {
+		return jutil_walk_object(conf, value, tcp_scope_cb);
+	} else if (CASE_NAME("listen")) {
+		conf->listen = jutil_strdup(value);
 		return conf->listen != NULL;
-	}
-	if (strcmp(name, "connect") == 0) {
-		conf->connect = parse_string_json(value);
+	} else if (CASE_NAME("connect")) {
+		conf->connect = jutil_strdup(value);
 		return conf->connect != NULL;
-	}
-	if (strcmp(name, "kcp_bind") == 0) {
-		conf->kcp_bind = parse_string_json(value);
+	} else if (CASE_NAME("kcp_bind")) {
+		conf->kcp_bind = jutil_strdup(value);
 		return conf->kcp_bind != NULL;
-	}
-	if (strcmp(name, "kcp_connect") == 0) {
-		conf->kcp_connect = parse_string_json(value);
+	} else if (CASE_NAME("kcp_connect")) {
+		conf->kcp_connect = jutil_strdup(value);
 		return conf->kcp_connect != NULL;
-	}
-	if (strcmp(name, "http_listen") == 0) {
-		conf->http_listen = parse_string_json(value);
+	} else if (CASE_NAME("http_listen")) {
+		conf->http_listen = jutil_strdup(value);
 		return conf->http_listen != NULL;
-	}
-	if (strcmp(name, "netdev") == 0) {
-		conf->netdev = parse_string_json(value);
+	} else if (CASE_NAME("netdev")) {
+		conf->netdev = jutil_strdup(value);
 		return conf->netdev != NULL;
 	}
 #if WITH_CRYPTO
-	if (strcmp(name, "method") == 0) {
-		conf->method = parse_string_json(value);
+	else if (CASE_NAME("method")) {
+		conf->method = jutil_strdup(value);
 		return conf->method != NULL;
-	}
-	if (strcmp(name, "password") == 0) {
-		conf->password = parse_string_json(value);
+	} else if (CASE_NAME("password")) {
+		conf->password = jutil_strdup(value);
 		return conf->password != NULL;
-	}
-	if (strcmp(name, "psk") == 0) {
-		conf->psk = parse_string_json(value);
+	} else if (CASE_NAME("psk")) {
+		conf->psk = jutil_strdup(value);
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
 #if WITH_OBFS
-	if (strcmp(name, "obfs") == 0) {
-		conf->obfs = parse_string_json(value);
+	else if (CASE_NAME("obfs")) {
+		conf->obfs = jutil_strdup(value);
 		return conf->obfs != NULL;
 	}
 #endif /* WITH_OBFS */
-	if (strcmp(name, "linger") == 0) {
-		return parse_int_json(&conf->linger, value);
-	}
-	if (strcmp(name, "timeout") == 0) {
-		return parse_int_json(&conf->timeout, value);
-	}
-	if (strcmp(name, "keepalive") == 0) {
-		return parse_int_json(&conf->keepalive, value);
-	}
-	if (strcmp(name, "time_wait") == 0) {
-		return parse_int_json(&conf->time_wait, value);
-	}
-	if (strcmp(name, "loglevel") == 0) {
-		return parse_int_json(&conf->log_level, value);
-	}
-	if (strcmp(name, "user") == 0) {
-		conf->user = parse_string_json(value);
+	else if (CASE_NAME("linger")) {
+		return jutil_get_int(value, &conf->linger);
+	} else if (CASE_NAME("timeout")) {
+		return jutil_get_int(value, &conf->timeout);
+	} else if (CASE_NAME("keepalive")) {
+		return jutil_get_int(value, &conf->keepalive);
+	} else if (CASE_NAME("time_wait")) {
+		return jutil_get_int(value, &conf->time_wait);
+	} else if (CASE_NAME("loglevel")) {
+		return jutil_get_int(value, &conf->log_level);
+	} else if (CASE_NAME("user")) {
+		conf->user = jutil_strdup(value);
 		return conf->user != NULL;
 	}
 	LOGW_F("unknown config: \"%s\"", name);
 	return true;
 }
+
+#undef CASE_NAME
 
 const char *runmode_str(const int mode)
 {
@@ -242,7 +221,7 @@ static struct config conf_default(void)
 		.kcp_rcvwnd = 256,
 		.kcp_nodelay = 1,
 		.kcp_interval = 50,
-		.kcp_resend = 2,
+		.kcp_resend = 0,
 		.kcp_nc = 1,
 		.kcp_flush = 1,
 		.timeout = 600,
@@ -329,18 +308,18 @@ struct config *conf_read(const char *filename)
 		return NULL;
 	}
 	*conf = conf_default();
-	json_value *obj = conf_parse(filename);
-	if (obj == NULL) {
+	struct jutil_value *root = conf_parse(filename);
+	if (root == NULL) {
 		conf_free(conf);
 		return NULL;
 	}
-	if (!walk_json_object(conf, obj, main_scope_cb)) {
+	if (!jutil_walk_object(conf, root, main_scope_cb)) {
 		LOGE("invalid config file");
 		conf_free(conf);
-		json_value_free(obj);
+		jutil_free(root);
 		return NULL;
 	}
-	json_value_free(obj);
+	jutil_free(root);
 	if (!conf_check(conf)) {
 		conf_free(conf);
 		return NULL;

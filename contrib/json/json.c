@@ -33,7 +33,6 @@
    #ifndef _CRT_SECURE_NO_WARNINGS
       #define _CRT_SECURE_NO_WARNINGS
    #endif
-   #include <stdint.h>
 #endif
 
 const struct _json_value json_value_none;
@@ -44,15 +43,6 @@ const struct _json_value json_value_none;
 #include <math.h>
 
 typedef unsigned int json_uchar;
-
-/* There has to be a better way to do this */
-static const json_int_t JSON_INT_MAX = sizeof(json_int_t) == 1
-                                       ? INT8_MAX
-                                       : (sizeof(json_int_t) == 2
-                                         ? INT16_MAX
-                                         : (sizeof(json_int_t) == 4
-                                           ? INT32_MAX
-                                           : INT64_MAX));
 
 static unsigned char hex_value (json_char c)
 {
@@ -68,11 +58,6 @@ static unsigned char hex_value (json_char c)
       case 'f': case 'F': return 0x0F;
       default: return 0xFF;
    }
-}
-
-static int would_overflow (json_int_t value, json_char b)
-{
-   return ((JSON_INT_MAX - (b - '0')) / 10 ) < value;
 }
 
 typedef struct
@@ -133,9 +118,6 @@ static int new_value (json_state * state,
       {
          case json_array:
 
-            if (value->u.array.length == 0)
-               break;
-
             if (! (value->u.array.values = (json_value **) json_alloc
                (state, value->u.array.length * sizeof (json_value *), 0)) )
             {
@@ -147,12 +129,9 @@ static int new_value (json_state * state,
 
          case json_object:
 
-            if (value->u.object.length == 0)
-               break;
-
             values_size = sizeof (*value->u.object.values) * value->u.object.length;
 
-            if (! (value->u.object.values = (json_object_entry *) json_alloc
+            if (! ((*(void **) &value->u.object.values) = json_alloc
                   (state, values_size + ((unsigned long) value->u.object.values), 0)) )
             {
                return 0;
@@ -231,8 +210,7 @@ static const long
    flag_num_e_got_sign   = 1 << 11,
    flag_num_e_negative   = 1 << 12,
    flag_line_comment     = 1 << 13,
-   flag_block_comment    = 1 << 14,
-   flag_num_got_decimal  = 1 << 15;
+   flag_block_comment    = 1 << 14;
 
 json_value * json_parse_ex (json_settings * settings,
                             const json_char * json,
@@ -243,9 +221,9 @@ json_value * json_parse_ex (json_settings * settings,
    const json_char * end;
    json_value * top, * root, * alloc = 0;
    json_state state = { 0 };
-   long flags = 0;
-   double num_digits = 0, num_e = 0;
-   double num_fraction = 0;
+   long flags;
+   long num_digits = 0, num_e = 0;
+   json_int_t num_fraction = 0;
 
    /* Skip UTF-8 BOM
     */
@@ -313,7 +291,7 @@ json_value * json_parse_ex (json_settings * settings,
                   case 't':  string_add ('\t');  break;
                   case 'u':
 
-                    if (end - state.ptr <= 4 || 
+                    if (end - state.ptr < 4 || 
                         (uc_b1 = hex_value (*++ state.ptr)) == 0xFF ||
                         (uc_b2 = hex_value (*++ state.ptr)) == 0xFF ||
                         (uc_b3 = hex_value (*++ state.ptr)) == 0xFF ||
@@ -330,7 +308,7 @@ json_value * json_parse_ex (json_settings * settings,
                     if ((uchar & 0xF800) == 0xD800) {
                         json_uchar uchar2;
                         
-                        if (end - state.ptr <= 6 || (*++ state.ptr) != '\\' || (*++ state.ptr) != 'u' ||
+                        if (end - state.ptr < 6 || (*++ state.ptr) != '\\' || (*++ state.ptr) != 'u' ||
                             (uc_b1 = hex_value (*++ state.ptr)) == 0xFF ||
                             (uc_b2 = hex_value (*++ state.ptr)) == 0xFF ||
                             (uc_b3 = hex_value (*++ state.ptr)) == 0xFF ||
@@ -772,23 +750,11 @@ json_value * json_parse_ex (json_settings * settings,
                         continue;
                      }
 
-                     if (would_overflow(top->u.integer, b))
-                     {  -- num_digits;
-                        -- state.ptr;
-                        top->type = json_double;
-                        top->u.dbl = (double)top->u.integer;
-                        continue;
-                     }
-
                      top->u.integer = (top->u.integer * 10) + (b - '0');
                      continue;
                   }
 
-                  if (flags & flag_num_got_decimal)
-                     num_fraction = (num_fraction * 10) + (b - '0');
-                  else
-                     top->u.dbl = (top->u.dbl * 10) + (b - '0');
-
+                  num_fraction = (num_fraction * 10) + (b - '0');
                   continue;
                }
 
@@ -814,7 +780,6 @@ json_value * json_parse_ex (json_settings * settings,
                   top->type = json_double;
                   top->u.dbl = (double) top->u.integer;
 
-                  flags |= flag_num_got_decimal;
                   num_digits = 0;
                   continue;
                }
@@ -828,7 +793,7 @@ json_value * json_parse_ex (json_settings * settings,
                         goto e_failed;
                      }
 
-                     top->u.dbl += num_fraction / pow (10.0, num_digits);
+                     top->u.dbl += ((double) num_fraction) / (pow (10.0, (double) num_digits));
                   }
 
                   if (b == 'e' || b == 'E')
@@ -854,7 +819,8 @@ json_value * json_parse_ex (json_settings * settings,
                      goto e_failed;
                   }
 
-                  top->u.dbl *= pow (10.0, (flags & flag_num_e_negative ? - num_e : num_e));
+                  top->u.dbl *= pow (10.0, (double)
+                      (flags & flag_num_e_negative ? - num_e : num_e));
                }
 
                if (flags & flag_num_negative)

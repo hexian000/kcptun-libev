@@ -1,12 +1,11 @@
 {
     "kcp_bind": ":5555",
     "connect": "127.0.0.1:5201",
-    "http_listen": "127.0.1.1:8081",
     "kcp": {
         "mtu": 1400,
         "sndwnd": 256,
         "rcvwnd": 256,
-        "nodelay": 2,
+        "nodelay": 1,
         "interval": 50,
         "resend": 0,
         "nc": 1

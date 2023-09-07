@@ -88,15 +88,6 @@ typedef enum
 } json_type;
 
 extern const struct _json_value json_value_none;
-       
-typedef struct _json_object_entry
-{
-    json_char * name;
-    unsigned int name_length;
-    
-    struct _json_value * value;
-    
-} json_object_entry;
 
 typedef struct _json_value
 {
@@ -121,7 +112,14 @@ typedef struct _json_value
       {
          unsigned int length;
 
-         json_object_entry * values;
+         struct
+         {
+            json_char * name;
+            unsigned int name_length;
+
+            struct _json_value * value;
+
+         } * values;
 
          #if defined(__cplusplus) && __cplusplus >= 201103L
          decltype(values) begin () const
@@ -254,7 +252,7 @@ typedef struct _json_value
    #endif
 
 } json_value;
-       
+
 json_value * json_parse (const json_char * json,
                          size_t length);
 

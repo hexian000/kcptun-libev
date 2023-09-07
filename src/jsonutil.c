@@ -5,90 +5,108 @@
 #include "utils/slog.h"
 #include "json/json.h"
 
+#include <limits.h>
 #include <string.h>
 
-static void *jsonutil_malloc(size_t n, int zero, void *user_data)
-{
-	(void)user_data;
-	void *p = malloc(n);
-	if (p && zero) {
-		memset(p, 0, n);
-	}
-	return p;
-}
+struct jutil_value;
 
-static void jsonutil_free(void *p, void *user_data)
+struct jutil_value *jutil_parse(const char *json, size_t length)
 {
-	(void)user_data;
-	free(p);
-}
-
-json_value *parse_json(const json_char *json, size_t length)
-{
-	json_settings settings = {
-		.mem_alloc = &jsonutil_malloc,
-		.mem_free = &jsonutil_free,
-		.user_data = NULL,
-	};
 	char error_msg[json_error_max];
-	json_value *obj = json_parse_ex(&settings, json, length, error_msg);
+	json_value *obj =
+		json_parse_ex(&(json_settings){ 0 }, json, length, error_msg);
 	if (obj == NULL) {
 		LOGE_F("failed parsing json: %s", error_msg);
 	}
-	return obj;
+	return (struct jutil_value *)obj;
 }
 
-bool walk_json_object(void *ud, const json_value *obj, walk_json_object_cb cb)
+void jutil_free(struct jutil_value *value)
 {
-	if (obj == NULL || obj->type != json_object) {
+	json_value *v = (json_value *)value;
+	json_value_free(v);
+}
+
+bool jutil_walk_object(
+	void *ud, const struct jutil_value *value, jutil_walk_object_cb cb)
+{
+	const json_value *restrict v = (const json_value *)value;
+	if (v == NULL || v->type != json_object) {
 		return false;
 	}
 
-	for (unsigned int i = 0; i < obj->u.object.length; i++) {
-		if (!cb(ud, &obj->u.object.values[i])) {
+	for (unsigned int i = 0; i < v->u.object.length; i++) {
+		if (!cb(ud, v->u.object.values[i].name,
+			v->u.object.values[i].name_length,
+			(struct jutil_value *)v->u.object.values[i].value)) {
 			return false;
 		}
 	}
 	return true;
 }
 
-bool walk_json_array(void *ud, const json_value *obj, walk_json_array_cb cb)
+bool jutil_walk_array(
+	void *ud, const struct jutil_value *value, jutil_walk_array_cb cb)
 {
-	if (obj == NULL || obj->type != json_array) {
+	const json_value *restrict v = (const json_value *)value;
+	if (v == NULL || v->type != json_array) {
 		return false;
 	}
 
-	for (unsigned int i = 0; i < obj->u.array.length; i++) {
-		if (!cb(ud, obj->u.array.values[i])) {
+	for (unsigned int i = 0; i < v->u.array.length; i++) {
+		if (!cb(ud, (struct jutil_value *)v->u.array.values[i])) {
 			return false;
 		}
 	}
 	return true;
 }
 
-bool parse_bool_json(bool *b, const json_value *v)
+bool jutil_get_bool(const struct jutil_value *value, bool *b)
 {
+	const json_value *v = (const json_value *)value;
 	if (v->type != json_boolean) {
 		return false;
 	}
-	*b = v->u.boolean != 0;
+	if (b != NULL) {
+		*b = !!(v->u.boolean);
+	}
 	return true;
 }
 
-bool parse_int_json(int *i, const json_value *v)
+bool jutil_get_int(const struct jutil_value *value, int *i)
 {
+	const json_value *v = (const json_value *)value;
 	if (v->type != json_integer) {
 		return false;
 	}
-	*i = (int)v->u.integer;
+	if (v->u.integer < INT_MIN && INT_MAX < v->u.integer) {
+		return false;
+	}
+	if (i != NULL) {
+		*i = (int)v->u.integer;
+	}
 	return true;
 }
 
-char *parse_string_json(const json_value *value)
+const char *jutil_get_string(const struct jutil_value *value, size_t *len)
 {
-	if (value->type != json_string) {
-		LOGE_F("unexpected json object type: %d", value->type);
+	const json_value *v = (const json_value *)value;
+	if (v->type != json_string) {
+		LOGE_F("unexpected json object type: %d", v->type);
 		return NULL;
 	}
-	return strndup(value->u.string.ptr, value->u.string.length);
+	if (len != NULL) {
+		*len = v->u.string.length;
+	}
+	return v->u.string.ptr;
+}
+
+char *jutil_strdup(const struct jutil_value *value)
+{
+	size_t n;
+	const char *s = jutil_get_string(value, &n);
+	if (s == NULL) {
+		return NULL;
+	}
+	return strndup(s, n);
 }
