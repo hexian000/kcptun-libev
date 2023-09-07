@@ -139,6 +139,12 @@ For security reasons, kcptun-libev does NOT provide compatibility to any other K
 
 We use [semantic versioning](https://semver.org/).
 
+Given a version number `MAJOR.MINOR.PATCH`:
+
+- As long as `MAJOR` remains unchanged, the versions should speak a compatible protocol.
+
+- As long as `MAJOR.MINOR` remains unchanged, later versions should compatible with working configuration files from previous versions.
+
 ## Build
 ### Dependencies
 
