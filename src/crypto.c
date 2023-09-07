@@ -6,6 +6,7 @@
 #include "utils/check.h"
 #include "util.h"
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -160,6 +161,29 @@ size_t crypto_open(
 		return 0;
 	}
 	return r_len;
+}
+
+bool crypto_pad(unsigned char *data, const size_t len, const size_t npad)
+{
+	if (npad > UINT8_MAX) {
+		return false;
+	}
+	const unsigned char v = (unsigned char)npad;
+	for (size_t i = 0; i < npad; i++) {
+		data[len + i] = v;
+	}
+	return true;
+}
+
+bool crypto_unpad(unsigned char *data, const size_t len, const size_t npad)
+{
+	const unsigned char v = (unsigned char)npad;
+	for (size_t i = 0; i < npad; i++) {
+		if (data[len - 1 - i] != v) {
+			return false;
+		}
+	}
+	return true;
 }
 
 enum crypto_method {

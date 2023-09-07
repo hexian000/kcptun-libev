@@ -41,6 +41,9 @@ size_t crypto_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size);
 
+bool crypto_pad(unsigned char *data, size_t len, size_t npad);
+bool crypto_unpad(unsigned char *data, size_t len, size_t npad);
+
 void crypto_list_methods(void);
 
 #endif /* CRYPTO_H */

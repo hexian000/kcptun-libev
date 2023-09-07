@@ -3,6 +3,7 @@
 
 #include "pktqueue.h"
 #include "algo/hashtable.h"
+#include "math/rand.h"
 #include "utils/check.h"
 #include "utils/slog.h"
 #include "conf.h"
@@ -69,11 +70,22 @@ static bool crypto_seal_inplace(
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	assert(size >= src_len + overhead + nonce_size);
+	if (src_len + overhead + nonce_size > q->mtu) {
+		LOGE("packet too long");
+		return false;
+	}
+	const size_t npad =
+		rand64n(MIN(q->mtu - (src_len + overhead + nonce_size), 15));
+	if (npad > 0 && !crypto_pad(data, src_len, npad)) {
+		LOGE("failed to pad packet");
+		return false;
+	}
+	const size_t plain_len = src_len + npad;
 	const unsigned char *nonce = noncegen_next(q->noncegen);
 	const size_t dst_size = size - nonce_size;
 	size_t dst_len =
-		crypto_seal(crypto, data, dst_size, nonce, data, src_len);
-	if (dst_len != src_len + overhead) {
+		crypto_seal(crypto, data, dst_size, nonce, data, plain_len);
+	if (dst_len != plain_len + overhead) {
 		LOGE("failed to seal packet");
 		return false;
 	}
@@ -225,10 +237,9 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	if (q->crypto != NULL) {
 		size_t cap = MAX_PACKET_SIZE - msg->off;
 		size_t len = msg->len;
-		const bool pkt_seal_ok =
-			crypto_seal_inplace(q, msg->buf + msg->off, &len, cap);
-		CHECK(pkt_seal_ok);
-		assert(len <= UINT16_MAX);
+		if (!crypto_seal_inplace(q, msg->buf + msg->off, &len, cap)) {
+			return false;
+		}
 		msg->len = len;
 	}
 #endif
@@ -317,6 +328,7 @@ struct pktqueue *queue_new(struct server *restrict s)
 		.mq_recv = malloc(recv_cap * sizeof(struct msgframe *)),
 		.mq_recv_cap = recv_cap,
 		.msg_offset = 0,
+		.mtu = (uint16_t)conf->kcp_mtu,
 	};
 	if (q->mq_send == NULL || q->mq_recv == NULL) {
 		LOGOOM();
