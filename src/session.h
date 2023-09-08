@@ -101,7 +101,7 @@ struct session {
 	sockaddr_max_t raddr;
 	struct {
 		struct ev_io w_read, w_write;
-		struct ev_watcher w_update;
+		struct ev_idle w_flush;
 	};
 	struct {
 		ev_tstamp created;
@@ -110,8 +110,6 @@ struct session {
 	};
 	struct {
 		bool is_accepted : 1;
-		bool event_read : 1;
-		bool event_flush : 1;
 	};
 	struct vbuffer *rbuf, *wbuf;
 	size_t wbuf_flush, wbuf_next;
@@ -129,6 +127,8 @@ void session_kcp_stop(struct session *ss);
 
 bool session_kcp_send(struct session *ss);
 void session_kcp_close(struct session *ss);
+
+void session_read_cb(struct session *ss);
 void session_notify(struct session *ss);
 
 /* session 0 messages */

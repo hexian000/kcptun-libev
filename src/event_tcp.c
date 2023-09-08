@@ -260,18 +260,16 @@ static bool on_connected(struct session *restrict ss)
 	return true;
 }
 
-void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_flush(struct session *restrict ss)
 {
-	CHECK_EV_ERROR(revents);
-
-	struct session *restrict ss = watcher->data;
-	if ((revents & EV_WRITE) && (ss->tcp_state == STATE_CONNECT)) {
-		if (!on_connected(ss)) {
-			return;
-		}
-		ss->tcp_state = STATE_CONNECTED;
+	switch (ss->tcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
+		return;
 	}
-
 	for (;;) {
 		const int ret = tcp_send(ss);
 		if (ret < 0) {
@@ -291,20 +289,22 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
 		return;
 	}
-	ev_io_set_active(loop, watcher, has_data);
-	ss->event_read = true;
-	session_notify(ss);
+	ev_io_set_active(ss->server->loop, &ss->w_write, has_data);
 }
 
-void tcp_flush(struct session *restrict ss)
+void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	switch (ss->tcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-	case STATE_LINGER:
-		break;
-	default:
-		return;
+	UNUSED(loop);
+	CHECK_EV_ERROR(revents);
+
+	struct session *restrict ss = watcher->data;
+	if (ss->tcp_state == STATE_CONNECT) {
+		if (!on_connected(ss)) {
+			return;
+		}
+		ss->tcp_state = STATE_CONNECTED;
 	}
-	ev_invoke(ss->server->loop, &ss->w_write, EV_CUSTOM);
+
+	tcp_flush(ss);
+	session_read_cb(ss);
 }

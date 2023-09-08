@@ -192,12 +192,11 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
-	ss->event_read = true;
 	if (ss->kcp_flush >= 2) {
 		/* flush acks */
-		ss->event_flush = true;
+		session_notify(ss);
 	}
-	session_notify(ss);
+	session_read_cb(ss);
 }
 
 size_t queue_dispatch(struct server *restrict s)

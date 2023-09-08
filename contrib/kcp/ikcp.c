@@ -141,7 +141,7 @@ struct mcache *ikcp_segment_pool = NULL;
 static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 {
 	struct mcache *restrict pool = ikcp_segment_pool;
-	assert(0 < size && (size_t)size <= pool->elem_size);
+	assert(0 < size && (sizeof(IKCPSEG) + (size_t)size) <= pool->elem_size);
 	if (pool == NULL) {
 		return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
 	}
