@@ -216,7 +216,7 @@ const char *runmode_str(const int mode)
 static struct config conf_default(void)
 {
 	return (struct config){
-		.kcp_mtu = 1400,
+		.kcp_mtu = 1492,
 		.kcp_sndwnd = 256,
 		.kcp_rcvwnd = 256,
 		.kcp_nodelay = 1,
@@ -271,7 +271,7 @@ static bool conf_check(struct config *restrict conf)
 
 	/* 3. range check */
 	const bool range_ok =
-		conf_check_range("kcp.mtu", conf->kcp_mtu, 300, 1400) &&
+		conf_check_range("kcp.mtu", conf->kcp_mtu, 300, 1500) &&
 		conf_check_range("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
 		conf_check_range("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
 		conf_check_range("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&

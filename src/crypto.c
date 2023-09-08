@@ -97,7 +97,8 @@ size_t crypto_seal(
 	const unsigned char *plain, const size_t plain_size)
 {
 	if (dst_size < plain_size + crypto->overhead) {
-		LOGW("crypto_seal: insufficient crypto buffer");
+		LOGW_F("crypto_seal: insufficient crypto buffer %zu < %zu",
+		       dst_size, plain_size + crypto->overhead);
 		return 0;
 	}
 	struct crypto_impl *restrict impl = crypto->impl;

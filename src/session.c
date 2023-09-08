@@ -13,6 +13,7 @@
 #include "event.h"
 #include "server.h"
 #include "pktqueue.h"
+#include "obfs.h"
 #include "sockutil.h"
 #include "util.h"
 #include "kcp/ikcp.h"
@@ -49,14 +50,7 @@ kcp_new(struct session *restrict ss, const struct config *restrict conf,
 		return NULL;
 	}
 	ikcp_wndsize(kcp, conf->kcp_sndwnd, conf->kcp_rcvwnd);
-	int mtu = conf->kcp_mtu;
-#if WITH_CRYPTO
-	struct crypto *restrict crypto = ss->server->pkt.queue->crypto;
-	if (crypto != NULL) {
-		mtu -= (int)(crypto->overhead + crypto->nonce_size);
-	}
-#endif
-	ikcp_setmtu(kcp, mtu);
+	ikcp_setmtu(kcp, (int)queue_mss(ss->server));
 	ikcp_nodelay(
 		kcp, conf->kcp_nodelay, conf->kcp_interval, conf->kcp_resend,
 		conf->kcp_nc);

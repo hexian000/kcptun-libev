@@ -8,6 +8,7 @@
 #include "pktqueue.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 struct server;
@@ -23,7 +24,7 @@ void obfs_stop(struct obfs *obfs, struct server *s);
 void obfs_free(struct obfs *obfs);
 
 struct obfs_ctx *obfs_open_inplace(struct obfs *obfs, struct msgframe *msg);
-uint16_t obfs_offset(struct obfs *obfs);
+size_t obfs_overhead(const struct obfs *obfs);
 bool obfs_seal_inplace(struct obfs *obfs, struct msgframe *msg);
 
 void obfs_ctx_auth(struct obfs_ctx *ctx, bool ok);

@@ -33,6 +33,7 @@
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <net/if.h>
 #include <linux/filter.h>
 #include <linux/if_packet.h>
@@ -1153,7 +1154,7 @@ void obfs_free(struct obfs *obfs)
 	free(obfs);
 }
 
-uint16_t obfs_offset(struct obfs *obfs)
+size_t obfs_overhead(const struct obfs *restrict obfs)
 {
 	switch (obfs->domain) {
 	case AF_INET:

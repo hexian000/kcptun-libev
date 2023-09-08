@@ -3,6 +3,7 @@
 
 #include "server.h"
 #include "utils/slog.h"
+#include "utils/check.h"
 #include "utils/buffer.h"
 #include "utils/formats.h"
 #include "algo/hashtable.h"
@@ -151,6 +152,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			    RESOLVE_UDP | RESOLVE_PASSIVE)) {
 			return false;
 		}
+		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_init(udp, conf, addr.sa.sa_family)) {
 				return false;
@@ -172,6 +174,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			return false;
 		}
 		const struct sockaddr *sa = &udp->kcp_connect.sa;
+		udp->domain = sa->sa_family;
 		if (udp->fd == -1) {
 			if (!udp_init(udp, conf, sa->sa_family)) {
 				return false;
@@ -192,6 +195,21 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 	return true;
 }
 
+size_t udp_overhead(const struct pktconn *restrict udp)
+{
+	switch (udp->domain) {
+	case AF_INET:
+		/* UDP/IP4 */
+		return 28;
+	case AF_INET6:
+		/* UDP/IP6 */
+		return 48;
+	default:
+		break;
+	}
+	FAIL();
+}
+
 bool server_resolve(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
@@ -201,8 +219,13 @@ bool server_resolve(struct server *restrict s)
 		}
 	}
 #if WITH_OBFS
-	if (s->pkt.queue->obfs != NULL) {
-		return obfs_resolve(s->pkt.queue->obfs);
+	struct pktqueue *restrict q = s->pkt.queue;
+	if (q->obfs != NULL) {
+		if (!obfs_resolve(q->obfs)) {
+			return false;
+		}
+		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
+		return true;
 	}
 #endif
 	return udp_bind(&s->pkt, conf);
@@ -233,7 +256,7 @@ static bool udp_start(struct server *restrict s)
 
 struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 {
-	struct server *s = malloc(sizeof(struct server));
+	struct server *restrict s = malloc(sizeof(struct server));
 	if (s == NULL) {
 		return NULL;
 	}
@@ -333,7 +356,7 @@ bool server_start(struct server *s)
 	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->obfs != NULL) {
 		const bool ok = obfs_start(q->obfs, s);
-		q->msg_offset = obfs_offset(q->obfs);
+		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
 		return ok;
 	}
 #endif

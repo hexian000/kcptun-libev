@@ -103,7 +103,7 @@ const char *jutil_get_string(const struct jutil_value *value, size_t *len)
 
 char *jutil_strdup(const struct jutil_value *value)
 {
-	size_t n;
+	size_t n = 0;
 	const char *s = jutil_get_string(value, &n);
 	if (s == NULL) {
 		return NULL;

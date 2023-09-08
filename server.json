@@ -2,7 +2,6 @@
     "kcp_bind": ":5555",
     "connect": "127.0.0.1:5201",
     "kcp": {
-        "mtu": 1400,
         "sndwnd": 256,
         "rcvwnd": 256,
         "nodelay": 1,

@@ -15,6 +15,7 @@
 
 #include <ev.h>
 
+#include <stddef.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -30,6 +31,7 @@ struct pktconn {
 	struct ev_io w_read, w_write;
 	struct pktqueue *queue;
 	int fd;
+	int domain;
 	sockaddr_max_t kcp_connect;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;
@@ -80,5 +82,6 @@ void server_stop(struct server *s);
 void server_free(struct server *s);
 
 uint32_t conv_new(struct server *s, const struct sockaddr *sa);
+size_t udp_overhead(const struct pktconn *udp);
 
 #endif /* SERVER_H */

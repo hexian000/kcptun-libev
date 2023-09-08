@@ -63,24 +63,18 @@ static bool crypto_open_inplace(
 /* caller should ensure the buffer is large enough */
 static bool crypto_seal_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
-	const size_t size)
+	const size_t size, const size_t pad)
 {
 	struct crypto *restrict crypto = q->crypto;
 	const size_t src_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	assert(size >= src_len + overhead + nonce_size);
-	if (src_len + overhead + nonce_size > q->mtu) {
-		LOGE("packet too long");
-		return false;
-	}
-	const size_t npad =
-		rand64n(MIN(q->mtu - (src_len + overhead + nonce_size), 15));
-	if (npad > 0 && !crypto_pad(data, src_len, npad)) {
+	if (!crypto_pad(data, src_len, pad)) {
 		LOGE("failed to pad packet");
 		return false;
 	}
-	const size_t plain_len = src_len + npad;
+	const size_t plain_len = src_len + pad;
 	const unsigned char *nonce = noncegen_next(q->noncegen);
 	const size_t dst_size = size - nonce_size;
 	size_t dst_len =
@@ -94,6 +88,29 @@ static bool crypto_seal_inplace(
 	return true;
 }
 #endif /* WITH_CRYPTO */
+
+size_t queue_mss(const struct server *restrict s)
+{
+	const struct pktqueue *restrict q = s->pkt.queue;
+	size_t mss = (size_t)s->conf->kcp_mtu;
+#if WITH_OBFS
+	const struct obfs *restrict obfs = q->obfs;
+	if (obfs != NULL) {
+		mss -= obfs_overhead(obfs);
+	} else {
+		mss -= udp_overhead(&s->pkt);
+	}
+#else
+	mss -= udp_overhead(&s->pkt);
+#endif
+#if WITH_CRYPTO
+	const struct crypto *restrict crypto = q->crypto;
+	if (crypto != NULL) {
+		mss -= (crypto->overhead + crypto->nonce_size);
+	}
+#endif
+	return mss;
+}
 
 static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 {
@@ -235,9 +252,13 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
-		size_t cap = MAX_PACKET_SIZE - msg->off;
+		const size_t mss = queue_mss(s);
+		const size_t cap = MAX_PACKET_SIZE - msg->off;
 		size_t len = msg->len;
-		if (!crypto_seal_inplace(q, msg->buf + msg->off, &len, cap)) {
+		assert(len <= mss);
+		const size_t pad = rand64n(MIN(mss - len, 15));
+		if (!crypto_seal_inplace(
+			    q, msg->buf + msg->off, &len, cap, pad)) {
 			return false;
 		}
 		msg->len = len;
@@ -328,7 +349,6 @@ struct pktqueue *queue_new(struct server *restrict s)
 		.mq_recv = malloc(recv_cap * sizeof(struct msgframe *)),
 		.mq_recv_cap = recv_cap,
 		.msg_offset = 0,
-		.mtu = (uint16_t)conf->kcp_mtu,
 	};
 	if (q->mq_send == NULL || q->mq_recv == NULL) {
 		LOGOOM();
