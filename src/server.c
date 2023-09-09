@@ -538,12 +538,18 @@ static bool print_session_iter(
 
 	FORMAT_BYTES(kcp_rx, (double)ss->stats.tcp_tx);
 	FORMAT_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
+
+	int rtt = -1, rto = -1;
+	if (ss->kcp != NULL) {
+		rtt = (int)CLAMP(ss->kcp->rx_srtt, INT_MIN, INT_MAX);
+		rto = (int)CLAMP(ss->kcp->rx_rto, INT_MIN, INT_MAX);
+	}
 	ctx->buf = VBUF_APPENDF(
 		ctx->buf,
 		"[%08" PRIX32 "] %c peer=%s seen=%.0lfs "
-		"rtt=%" PRId32 " rto=%" PRId32 " waitsnd=%zu rx/tx=%s/%s\n",
-		ss->conv, session_state_char[state], addr_str, not_seen,
-		ss->kcp->rx_srtt, ss->kcp->rx_rto, waitsnd, kcp_rx, kcp_tx);
+		"rtt=%d rto=%d waitsnd=%zu rx/tx=%s/%s\n",
+		ss->conv, session_state_char[state], addr_str, not_seen, rtt,
+		rto, waitsnd, kcp_rx, kcp_tx);
 #undef FORMAT_BYTES
 
 	return true;
