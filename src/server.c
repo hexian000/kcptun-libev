@@ -44,7 +44,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
-		(void)close(fd);
+		CLOSE_FD(fd);
 		return -1;
 	}
 	socket_set_reuseport(fd, conf->tcp_reuseport);
@@ -54,14 +54,14 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
 		const int err = errno;
 		LOGE_F("bind error: %s", strerror(err));
-		(void)close(fd);
+		CLOSE_FD(fd);
 		return -1;
 	}
 	/* Start listing on the socket */
 	if (listen(fd, 16)) {
 		const int err = errno;
 		LOGE_F("listen error: %s", strerror(err));
-		(void)close(fd);
+		CLOSE_FD(fd);
 		return -1;
 	}
 	return fd;
@@ -415,10 +415,7 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	}
 	ev_io_stop(loop, &conn->w_read);
 	ev_io_stop(loop, &conn->w_write);
-	if (close(conn->fd) != 0) {
-		const int err = errno;
-		LOGW_F("close: %s", strerror(err));
-	}
+	CLOSE_FD(conn->fd);
 	conn->fd = -1;
 }
 
@@ -439,20 +436,14 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 		LOGD_F("listener close: fd=%d", l->fd);
 		struct ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
-		if (close(l->fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		CLOSE_FD(l->fd);
 		l->fd = -1;
 	}
 	if (l->fd_http != -1) {
 		LOGD_F("http listener close: fd=%d", l->fd_http);
 		struct ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
-		if (close(l->fd_http) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		CLOSE_FD(l->fd_http);
 		l->fd_http = -1;
 	}
 	ev_timer_stop(loop, &l->w_timer);

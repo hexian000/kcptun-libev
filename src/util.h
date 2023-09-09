@@ -16,6 +16,14 @@
 
 #define TSTAMP_NIL (-1.0)
 
+#define CLOSE_FD(fd)                                                           \
+	do {                                                                   \
+		if (close(fd) != 0) {                                          \
+			const int err = errno;                                 \
+			LOGW_F("close: %s", strerror(err));                    \
+		}                                                              \
+	} while (0)
+
 extern struct mcache *msgpool;
 
 #define UTIL_SAFE_FREE(x)                                                      \

@@ -62,20 +62,14 @@ static void accept_one(
 	ss = session_new(s, sa, conv);
 	if (ss == NULL) {
 		LOGOOM();
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		CLOSE_FD(fd);
 		return;
 	}
 	ss->kcp_state = STATE_CONNECT;
 	ss->tcp_state = STATE_CONNECTED;
 	if (!kcp_sendmsg(ss, SMSG_DIAL)) {
 		LOGOOM();
-		if (close(fd) != 0) {
-			const int err = errno;
-			LOGW_F("close: %s", strerror(err));
-		}
+		CLOSE_FD(fd);
 		session_free(ss);
 		return;
 	}
@@ -118,19 +112,16 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			return;
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
-			if (close(fd) != 0) {
-				const int err = errno;
-				LOGW_F("close: %s", strerror(err));
-			}
 			LOG_RATELIMITED(
 				LOG_LEVEL_ERROR, ev_now(loop), 1.0,
 				"* max session count exceeded, new connections refused");
+			CLOSE_FD(fd);
 			return;
 		}
 		if (!socket_set_nonblock(fd)) {
 			const int err = errno;
 			LOGE_F("fcntl: %s", strerror(err));
-			(void)close(fd);
+			CLOSE_FD(fd);
 			return;
 		}
 		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
@@ -148,7 +139,7 @@ static void tcp_update(struct session *restrict ss)
 	if (is_linger && !has_data) {
 		/* finish this connection gracefully */
 		session_tcp_stop(ss);
-		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
+		LOGD_F("session [%08" PRIX32 "] tcp: close", ss->conv);
 		return;
 	}
 	int events = 0;

@@ -160,10 +160,7 @@ void session_tcp_stop(struct session *restrict ss)
 	       ss->tcp_fd);
 	struct ev_loop *restrict loop = ss->server->loop;
 	ev_io_stop(loop, &ss->w_socket);
-	if (close(ss->tcp_fd) != 0) {
-		const int err = errno;
-		LOGE_F("close: %s", strerror(err));
-	}
+	CLOSE_FD(ss->tcp_fd);
 	ss->tcp_fd = -1;
 }
 
@@ -197,7 +194,7 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 	if (!socket_set_nonblock(fd)) {
 		const int err = errno;
 		LOGE_F("fcntl: %s", strerror(err));
-		(void)close(fd);
+		CLOSE_FD(fd);
 		return false;
 	}
 	{
@@ -363,7 +360,7 @@ void session_kcp_close(struct session *restrict ss)
 		kcp_reset(ss);
 		return;
 	}
-	LOGD_F("session [%08" PRIX32 "] kcp: send eof", ss->conv);
+	LOGD_F("session [%08" PRIX32 "] kcp: close", ss->conv);
 	ss->kcp_state = STATE_LINGER;
 	if (ss->kcp_flush >= 1) {
 		session_kcp_flush(ss);
