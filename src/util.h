@@ -14,8 +14,6 @@
 
 #define UNUSED(x) (void)(x)
 
-void modify_io_events(struct ev_loop *loop, struct ev_io *watcher, int events);
-
 #define TSTAMP_NIL (-1.0)
 
 extern struct mcache *msgpool;

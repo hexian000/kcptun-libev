@@ -28,32 +28,6 @@
 #include <string.h>
 #include <time.h>
 
-void modify_io_events(
-	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
-{
-	assert(watcher->fd != -1);
-	const int ioevents = events & (EV_READ | EV_WRITE);
-	if (ioevents == EV_NONE) {
-		if (ev_is_active(watcher)) {
-			LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
-		}
-		ev_io_stop(loop, watcher);
-		return;
-	}
-	if (ioevents != (watcher->events & (EV_READ | EV_WRITE))) {
-		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
-#ifdef ev_io_modify
-		ev_io_modify(watcher, ioevents);
-#else
-		ev_io_set(watcher, watcher->fd, ioevents);
-#endif
-	}
-	if (!ev_is_active(watcher)) {
-		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
-		ev_io_start(loop, watcher);
-	}
-}
-
 bool check_rate_limit(
 	ev_tstamp *restrict last, const ev_tstamp now, const double interval)
 {

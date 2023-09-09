@@ -182,8 +182,8 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 
 void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
+	CHECK_EV_ERROR(revents);
 	struct server *restrict s = watcher->data;
 	while (pkt_recv(s, watcher->fd) > 0) {
 		(void)queue_dispatch(s);

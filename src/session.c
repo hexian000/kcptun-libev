@@ -98,7 +98,7 @@ struct session *session_new(
 	ss->tcp_state = STATE_INIT;
 	ss->kcp_state = STATE_INIT;
 	ss->tcp_fd = -1;
-	ev_io_init(&ss->w_socket, tcp_socket_cb, -1, 0);
+	ev_io_init(&ss->w_socket, tcp_socket_cb, -1, EV_NONE);
 	ss->w_socket.data = ss;
 	ev_idle_init(&ss->w_flush, ss_flush_cb);
 	ss->w_flush.data = ss;
@@ -142,7 +142,7 @@ void session_start(struct session *restrict ss, const int fd)
 	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_socket = &ss->w_socket;
-	ev_io_set(&ss->w_socket, fd, EV_READ | EV_WRITE);
+	ev_io_set(w_socket, fd, EV_READ | EV_WRITE);
 	ev_io_start(loop, w_socket);
 
 	const ev_tstamp now = ev_now(loop);

@@ -24,6 +24,33 @@
 #include <inttypes.h>
 #include <limits.h>
 
+void modify_io_events(
+	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
+{
+	assert(watcher->fd != -1);
+	const int ioevents = events & (EV_READ | EV_WRITE);
+	if (ioevents == EV_NONE) {
+		if (ev_is_active(watcher)) {
+			LOGD_F("io fd=%d stop", watcher->fd);
+			ev_io_stop(loop, watcher);
+		}
+		return;
+	}
+	if (ioevents != (watcher->events & (EV_READ | EV_WRITE))) {
+		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
+#ifdef ev_io_modify
+		ev_io_modify(watcher, ioevents);
+#else
+		ev_io_set(watcher, watcher->fd, ioevents);
+#endif
+		ev_io_stop(loop, watcher);
+	}
+	if (!ev_is_active(watcher)) {
+		LOGD_F("io fd=%d start", watcher->fd);
+		ev_io_start(loop, watcher);
+	}
+}
+
 static void accept_one(
 	struct server *restrict s, const int fd,
 	const struct sockaddr *client_sa)
@@ -223,10 +250,6 @@ static void tcp_recv_all(struct session *restrict ss)
 void tcp_notify_recv(struct session *restrict ss)
 {
 	if (ss->tcp_state != STATE_CONNECTED) {
-		return;
-	}
-	tcp_recv_all(ss);
-	if (ss->tcp_fd == -1) {
 		return;
 	}
 	tcp_update(ss);

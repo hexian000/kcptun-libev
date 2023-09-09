@@ -36,4 +36,6 @@
 
 struct server;
 
+void modify_io_events(struct ev_loop *loop, struct ev_io *watcher, int events);
+
 #endif /* EVENT_IMPL_H */
