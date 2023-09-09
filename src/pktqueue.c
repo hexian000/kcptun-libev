@@ -89,29 +89,6 @@ static bool crypto_seal_inplace(
 }
 #endif /* WITH_CRYPTO */
 
-size_t queue_mss(const struct server *restrict s)
-{
-	const struct pktqueue *restrict q = s->pkt.queue;
-	size_t mss = (size_t)s->conf->kcp_mtu;
-#if WITH_OBFS
-	const struct obfs *restrict obfs = q->obfs;
-	if (obfs != NULL) {
-		mss -= obfs_overhead(obfs);
-	} else {
-		mss -= udp_overhead(&s->pkt);
-	}
-#else
-	mss -= udp_overhead(&s->pkt);
-#endif
-#if WITH_CRYPTO
-	const struct crypto *restrict crypto = q->crypto;
-	if (crypto != NULL) {
-		mss -= (crypto->overhead + crypto->nonce_size);
-	}
-#endif
-	return mss;
-}
-
 static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 {
 	const unsigned char *kcp_packet = msg->buf + msg->off;
@@ -194,7 +171,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	s->stats.kcp_rx += msg->len;
 	if (ss->kcp_flush >= 2) {
 		/* flush acks */
-		session_notify(ss);
+		session_kcp_flush(ss);
 	}
 	session_read_cb(ss);
 }
@@ -251,7 +228,7 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
-		const size_t mss = queue_mss(s);
+		const size_t mss = q->mss;
 		const size_t cap = MAX_PACKET_SIZE - msg->off;
 		size_t len = msg->len;
 		assert(len <= mss);
@@ -287,14 +264,7 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	msg->ts = now;
 	q->mq_send[q->mq_send_len++] = msg;
-	if (q->mq_send_len < MMSG_BATCH_SIZE) {
-		struct ev_io *restrict w_write = &s->pkt.w_write;
-		if (!ev_is_active(w_write)) {
-			ev_io_start(s->loop, w_write);
-		}
-	} else {
-		pkt_flush(s);
-	}
+	pkt_notify_send(s);
 	return true;
 }
 

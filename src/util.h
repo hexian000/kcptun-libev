@@ -14,7 +14,7 @@
 
 #define UNUSED(x) (void)(x)
 
-void ev_io_set_active(struct ev_loop *loop, struct ev_io *watcher, bool active);
+void modify_io_events(struct ev_loop *loop, struct ev_io *watcher, int events);
 
 #define TSTAMP_NIL (-1.0)
 

@@ -13,6 +13,7 @@
 #include "sockutil.h"
 
 #include <ev.h>
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <errno.h>
@@ -112,6 +113,27 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	}
 }
 
+static void tcp_update(struct session *restrict ss)
+{
+	assert(ss->tcp_fd != -1);
+	const bool is_linger = (ss->tcp_state == STATE_LINGER);
+	const bool has_data = (ss->wbuf_flush < ss->wbuf_next);
+	if (is_linger && !has_data) {
+		/* finish this connection gracefully */
+		session_tcp_stop(ss);
+		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
+		return;
+	}
+	int events = 0;
+	if (ss->kcp != NULL && ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
+		events |= EV_READ;
+	}
+	if (is_linger || has_data) {
+		events |= EV_WRITE;
+	}
+	modify_io_events(ss->server->loop, &ss->w_socket, events);
+}
+
 enum tcp_recv_ret {
 	TCPRECV_OK,
 	TCPRECV_AGAIN,
@@ -160,20 +182,20 @@ static int tcp_recv(struct session *restrict ss)
 	return TCPRECV_OK;
 }
 
-void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+static void tcp_recv_all(struct session *restrict ss)
 {
-	CHECK_EV_ERROR(revents);
-
-	struct session *restrict ss = watcher->data;
 	int ret;
-	do {
+	for (;;) {
 		ret = tcp_recv(ss);
 		if (!session_kcp_send(ss)) {
 			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return;
 		}
-	} while (ret == TCPRECV_OK);
+		if (ret != TCPRECV_OK) {
+			break;
+		}
+	}
 
 	switch (ret) {
 	case TCPRECV_AGAIN:
@@ -196,18 +218,18 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	default:
 		FAIL();
 	}
-
-	const bool has_space = ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd;
-	ev_io_set_active(loop, watcher, has_space);
 }
 
-void tcp_notify_read(struct session *restrict ss)
+void tcp_notify_recv(struct session *restrict ss)
 {
 	if (ss->tcp_state != STATE_CONNECTED) {
 		return;
 	}
-	const bool has_space = ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd;
-	ev_io_set_active(ss->server->loop, &ss->w_read, has_space);
+	tcp_recv_all(ss);
+	if (ss->tcp_fd == -1) {
+		return;
+	}
+	tcp_update(ss);
 }
 
 static int tcp_send(struct session *restrict ss)
@@ -240,25 +262,7 @@ static int tcp_send(struct session *restrict ss)
 	return 1;
 }
 
-static bool on_connected(struct session *restrict ss)
-{
-	int sockerr = 0;
-	if (getsockopt(
-		    ss->tcp_fd, SOL_SOCKET, SO_ERROR, &sockerr,
-		    &(socklen_t){ sizeof(sockerr) }) == 0) {
-		if (sockerr != 0) {
-			LOGE_F("SO_ERROR: %s", strerror(sockerr));
-			return false;
-		}
-		return true;
-	} else {
-		const int err = errno;
-		LOGD_F("SO_ERROR: %s", strerror(err));
-	}
-	return true;
-}
-
-void tcp_flush(struct session *restrict ss)
+static void tcp_flush(struct session *restrict ss)
 {
 	switch (ss->tcp_state) {
 	case STATE_CONNECT:
@@ -279,33 +283,73 @@ void tcp_flush(struct session *restrict ss)
 			break;
 		}
 	}
-
-	const bool has_data = ss->wbuf_flush < ss->wbuf_next;
-	if (!has_data && ss->tcp_state == STATE_LINGER) {
-		/* no more data, close */
-		session_tcp_stop(ss);
-		LOGD_F("session [%08" PRIX32 "] tcp: send eof", ss->conv);
-		return;
-	}
-	ev_io_set_active(ss->server->loop, &ss->w_write, has_data);
 }
 
-void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_notify_send(struct session *restrict ss)
 {
-	UNUSED(loop);
-	CHECK_EV_ERROR(revents);
+	tcp_flush(ss);
+	if (ss->tcp_fd == -1) {
+		return;
+	}
+	tcp_update(ss);
+}
 
-	struct session *restrict ss = watcher->data;
-	if (ss->tcp_state == STATE_CONNECT) {
-		if (!on_connected(ss)) {
+static void connected_cb(struct session *restrict ss)
+{
+	int sockerr = 0;
+	if (getsockopt(
+		    ss->tcp_fd, SOL_SOCKET, SO_ERROR, &sockerr,
+		    &(socklen_t){ sizeof(sockerr) }) == 0) {
+		if (sockerr != 0) {
+			LOGE_F("SO_ERROR: %s", strerror(sockerr));
 			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return;
 		}
-		ss->tcp_state = STATE_CONNECTED;
-		tcp_notify_read(ss);
+	} else {
+		const int err = errno;
+		LOGD_F("SO_ERROR: %s", strerror(err));
 	}
 
-	tcp_flush(ss);
-	session_read_cb(ss);
+	ss->tcp_state = STATE_CONNECTED;
+	LOGD_F("session [%08" PRIX32 "] tcp fd=%d: connected", ss->conv,
+	       ss->tcp_fd);
+	return;
+}
+
+void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+{
+	UNUSED(loop);
+	CHECK_EV_ERROR(revents);
+
+	LOGD_F("io fd=%d revents=0x%x", watcher->fd, revents);
+	struct session *restrict ss = watcher->data;
+	if (ss->tcp_state == STATE_CONNECT) {
+		connected_cb(ss);
+		if (ss->tcp_fd == -1) {
+			return;
+		}
+	}
+
+	if (revents & EV_WRITE) {
+		tcp_flush(ss);
+		if (ss->tcp_fd == -1) {
+			return;
+		}
+		if (ss->wbuf_flush == ss->wbuf_next) {
+			session_read_cb(ss);
+			if (ss->tcp_fd == -1) {
+				return;
+			}
+		}
+	}
+
+	if (revents & EV_READ) {
+		tcp_recv_all(ss);
+		if (ss->tcp_fd == -1) {
+			return;
+		}
+	}
+
+	tcp_update(ss);
 }

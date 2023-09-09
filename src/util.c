@@ -28,18 +28,29 @@
 #include <string.h>
 #include <time.h>
 
-void ev_io_set_active(
-	struct ev_loop *loop, struct ev_io *restrict watcher, const bool active)
+void modify_io_events(
+	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
 {
-	if (!!ev_is_active(watcher) == active) {
+	assert(watcher->fd != -1);
+	const int ioevents = events & (EV_READ | EV_WRITE);
+	if (ioevents == EV_NONE) {
+		if (ev_is_active(watcher)) {
+			LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
+		}
+		ev_io_stop(loop, watcher);
 		return;
 	}
-	if (active) {
-		LOGV_F("start fd=%d events=%x", watcher->fd, watcher->events);
+	if (ioevents != (watcher->events & (EV_READ | EV_WRITE))) {
+		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
+#ifdef ev_io_modify
+		ev_io_modify(watcher, ioevents);
+#else
+		ev_io_set(watcher, watcher->fd, ioevents);
+#endif
+	}
+	if (!ev_is_active(watcher)) {
+		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
 		ev_io_start(loop, watcher);
-	} else {
-		LOGV_F("stop fd=%d events=%x", watcher->fd, watcher->events);
-		ev_io_stop(loop, watcher);
 	}
 }
 

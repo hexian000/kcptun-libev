@@ -329,21 +329,35 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 
 #endif /* HAVE_SENDMMSG */
 
-void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+static void pkt_flush(struct server *restrict s)
 {
-	CHECK_EV_ERROR(revents);
-	const int fd = watcher->fd;
-	struct server *restrict s = watcher->data;
+	struct ev_io *restrict w_write = &s->pkt.w_write;
 	for (;;) {
-		const size_t nsend = pkt_send(s, fd);
-		if (nsend == 0) {
+		const size_t ret = pkt_send(s, w_write->fd);
+		if (ret == 0) {
 			break;
 		}
 	}
-	ev_io_set_active(loop, watcher, s->pkt.queue->mq_send_len > 0);
 }
 
-void pkt_flush(struct server *restrict s)
+void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	ev_invoke(s->loop, &s->pkt.w_write, EV_CUSTOM);
+	UNUSED(loop);
+	CHECK_EV_ERROR(revents);
+	struct server *restrict s = watcher->data;
+	if (s->pkt.queue->mq_send_len == 0) {
+		ev_io_stop(loop, watcher);
+		return;
+	}
+	pkt_flush(s);
+}
+
+void pkt_notify_send(struct server *restrict s)
+{
+	struct pktqueue *restrict q = s->pkt.queue;
+	pkt_flush(s);
+	struct ev_io *restrict w_write = &s->pkt.w_write;
+	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
+		ev_io_start(s->loop, w_write);
+	}
 }

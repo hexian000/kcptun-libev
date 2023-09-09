@@ -20,8 +20,7 @@ struct ev_timer;
 struct IKCPCB;
 
 void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
@@ -37,9 +36,9 @@ bool kcp_push(struct session *ss);
 void kcp_recv(struct session *ss);
 void kcp_reset(struct session *ss);
 
-void tcp_notify_read(struct session *ss);
+void tcp_notify_send(struct session *ss);
+void tcp_notify_recv(struct session *ss);
 
-void tcp_flush(struct session *ss);
-void pkt_flush(struct server *s);
+void pkt_notify_send(struct server *s);
 
 #endif /* EVENT_H */

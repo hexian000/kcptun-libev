@@ -100,7 +100,7 @@ struct session {
 	uint32_t conv;
 	sockaddr_max_t raddr;
 	struct {
-		struct ev_io w_read, w_write;
+		struct ev_io w_socket;
 		struct ev_idle w_flush;
 	};
 	struct {
@@ -126,10 +126,10 @@ void session_tcp_stop(struct session *ss);
 void session_kcp_stop(struct session *ss);
 
 bool session_kcp_send(struct session *ss);
+void session_kcp_flush(struct session *ss);
 void session_kcp_close(struct session *ss);
 
 void session_read_cb(struct session *ss);
-void session_notify(struct session *ss);
 
 /* session 0 messages */
 enum session0_messages {

@@ -10,6 +10,7 @@
 #include "math/rand.h"
 #include "conf.h"
 #include "event.h"
+#include "crypto.h"
 #include "pktqueue.h"
 #include "obfs.h"
 #include "session.h"
@@ -210,6 +211,30 @@ size_t udp_overhead(const struct pktconn *restrict udp)
 	FAIL();
 }
 
+/* calculate max send size */
+static size_t server_mss(const struct server *restrict s)
+{
+	const struct pktqueue *restrict q = s->pkt.queue;
+	size_t mss = (size_t)s->conf->kcp_mtu;
+#if WITH_OBFS
+	const struct obfs *restrict obfs = q->obfs;
+	if (obfs != NULL) {
+		mss -= obfs_overhead(obfs);
+	} else {
+		mss -= udp_overhead(&s->pkt);
+	}
+#else
+	mss -= udp_overhead(&s->pkt);
+#endif
+#if WITH_CRYPTO
+	const struct crypto *restrict crypto = q->crypto;
+	if (crypto != NULL) {
+		mss -= (crypto->overhead + crypto->nonce_size);
+	}
+#endif
+	return mss;
+}
+
 bool server_resolve(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
@@ -225,10 +250,15 @@ bool server_resolve(struct server *restrict s)
 			return false;
 		}
 		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
+		q->mss = (uint16_t)server_mss(s);
 		return true;
 	}
 #endif
-	return udp_bind(&s->pkt, conf);
+	if (!udp_bind(&s->pkt, conf)) {
+		return false;
+	}
+	q->mss = (uint16_t)server_mss(s);
+	return true;
 }
 
 static bool udp_start(struct server *restrict s)
@@ -357,10 +387,15 @@ bool server_start(struct server *s)
 	if (q->obfs != NULL) {
 		const bool ok = obfs_start(q->obfs, s);
 		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
+		q->mss = (uint16_t)server_mss(s);
 		return ok;
 	}
 #endif
-	return udp_start(s);
+	if (!udp_start(s)) {
+		return false;
+	}
+	q->mss = (uint16_t)server_mss(s);
+	return true;
 }
 
 void server_ping(struct server *restrict s)
