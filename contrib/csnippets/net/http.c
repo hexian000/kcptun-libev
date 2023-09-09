@@ -40,6 +40,8 @@ static const struct {
 	  "The server encountered an internal error." },
 	{ HTTP_ENTITY_TOO_LARGE, "Content Too Large",
 	  "The amount of data provided in the request exceeds the capacity limit." },
+	{ HTTP_EXPECTATION_FAILED, "Expectation Failed",
+	  "The expectation given in the Expect request-header field could not be met by this server." },
 	{ HTTP_BAD_GATEWAY, "Bad Gateway",
 	  "The proxy server received an invalid response from an upstream server." },
 	{ HTTP_GATEWAY_TIMEOUT, "Gateway Timeout",

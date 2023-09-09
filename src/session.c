@@ -77,7 +77,7 @@ ss_flush_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
 		return;
 	}
 	ikcp_flush(ss->kcp);
-	tcp_notify_recv(ss);
+	tcp_notify(ss);
 }
 
 struct session *session_new(
@@ -246,12 +246,8 @@ static bool session_on_msg(
 		const size_t navail = (size_t)hdr->len - TLV_HEADER_SIZE;
 		LOGV_F("session [%08" PRIX32 "] msg: push, %zu bytes", ss->conv,
 		       navail);
-		/* tcp connection is lost, discard message */
-		if (ss->tcp_fd == -1) {
-			break;
-		}
 		ss->wbuf_flush = TLV_HEADER_SIZE;
-		tcp_notify_send(ss);
+		tcp_notify(ss);
 		return true;
 	}
 	case SMSG_EOF: {
@@ -263,11 +259,8 @@ static bool session_on_msg(
 		       ss->conv);
 		ss->kcp_state = STATE_LINGER;
 		ss->tcp_state = STATE_LINGER;
-		if (ss->tcp_fd == -1) {
-			break;
-		}
 		ss->wbuf_flush = ss->wbuf_next;
-		tcp_notify_send(ss);
+		tcp_notify(ss);
 		return true;
 	}
 	case SMSG_KEEPALIVE: {
@@ -369,8 +362,22 @@ void session_kcp_close(struct session *restrict ss)
 
 void session_read_cb(struct session *restrict ss)
 {
-	while (ss->kcp_state == STATE_CONNECT ||
-	       ss->kcp_state == STATE_CONNECTED) {
+	for (;;) {
+		switch (ss->kcp_state) {
+		case STATE_CONNECT:
+		case STATE_CONNECTED:
+			break;
+		default:
+			return;
+		}
+		switch (ss->tcp_state) {
+		case STATE_INIT:
+		case STATE_CONNECT:
+		case STATE_CONNECTED:
+			break;
+		default:
+			return;
+		}
 		kcp_recv(ss);
 		const int ret = ss_process(ss);
 		if (ret < 0) {
@@ -378,7 +385,7 @@ void session_read_cb(struct session *restrict ss)
 			kcp_reset(ss);
 			return;
 		} else if (ret == 0) {
-			break;
+			return;
 		}
 	}
 }

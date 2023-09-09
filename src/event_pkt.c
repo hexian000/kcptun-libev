@@ -346,6 +346,7 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 	struct server *restrict s = watcher->data;
 	if (s->pkt.queue->mq_send_len == 0) {
+		LOGD_F("pkt send fd=%d stop", watcher->fd);
 		ev_io_stop(loop, watcher);
 		return;
 	}
@@ -358,6 +359,7 @@ void pkt_notify_send(struct server *restrict s)
 	pkt_flush(s);
 	struct ev_io *restrict w_write = &s->pkt.w_write;
 	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
+		LOGD_F("pkt send fd=%d start", w_write->fd);
 		ev_io_start(s->loop, w_write);
 	}
 }

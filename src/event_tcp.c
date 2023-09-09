@@ -37,16 +37,15 @@ void modify_io_events(
 		return;
 	}
 	if (ioevents != (watcher->events & (EV_READ | EV_WRITE))) {
-		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
+		ev_io_stop(loop, watcher);
 #ifdef ev_io_modify
 		ev_io_modify(watcher, ioevents);
 #else
 		ev_io_set(watcher, watcher->fd, ioevents);
 #endif
-		ev_io_stop(loop, watcher);
 	}
 	if (!ev_is_active(watcher)) {
-		LOGD_F("io fd=%d start", watcher->fd);
+		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
 		ev_io_start(loop, watcher);
 	}
 }
@@ -133,7 +132,13 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 static void tcp_update(struct session *restrict ss)
 {
-	assert(ss->tcp_fd != -1);
+	switch (ss->tcp_state) {
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		break;
+	default:
+		return;
+	}
 	const bool is_linger = (ss->tcp_state == STATE_LINGER);
 	const bool has_data = (ss->wbuf_flush < ss->wbuf_next);
 	if (is_linger && !has_data) {
@@ -202,6 +207,12 @@ static int tcp_recv(struct session *restrict ss)
 
 static void tcp_recv_all(struct session *restrict ss)
 {
+	switch (ss->tcp_state) {
+	case STATE_CONNECTED:
+		break;
+	default:
+		return;
+	}
 	int ret;
 	for (;;) {
 		ret = tcp_recv(ss);
@@ -238,22 +249,14 @@ static void tcp_recv_all(struct session *restrict ss)
 	}
 }
 
-void tcp_notify_recv(struct session *restrict ss)
-{
-	if (ss->tcp_state != STATE_CONNECTED) {
-		return;
-	}
-	tcp_update(ss);
-}
-
 static int tcp_send(struct session *restrict ss)
 {
 	assert(ss->wbuf_next >= ss->wbuf_flush);
-	unsigned char *buf = ss->wbuf->data + ss->wbuf_flush;
 	const size_t len = ss->wbuf_next - ss->wbuf_flush;
 	if (len == 0) {
 		return 0;
 	}
+	unsigned char *buf = ss->wbuf->data + ss->wbuf_flush;
 	const ssize_t ret = send(ss->tcp_fd, buf, len, 0);
 	if (ret < 0) {
 		const int err = errno;
@@ -279,7 +282,6 @@ static int tcp_send(struct session *restrict ss)
 static void tcp_flush(struct session *restrict ss)
 {
 	switch (ss->tcp_state) {
-	case STATE_CONNECT:
 	case STATE_CONNECTED:
 	case STATE_LINGER:
 		break;
@@ -297,15 +299,6 @@ static void tcp_flush(struct session *restrict ss)
 			break;
 		}
 	}
-}
-
-void tcp_notify_send(struct session *restrict ss)
-{
-	tcp_flush(ss);
-	if (ss->tcp_fd == -1) {
-		return;
-	}
-	tcp_update(ss);
 }
 
 static void connected_cb(struct session *restrict ss)
@@ -340,30 +333,26 @@ void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct session *restrict ss = watcher->data;
 	if (ss->tcp_state == STATE_CONNECT) {
 		connected_cb(ss);
-		if (ss->tcp_fd == -1) {
-			return;
-		}
 	}
 
 	if (revents & EV_WRITE) {
 		tcp_flush(ss);
-		if (ss->tcp_fd == -1) {
-			return;
-		}
-		if (ss->wbuf_flush == ss->wbuf_next) {
+		if (ss->tcp_state == STATE_CONNECTED &&
+		    ss->wbuf_flush == ss->wbuf_next) {
 			session_read_cb(ss);
-			if (ss->tcp_fd == -1) {
-				return;
-			}
 		}
 	}
 
 	if (revents & EV_READ) {
 		tcp_recv_all(ss);
-		if (ss->tcp_fd == -1) {
-			return;
-		}
 	}
 
+	tcp_update(ss);
+}
+
+void tcp_notify(struct session *restrict ss)
+{
+	tcp_flush(ss);
+	tcp_recv_all(ss);
 	tcp_update(ss);
 }

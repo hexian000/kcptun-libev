@@ -131,7 +131,7 @@ static void kcp_update(struct session *restrict ss)
 	const ev_tstamp now = ev_now(s->loop);
 	const uint32_t now_ms = TSTAMP2MS(now);
 	ikcp_update(ss->kcp, now_ms);
-	tcp_notify_recv(ss);
+	tcp_notify(ss);
 }
 
 static bool kcp_update_iter(
