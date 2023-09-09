@@ -12,6 +12,7 @@
 #include "pktqueue.h"
 #include "kcp/ikcp.h"
 
+#include <ev.h>
 #include <unistd.h>
 #include <pwd.h>
 #if _BSD_SOURCE || _GNU_SOURCE
@@ -34,8 +35,10 @@ void ev_io_set_active(
 		return;
 	}
 	if (active) {
+		LOGV_F("start fd=%d events=%x", watcher->fd, watcher->events);
 		ev_io_start(loop, watcher);
 	} else {
+		LOGV_F("stop fd=%d events=%x", watcher->fd, watcher->events);
 		ev_io_stop(loop, watcher);
 	}
 }

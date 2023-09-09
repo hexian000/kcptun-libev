@@ -121,10 +121,14 @@ enum tcp_recv_ret {
 
 static int tcp_recv(struct session *restrict ss)
 {
+	if (ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
+		return TCPRECV_AGAIN;
+	}
+
 	/* reserve some space to encode header in place */
 	size_t cap = TLV_MAX_LENGTH - TLV_HEADER_SIZE - ss->rbuf->len;
 	if (cap == 0) {
-		return TCPRECV_OK;
+		return TCPRECV_AGAIN;
 	}
 
 	unsigned char *buf = ss->rbuf->data + TLV_HEADER_SIZE + ss->rbuf->len;
@@ -150,8 +154,8 @@ static int tcp_recv(struct session *restrict ss)
 		ss->stats.tcp_rx += len;
 		ss->server->stats.tcp_rx += len;
 		LOGV_F("session [%08" PRIX32 "] "
-		       "tcp recv: %zu bytes, cap: %zu bytes",
-		       ss->conv, len, cap);
+		       "tcp fd=%d: recv %zu bytes, cap: %zu bytes",
+		       ss->conv, ss->tcp_fd, len, cap);
 	}
 	return TCPRECV_OK;
 }
@@ -161,53 +165,49 @@ void tcp_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct session *restrict ss = watcher->data;
-	while (ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
-		switch (tcp_recv(ss)) {
-		case TCPRECV_OK:
-			break;
-		case TCPRECV_AGAIN:
-			session_notify(ss);
-			return;
-		case TCPRECV_EOF:
-			LOGI_F("session [%08" PRIX32 "] tcp: "
-			       "connection closed by peer",
-			       ss->conv);
-			session_tcp_stop(ss);
-			if (!session_kcp_send(ss)) {
-				kcp_reset(ss);
-				return;
-			}
-			session_kcp_close(ss);
-			return;
-		case TCPRECV_ERROR:
-			session_tcp_stop(ss);
-			kcp_reset(ss);
-			return;
-		}
+	int ret;
+	do {
+		ret = tcp_recv(ss);
 		if (!session_kcp_send(ss)) {
 			session_tcp_stop(ss);
 			kcp_reset(ss);
 			return;
 		}
+	} while (ret == TCPRECV_OK);
+
+	switch (ret) {
+	case TCPRECV_AGAIN:
+		break;
+	case TCPRECV_EOF:
+		LOGI_F("session [%08" PRIX32 "] tcp: "
+		       "connection closed by peer",
+		       ss->conv);
+		session_tcp_stop(ss);
+		if (!session_kcp_send(ss)) {
+			kcp_reset(ss);
+			return;
+		}
+		session_kcp_close(ss);
+		return;
+	case TCPRECV_ERROR:
+		session_tcp_stop(ss);
+		kcp_reset(ss);
+		return;
+	default:
+		FAIL();
 	}
 
-	ev_io_stop(loop, watcher);
+	const bool has_space = ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd;
+	ev_io_set_active(loop, watcher, has_space);
 }
 
 void tcp_notify_read(struct session *restrict ss)
 {
-	if (ss->tcp_state != STATE_CONNECTED ||
-	    ss->kcp_state != STATE_CONNECTED) {
+	if (ss->tcp_state != STATE_CONNECTED) {
 		return;
 	}
-	if (ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
-		return;
-	}
-	struct ev_io *restrict w_read = &ss->w_read;
-	if (ev_is_active(w_read)) {
-		return;
-	}
-	ev_io_start(ss->server->loop, w_read);
+	const bool has_space = ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd;
+	ev_io_set_active(ss->server->loop, &ss->w_read, has_space);
 }
 
 static int tcp_send(struct session *restrict ss)
@@ -234,9 +234,9 @@ static int tcp_send(struct session *restrict ss)
 	ss->wbuf_flush += (size_t)ret;
 	ss->stats.tcp_tx += (uintmax_t)ret;
 	ss->server->stats.tcp_tx += (uintmax_t)ret;
-	LOGV_F("session [%08" PRIX32 "] tcp: "
+	LOGV_F("session [%08" PRIX32 "] tcp fd=%d: "
 	       "send %zd/%zu bytes",
-	       ss->conv, ret, len);
+	       ss->conv, ss->tcp_fd, ret, len);
 	return 1;
 }
 
@@ -248,8 +248,6 @@ static bool on_connected(struct session *restrict ss)
 		    &(socklen_t){ sizeof(sockerr) }) == 0) {
 		if (sockerr != 0) {
 			LOGE_F("SO_ERROR: %s", strerror(sockerr));
-			session_tcp_stop(ss);
-			kcp_reset(ss);
 			return false;
 		}
 		return true;
@@ -300,9 +298,12 @@ void tcp_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	struct session *restrict ss = watcher->data;
 	if (ss->tcp_state == STATE_CONNECT) {
 		if (!on_connected(ss)) {
+			session_tcp_stop(ss);
+			kcp_reset(ss);
 			return;
 		}
 		ss->tcp_state = STATE_CONNECTED;
+		tcp_notify_read(ss);
 	}
 
 	tcp_flush(ss);

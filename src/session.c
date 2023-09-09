@@ -146,9 +146,7 @@ void session_start(struct session *restrict ss, const int fd)
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_read = &ss->w_read;
 	ev_io_set(&ss->w_read, fd, EV_READ);
-	if (ss->tcp_state == STATE_CONNECTED) {
-		ev_io_start(loop, w_read);
-	}
+	ev_io_start(loop, w_read);
 	struct ev_io *restrict w_write = &ss->w_write;
 	ev_io_set(w_write, fd, EV_WRITE);
 	ev_io_start(loop, w_write);
