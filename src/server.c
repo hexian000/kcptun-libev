@@ -243,8 +243,8 @@ bool server_resolve(struct server *restrict s)
 			return false;
 		}
 	}
-#if WITH_OBFS
 	struct pktqueue *restrict q = s->pkt.queue;
+#if WITH_OBFS
 	if (q->obfs != NULL) {
 		if (!obfs_resolve(q->obfs)) {
 			return false;
@@ -382,8 +382,8 @@ bool server_start(struct server *s)
 	}
 	ev_timer_start(loop, &s->w_timeout);
 
-#if WITH_OBFS
 	struct pktqueue *restrict q = s->pkt.queue;
+#if WITH_OBFS
 	if (q->obfs != NULL) {
 		const bool ok = obfs_start(q->obfs, s);
 		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
