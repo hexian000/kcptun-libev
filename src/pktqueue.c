@@ -232,7 +232,11 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 		const size_t cap = MAX_PACKET_SIZE - msg->off;
 		size_t len = msg->len;
 		assert(len <= mss);
-		const size_t pad = rand64n(MIN(mss - len, 15));
+		size_t pad = (len & 0x3) ? 0x4 - (len & 0x3) : 0;
+		pad += rand64n(3) * 4;
+		if (pad + len > mss) {
+			pad = mss - len;
+		}
 		if (!crypto_seal_inplace(
 			    q, msg->buf + msg->off, &len, cap, pad)) {
 			return false;
