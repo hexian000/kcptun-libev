@@ -148,10 +148,10 @@ Given a version number `MAJOR.MINOR.PATCH`:
 ## Build
 ### Dependencies
 
-| Name      | Required | Feature    |
-| --------- | -------- | ---------- |
-| libev     | yes      |            |
-| libsodium | no       | encryption |
+| Name      | Version   | Required | Feature    |
+| --------- | --------- | -------- | ---------- |
+| libev     | >= 4.31   | yes      |            |
+| libsodium | >= 1.0.18 | no       | encryption |
 
 ```sh
 # Debian & Ubuntu
