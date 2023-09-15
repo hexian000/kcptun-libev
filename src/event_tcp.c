@@ -321,7 +321,6 @@ static void connected_cb(struct session *restrict ss)
 	ss->tcp_state = STATE_CONNECTED;
 	LOGD_F("session [%08" PRIX32 "] tcp fd=%d: connected", ss->conv,
 	       ss->tcp_fd);
-	return;
 }
 
 void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)

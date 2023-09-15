@@ -72,7 +72,7 @@ static struct jutil_value *conf_parse(const char *filename)
 
 #define CASE_NAME(c)                                                           \
 	(namelen == (ARRAY_SIZE(c) - 1) &&                                     \
-	 memcmp(name, c, (ARRAY_SIZE(c) - 1) * sizeof(c[0])) == 0)
+	 memcmp(name, c, (ARRAY_SIZE(c) - 1) * sizeof((c)[0])) == 0)
 
 static bool kcp_scope_cb(
 	void *ud, const char *name, const size_t namelen,
