@@ -34,7 +34,7 @@ static bool timeout_filt(
 			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
 			       ss->conv);
 			session_tcp_stop(ss);
-			kcp_reset(ss);
+			session_kcp_close(ss);
 			break;
 		}
 		break;

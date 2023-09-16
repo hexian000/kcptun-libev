@@ -218,7 +218,7 @@ static void tcp_recv_all(struct session *restrict ss)
 		ret = tcp_recv(ss);
 		if (!session_kcp_send(ss)) {
 			session_tcp_stop(ss);
-			kcp_reset(ss);
+			session_kcp_close(ss);
 			return;
 		}
 		if (ret != TCPRECV_OK) {
@@ -234,15 +234,11 @@ static void tcp_recv_all(struct session *restrict ss)
 		       "connection closed by peer",
 		       ss->conv);
 		session_tcp_stop(ss);
-		if (!session_kcp_send(ss)) {
-			kcp_reset(ss);
-			return;
-		}
 		session_kcp_close(ss);
 		return;
 	case TCPRECV_ERROR:
 		session_tcp_stop(ss);
-		kcp_reset(ss);
+		session_kcp_close(ss);
 		return;
 	default:
 		FAIL();
@@ -292,7 +288,7 @@ static void tcp_flush(struct session *restrict ss)
 		const int ret = tcp_send(ss);
 		if (ret < 0) {
 			session_tcp_stop(ss);
-			kcp_reset(ss);
+			session_kcp_close(ss);
 			return;
 		} else if (ret == 0) {
 			/* wait next event */
@@ -310,7 +306,7 @@ static void connected_cb(struct session *restrict ss)
 		if (sockerr != 0) {
 			LOGE_F("SO_ERROR: %s", strerror(sockerr));
 			session_tcp_stop(ss);
-			kcp_reset(ss);
+			session_kcp_close(ss);
 			return;
 		}
 	} else {

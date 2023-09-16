@@ -1,7 +1,6 @@
 {
     "listen": ":5202",
     "kcp_connect": "127.0.0.1:5555",
-    "http_listen": "127.0.1.1:8081",
     "kcp": {
         "sndwnd": 256,
         "rcvwnd": 256,

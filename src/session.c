@@ -382,7 +382,7 @@ void session_read_cb(struct session *restrict ss)
 		const int ret = ss_process(ss);
 		if (ret < 0) {
 			session_tcp_stop(ss);
-			kcp_reset(ss);
+			session_kcp_close(ss);
 			return;
 		} else if (ret == 0) {
 			return;
