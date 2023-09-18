@@ -46,6 +46,7 @@ bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 		}                                                              \
 	} while (0)
 
+void setup(int argc, char **argv);
 void init(void);
 
 #if WITH_CRYPTO

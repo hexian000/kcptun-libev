@@ -46,6 +46,22 @@ bool check_rate_limit(
 
 struct mcache *msgpool;
 
+void setup(int argc, char **argv)
+{
+	UNUSED(argc);
+	UNUSED(argv);
+
+	(void)setlocale(LC_ALL, "");
+
+	struct sigaction ignore = {
+		.sa_handler = SIG_IGN,
+	};
+	if (sigaction(SIGPIPE, &ignore, NULL) != 0) {
+		const int err = errno;
+		FAILMSGF("sigaction: %s", strerror(err));
+	}
+}
+
 static void uninit(void);
 
 void init(void)
@@ -57,16 +73,6 @@ void init(void)
 		}
 	}
 
-	(void)setlocale(LC_ALL, "");
-
-	struct sigaction ignore = {
-		.sa_handler = SIG_IGN,
-	};
-	if (sigaction(SIGPIPE, &ignore, NULL) != 0) {
-		const int err = errno;
-		FAILMSGF("sigaction: %s", strerror(err));
-	}
-
 	const size_t size =
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
@@ -75,6 +81,8 @@ void init(void)
 	ikcp_segment_pool = msgpool;
 
 	srand64((uint64_t)clock_monotonic());
+
+	LOGD_F("libev: %d.%d", ev_version_major(), ev_version_minor());
 }
 
 void uninit(void)

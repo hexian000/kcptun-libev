@@ -6,6 +6,7 @@
 #include "utils/check.h"
 #include "util.h"
 
+#include <sodium/version.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -32,6 +33,7 @@ static bool crypto_init(void)
 		return false;
 	}
 	sodium_init_done = true;
+	LOGD_F("libsodium: %s", sodium_version_string());
 	return true;
 }
 

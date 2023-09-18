@@ -122,8 +122,7 @@ static void parse_args(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-	init();
-
+	setup(argc, argv);
 	parse_args(argc, argv);
 	if (args.conf_path == NULL) {
 		LOGF("config file must be specified");
@@ -139,6 +138,7 @@ int main(int argc, char **argv)
 	slog_level =
 		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
 		      LOG_LEVEL_VERBOSE);
+	init();
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
