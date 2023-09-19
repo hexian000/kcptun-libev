@@ -79,7 +79,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-	-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld --rtlib=compiler-rt" \
+        -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld --rtlib=compiler-rt" \
         -S "." -B "build"
     nice cmake --build "build"
     (cd "build/src" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
@@ -109,6 +109,18 @@ case "$1" in
     done | gcc -pipe -O2 -g -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=gnu11 \
         -Icontrib/csnippets -Icontrib -Isrc -include build/src/config.h \
         -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
+    ;;
+"san")
+    # rebuild with sanitizers
+    rm -rf "build" && mkdir -p "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Debug" \
+        -DENABLE_SANITIZERS=ON \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -S . -B "build"
+    ln -sf build/compile_commands.json compile_commands.json
+    nice cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
     ;;
 "c")
     # clean artifacts
