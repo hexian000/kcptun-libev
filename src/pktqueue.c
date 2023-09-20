@@ -70,8 +70,7 @@ static bool crypto_seal_inplace(
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	assert(size >= src_len + overhead + nonce_size);
-	const size_t npad = MIN(size - (src_len + overhead + nonce_size), pad);
-	if (!crypto_pad(data, src_len, npad)) {
+	if (!crypto_pad(data, src_len, pad)) {
 		LOGE("failed to pad packet");
 		return false;
 	}
@@ -229,13 +228,12 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
-		const size_t size = q->mss;
-		assert(size <= MAX_PACKET_SIZE - (size_t)msg->off);
+		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
 		size_t len = msg->len;
-		assert(len <= size);
-		const size_t pad = rand64n(15);
+		assert(len <= cap);
+		const size_t pad = rand64n(MIN(q->mss - len, 15));
 		if (!crypto_seal_inplace(
-			    q, msg->buf + msg->off, &len, size, pad)) {
+			    q, msg->buf + msg->off, &len, cap, pad)) {
 			return false;
 		}
 		msg->len = len;
