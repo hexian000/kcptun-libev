@@ -229,13 +229,13 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
-		const size_t cap = q->mss;
-		assert(cap <= MAX_PACKET_SIZE - msg->off);
+		const size_t size = q->mss;
+		assert(size <= MAX_PACKET_SIZE - (size_t)msg->off);
 		size_t len = msg->len;
-		assert(len <= cap);
+		assert(len <= size);
 		const size_t pad = rand64n(15);
 		if (!crypto_seal_inplace(
-			    q, msg->buf + msg->off, &len, cap, pad)) {
+			    q, msg->buf + msg->off, &len, size, pad)) {
 			return false;
 		}
 		msg->len = len;
