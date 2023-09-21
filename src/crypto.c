@@ -177,8 +177,11 @@ bool crypto_pad(unsigned char *data, const size_t len, const size_t npad)
 	return true;
 }
 
-bool crypto_unpad(unsigned char *data, const size_t len, const size_t npad)
+bool crypto_unpad(const unsigned char *data, const size_t len, const size_t npad)
 {
+	if (npad < len) {
+		return false;
+	}
 	const unsigned char v = (unsigned char)npad;
 	for (size_t i = 0; i < npad; i++) {
 		if (data[len - 1 - i] != v) {

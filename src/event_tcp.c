@@ -27,11 +27,12 @@
 void modify_io_events(
 	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
 {
-	assert(watcher->fd != -1);
+	const int fd = watcher->fd;
+	assert(fd != -1);
 	const int ioevents = events & (EV_READ | EV_WRITE);
 	if (ioevents == EV_NONE) {
 		if (ev_is_active(watcher)) {
-			LOGD_F("io fd=%d stop", watcher->fd);
+			LOGD_F("io fd=%d stop", fd);
 			ev_io_stop(loop, watcher);
 		}
 		return;
@@ -41,11 +42,11 @@ void modify_io_events(
 #ifdef ev_io_modify
 		ev_io_modify(watcher, ioevents);
 #else
-		ev_io_set(watcher, watcher->fd, ioevents);
+		ev_io_set(watcher, fd, ioevents);
 #endif
 	}
 	if (!ev_is_active(watcher)) {
-		LOGD_F("io fd=%d events=0x%x", watcher->fd, ioevents);
+		LOGD_F("io fd=%d events=0x%x", fd, ioevents);
 		ev_io_start(loop, watcher);
 	}
 }

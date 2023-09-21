@@ -42,7 +42,7 @@ size_t crypto_open(
 	size_t cipher_size);
 
 bool crypto_pad(unsigned char *data, size_t len, size_t npad);
-bool crypto_unpad(unsigned char *data, size_t len, size_t npad);
+bool crypto_unpad(const unsigned char *data, size_t len, size_t npad);
 
 void crypto_list_methods(void);
 

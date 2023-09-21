@@ -13,7 +13,6 @@
 #include "event.h"
 #include "server.h"
 #include "pktqueue.h"
-#include "obfs.h"
 #include "sockutil.h"
 #include "util.h"
 #include "kcp/ikcp.h"

@@ -1037,17 +1037,15 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 	}
 	if (conf->mode & MODE_CLIENT) {
-		if (!resolve_addr(
-			    &pkt->kcp_connect, conf->kcp_connect,
-			    RESOLVE_TCP)) {
+		sockaddr_max_t addr;
+		if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_TCP)) {
 			return false;
 		}
-		const struct sockaddr *sa = &pkt->kcp_connect.sa;
-		obfs->domain = sa->sa_family;
+		obfs->domain = addr.sa.sa_family;
 		if (!obfs_raw_start(obfs)) {
 			return false;
 		}
-		if (!obfs_ctx_dial(obfs, sa)) {
+		if (!obfs_ctx_dial(obfs, &addr.sa)) {
 			return false;
 		}
 	}
