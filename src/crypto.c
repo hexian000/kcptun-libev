@@ -21,20 +21,13 @@
 static const char crypto_tag[] = "kcptun-libev";
 #define CRYPTO_TAG_SIZE (sizeof crypto_tag)
 
-static bool crypto_init(void)
+void crypto_init_cb(void)
 {
-	static bool sodium_init_done = false;
-	if (sodium_init_done) {
-		return true;
-	}
 	const int ret = sodium_init();
 	if (ret != 0) {
-		LOGE_F("sodium_init failed: %d", ret);
-		return false;
+		FAILMSGF("sodium_init failed: %d", ret);
 	}
-	sodium_init_done = true;
 	LOGD_F("libsodium: %s", sodium_version_string());
-	return true;
 }
 
 uint32_t crypto_rand32(void)
@@ -227,9 +220,6 @@ void crypto_list_methods(void)
 
 struct crypto *crypto_new(const char *method)
 {
-	if (!crypto_init()) {
-		return NULL;
-	}
 	enum crypto_method m;
 	size_t nonce_size, overhead, key_size;
 	if (strcmp(method, strmethod(method_xchacha20poly1305_ietf)) == 0) {

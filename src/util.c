@@ -73,16 +73,21 @@ void init(void)
 		}
 	}
 
+	LOGD_F("libev: %d.%d", ev_version_major(), ev_version_minor());
+
+#if WITH_CRYPTO
+	crypto_init_cb();
+	srand64(((uint64_t)crypto_rand32() << 32u) | crypto_rand32());
+#else
+	srand64((uint64_t)clock_monotonic());
+#endif
+
 	const size_t size =
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
 	msgpool = mcache_new(MMSG_BATCH_SIZE * 2, size);
 	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
-
-	srand64((uint64_t)clock_monotonic());
-
-	LOGD_F("libev: %d.%d", ev_version_major(), ev_version_minor());
 }
 
 void uninit(void)
