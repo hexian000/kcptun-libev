@@ -72,24 +72,14 @@ void noncegen_init(struct noncegen *restrict g)
 	}
 }
 
-static void noncegen_fill_counter(struct noncegen *restrict g)
-{
-	sodium_increment(g->buf.data, g->buf.len);
-}
-
-static void noncegen_fill_random(struct noncegen *restrict g)
-{
-	randombytes_buf(g->buf.data, g->buf.len);
-}
-
 const unsigned char *noncegen_next(struct noncegen *restrict g)
 {
 	switch (g->method) {
 	case noncegen_counter:
-		noncegen_fill_counter(g);
+		sodium_increment(g->buf.data, g->buf.len);
 		break;
 	case noncegen_random:
-		noncegen_fill_random(g);
+		randombytes_buf(g->buf.data, g->buf.len);
 		break;
 	}
 	return g->buf.data;
