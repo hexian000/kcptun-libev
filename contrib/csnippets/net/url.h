@@ -60,10 +60,10 @@ bool url_parse(char *raw, struct url *url);
 /**
  * @brief Parse a URL path into segments.
  * @details The escaped path string will be destructed.
- * @param[inout] path  Pointer to URL path string, will be moved to next segment.
+ * @param[inout] path Pointer to URL path string, will be moved to next segment.
  * @param[out] segment Unescaped URL path segment string.
  * @return true if successful.
- * @note Stop iterating if *path == NULL.
+ * @note Stop iterating if *path == NULL or previous call returned false.
  */
 bool url_path_segment(char **path, char **segment);
 
@@ -74,14 +74,14 @@ bool url_path_segment(char **path, char **segment);
  * @param[out] key Unescaped URL query key string.
  * @param[out] value Unescaped URL query value string.
  * @return true if successful.
- * @note Stop iterating if *query == NULL.
+ * @note Stop iterating if *query == NULL or previous call returned false.
  */
 bool url_query_component(char **query, char **key, char **value);
 
 /**
  * @brief Unescape a full URL path string in-place.
  * @details The escaped path string will be destructed.
- * An alternative that does not split the path into segments.
+ * This is an alternative to url_path_segment that does not split the path into segments.
  * @param[inout] path URL path string.
  * @return true if successful.
  */
@@ -90,7 +90,7 @@ bool url_unescape_path(char *path);
 /**
  * @brief Unescape a full URL query string in-place.
  * @details The escaped query string will be destructed.
- * An alternative that does not split the query into components.
+ * This is an alternative to url_query_component that does not split the query into components.
  * @param[inout] path URL query string.
  * @details Useful if you don't want to extract query components.
  * @return true if successful.

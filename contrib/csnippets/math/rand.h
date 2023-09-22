@@ -23,30 +23,30 @@ uint64_t rand64(void);
 
 /**
  * @brief Seed PRNG rand64().
- * @details If rand64() is used before any calls to srand64(),
- * rand64() behaves as if it was seeded with srand64(1).
- * MT-Safe: srand64() should be called per thread.
+ * @details If rand64 is used before any calls to srand64,
+ * rand64 behaves as if it was seeded with `srand64(1)`.
+ * MT-Safe: srand64 should be called per thread.
  * @see rand64
  */
 void srand64(uint64_t seed);
 
 /**
  * @brief Generate uniformly distributed uint64_t in [0, n].
- * @details Based on rand64().
+ * @details Based on rand64.
  * @see rand64
  */
 uint64_t rand64n(uint64_t n);
 
 /**
  * @brief Generate uniformly distributed float in [0.0f, 1.0f).
- * @details Based on rand64().
+ * @details Based on rand64.
  * @see rand64
  */
 float frandf(void);
 
 /**
  * @brief Generate uniformly distributed double in [0.0, 1.0).
- * @details Based on rand64().
+ * @details Based on rand64.
  * @see rand64
  */
 double frand(void);

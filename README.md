@@ -75,7 +75,7 @@ For your convenience, some statically-linked executables are also provided in th
 
 ### Encryption
 
-kcptun-libev can optionally encrypt packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://doc.libsodium.org/).
+kcptun-libev can encrypt packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://github.com/jedisct1/libsodium).
 
 In config file:
 
@@ -100,7 +100,7 @@ kcptun-libev ships with additional encryption methods to ensure that users have 
 
 ### Obfuscation
 
-The obfuscator is a tool to fool eavesdroppers. This feature is only available on Linux.
+The obfuscator is an optional tool to fool eavesdroppers. This feature is only available on Linux.
 
 In config file:
 
@@ -143,7 +143,7 @@ Given a version number `MAJOR.MINOR.PATCH`:
 
 - As long as `MAJOR` remains unchanged, the versions should speak a compatible protocol.
 
-- As long as `MAJOR.MINOR` remains unchanged, later versions should compatible with working configuration files from previous versions.
+- As long as `MAJOR.MINOR` remains unchanged, later versions should be compatible with working configuration files from previous versions.
 
 ## Build
 ### Dependencies
@@ -253,6 +253,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 	2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
+- "kcp.mtu": IP header is included. 1492 by default.
 
 Again, there is some kcptun-libev specific options:
 
