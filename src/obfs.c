@@ -685,7 +685,6 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
 	struct server *restrict s = obfs->server;
 	assert(s->conf->mode & MODE_CLIENT);
-	struct ev_loop *loop = s->loop;
 	int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
 		const int err = errno;
@@ -704,7 +703,9 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		return false;
 	}
 
-	if (connect(fd, sa, getsocklen(sa))) {
+	struct ev_loop *loop = s->loop;
+	const socklen_t socklen = getsocklen(sa);
+	if (connect(fd, sa, socklen)) {
 		const int err = errno;
 		if (err != EINTR && err != EINPROGRESS) {
 			LOGE_F("obfs tcp connect: %s", strerror(err));
@@ -719,7 +720,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		obfs_ctx_free(loop, ctx);
 		return false;
 	}
-	memcpy(&ctx->raddr, sa, getsocklen(sa));
+	memcpy(&ctx->raddr, sa, socklen);
 	OBFS_CTX_LOG(LOG_LEVEL_INFO, ctx, "connect");
 
 	if (!obfs_bind(obfs, &ctx->laddr.sa)) {
@@ -822,11 +823,14 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	}
 	const int redial_count = ++obfs->redial_count;
 	LOGI_F("obfs: redial #%d to \"%s\"", redial_count, conf->kcp_connect);
-	struct pktconn *restrict pkt = &s->pkt;
-	if (!resolve_addr(&pkt->kcp_connect, conf->kcp_connect, RESOLVE_TCP)) {
+	sockaddr_max_t addr;
+	if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_TCP)) {
 		return;
 	}
-	(void)obfs_ctx_dial(obfs, &pkt->kcp_connect.sa);
+	if (!obfs_ctx_dial(obfs, &addr.sa)) {
+		return;
+	}
+	memcpy(&s->pkt.kcp_connect, &addr, getsocklen(&addr.sa));
 }
 
 static void
@@ -1048,6 +1052,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		if (!obfs_ctx_dial(obfs, &addr.sa)) {
 			return false;
 		}
+		memcpy(&s->pkt.kcp_connect, &addr, getsocklen(&addr.sa));
 	}
 
 	{
