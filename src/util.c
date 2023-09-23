@@ -147,7 +147,7 @@ void drop_privileges(const char *user)
 	}
 }
 
-void daemonize(const char *user)
+void daemonize(const char *user, const bool nochdir, const bool noclose)
 {
 	/* Create an anonymous pipe for communicating with daemon process. */
 	int fd[2];
@@ -191,22 +191,26 @@ void daemonize(const char *user)
 		}
 	}
 	/* In the daemon process, connect /dev/null to standard input, output, and error. */
-	FILE *f;
-	f = freopen("/dev/null", "r", stdin);
-	assert(f == stdin);
-	f = freopen("/dev/null", "w", stdout);
-	assert(f == stdout);
-	f = freopen("/dev/null", "w", stderr);
-	assert(f == stderr);
-	(void)f;
+	if (!noclose) {
+		FILE *f;
+		f = freopen("/dev/null", "r", stdin);
+		assert(f == stdin);
+		f = freopen("/dev/null", "w", stdout);
+		assert(f == stdout);
+		f = freopen("/dev/null", "w", stderr);
+		assert(f == stderr);
+		(void)f;
+	}
 	/* In the daemon process, reset the umask to 0. */
 	(void)umask(0);
 	/* In the daemon process, change the current directory to the
            root directory (/), in order to avoid that the daemon
            involuntarily blocks mount points from being unmounted. */
-	if (chdir("/") != 0) {
-		const int err = errno;
-		LOGW_F("chdir: %s", strerror(err));
+	if (!nochdir) {
+		if (chdir("/") != 0) {
+			const int err = errno;
+			LOGW_F("chdir: %s", strerror(err));
+		}
 	}
 	/* In the daemon process, drop privileges */
 	if (user != NULL) {
@@ -214,14 +218,17 @@ void daemonize(const char *user)
 	}
 	/* From the daemon process, notify the original process started
            that initialization is complete. */
-	char buf[256] = { 0 };
-	const int n = snprintf(
-		buf, sizeof(buf), "daemon process has started with pid %jd",
-		(intmax_t)getpid());
-	assert(n > 0 && (size_t)n < sizeof(buf));
-	const ssize_t nwritten = write(fd[1], buf, n);
-	assert(nwritten == n);
-	(void)nwritten;
+	{
+		char buf[256];
+		const int n = snprintf(
+			buf, sizeof(buf),
+			"daemon process has started with pid %jd",
+			(intmax_t)getpid());
+		assert(n > 0 && (size_t)n < sizeof(buf));
+		const ssize_t nwritten = write(fd[1], buf, n);
+		assert(nwritten == n);
+		(void)nwritten;
+	}
 	/* Close the anonymous pipe. */
 	(void)close(fd[1]);
 

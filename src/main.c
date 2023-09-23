@@ -159,7 +159,7 @@ int main(int argc, char **argv)
 
 	const char *user = args.user_name ? args.user_name : conf->user;
 	if (args.daemonize) {
-		daemonize(user);
+		daemonize(user, true, false);
 	} else if (user != NULL) {
 		drop_privileges(user);
 	}

@@ -54,6 +54,6 @@ void genpsk(const char *method);
 #endif
 
 void drop_privileges(const char *user);
-void daemonize(const char *user);
+void daemonize(const char *user, bool nochdir, bool noclose);
 
 #endif /* UTIL_H */
