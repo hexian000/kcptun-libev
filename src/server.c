@@ -60,7 +60,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 		return -1;
 	}
 	/* Start listing on the socket */
-	if (listen(fd, 16)) {
+	if (listen(fd, 255)) {
 		const int err = errno;
 		LOGE_F("listen error: %s", strerror(err));
 		CLOSE_FD(fd);

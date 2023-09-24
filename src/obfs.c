@@ -668,7 +668,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 		LOGE_F("obfs tcp bind: %s", strerror(err));
 		return false;
 	}
-	if (listen(obfs->fd, 16)) {
+	if (listen(obfs->fd, 15)) {
 		const int err = errno;
 		LOGE_F("obfs tcp listen: %s", strerror(err));
 		return false;
