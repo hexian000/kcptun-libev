@@ -11,8 +11,6 @@
 #include "session.h"
 #include "util.h"
 
-#include "kcp/ikcp.h"
-
 #include <ev.h>
 
 #include <stddef.h>

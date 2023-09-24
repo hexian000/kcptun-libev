@@ -76,7 +76,7 @@ ss_flush_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
 		return;
 	}
 	ikcp_flush(ss->kcp);
-	tcp_notify(ss);
+	tcp_notify_recv(ss);
 }
 
 struct session *session_new(
@@ -96,7 +96,6 @@ struct session *session_new(
 	ss->last_reset = TSTAMP_NIL;
 	ss->tcp_state = STATE_INIT;
 	ss->kcp_state = STATE_INIT;
-	ss->tcp_fd = -1;
 	ev_io_init(&ss->w_socket, tcp_socket_cb, -1, EV_NONE);
 	ss->w_socket.data = ss;
 	ev_idle_init(&ss->w_flush, ss_flush_cb);
@@ -137,7 +136,6 @@ void session_free(struct session *restrict ss)
 void session_start(struct session *restrict ss, const int fd)
 {
 	LOGD_F("session [%08" PRIX32 "] tcp: start, fd=%d", ss->conv, fd);
-	ss->tcp_fd = fd;
 	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
 	struct ev_io *restrict w_socket = &ss->w_socket;
@@ -152,15 +150,15 @@ void session_start(struct session *restrict ss, const int fd)
 void session_tcp_stop(struct session *restrict ss)
 {
 	ss->tcp_state = STATE_TIME_WAIT;
-	if (ss->tcp_fd == -1) {
+	struct ev_io *restrict w_socket = &ss->w_socket;
+	if (w_socket->fd == -1) {
 		return;
 	}
 	LOGD_F("session [%08" PRIX32 "] tcp: stop, fd=%d", ss->conv,
-	       ss->tcp_fd);
-	struct ev_loop *restrict loop = ss->server->loop;
-	ev_io_stop(loop, &ss->w_socket);
-	CLOSE_FD(ss->tcp_fd);
-	ss->tcp_fd = -1;
+	       w_socket->fd);
+	ev_io_stop(ss->server->loop, w_socket);
+	CLOSE_FD(ss->w_socket.fd);
+	ev_io_set(w_socket, -1, EV_NONE);
 }
 
 void session_kcp_stop(struct session *restrict ss)
@@ -246,7 +244,7 @@ static bool session_on_msg(
 		LOGV_F("session [%08" PRIX32 "] msg: push, %zu bytes", ss->conv,
 		       navail);
 		ss->wbuf_flush = TLV_HEADER_SIZE;
-		tcp_notify(ss);
+		tcp_notify_send(ss);
 		return true;
 	}
 	case SMSG_EOF: {
@@ -259,7 +257,7 @@ static bool session_on_msg(
 		ss->kcp_state = STATE_LINGER;
 		ss->tcp_state = STATE_LINGER;
 		ss->wbuf_flush = ss->wbuf_next;
-		tcp_notify(ss);
+		tcp_notify_send(ss);
 		return true;
 	}
 	case SMSG_KEEPALIVE: {
@@ -283,7 +281,7 @@ static bool session_on_msg(
 
 static int ss_process(struct session *restrict ss)
 {
-	if (ss->wbuf_next > ss->wbuf_flush) {
+	if (ss->wbuf_flush < ss->wbuf_next) {
 		/* tcp flushing is in progress */
 		return 0;
 	}

@@ -36,7 +36,8 @@ bool kcp_push(struct session *ss);
 void kcp_recv(struct session *ss);
 void kcp_reset(struct session *ss);
 
-void tcp_notify(struct session *ss);
+void tcp_notify_send(struct session *ss);
+void tcp_notify_recv(struct session *ss);
 
 void pkt_notify_send(struct server *s);
 

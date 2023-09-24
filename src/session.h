@@ -95,7 +95,6 @@ struct session {
 	struct server *server;
 	struct IKCPCB *kcp;
 	int tcp_state, kcp_state;
-	int tcp_fd;
 	int kcp_flush;
 	uint32_t conv;
 	sockaddr_max_t raddr;

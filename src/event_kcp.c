@@ -42,6 +42,12 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	return queue_send(s, msg) ? len : -1;
 }
 
+bool kcp_cansend(struct session *restrict ss)
+{
+	struct IKCPCB *restrict kcp = ss->kcp;
+	return kcp != NULL && ikcp_waitsnd(kcp) < kcp->snd_wnd;
+}
+
 void kcp_reset(struct session *ss)
 {
 	switch (ss->kcp_state) {
@@ -131,7 +137,7 @@ static void kcp_update(struct session *restrict ss)
 	const ev_tstamp now = ev_now(s->loop);
 	const uint32_t now_ms = TSTAMP2MS(now);
 	ikcp_update(ss->kcp, now_ms);
-	tcp_notify(ss);
+	tcp_notify_recv(ss);
 }
 
 static bool kcp_update_iter(

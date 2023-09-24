@@ -149,7 +149,7 @@ static void tcp_update(struct session *restrict ss)
 		return;
 	}
 	int events = 0;
-	if (ss->kcp != NULL && ikcp_waitsnd(ss->kcp) < ss->kcp->snd_wnd) {
+	if (kcp_cansend(ss)) {
 		events |= EV_READ;
 	}
 	if (is_linger || has_data) {
@@ -167,7 +167,7 @@ enum tcp_recv_ret {
 
 static int tcp_recv(struct session *restrict ss)
 {
-	if (ikcp_waitsnd(ss->kcp) >= ss->kcp->snd_wnd) {
+	if (!kcp_cansend(ss)) {
 		return TCPRECV_AGAIN;
 	}
 
@@ -177,10 +177,11 @@ static int tcp_recv(struct session *restrict ss)
 		return TCPRECV_AGAIN;
 	}
 
+	const int fd = ss->w_socket.fd;
 	unsigned char *buf = ss->rbuf->data + TLV_HEADER_SIZE + ss->rbuf->len;
 	size_t len = 0;
 	/* Receive message from client socket */
-	const ssize_t nread = recv(ss->tcp_fd, buf, cap, 0);
+	const ssize_t nread = recv(fd, buf, cap, 0);
 	if (nread < 0) {
 		const int err = errno;
 		if (IS_TRANSIENT_ERROR(err)) {
@@ -201,7 +202,7 @@ static int tcp_recv(struct session *restrict ss)
 		ss->server->stats.tcp_rx += len;
 		LOGV_F("session [%08" PRIX32 "] "
 		       "tcp fd=%d: recv %zu bytes, cap: %zu bytes",
-		       ss->conv, ss->tcp_fd, len, cap);
+		       ss->conv, fd, len, cap);
 	}
 	return TCPRECV_OK;
 }
@@ -253,8 +254,10 @@ static int tcp_send(struct session *restrict ss)
 	if (len == 0) {
 		return 0;
 	}
+
+	const int fd = ss->w_socket.fd;
 	unsigned char *buf = ss->wbuf->data + ss->wbuf_flush;
-	const ssize_t ret = send(ss->tcp_fd, buf, len, 0);
+	const ssize_t ret = send(fd, buf, len, 0);
 	if (ret < 0) {
 		const int err = errno;
 		if (IS_TRANSIENT_ERROR(err)) {
@@ -272,7 +275,7 @@ static int tcp_send(struct session *restrict ss)
 	ss->server->stats.tcp_tx += (uintmax_t)ret;
 	LOGV_F("session [%08" PRIX32 "] tcp fd=%d: "
 	       "send %zd/%zu bytes",
-	       ss->conv, ss->tcp_fd, ret, len);
+	       ss->conv, fd, ret, len);
 	return 1;
 }
 
@@ -300,9 +303,10 @@ static void tcp_flush(struct session *restrict ss)
 
 static void connected_cb(struct session *restrict ss)
 {
+	const int fd = ss->w_socket.fd;
 	int sockerr = 0;
 	if (getsockopt(
-		    ss->tcp_fd, SOL_SOCKET, SO_ERROR, &sockerr,
+		    fd, SOL_SOCKET, SO_ERROR, &sockerr,
 		    &(socklen_t){ sizeof(sockerr) }) == 0) {
 		if (sockerr != 0) {
 			LOGE_F("SO_ERROR: %s", strerror(sockerr));
@@ -316,8 +320,7 @@ static void connected_cb(struct session *restrict ss)
 	}
 
 	ss->tcp_state = STATE_CONNECTED;
-	LOGD_F("session [%08" PRIX32 "] tcp fd=%d: connected", ss->conv,
-	       ss->tcp_fd);
+	LOGD_F("session [%08" PRIX32 "] tcp fd=%d: connected", ss->conv, fd);
 }
 
 void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
@@ -346,9 +349,13 @@ void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	tcp_update(ss);
 }
 
-void tcp_notify(struct session *restrict ss)
+void tcp_notify_send(struct session *restrict ss)
 {
 	tcp_flush(ss);
-	tcp_recv_all(ss);
+	tcp_update(ss);
+}
+
+void tcp_notify_recv(struct session *restrict ss)
+{
 	tcp_update(ss);
 }
