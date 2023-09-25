@@ -768,13 +768,14 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 		ev_feed_event(loop, w_redial, EV_TIMER);
 		return;
 	}
-	static const double wait_schedule[] = { 5.0, 10.0, 30.0, 60.0 };
+	static const double wait_schedule[] = {
+		5.0, 10.0, 15.0, 30.0, 60.0, 120.0,
+	};
 	const double wait_time = wait_schedule[CLAMP(
 		redial_count - 1, 0, (int)ARRAY_SIZE(wait_schedule) - 1)];
 	if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
-		LOG_F(LOG_LEVEL_DEBUG,
-		      "obfs: scheduled redial #%d after %.0lfs", redial_count,
-		      wait_time);
+		LOG_F(LOG_LEVEL_DEBUG, "obfs: scheduled redial #%d after %.0fs",
+		      redial_count, wait_time);
 	}
 	ev_timer_set(w_redial, wait_time, 0.0);
 	ev_timer_start(loop, w_redial);
