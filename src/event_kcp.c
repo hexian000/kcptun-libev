@@ -48,6 +48,12 @@ bool kcp_cansend(struct session *restrict ss)
 	return kcp != NULL && ikcp_waitsnd(kcp) < kcp->snd_wnd;
 }
 
+bool kcp_canrecv(struct session *restrict ss)
+{
+	struct IKCPCB *restrict kcp = ss->kcp;
+	return kcp != NULL && ikcp_peeksize(kcp) > 0;
+}
+
 void kcp_reset(struct session *ss)
 {
 	switch (ss->kcp_state) {

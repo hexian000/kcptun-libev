@@ -152,7 +152,7 @@ static void tcp_update(struct session *restrict ss)
 	if (kcp_cansend(ss)) {
 		events |= EV_READ;
 	}
-	if (is_linger || has_data) {
+	if (is_linger || has_data || kcp_canrecv(ss)) {
 		events |= EV_WRITE;
 	}
 	modify_io_events(ss->server->loop, &ss->w_socket, events);
