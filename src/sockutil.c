@@ -263,7 +263,7 @@ bool resolve_addr(sockaddr_max_t *sa, const char *s, const int flags)
 		.ai_family = PF_UNSPEC,
 		.ai_socktype = SOCK_STREAM,
 		.ai_protocol = IPPROTO_TCP,
-		.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG,
+		.ai_flags = AI_ADDRCONFIG,
 	};
 	if (flags & RESOLVE_UDP) {
 		hints.ai_socktype = SOCK_DGRAM;
