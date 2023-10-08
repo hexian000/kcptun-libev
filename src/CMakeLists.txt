@@ -42,11 +42,6 @@ target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
 target_link_libraries(kcptun-libev PRIVATE kcp json bloom csnippets)
 
-find_library(LIBM NAMES m)
-if(LIBM)
-    target_link_libraries(kcptun-libev PRIVATE ${LIBM})
-endif()
-
 # find libev
 find_path(LIBEV_INCLUDE_DIR NAMES ev.h)
 if(BUILD_STATIC OR LINK_STATIC_LIBS)
@@ -75,6 +70,11 @@ else()
     set(WITH_SODIUM 1)
     target_include_directories(kcptun-libev SYSTEM PRIVATE ${SODIUM_INCLUDE_DIR})
     target_link_libraries(kcptun-libev PRIVATE ${SODIUM_LIBRARY})
+endif()
+
+find_library(LIBM NAMES m)
+if(LIBM)
+    target_link_libraries(kcptun-libev PRIVATE ${LIBM})
 endif()
 
 install(TARGETS kcptun-libev DESTINATION bin)
