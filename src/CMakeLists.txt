@@ -72,9 +72,10 @@ else()
     target_link_libraries(kcptun-libev PRIVATE ${SODIUM_LIBRARY})
 endif()
 
-find_library(LIBM NAMES m)
+include(CheckLibraryExists)
+check_library_exists(m fmod "" LIBM)
 if(LIBM)
-    target_link_libraries(kcptun-libev PRIVATE ${LIBM})
+    target_link_libraries(kcptun-libev PRIVATE m)
 endif()
 
 install(TARGETS kcptun-libev DESTINATION bin)
