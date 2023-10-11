@@ -1326,7 +1326,8 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (doff < sizeof(struct tcphdr) || plen < doff) {
 		return NULL;
 	}
-	if (!IN6_IS_ADDR_LOOPBACK(&ip6.ip6_src)) {
+	const struct in6_addr ip6_src = ip6.ip6_src;
+	if (!IN6_IS_ADDR_LOOPBACK(&ip6_src)) {
 		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
 			.src = ip6.ip6_src,
 			.dst = ip6.ip6_dst,
