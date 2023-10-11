@@ -23,7 +23,7 @@ else()
     message(STATUS "POSIX-compliant System: ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_VERSION}")
 endif()
 
-if(TARGET_GNU_LINUX || TARGET_ANDROID)
+if(TARGET_GNU_LINUX OR TARGET_ANDROID)
     list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
     target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
 else()
