@@ -35,6 +35,7 @@
 #include <netinet/tcp.h>
 #include <net/if.h>
 #include <linux/filter.h>
+#include <linux/if_ether.h>
 #include <linux/if_packet.h>
 
 #include <assert.h>
