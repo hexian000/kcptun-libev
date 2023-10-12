@@ -19,6 +19,7 @@
 static struct {
 	const char *conf_path;
 	const char *user_name;
+	const char *genpsk;
 	int verbosity;
 	bool daemonize : 1;
 } args = { 0 };
@@ -90,8 +91,8 @@ static void parse_args(int argc, char **argv)
 		}
 		if (strcmp(argv[i], "--genpsk") == 0) {
 			OPT_REQUIRE_ARG(argc, argv, i);
-			genpsk(argv[++i]);
-			exit(EXIT_SUCCESS);
+			args.genpsk = argv[++i];
+			continue;
 		}
 #endif
 		if (strcmp(argv[i], "-v") == 0 ||
@@ -124,6 +125,12 @@ int main(int argc, char **argv)
 {
 	setup(argc, argv);
 	parse_args(argc, argv);
+	slog_level = LOG_LEVEL_INFO + args.verbosity;
+	init();
+	if (args.genpsk) {
+		genpsk(args.genpsk);
+		return EXIT_SUCCESS;
+	}
 	if (args.conf_path == NULL) {
 		LOGF("config file must be specified");
 		print_usage(argv[0]);
@@ -138,7 +145,6 @@ int main(int argc, char **argv)
 	slog_level =
 		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
 		      LOG_LEVEL_VERBOSE);
-	init();
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
