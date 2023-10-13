@@ -99,6 +99,7 @@ void uninit(void)
 #if WITH_CRYPTO
 void genpsk(const char *method)
 {
+	init();
 	struct crypto *crypto = crypto_new(method);
 	if (crypto == NULL) {
 		LOGF("failed to initialize crypto");

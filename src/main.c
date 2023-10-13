@@ -119,14 +119,13 @@ static void parse_args(int argc, char **argv)
 	}
 
 #undef OPT_REQUIRE_ARG
+	slog_level = LOG_LEVEL_INFO + args.verbosity;
 }
 
 int main(int argc, char **argv)
 {
 	setup(argc, argv);
 	parse_args(argc, argv);
-	slog_level = LOG_LEVEL_INFO + args.verbosity;
-	init();
 	if (args.genpsk) {
 		genpsk(args.genpsk);
 		return EXIT_SUCCESS;
@@ -134,9 +133,8 @@ int main(int argc, char **argv)
 	if (args.conf_path == NULL) {
 		LOGF("config file must be specified");
 		print_usage(argv[0]);
-		exit(EXIT_FAILURE);
+		return EXIT_FAILURE;
 	}
-
 	struct config *restrict conf = conf_read(args.conf_path);
 	if (conf == NULL) {
 		LOGF("failed to read config");
@@ -145,6 +143,7 @@ int main(int argc, char **argv)
 	slog_level =
 		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
 		      LOG_LEVEL_VERBOSE);
+	init();
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
