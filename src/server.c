@@ -531,7 +531,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 
 struct server_stats_ctx {
 	size_t num_in_state[STATE_MAX];
-	size_t waitsnd, stalled;
+	size_t waitsnd;
 	int level;
 	ev_tstamp now;
 	struct vbuffer *restrict buf;
@@ -549,16 +549,16 @@ static bool print_session_iter(
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;
 	const size_t waitsnd = (ss->kcp != NULL) ? ikcp_waitsnd(ss->kcp) : 0;
-	ctx->waitsnd += waitsnd;
-	struct ev_io *restrict w_socket = &ss->w_socket;
-	if (((ss->tcp_state == STATE_CONNECT) ||
-	     (ss->tcp_state == STATE_CONNECTED) ||
-	     (ss->tcp_state == STATE_LINGER)) &&
-	    (!ev_is_active(w_socket) || !(w_socket->events & EV_READ) ||
-	     (w_socket->events & EV_WRITE))) {
-		ctx->stalled++;
+	switch (state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+	case STATE_LINGER:
+		ctx->waitsnd += waitsnd;
+		break;
+	default:
+		break;
 	}
-	if (ss->kcp_state > ctx->level) {
+	if (state > ctx->level) {
 		return true;
 	}
 	char addr_str[64];
@@ -608,11 +608,11 @@ static struct vbuffer *print_session_table(
 	table_iterate(s->sessions, &print_session_iter, &ctx);
 	return VBUF_APPENDF(
 		ctx.buf,
-		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; stalled=%zu, waitsnd=%zu\n\n",
+		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; waitsnd=%zu\n\n",
 		table_size(s->sessions), ctx.num_in_state[STATE_CONNECT],
 		ctx.num_in_state[STATE_CONNECTED],
 		ctx.num_in_state[STATE_LINGER],
-		ctx.num_in_state[STATE_TIME_WAIT], ctx.stalled, ctx.waitsnd);
+		ctx.num_in_state[STATE_TIME_WAIT], ctx.waitsnd);
 }
 
 static struct vbuffer *append_traffic_stats(
