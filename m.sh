@@ -112,8 +112,8 @@ case "$1" in
         -Icontrib/csnippets -Icontrib -Isrc -include build/src/config.h \
         -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
     ;;
-"san")
-    # rebuild with sanitizers
+"asan")
+    # rebuild with asan
     rm -rf "build" && mkdir -p "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Debug" \
@@ -122,6 +122,18 @@ case "$1" in
         -S . -B "build"
     ln -sf build/compile_commands.json compile_commands.json
     nice cmake --build "build" --parallel
+    ls -lh "build/src/kcptun-libev"
+    ;;
+"clang-asan")
+    # rebuild with clang & asan
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Debug" \
+        -DENABLE_SANITIZERS=ON \
+        -DCMAKE_C_COMPILER="clang" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -S "." -B "build"
+    nice cmake --build "build"
     ls -lh "build/src/kcptun-libev"
     ;;
 "c")
