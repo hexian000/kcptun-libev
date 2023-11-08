@@ -4,6 +4,10 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "utils/slog.h"
+#include "utils/buffer.h"
+#include "utils/debug.h"
+
 #include <ev.h>
 
 #include <errno.h>
@@ -24,6 +28,34 @@
 			LOGW_F("close: %s", strerror(close_err));              \
 		}                                                              \
 	} while (0)
+
+#define LOG_TXT_F(level, txt, txtsize, format, ...)                            \
+	do {                                                                   \
+		if (!LOGLEVEL(level)) {                                        \
+			break;                                                 \
+		}                                                              \
+		struct vbuffer *vbuf =                                         \
+			print_txt(NULL, "  ", (txt), (txtsize));               \
+		LOG_F(level, format "\n%.*s", __VA_ARGS__, (int)vbuf->len,     \
+		      vbuf->data);                                             \
+		VBUF_FREE(vbuf);                                               \
+	} while (0)
+#define LOG_TXT(level, txt, txtsize, msg)                                      \
+	LOG_TXT_F(level, txt, txtsize, "%s", msg)
+
+#define LOG_BIN_F(level, bin, binsize, format, ...)                            \
+	do {                                                                   \
+		if (!LOGLEVEL(level)) {                                        \
+			break;                                                 \
+		}                                                              \
+		struct vbuffer *vbuf =                                         \
+			print_bin(NULL, "  ", (bin), (binsize));               \
+		LOG_F(level, format "\n%.*s", __VA_ARGS__, (int)vbuf->len,     \
+		      vbuf->data);                                             \
+		VBUF_FREE(vbuf);                                               \
+	} while (0)
+#define LOG_BIN(level, bin, binsize, msg)                                      \
+	LOG_BIN_F(level, bin, binsize, "%s", msg)
 
 extern struct mcache *msgpool;
 

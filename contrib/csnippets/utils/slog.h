@@ -5,9 +5,9 @@
 #define UTILS_SLOG_H
 
 #include <stdio.h>
-#include <errno.h>
-#include <string.h>
-#include <time.h>
+#if HAVE_SYSLOG
+#include <syslog.h>
+#endif
 
 enum {
 	LOG_LEVEL_SILENCE,
@@ -29,132 +29,88 @@ enum {
 
 extern int slog_level;
 extern FILE *slog_file;
-void slog_write_txt(const void *data, size_t n);
-void slog_write_bin(const void *data, size_t n);
 
-#if defined(_MSC_VER)
-#define PATH_SEPARATOR '\\'
-#else
-#define PATH_SEPARATOR '/'
-#endif
-
-#define LOGLEVEL(x) ((x) <= slog_level)
+void slog_write(int level, const char *path, int line, const char *format, ...);
 
 #define LOG_WRITE(level, path, line, format, ...)                              \
-	do {                                                                   \
-		FILE *log_fp = slog_file ? slog_file : stdout;                 \
-		const time_t log_now = time(NULL);                             \
-		char log_timestamp[32];                                        \
-		const int timestamp_len = strftime(                            \
-			log_timestamp, sizeof(log_timestamp), "%FT%T%z",       \
-			localtime(&log_now));                                  \
-		const char *log_filename = strrchr((path), PATH_SEPARATOR);    \
-		if (log_filename && *log_filename) {                           \
-			log_filename++;                                        \
-		} else {                                                       \
-			log_filename = (path);                                 \
-		}                                                              \
-		(void)fprintf(                                                 \
-			log_fp, level##_STR " %.*s %s:%d " format "\n",        \
-			timestamp_len, log_timestamp, log_filename, (line),    \
-			__VA_ARGS__);                                          \
-		(void)fflush(log_fp);                                          \
-	} while (0)
+	slog_write((level), (path), (line), (format), __VA_ARGS__)
 
 /* LOG: Log a message unconditionally. */
 #define LOG_F(level, format, ...)                                              \
 	LOG_WRITE(level, __FILE__, __LINE__, format, __VA_ARGS__);
 #define LOG(level, message) LOG_F(level, "%s", message)
 
-/* LOG_TXT: Log a text buffer, usually for debugging. */
-#define LOG_TXT_F(level, txt, maxlen, format, ...)                             \
-	do {                                                                   \
-		if (LOGLEVEL(level)) {                                         \
-			LOG_WRITE(                                             \
-				level, __FILE__, __LINE__, format,             \
-				__VA_ARGS__);                                  \
-			slog_write_txt((txt), (maxlen));                       \
-		}                                                              \
-	} while (0)
-#define LOG_TXT(level, txt, maxlen, message)                                   \
-	LOG_TXT_F(level, txt, maxlen, "%s", message)
-
-/* LOG_BIN: Log a binary buffer, usually for debugging. */
-#define LOG_BIN_F(level, bin, len, format, ...)                                \
-	do {                                                                   \
-		if (LOGLEVEL(level)) {                                         \
-			LOG_WRITE(                                             \
-				level, __FILE__, __LINE__, format,             \
-				__VA_ARGS__);                                  \
-			slog_write_bin((bin), (len));                          \
-		}                                                              \
-	} while (0)
-#define LOG_BIN(level, bin, len, message)                                      \
-	LOG_BIN_F(level, bin, len, "%s", message)
+#define LOGLEVEL(x) ((x) <= slog_level)
 
 /* LOGF: Log a fatal message. */
 #define LOGF_F(format, ...)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_FATAL)) {                               \
-			LOG_WRITE(                                             \
-				LOG_LEVEL_FATAL, __FILE__, __LINE__, format,   \
-				__VA_ARGS__);                                  \
+		if (!LOGLEVEL(LOG_LEVEL_FATAL)) {                              \
+			break;                                                 \
 		}                                                              \
+		LOG_WRITE(                                                     \
+			LOG_LEVEL_FATAL, __FILE__, __LINE__, format,           \
+			__VA_ARGS__);                                          \
 	} while (0)
 #define LOGF(message) LOGF_F("%s", message)
 
 /* Error: Log an error message. */
 #define LOGE_F(format, ...)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_ERROR)) {                               \
-			LOG_WRITE(                                             \
-				LOG_LEVEL_ERROR, __FILE__, __LINE__, format,   \
-				__VA_ARGS__);                                  \
+		if (!LOGLEVEL(LOG_LEVEL_ERROR)) {                              \
+			break;                                                 \
 		}                                                              \
+		LOG_WRITE(                                                     \
+			LOG_LEVEL_ERROR, __FILE__, __LINE__, format,           \
+			__VA_ARGS__);                                          \
 	} while (0)
 #define LOGE(message) LOGE_F("%s", message)
 
 /* Warning: Log a warning message. */
 #define LOGW_F(format, ...)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_WARNING)) {                             \
-			LOG_WRITE(                                             \
-				LOG_LEVEL_WARNING, __FILE__, __LINE__, format, \
-				__VA_ARGS__);                                  \
+		if (!LOGLEVEL(LOG_LEVEL_WARNING)) {                            \
+			break;                                                 \
 		}                                                              \
+		LOG_WRITE(                                                     \
+			LOG_LEVEL_WARNING, __FILE__, __LINE__, format,         \
+			__VA_ARGS__);                                          \
 	} while (0)
 #define LOGW(message) LOGW_F("%s", message)
 
 /* Info: Log an info message. */
 #define LOGI_F(format, ...)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {                                \
-			LOG_WRITE(                                             \
-				LOG_LEVEL_INFO, __FILE__, __LINE__, format,    \
-				__VA_ARGS__);                                  \
+		if (!LOGLEVEL(LOG_LEVEL_INFO)) {                               \
+			break;                                                 \
 		}                                                              \
+		LOG_WRITE(                                                     \
+			LOG_LEVEL_INFO, __FILE__, __LINE__, format,            \
+			__VA_ARGS__);                                          \
 	} while (0)
 #define LOGI(message) LOGI_F("%s", message)
 
 /* Debug: Log a debug message. */
 #define LOGD_F(format, ...)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {                               \
-			LOG_WRITE(                                             \
-				LOG_LEVEL_DEBUG, __FILE__, __LINE__, format,   \
-				__VA_ARGS__);                                  \
+		if (!LOGLEVEL(LOG_LEVEL_DEBUG)) {                              \
+			break;                                                 \
 		}                                                              \
+		LOG_WRITE(                                                     \
+			LOG_LEVEL_DEBUG, __FILE__, __LINE__, format,           \
+			__VA_ARGS__);                                          \
 	} while (0)
 #define LOGD(message) LOGD_F("%s", message)
 
 /* Verbose: Log a verbose message. */
 #define LOGV_F(format, ...)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {                             \
-			LOG_WRITE(                                             \
-				LOG_LEVEL_VERBOSE, __FILE__, __LINE__, format, \
-				__VA_ARGS__);                                  \
+		if (!LOGLEVEL(LOG_LEVEL_VERBOSE)) {                            \
+			break;                                                 \
 		}                                                              \
+		LOG_WRITE(                                                     \
+			LOG_LEVEL_VERBOSE, __FILE__, __LINE__, format,         \
+			__VA_ARGS__);                                          \
 	} while (0)
 #define LOGV(message) LOGV_F("%s", message)
 

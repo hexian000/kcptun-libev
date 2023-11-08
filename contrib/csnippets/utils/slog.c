@@ -2,75 +2,115 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "slog.h"
+#include "buffer.h"
 
 #include <ctype.h>
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 
 int slog_level = LOG_LEVEL_VERBOSE;
 FILE *slog_file = NULL;
 
+const unsigned char slog_level_char[] = {
+	'-', 'F', 'E', 'W', 'I', 'D', 'V',
+};
+
+_Thread_local struct {
+	BUFFER_HDR;
+	unsigned char data[BUFSIZ];
+} slog_buffer;
+
+#if defined(_MSC_VER)
+#define PATH_SEPARATOR '\\'
+#else
+#define PATH_SEPARATOR '/'
+#endif
+
 #define STRLEN(s) (sizeof(s) - 1)
 
-void slog_write_txt(const void *data, const size_t n)
+#if HAVE_SYSLOG
+static void slog_write_syslog(
+	const int level, const char *path, const int line, const char *format,
+	va_list args)
 {
-	FILE *log_fp = slog_file ? slog_file : stdout;
-	const char *restrict s = data;
-	size_t line = 1, wrap = 0;
-	for (size_t i = 0; s[i] != '\0' && i < n; i++) {
-		if (wrap == 0) {
-			fprintf(log_fp, "%4zu ", line);
-		}
-		const char ch = s[i];
-		if (ch == '\n') {
-			/* soft wrap */
-			fputc('\n', log_fp);
-			line++;
-			wrap = 0;
-			continue;
-		}
-		if (wrap >= (80 - STRLEN("  0000 ") - STRLEN(" +"))) {
-			/* hard wrap */
-			fputs(" +\n     ", log_fp);
-			wrap = 0;
-		}
-		fputc(isprint(ch) ? ch : '?', log_fp);
-		wrap++;
+	static const int slog_level_map[] = {
+		LOG_EMERG, LOG_CRIT,  LOG_ERR,	 LOG_WARNING,
+		LOG_INFO,  LOG_DEBUG, LOG_DEBUG,
+	};
+
+	const char *log_filename = strrchr(path, PATH_SEPARATOR);
+	if (log_filename && *log_filename) {
+		log_filename++;
+	} else {
+		log_filename = path;
 	}
-	if (wrap > 0) {
-		fputc('\n', log_fp);
+
+	BUF_INIT(slog_buffer, 0);
+	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
+	if (ret < 0) {
+		BUF_APPENDCONST(slog_buffer, "<log format error>");
 	}
-	fflush(log_fp);
+
+	syslog(LOG_USER | slog_level_map[(level)], "%c %s:%d %.*s",
+	       slog_level_char[level], log_filename, (line),
+	       (int)slog_buffer.len, slog_buffer.data);
+}
+#endif
+
+static inline int format_timestamp(char *s, size_t maxsize, const time_t *timer)
+{
+#if HAVE_LOCALTIME_R
+	struct tm t;
+	return strftime(s, maxsize, "%FT%T%z", localtime_r(timer, &t));
+#else
+	return strftime(s, maxsize, "%FT%T%z", localtime(timer));
+#endif
 }
 
-void slog_write_bin(const void *data, const size_t n)
+void slog_write(
+	const int level, const char *path, const int line, const char *format,
+	...)
 {
-	FILE *log_fp = slog_file ? slog_file : stdout;
-	const size_t wrap = 16;
-	const uint8_t *restrict b = data;
-	for (size_t i = 0; i < n; i += wrap) {
-		fprintf(log_fp, "  %p: ", (void *)(b + i));
-		for (size_t j = 0; j < wrap; j++) {
-			if ((i + j) < n) {
-				fprintf(log_fp, "%02" PRIX8 " ", b[i + j]);
-			} else {
-				fputs("   ", log_fp);
-			}
-		}
-		fputc(' ', log_fp);
-		for (size_t j = 0; j < wrap; j++) {
-			char ch = ' ';
-			if ((i + j) < n) {
-				ch = (char)b[i + j];
-				if (!isprint(ch)) {
-					ch = '.';
-				}
-			}
-			fputc(ch, log_fp);
-		}
-		fputc('\n', log_fp);
+	FILE *stream = slog_file;
+	if (stream == NULL) {
+		va_list args;
+		va_start(args, format);
+		slog_write_syslog(level, path, line, format, args);
+		va_end(args);
+		return;
 	}
-	fflush(log_fp);
+	const time_t log_now = time(NULL);
+	BUF_INIT(slog_buffer, 2);
+	slog_buffer.data[0] = slog_level_char[level];
+	slog_buffer.data[1] = ' ';
+	slog_buffer.len += format_timestamp(
+		(char *)slog_buffer.data + slog_buffer.len,
+		slog_buffer.cap - slog_buffer.len, &log_now);
+
+	const char *log_filename = strrchr(path, PATH_SEPARATOR);
+	if (log_filename && *log_filename) {
+		log_filename++;
+	} else {
+		log_filename = path;
+	}
+	BUF_APPENDF(slog_buffer, " %s:%d ", log_filename, line);
+
+	va_list args;
+	va_start(args, format);
+	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
+	va_end(args);
+	if (ret < 0) {
+		BUF_APPENDCONST(slog_buffer, "<log format error>");
+	}
+	/* overwritting the null terminator is not an issue */
+	BUF_APPENDCONST(slog_buffer, "\n");
+
+	(void)fwrite(
+		slog_buffer.data, sizeof(slog_buffer.data[0]), slog_buffer.len,
+		stream);
+	(void)fflush(stream);
 }

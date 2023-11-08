@@ -63,7 +63,7 @@ bool url_parse(char *raw, struct url *url);
  * @param[inout] path Pointer to URL path string, will be moved to next segment.
  * @param[out] segment Unescaped URL path segment string.
  * @return true if successful.
- * @note Stop iterating if *path == NULL or previous call returned false.
+ * @note Stop iterating if `*path == NULL` or previous call returned false.
  */
 bool url_path_segment(char **path, char **segment);
 
@@ -74,7 +74,7 @@ bool url_path_segment(char **path, char **segment);
  * @param[out] key Unescaped URL query key string.
  * @param[out] value Unescaped URL query value string.
  * @return true if successful.
- * @note Stop iterating if *query == NULL or previous call returned false.
+ * @note Stop iterating if `*query == NULL` or previous call returned false.
  */
 bool url_query_component(char **query, char **key, char **value);
 

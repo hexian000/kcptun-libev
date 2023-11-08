@@ -7,6 +7,7 @@
 #include "minmax.h"
 
 #include <assert.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -47,6 +48,9 @@ buf_append(struct vbuffer *restrict buf, const unsigned char *data, size_t n)
 int buf_appendf(struct vbuffer *buf, const char *format, ...);
 
 /** @internal */
+int buf_vappendf(struct vbuffer *buf, const char *format, va_list args);
+
+/** @internal */
 struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, size_t cap);
 
 /** @internal */
@@ -55,6 +59,10 @@ vbuf_append(struct vbuffer *vbuf, const unsigned char *data, size_t n);
 
 /** @internal */
 struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
+
+/** @internal */
+struct vbuffer *
+vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
 
 /**
  * @defgroup BUF
@@ -95,7 +103,7 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 /**
  * @brief Append constant null-terminated string to buffer.
  * @details The string will be truncated if there is not enough space.
- * usage: `buf = BUF_APPENDCONST(buf, "some string");`
+ * usage: `size_t n = BUF_APPENDCONST(buf, "some string");`
  */
 #define BUF_APPENDCONST(buf, str)                                              \
 	(assert((buf).len <= (buf).cap),                                       \
@@ -106,7 +114,7 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 /**
  * @brief Append null-terminated string to buffer.
  * @details The string will be truncated if there is not enough space.
- * usage: `buf = BUF_APPENDSTR(buf, str);`
+ * usage: `size_t n = BUF_APPENDSTR(buf, str);`
  */
 #define BUF_APPENDSTR(buf, str)                                                \
 	(assert((buf).len <= (buf).cap),                                       \
@@ -117,11 +125,15 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 /**
  * @brief Append formatted string to buffer.
  * @details The string will be truncated if there is not enough space.
- * usage: `buf = BUF_APPENDF(buf, "%s: %s\r\n", "Content-Type", "text/plain");`
+ * usage: `int ret = BUF_APPENDF(buf, "%s: %s\r\n", "Content-Type", "text/plain");`
  */
 #define BUF_APPENDF(buf, format, ...)                                          \
 	(assert((buf).len <= (buf).cap),                                       \
 	 buf_appendf((struct vbuffer *)&(buf), (format), __VA_ARGS__))
+
+#define BUF_VAPPENDF(buf, format, args)                                        \
+	(assert((buf).len <= (buf).cap),                                       \
+	 buf_vappendf((struct vbuffer *)&(buf), (format), (args)))
 
 /**
  * @brief Remove n bytes from the start of the buffer.
@@ -234,6 +246,9 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
  */
 #define VBUF_APPENDF(vbuf, format, ...)                                        \
 	(VBUF_ASSERT_BOUND(vbuf), vbuf_appendf((vbuf), (format), __VA_ARGS__))
+
+#define VBUF_VAPPENDF(vbuf, format, args)                                      \
+	(VBUF_ASSERT_BOUND(vbuf), vbuf_vappendf((vbuf), (format), (args)))
 
 /**
  * @brief Remove n bytes from the start of the vbuffer.

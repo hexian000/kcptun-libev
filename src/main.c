@@ -41,7 +41,7 @@ static void print_usage(char *argv0)
 	fprintf(stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
 		"  -c, --config <file>        specify json config\n"
-		"  -d, --daemonize            run in background and discard all logs\n"
+		"  -d, --daemonize            run in background and write logs to syslog\n"
 		"  -u, --user <name>          run as the specified limited user, e.g. nobody\n"
 		"  -v, --verbose              increase logging verbosity, can be specified more than once\n"
 		"                             e.g. \"-v -v\" prints verbose messages\n"

@@ -8,20 +8,26 @@
 #include <stdint.h>
 #include <stdio.h>
 
-int buf_appendf(struct vbuffer *restrict buf, const char *format, ...)
+int buf_vappendf(struct vbuffer *buf, const char *format, va_list args)
 {
 	char *b = (char *)(buf->data + buf->len);
 	const size_t maxlen = buf->cap - buf->len;
 	if (maxlen == 0) {
 		return 0;
 	}
-	va_list args;
-	va_start(args, format);
 	const int ret = vsnprintf(b, maxlen, format, args);
-	va_end(args);
 	if (ret > 0) {
 		buf->len += MIN((size_t)ret, maxlen - 1);
 	}
+	return ret;
+}
+
+int buf_appendf(struct vbuffer *buf, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	const int ret = buf_vappendf(buf, format, args);
+	va_end(args);
 	return ret;
 }
 
@@ -98,7 +104,7 @@ vbuf_append(struct vbuffer *restrict vbuf, const unsigned char *data, size_t n)
 }
 
 struct vbuffer *
-vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
+vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args)
 {
 	char *b = NULL;
 	size_t maxlen = 0;
@@ -107,13 +113,11 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
 		maxlen = vbuf->cap - vbuf->len;
 	}
 
-	va_list args, args0;
-	va_start(args, format);
+	va_list args0;
 	va_copy(args0, args);
 	int ret = vsnprintf(b, maxlen, format, args0);
 	va_end(args0);
 	if (ret <= 0) {
-		va_end(args);
 		return vbuf;
 	}
 	size_t want = (size_t)ret + (size_t)1;
@@ -122,27 +126,33 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
 		if (want <= vbuf->cap) {
 			/* first try success */
 			vbuf->len += (size_t)ret;
-			va_end(args);
 			return vbuf;
 		}
 		vbuf = vbuf_grow(vbuf, want);
 		if (vbuf->cap < want) {
-			va_end(args);
 			return vbuf;
 		}
 	} else {
 		vbuf = vbuf_alloc(NULL, want);
 		if (vbuf == NULL) {
-			va_end(args);
 			return NULL;
 		}
 	}
 	maxlen = vbuf->cap - vbuf->len;
 	b = (char *)(vbuf->data + vbuf->len);
 	ret = vsnprintf(b, maxlen, format, args);
-	va_end(args);
 	if (ret > 0) {
 		vbuf->len += (size_t)ret;
 	}
 	return vbuf;
+}
+
+struct vbuffer *
+vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	struct vbuffer *ret = vbuf_vappendf(vbuf, format, args);
+	va_end(args);
+	return ret;
 }
