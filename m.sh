@@ -93,11 +93,15 @@ case "$1" in
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DLINK_STATIC_LIBS=TRUE \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    zip -9j "build/kcptun-libev.x86_64-pc-msys.zip" \
+        "build/src/kcptun-libev" \
+        "/usr/bin/msys-2.0.dll"
+    ls -lh "build/kcptun-libev.x86_64-pc-msys.zip"
     ;;
 "single")
     # rebuild as single file
@@ -111,6 +115,7 @@ case "$1" in
     done | gcc -pipe -O2 -g -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=gnu11 \
         -Icontrib/csnippets -Icontrib -Isrc -include build/src/config.h \
         -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
+    ls -lh "build/src/kcptun-libev"
     ;;
 "asan")
     # rebuild with asan

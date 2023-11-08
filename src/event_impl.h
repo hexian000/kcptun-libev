@@ -5,8 +5,8 @@
 #define EVENT_IMPL_H
 
 #include <ev.h>
-#include <errno.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <string.h>
 
