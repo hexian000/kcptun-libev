@@ -3,9 +3,16 @@
 
 #include "slog.h"
 #include "buffer.h"
+#include <sys/syslog.h>
 
+#if HAVE_SYSLOG
+#include <syslog.h>
+#endif
+
+#include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -13,16 +20,43 @@
 #include <time.h>
 
 int slog_level = LOG_LEVEL_VERBOSE;
-FILE *slog_file = NULL;
+static int slog_output_type = SLOG_OUTPUT_DISCARD;
+static FILE *slog_file = NULL;
 
-const unsigned char slog_level_char[] = {
-	'-', 'F', 'E', 'W', 'I', 'D', 'V',
+static const unsigned char slog_level_char[] = {
+	'-', 'F', 'E', 'W', 'N', 'I', 'D', 'V',
 };
 
-_Thread_local struct {
+static _Thread_local struct {
 	BUFFER_HDR;
 	unsigned char data[BUFSIZ];
 } slog_buffer;
+
+void slog_setoutput(const int type, ...)
+{
+	va_list args;
+	va_start(args, type);
+	switch (type) {
+	case SLOG_OUTPUT_DISCARD: {
+		slog_file = NULL;
+	} break;
+	case SLOG_OUTPUT_FILE: {
+		FILE *stream = va_arg(args, FILE *);
+		assert(stream != NULL);
+		(void)setvbuf(stream, NULL, _IONBF, 0);
+		slog_file = stream;
+	} break;
+	case SLOG_OUTPUT_SYSLOG: {
+		const char *ident = va_arg(args, const char *);
+#if HAVE_SYSLOG
+		openlog(ident, LOG_PID | LOG_NDELAY, LOG_USER);
+#endif
+		slog_file = NULL;
+	} break;
+	}
+	va_end(args);
+	slog_output_type = type;
+}
 
 #if defined(_MSC_VER)
 #define PATH_SEPARATOR '\\'
@@ -30,16 +64,14 @@ _Thread_local struct {
 #define PATH_SEPARATOR '/'
 #endif
 
-#define STRLEN(s) (sizeof(s) - 1)
-
 #if HAVE_SYSLOG
 static void slog_write_syslog(
 	const int level, const char *path, const int line, const char *format,
 	va_list args)
 {
 	static const int slog_level_map[] = {
-		LOG_EMERG, LOG_CRIT,  LOG_ERR,	 LOG_WARNING,
-		LOG_INFO,  LOG_DEBUG, LOG_DEBUG,
+		LOG_ALERT,  LOG_CRIT, LOG_ERR,	 LOG_WARNING,
+		LOG_NOTICE, LOG_INFO, LOG_DEBUG, LOG_DEBUG,
 	};
 
 	const char *log_filename = strrchr(path, PATH_SEPARATOR);
@@ -61,35 +93,51 @@ static void slog_write_syslog(
 }
 #endif
 
-static inline int format_timestamp(char *s, size_t maxsize, const time_t *timer)
-{
 #if HAVE_LOCALTIME_R
-	struct tm t;
-	return strftime(s, maxsize, "%FT%T%z", localtime_r(timer, &t));
+#define APPEND_TIMESTAMP(buf, timer)                                           \
+	do {                                                                   \
+		struct tm log_tm;                                              \
+		const int ret = strftime(                                      \
+			(char *)((buf).data + (buf).len),                      \
+			((buf).cap - (buf).len), "%FT%T%z",                    \
+			localtime_r((timer), &log_tm));                        \
+		assert(ret > 0);                                               \
+		(buf).len += ret;                                              \
+	} while (0)
 #else
-	return strftime(s, maxsize, "%FT%T%z", localtime(timer));
+#define APPEND_TIMESTAMP(buf, timer)                                           \
+	do {                                                                   \
+		const int ret = strftime(                                      \
+			(char *)((buf).data + (buf).len),                      \
+			((buf).cap - (buf).len), "%FT%T%z",                    \
+			localtime((timer)));                                   \
+		assert(ret > 0);                                               \
+		(buf).len += ret;                                              \
+	} while (0)
 #endif
-}
 
 void slog_write(
 	const int level, const char *path, const int line, const char *format,
 	...)
 {
-	FILE *stream = slog_file;
-	if (stream == NULL) {
+	switch (slog_output_type) {
+	case SLOG_OUTPUT_DISCARD:
+		return;
+	case SLOG_OUTPUT_FILE:
+		break;
+	case SLOG_OUTPUT_SYSLOG: {
 		va_list args;
 		va_start(args, format);
 		slog_write_syslog(level, path, line, format, args);
 		va_end(args);
 		return;
 	}
+	}
 	const time_t log_now = time(NULL);
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
 	slog_buffer.data[1] = ' ';
-	slog_buffer.len += format_timestamp(
-		(char *)slog_buffer.data + slog_buffer.len,
-		slog_buffer.cap - slog_buffer.len, &log_now);
+	APPEND_TIMESTAMP(slog_buffer, &log_now);
 
 	const char *log_filename = strrchr(path, PATH_SEPARATOR);
 	if (log_filename && *log_filename) {
@@ -111,6 +159,5 @@ void slog_write(
 
 	(void)fwrite(
 		slog_buffer.data, sizeof(slog_buffer.data[0]), slog_buffer.len,
-		stream);
-	(void)fflush(stream);
+		slog_file);
 }

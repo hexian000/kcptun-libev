@@ -115,10 +115,10 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	ev_timer_init(w_timeout, http_timeout_cb, 15.0, 0.0);
 	w_timeout->data = ctx;
 	ev_timer_start(loop, w_timeout);
-	if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+	if (LOGLEVEL(VERBOSE)) {
 		char addr_str[64];
 		format_sa(&addr.sa, addr_str, sizeof(addr_str));
-		LOG_F(LOG_LEVEL_VERBOSE, "http: accept %s", addr_str);
+		LOG_F(VERBOSE, "http: accept %s", addr_str);
 	}
 }
 

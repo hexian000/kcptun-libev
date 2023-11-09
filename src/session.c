@@ -54,7 +54,7 @@ kcp_new(struct session *restrict ss, const struct config *restrict conf,
 		kcp, conf->kcp_nodelay, conf->kcp_interval, conf->kcp_resend,
 		conf->kcp_nc);
 	ikcp_setoutput(kcp, udp_output);
-	if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {
+	if (LOGLEVEL(VERBOSE)) {
 		kcp->logmask = -1;
 		kcp->writelog = kcp_log;
 	}
@@ -212,11 +212,11 @@ static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
 		ss->tcp_state = STATE_CONNECTED;
 	}
 
-	if (LOGLEVEL(LOG_LEVEL_INFO)) {
+	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOG_F(LOG_LEVEL_INFO, "session [%08" PRIX32 "] tcp: connect %s",
-		      ss->conv, addr_str);
+		LOG_F(INFO, "session [%08" PRIX32 "] tcp: connect %s", ss->conv,
+		      addr_str);
 	}
 	session_start(ss, fd);
 	return true;

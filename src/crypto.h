@@ -24,7 +24,7 @@ struct crypto {
 	struct crypto_impl *impl;
 };
 
-void crypto_init_cb(void);
+void crypto_init(void);
 
 struct crypto *crypto_new(const char *method);
 bool crypto_password(struct crypto *, char *password);

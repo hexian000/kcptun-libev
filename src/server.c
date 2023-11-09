@@ -90,10 +90,10 @@ static bool listener_start(struct server *restrict s)
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd = fd;
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (LOGLEVEL(INFO)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(LOG_LEVEL_INFO, "listen at: %s", addr_str);
+			LOG_F(INFO, "listen at: %s", addr_str);
 		}
 	}
 
@@ -112,10 +112,10 @@ static bool listener_start(struct server *restrict s)
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd_http = fd;
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (LOGLEVEL(INFO)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(LOG_LEVEL_INFO, "http listen at: %s", addr_str);
+			LOG_F(INFO, "http listen at: %s", addr_str);
 		}
 	}
 
@@ -166,10 +166,10 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			LOGE_F("udp bind: %s", strerror(err));
 			return false;
 		}
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (LOGLEVEL(INFO)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(LOG_LEVEL_INFO, "udp bind: %s", addr_str);
+			LOG_F(INFO, "udp bind: %s", addr_str);
 		}
 	}
 	if (conf->kcp_connect != NULL) {
@@ -190,10 +190,10 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			return false;
 		}
 		memcpy(&udp->kcp_connect.sa, &addr.sa, socklen);
-		if (LOGLEVEL(LOG_LEVEL_INFO)) {
+		if (LOGLEVEL(INFO)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(LOG_LEVEL_INFO, "udp connect: %s", addr_str);
+			LOG_F(INFO, "udp connect: %s", addr_str);
 		}
 	}
 	if (conf->netdev != NULL) {

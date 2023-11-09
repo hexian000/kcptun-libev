@@ -19,12 +19,11 @@
 
 #define MSG_LOGV(what, msg)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(LOG_LEVEL_VERBOSE)) {                             \
+		if (LOGLEVEL(VERBOSE)) {                                       \
 			char addr[64];                                         \
 			format_sa(&(msg)->addr.sa, addr, sizeof(addr));        \
-			LOG_F(LOG_LEVEL_VERBOSE,                               \
-			      what ": %" PRIu16 " bytes to %s", (msg)->len,    \
-			      addr);                                           \
+			LOG_F(VERBOSE, what ": %" PRIu16 " bytes to %s",       \
+			      (msg)->len, addr);                               \
 		}                                                              \
 	} while (0)
 
@@ -34,7 +33,7 @@ static void udp_reset(struct server *restrict s)
 		return;
 	}
 	LOG_RATELIMITED(
-		LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
+		WARNING, ev_now(s->loop), 1.0,
 		"udp connection refused (wrong port number?)");
 }
 

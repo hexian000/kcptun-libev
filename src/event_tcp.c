@@ -74,11 +74,10 @@ static void accept_one(
 		return;
 	}
 	table_set(s->sessions, (hashkey_t *)&ss->key, ss);
-	if (LOGLEVEL(LOG_LEVEL_INFO)) {
+	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(client_sa, addr_str, sizeof(addr_str));
-		LOG_F(LOG_LEVEL_INFO,
-		      "session [%08" PRIX32 "] tcp: accepted %s", conv,
+		LOG_F(INFO, "session [%08" PRIX32 "] tcp: accepted %s", conv,
 		      addr_str);
 	}
 	session_start(ss, fd);
@@ -113,7 +112,7 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
 			LOG_RATELIMITED(
-				LOG_LEVEL_ERROR, ev_now(loop), 1.0,
+				ERROR, ev_now(loop), 1.0,
 				"* max session count exceeded, new connections refused");
 			CLOSE_FD(fd);
 			return;

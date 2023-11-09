@@ -52,8 +52,7 @@ static bool crypto_open_inplace(
 		return false;
 	}
 	if (!noncegen_verify(q->noncegen, nonce)) {
-		LOG_BIN(LOG_LEVEL_VERBOSE, nonce, nonce_size,
-			"nonce reuse detected");
+		LOG_BIN(VERBOSE, nonce, nonce_size, "nonce reuse detected");
 		return false;
 	}
 	*len = dst_len;
@@ -105,9 +104,9 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		table_find(s->sessions, (hashkey_t *)&sskey);
 	if (ss == NULL) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
-			if (LOGLEVEL(LOG_LEVEL_WARNING)) {
+			if (LOGLEVEL(WARNING)) {
 				LOG_RATELIMITED_F(
-					LOG_LEVEL_WARNING, ev_now(s->loop), 1.0,
+					WARNING, ev_now(s->loop), 1.0,
 					"* session %08" PRIX32 " not found",
 					conv);
 			}
@@ -122,12 +121,11 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		ss->is_accepted = true;
 		table_set(s->sessions, (hashkey_t *)&ss->key, ss);
-		if (LOGLEVEL(LOG_LEVEL_DEBUG)) {
+		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));
-			LOG_F(LOG_LEVEL_DEBUG,
-			      "session [%08" PRIX32 "] kcp: accepted %s", conv,
-			      addr_str);
+			LOG_F(DEBUG, "session [%08" PRIX32 "] kcp: accepted %s",
+			      conv, addr_str);
 		}
 		ss->kcp_state = STATE_CONNECT;
 	}
@@ -251,9 +249,9 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 
 	const ev_tstamp now = ev_now(s->loop);
 	if (q->mq_send_len >= q->mq_send_cap) {
-		if (LOGLEVEL(LOG_LEVEL_WARNING)) {
+		if (LOGLEVEL(WARNING)) {
 			LOG_RATELIMITED_F(
-				LOG_LEVEL_WARNING, now, 1.0,
+				WARNING, now, 1.0,
 				"* mq_send is full, %" PRIu16
 				" bytes discarded",
 				msg->len);

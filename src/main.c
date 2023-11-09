@@ -119,12 +119,12 @@ static void parse_args(int argc, char **argv)
 	}
 
 #undef OPT_REQUIRE_ARG
-	slog_level = LOG_LEVEL_INFO + args.verbosity;
+	slog_level = LOG_LEVEL_NOTICE + args.verbosity;
 }
 
 int main(int argc, char **argv)
 {
-	setup(argc, argv);
+	init(argc, argv);
 	parse_args(argc, argv);
 	if (args.genpsk) {
 		genpsk(args.genpsk);
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
 	slog_level =
 		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
 		      LOG_LEVEL_VERBOSE);
-	init();
+	loadlibs();
 
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
@@ -189,12 +189,12 @@ int main(int argc, char **argv)
 	}
 
 	/* start event loop */
-	LOGI_F("%s start", runmode_str(conf->mode));
+	LOGN_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
 	server_stop(s);
 	server_free(s);
-	LOGI_F("%s shutdown", runmode_str(conf->mode));
+	LOGN_F("%s shutdown", runmode_str(conf->mode));
 	ev_loop_destroy(loop);
 	conf_free(conf);
 
@@ -218,11 +218,11 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 		slog_level = conf->log_level;
 		s->conf = conf;
 		(void)server_resolve(s);
-		LOGI("config successfully reloaded");
+		LOGN("config successfully reloaded");
 	} break;
 	case SIGINT:
 	case SIGTERM: {
-		LOGI_F("signal %d received, breaking", watcher->signum);
+		LOGN_F("signal %d received, breaking", watcher->signum);
 		ev_break(loop, EVBREAK_ALL);
 	} break;
 	}

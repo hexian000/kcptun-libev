@@ -46,14 +46,13 @@ bool check_rate_limit(
 
 struct mcache *msgpool;
 
-void setup(int argc, char **argv)
+void init(int argc, char **argv)
 {
 	UNUSED(argc);
 	UNUSED(argv);
 
 	(void)setlocale(LC_ALL, "");
-	(void)setvbuf(stdout, NULL, _IONBF, 0);
-	slog_file = stdout;
+	slog_setoutput(SLOG_OUTPUT_FILE, stdout);
 
 	struct sigaction ignore = {
 		.sa_handler = SIG_IGN,
@@ -64,12 +63,12 @@ void setup(int argc, char **argv)
 	}
 }
 
-static void uninit(void);
+static void unloadlibs(void);
 
-void init(void)
+void loadlibs(void)
 {
 	{
-		const int ret = atexit(uninit);
+		const int ret = atexit(unloadlibs);
 		if (ret != 0) {
 			FAILMSGF("atexit: %d", ret);
 		}
@@ -78,7 +77,7 @@ void init(void)
 	LOGD_F("libev: %d.%d", ev_version_major(), ev_version_minor());
 
 #if WITH_CRYPTO
-	crypto_init_cb();
+	crypto_init();
 	srand64(((uint64_t)crypto_rand32() << 32u) | crypto_rand32());
 #else
 	srand64((uint64_t)clock_monotonic());
@@ -92,7 +91,7 @@ void init(void)
 	ikcp_segment_pool = msgpool;
 }
 
-void uninit(void)
+void unloadlibs(void)
 {
 	mcache_free(msgpool);
 	ikcp_segment_pool = msgpool = NULL;
@@ -101,7 +100,7 @@ void uninit(void)
 #if WITH_CRYPTO
 void genpsk(const char *method)
 {
-	init();
+	loadlibs();
 	struct crypto *crypto = crypto_new(method);
 	if (crypto == NULL) {
 		LOGF("failed to initialize crypto");
@@ -236,5 +235,5 @@ void daemonize(const char *user, const bool nochdir, const bool noclose)
 	(void)close(fd[1]);
 
 	/* Set logging output to syslog. */
-	slog_file = NULL;
+	slog_setoutput(SLOG_OUTPUT_SYSLOG, "kcptun-libev");
 }

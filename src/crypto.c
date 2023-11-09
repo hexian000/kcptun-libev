@@ -20,7 +20,7 @@
 static const char crypto_tag[] = "kcptun-libev";
 #define CRYPTO_TAG_SIZE (sizeof crypto_tag)
 
-void crypto_init_cb(void)
+void crypto_init(void)
 {
 	const int ret = sodium_init();
 	if (ret != 0) {
