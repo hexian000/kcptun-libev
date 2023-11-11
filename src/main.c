@@ -222,7 +222,7 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 	} break;
 	case SIGINT:
 	case SIGTERM: {
-		LOGN_F("signal %d received, breaking", watcher->signum);
+		LOGD_F("signal %d received, breaking", watcher->signum);
 		ev_break(loop, EVBREAK_ALL);
 	} break;
 	}

@@ -64,6 +64,59 @@ void slog_setoutput(const int type, ...)
 #define PATH_SEPARATOR '/'
 #endif
 
+#if HAVE_LOCALTIME_R
+#define APPEND_TIMESTAMP(buf, timer)                                           \
+	do {                                                                   \
+		struct tm log_tm;                                              \
+		const int ret = strftime(                                      \
+			(char *)((buf).data + (buf).len),                      \
+			((buf).cap - (buf).len), "%FT%T%z",                    \
+			localtime_r((timer), &log_tm));                        \
+		assert(ret > 0);                                               \
+		(buf).len += ret;                                              \
+	} while (0)
+#else
+#define APPEND_TIMESTAMP(buf, timer)                                           \
+	do {                                                                   \
+		const int ret = strftime(                                      \
+			(char *)((buf).data + (buf).len),                      \
+			((buf).cap - (buf).len), "%FT%T%z",                    \
+			localtime((timer)));                                   \
+		assert(ret > 0);                                               \
+		(buf).len += ret;                                              \
+	} while (0)
+#endif
+
+static void slog_write_file(
+	const int level, const char *path, const int line, const char *format,
+	va_list args)
+{
+	const time_t log_now = time(NULL);
+	BUF_INIT(slog_buffer, 2);
+	slog_buffer.data[0] = slog_level_char[level];
+	slog_buffer.data[1] = ' ';
+	APPEND_TIMESTAMP(slog_buffer, &log_now);
+
+	const char *log_filename = strrchr(path, PATH_SEPARATOR);
+	if (log_filename && *log_filename) {
+		log_filename++;
+	} else {
+		log_filename = path;
+	}
+	BUF_APPENDF(slog_buffer, " %s:%d ", log_filename, line);
+
+	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
+	if (ret < 0) {
+		BUF_APPENDCONST(slog_buffer, "<log format error>");
+	}
+	/* overwritting the null terminator is not an issue */
+	BUF_APPENDCONST(slog_buffer, "\n");
+
+	(void)fwrite(
+		slog_buffer.data, sizeof(slog_buffer.data[0]), slog_buffer.len,
+		slog_file);
+}
+
 #if HAVE_SYSLOG
 static void slog_write_syslog(
 	const int level, const char *path, const int line, const char *format,
@@ -93,29 +146,6 @@ static void slog_write_syslog(
 }
 #endif
 
-#if HAVE_LOCALTIME_R
-#define APPEND_TIMESTAMP(buf, timer)                                           \
-	do {                                                                   \
-		struct tm log_tm;                                              \
-		const int ret = strftime(                                      \
-			(char *)((buf).data + (buf).len),                      \
-			((buf).cap - (buf).len), "%FT%T%z",                    \
-			localtime_r((timer), &log_tm));                        \
-		assert(ret > 0);                                               \
-		(buf).len += ret;                                              \
-	} while (0)
-#else
-#define APPEND_TIMESTAMP(buf, timer)                                           \
-	do {                                                                   \
-		const int ret = strftime(                                      \
-			(char *)((buf).data + (buf).len),                      \
-			((buf).cap - (buf).len), "%FT%T%z",                    \
-			localtime((timer)));                                   \
-		assert(ret > 0);                                               \
-		(buf).len += ret;                                              \
-	} while (0)
-#endif
-
 void slog_write(
 	const int level, const char *path, const int line, const char *format,
 	...)
@@ -123,41 +153,19 @@ void slog_write(
 	switch (slog_output_type) {
 	case SLOG_OUTPUT_DISCARD:
 		return;
-	case SLOG_OUTPUT_FILE:
-		break;
+	case SLOG_OUTPUT_FILE: {
+		va_list args;
+		va_start(args, format);
+		slog_write_file(level, path, line, format, args);
+		va_end(args);
+	} break;
 	case SLOG_OUTPUT_SYSLOG: {
+#if HAVE_SYSLOG
 		va_list args;
 		va_start(args, format);
 		slog_write_syslog(level, path, line, format, args);
 		va_end(args);
-		return;
+#endif
+	} break;
 	}
-	}
-	const time_t log_now = time(NULL);
-	BUF_INIT(slog_buffer, 2);
-	slog_buffer.data[0] = slog_level_char[level];
-	slog_buffer.data[1] = ' ';
-	APPEND_TIMESTAMP(slog_buffer, &log_now);
-
-	const char *log_filename = strrchr(path, PATH_SEPARATOR);
-	if (log_filename && *log_filename) {
-		log_filename++;
-	} else {
-		log_filename = path;
-	}
-	BUF_APPENDF(slog_buffer, " %s:%d ", log_filename, line);
-
-	va_list args;
-	va_start(args, format);
-	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
-	va_end(args);
-	if (ret < 0) {
-		BUF_APPENDCONST(slog_buffer, "<log format error>");
-	}
-	/* overwritting the null terminator is not an issue */
-	BUF_APPENDCONST(slog_buffer, "\n");
-
-	(void)fwrite(
-		slog_buffer.data, sizeof(slog_buffer.data[0]), slog_buffer.len,
-		slog_file);
 }

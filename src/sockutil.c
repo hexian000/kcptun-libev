@@ -109,6 +109,17 @@ void socket_bind_netdev(const int fd, const char *netdev)
 #endif
 }
 
+int socket_get_error(const int fd)
+{
+	int value = 0;
+	socklen_t len = sizeof(value);
+	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &len)) {
+		const int err = errno;
+		LOGW_F("SO_ERROR: %s", strerror(err));
+	}
+	return value;
+}
+
 socklen_t getsocklen(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {

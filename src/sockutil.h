@@ -23,6 +23,7 @@ void socket_set_reuseport(int fd, bool reuseport);
 void socket_set_tcp(int fd, bool nodelay, bool keepalive);
 void socket_set_buffer(int fd, size_t send, size_t recv);
 void socket_bind_netdev(int fd, const char *netdev);
+int socket_get_error(int fd);
 
 socklen_t getsocklen(const struct sockaddr *sa);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);

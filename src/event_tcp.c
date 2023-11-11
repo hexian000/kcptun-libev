@@ -303,19 +303,12 @@ static void tcp_flush(struct session *restrict ss)
 static void connected_cb(struct session *restrict ss)
 {
 	const int fd = ss->w_socket.fd;
-	int sockerr = 0;
-	if (getsockopt(
-		    fd, SOL_SOCKET, SO_ERROR, &sockerr,
-		    &(socklen_t){ sizeof(sockerr) }) == 0) {
-		if (sockerr != 0) {
-			LOGE_F("SO_ERROR: %s", strerror(sockerr));
-			session_tcp_stop(ss);
-			session_kcp_close(ss);
-			return;
-		}
-	} else {
-		const int err = errno;
-		LOGD_F("SO_ERROR: %s", strerror(err));
+	const int sockerr = socket_get_error(fd);
+	if (sockerr != 0) {
+		LOGE_F("connect: %s", strerror(sockerr));
+		session_tcp_stop(ss);
+		session_kcp_close(ss);
+		return;
 	}
 
 	ss->tcp_state = STATE_CONNECTED;
