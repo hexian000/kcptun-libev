@@ -3,7 +3,6 @@
 
 #include "slog.h"
 #include "buffer.h"
-#include <sys/syslog.h>
 
 #if HAVE_SYSLOG
 #include <syslog.h>
@@ -11,7 +10,6 @@
 
 #include <assert.h>
 #include <ctype.h>
-#include <inttypes.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
