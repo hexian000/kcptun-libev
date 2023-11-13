@@ -44,7 +44,7 @@ static void print_usage(char *argv0)
 		"  -d, --daemonize            run in background and write logs to syslog\n"
 		"  -u, --user <name>          run as the specified limited user, e.g. nobody\n"
 		"  -v, --verbose              increase logging verbosity, can be specified more than once\n"
-		"                             e.g. \"-v -v\" prints verbose messages\n"
+		"                             e.g. \"-v -v\" prints debug messages\n"
 		"  -s, --silence              decrease logging verbosity\n"
 #if WITH_CRYPTO
 		"\ncrypto options:\n"
