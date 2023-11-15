@@ -11,7 +11,6 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_SYSTEM_NAME="Linux" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -S "." -B "build"
     nice cmake --build "build"
@@ -24,7 +23,6 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_SYSTEM_NAME="Linux" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DCMAKE_PREFIX_PATH="${SYSROOT}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
         -DBUILD_STATIC=ON \
         -S "." -B "build"
@@ -94,14 +92,13 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc" \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
-        -DLINK_STATIC_LIBS=TRUE \
+        -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    zip -9j "build/kcptun-libev.x86_64-pc-msys.zip" \
-        "build/src/kcptun-libev" \
-        "/usr/bin/msys-2.0.dll"
-    ls -lh "build/kcptun-libev.x86_64-pc-msys.zip"
+    zip -9j "build/kcptun-libev-win32.x86_64-pc-msys.zip" \
+        "/usr/bin/msys-2.0.dll" \
+        "build/src/kcptun-libev.exe"
+    ls -lh "build/kcptun-libev-win32.x86_64-pc-msys.zip"
     ;;
 "single")
     # rebuild as single file

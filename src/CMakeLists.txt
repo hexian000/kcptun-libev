@@ -13,16 +13,6 @@ add_executable(kcptun-libev main.c
 target_include_directories(kcptun-libev PRIVATE ../contrib/csnippets ../contrib)
 target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=0)
 
-if(NOT TARGET_POSIX AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(STATUS "GNU/Linux: ${CMAKE_SYSTEM_VERSION}")
-    set(TARGET_GNU_LINUX ON)
-elseif(NOT TARGET_POSIX AND CMAKE_SYSTEM_NAME STREQUAL "Android")
-    message(STATUS "Android: ${CMAKE_SYSTEM_VERSION}")
-    set(TARGET_ANDROID ON)
-else()
-    message(STATUS "POSIX-compliant system: ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_VERSION}")
-endif()
-
 if(TARGET_GNU_LINUX OR TARGET_ANDROID)
     list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
     target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)

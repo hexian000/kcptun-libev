@@ -2,6 +2,13 @@ add_library(csnippets STATIC)
 target_include_directories(csnippets BEFORE PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(csnippets PRIVATE -include "${PROJECT_BINARY_DIR}/src/config.h")
 target_compile_options(csnippets PRIVATE -pedantic -Wall -Wextra)
+
+if(TARGET_GNU_LINUX OR TARGET_ANDROID)
+    target_compile_definitions(csnippets PRIVATE _GNU_SOURCE)
+else()
+    target_compile_definitions(csnippets PRIVATE _POSIX_C_SOURCE=200809L)
+endif()
+
 add_subdirectory(algo)
 add_subdirectory(math)
 add_subdirectory(net)
