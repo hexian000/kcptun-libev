@@ -19,7 +19,9 @@
 static struct {
 	const char *conf_path;
 	const char *user_name;
+#if WITH_CRYPTO
 	const char *genpsk;
+#endif
 	int verbosity;
 	bool daemonize : 1;
 } args = { 0 };
@@ -126,10 +128,12 @@ int main(int argc, char **argv)
 {
 	init(argc, argv);
 	parse_args(argc, argv);
+#if WITH_CRYPTO
 	if (args.genpsk) {
 		genpsk(args.genpsk);
 		return EXIT_SUCCESS;
 	}
+#endif
 	if (args.conf_path == NULL) {
 		LOGF("config file must be specified");
 		print_usage(argv[0]);
