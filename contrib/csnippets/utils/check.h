@@ -28,8 +28,17 @@
 #define CHECK(cond) CHECKMSG(cond, "runtime check failed")
 
 /* check critical allocation failure */
-#define FAILOOM() FAILMSG("out of memory")
-#define CHECKOOM(ptr) CHECKMSG((ptr) != NULL, "out of memory")
+#define FAILOOM()                                                              \
+	do {                                                                   \
+		LOGF("out of memory");                                         \
+		exit(EXIT_FAILURE);                                            \
+	} while (0)
+#define CHECKOOM(ptr)                                                          \
+	do {                                                                   \
+		if ((ptr) == NULL) {                                           \
+			FAILOOM();                                             \
+		}                                                              \
+	} while (0)
 #define LOGOOM() LOGE("out of memory")
 
 #endif /* UTILS_CHECK_H */

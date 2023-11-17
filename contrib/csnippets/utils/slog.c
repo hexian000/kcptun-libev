@@ -45,8 +45,8 @@ void slog_setoutput(const int type, ...)
 		slog_file = stream;
 	} break;
 	case SLOG_OUTPUT_SYSLOG: {
-		const char *ident = va_arg(args, const char *);
 #if HAVE_SYSLOG
+		const char *ident = va_arg(args, const char *);
 		openlog(ident, LOG_PID | LOG_NDELAY, LOG_USER);
 #endif
 		slog_file = NULL;
