@@ -235,15 +235,18 @@ static struct config conf_default(void)
 	};
 }
 
-static bool
-conf_check_range(const char *key, const int value, const int min, const int max)
+static bool range_check_int(
+	const char *key, const int value, const int lbound, const int ubound)
 {
-	if (value < min || value > max) {
-		LOGE_F("config: %s is out of range (%d - %d)", key, min, max);
+	if (value < lbound || value > ubound) {
+		LOGE_F("%s is out of range (%d - %d)", key, lbound, ubound);
 		return false;
 	}
 	return true;
 }
+
+#define RANGE_CHECK(key, value, lbound, ubound)                                \
+	_Generic(value, int : range_check_int)(key, value, lbound, ubound)
 
 static bool conf_check(struct config *restrict conf)
 {
@@ -271,19 +274,19 @@ static bool conf_check(struct config *restrict conf)
 
 	/* 3. range check */
 	const bool range_ok =
-		conf_check_range("kcp.mtu", conf->kcp_mtu, 300, 1500) &&
-		conf_check_range("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
-		conf_check_range("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
-		conf_check_range("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&
-		conf_check_range("kcp.interval", conf->kcp_interval, 10, 500) &&
-		conf_check_range("kcp.resend", conf->kcp_resend, 0, 100) &&
-		conf_check_range("kcp.nc", conf->kcp_nc, 0, 1) &&
-		conf_check_range("kcp.flush", conf->kcp_flush, 0, 2) &&
-		conf_check_range("timeout", conf->timeout, 60, 86400) &&
-		conf_check_range("linger", conf->linger, 5, 600) &&
-		conf_check_range("keepalive", conf->keepalive, 0, 600) &&
-		conf_check_range("time_wait", conf->time_wait, 5, 3600) &&
-		conf_check_range(
+		RANGE_CHECK("kcp.mtu", conf->kcp_mtu, 300, 1500) &&
+		RANGE_CHECK("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
+		RANGE_CHECK("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
+		RANGE_CHECK("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&
+		RANGE_CHECK("kcp.interval", conf->kcp_interval, 10, 500) &&
+		RANGE_CHECK("kcp.resend", conf->kcp_resend, 0, 100) &&
+		RANGE_CHECK("kcp.nc", conf->kcp_nc, 0, 1) &&
+		RANGE_CHECK("kcp.flush", conf->kcp_flush, 0, 2) &&
+		RANGE_CHECK("timeout", conf->timeout, 60, 86400) &&
+		RANGE_CHECK("linger", conf->linger, 5, 600) &&
+		RANGE_CHECK("keepalive", conf->keepalive, 0, 600) &&
+		RANGE_CHECK("time_wait", conf->time_wait, 5, 3600) &&
+		RANGE_CHECK(
 			"log_level", conf->log_level, LOG_LEVEL_SILENCE,
 			LOG_LEVEL_VERBOSE);
 	if (!range_ok) {
