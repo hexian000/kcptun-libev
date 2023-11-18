@@ -3,7 +3,7 @@
 
 #include "session.h"
 #include "utils/buffer.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "utils/formats.h"
 #include "utils/serialize.h"
 #include "utils/slog.h"

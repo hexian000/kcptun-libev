@@ -4,7 +4,7 @@
 #include "util.h"
 #include "math/rand.h"
 #include "utils/slog.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "utils/minmax.h"
 #include "utils/mcache.h"
 #include "utils/posixtime.h"

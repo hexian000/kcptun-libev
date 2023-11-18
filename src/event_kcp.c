@@ -4,7 +4,7 @@
 #include "event.h"
 #include "event_impl.h"
 #include "sockutil.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "utils/slog.h"
 #include "session.h"
 #include "util.h"

@@ -25,7 +25,13 @@
 		size_t len;                                                    \
 	}
 
-/* generic buffer type */
+/* fixed buffer */
+struct buffer {
+	BUFFER_HDR;
+	unsigned char data[];
+};
+
+/* heap allocated buffer */
 struct vbuffer {
 	BUFFER_HDR;
 	unsigned char data[];
@@ -34,24 +40,19 @@ struct vbuffer {
 /* These internal functions should NOT be called directly, use macros */
 
 /** @internal */
-static inline size_t
-buf_append(struct vbuffer *restrict buf, const unsigned char *data, size_t n)
-{
-	unsigned char *b = buf->data + buf->len;
-	n = MIN(n, buf->cap - buf->len);
-	(void)memcpy(b, data, n);
-	buf->len += n;
-	return n;
-}
+size_t buf_append(struct buffer *buf, const unsigned char *data, size_t n);
 
 /** @internal */
-int buf_appendf(struct vbuffer *buf, const char *format, ...);
+int buf_appendf(struct buffer *buf, const char *format, ...);
 
 /** @internal */
-int buf_vappendf(struct vbuffer *buf, const char *format, va_list args);
+int buf_vappendf(struct buffer *buf, const char *format, va_list args);
 
 /** @internal */
 struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, size_t cap);
+
+/** @internal */
+struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want);
 
 /** @internal */
 struct vbuffer *
@@ -98,7 +99,7 @@ vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
  */
 #define BUF_APPEND(buf, data, n)                                               \
 	(assert((buf).len <= (buf).cap),                                       \
-	 buf_append((struct vbuffer *)&(buf), (data), (n)))
+	 buf_append((struct buffer *)&(buf), (data), (n)))
 
 /**
  * @brief Append constant null-terminated string to buffer.
@@ -108,7 +109,7 @@ vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
 #define BUF_APPENDCONST(buf, str)                                              \
 	(assert((buf).len <= (buf).cap),                                       \
 	 buf_append(                                                           \
-		 (struct vbuffer *)&(buf), (const unsigned char *)(str),       \
+		 (struct buffer *)&(buf), (const unsigned char *)(str),        \
 		 sizeof(str) - 1u))
 
 /**
@@ -119,7 +120,7 @@ vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
 #define BUF_APPENDSTR(buf, str)                                                \
 	(assert((buf).len <= (buf).cap),                                       \
 	 buf_append(                                                           \
-		 (struct vbuffer *)&(buf), (const unsigned char *)(str),       \
+		 (struct buffer *)&(buf), (const unsigned char *)(str),        \
 		 strlen(str)))
 
 /**
@@ -129,11 +130,11 @@ vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
  */
 #define BUF_APPENDF(buf, format, ...)                                          \
 	(assert((buf).len <= (buf).cap),                                       \
-	 buf_appendf((struct vbuffer *)&(buf), (format), __VA_ARGS__))
+	 buf_appendf((struct buffer *)&(buf), (format), __VA_ARGS__))
 
 #define BUF_VAPPENDF(buf, format, args)                                        \
 	(assert((buf).len <= (buf).cap),                                       \
-	 buf_vappendf((struct vbuffer *)&(buf), (format), (args)))
+	 buf_vappendf((struct buffer *)&(buf), (format), (args)))
 
 /**
  * @brief Remove n bytes from the start of the buffer.
@@ -177,15 +178,6 @@ vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
 #define VBUF_NEW(size) vbuf_alloc(NULL, (size))
 
 /**
- * @brief Resize vbuffer allocation.
- * @param vbuf If NULL, the behavior is undefined.
- * @return If failed, the allocation remains unchanged.
- * @details usage: `vbuf = VBUF_RESIZE(vbuf, 100);`
- */
-#define VBUF_RESIZE(vbuf, size)                                                \
-	((vbuf)->cap != (size) ? vbuf_alloc((vbuf), (size)) : (vbuf))
-
-/**
  * @brief Free vbuffer object.
  * @param vbuf If NULL, no operation is performed.
  * @return Always NULL.
@@ -194,12 +186,32 @@ vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
 #define VBUF_FREE(vbuf) vbuf_alloc((vbuf), 0)
 
 /**
- * @brief Adjust vbuffer allocation if data can be preserved.
- * @param vbuf If NULL, the behavior is undefined.
+ * @brief Resize vbuffer allocation. Data maybe truncated.
+ * @param vbuf If NULL, new buffer may be allocated.
+ * @param want Expected vbuffer overall size in bytes.
  * @return If failed, the allocation remains unchanged.
- * @details usage: `vbuf = VBUF_RESERVE(vbuf, 16384);`
+ * @details usage: `vbuf = VBUF_RESIZE(vbuf, 100);`
  */
-#define VBUF_RESERVE(vbuf, want) VBUF_RESIZE((vbuf), MAX((vbuf)->len, (want)))
+#define VBUF_RESIZE(vbuf, size)  vbuf_alloc((vbuf), (size)) : (vbuf))
+
+/**
+ * @brief Adjust vbuffer allocation only if data can be preserved.
+ * @param vbuf If NULL, new buffer may be allocated.
+ * @param want Expected vbuffer overall size in bytes.
+ * @return If failed, the allocation remains unchanged.
+ * @details usage: `vbuf = VBUF_RESERVE(vbuf, 0); // shrink the buffer to fit`
+ */
+#define VBUF_RESERVE(vbuf, want)                                               \
+	vbuf_alloc((vbuf), (vbuf) != NULL ? MAX((vbuf)->len, (want)) : (want))
+
+/**
+ * @brief Expand vbuffer allocation.
+ * @param vbuf If NULL, new buffer may be allocated.
+ * @param want Expected additional vbuffer space in bytes.
+ * @return If failed, the allocation remains unchanged.
+ * @details usage: `vbuf = VBUF_GROW(vbuf, 16384);`
+ */
+#define VBUF_GROW(vbuf, want) vbuf_grow((vbuf), (want))
 
 #define VBUF_ASSERT_BOUND(vbuf)                                                \
 	assert((vbuf) == NULL || ((struct vbuffer *)(vbuf))->len <=            \

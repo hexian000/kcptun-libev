@@ -2,7 +2,14 @@
 #include "arraysize.h"
 #include "buffer.h"
 
+#if WITH_LIBUNWIND
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
+#endif
+
 #include <ctype.h>
+#include <stddef.h>
+#include <string.h>
 #include <inttypes.h>
 
 #define STRLEN(s) (ARRAY_SIZE(s) - 1)
@@ -71,3 +78,34 @@ print_bin(struct vbuffer *vbuf, const char *indent, const void *data, size_t n)
 	}
 	return vbuf;
 }
+
+#if WITH_LIBUNWIND
+void print_stack(struct buffer *buf, const char *indent)
+{
+	unw_context_t uc;
+	unw_getcontext(&uc);
+	unw_cursor_t cursor;
+	unw_init_local(&cursor, &uc);
+	size_t i = 0;
+	while (unw_step(&cursor) > 0) {
+		unw_word_t pc;
+		if (unw_get_reg(&cursor, UNW_REG_IP, &pc) != 0) {
+			break;
+		}
+		i++;
+		BUF_APPENDF(*buf, "%s#%zu 0x%jx: ", indent, i, (uintmax_t)pc);
+		char *sym = (char *)buf->data + buf->len;
+		const size_t cap = buf->cap - buf->len;
+		if (cap < 1) {
+			break;
+		}
+		unw_word_t offset;
+		if (unw_get_proc_name(&cursor, sym, cap, &offset) != 0) {
+			BUF_APPENDF(*buf, "<unknown>\n", sym);
+			continue;
+		}
+		buf->len += strlen(sym);
+		BUF_APPENDF(*buf, "+0x%jx\n", (uintmax_t)offset);
+	}
+}
+#endif

@@ -8,7 +8,17 @@
 #include <stdint.h>
 #include <stdio.h>
 
-int buf_vappendf(struct vbuffer *buf, const char *format, va_list args)
+size_t
+buf_append(struct buffer *restrict buf, const unsigned char *data, size_t n)
+{
+	unsigned char *b = buf->data + buf->len;
+	n = MIN(n, buf->cap - buf->len);
+	(void)memcpy(b, data, n);
+	buf->len += n;
+	return n;
+}
+
+int buf_vappendf(struct buffer *restrict buf, const char *format, va_list args)
 {
 	char *b = (char *)(buf->data + buf->len);
 	const size_t maxlen = buf->cap - buf->len;
@@ -22,7 +32,7 @@ int buf_vappendf(struct vbuffer *buf, const char *format, va_list args)
 	return ret;
 }
 
-int buf_appendf(struct vbuffer *buf, const char *format, ...)
+int buf_appendf(struct buffer *restrict buf, const char *format, ...)
 {
 	va_list args;
 	va_start(args, format);
@@ -52,7 +62,7 @@ struct vbuffer *vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
 	return vbuf;
 }
 
-static struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
+struct vbuffer *vbuf_grow(struct vbuffer *restrict vbuf, const size_t want)
 {
 	size_t cap = (vbuf != NULL) ? vbuf->cap : 0;
 	if (want <= cap) {
@@ -104,7 +114,7 @@ vbuf_append(struct vbuffer *restrict vbuf, const unsigned char *data, size_t n)
 }
 
 struct vbuffer *
-vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args)
+vbuf_vappendf(struct vbuffer *restrict vbuf, const char *format, va_list args)
 {
 	char *b = NULL;
 	size_t maxlen = 0;

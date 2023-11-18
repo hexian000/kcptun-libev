@@ -3,7 +3,7 @@
 
 #include "server.h"
 #include "utils/slog.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "utils/buffer.h"
 #include "utils/formats.h"
 #include "algo/hashtable.h"

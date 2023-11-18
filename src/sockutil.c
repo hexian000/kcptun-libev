@@ -4,7 +4,7 @@
 #include "sockutil.h"
 #include "utils/minmax.h"
 #include "utils/slog.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "net/addr.h"
 #include "util.h"
 

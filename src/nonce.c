@@ -5,7 +5,7 @@
 
 #if WITH_SODIUM
 #include "utils/buffer.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "crypto.h"
 
 #include <sodium.h>

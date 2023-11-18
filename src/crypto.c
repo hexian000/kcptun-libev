@@ -3,7 +3,7 @@
 
 #include "crypto.h"
 #include "utils/slog.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "util.h"
 
 #include <stdbool.h>

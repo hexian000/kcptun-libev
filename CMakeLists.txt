@@ -47,7 +47,7 @@ message(STATUS "Project version: ${PROJECT_VERSION_STRING}")
 include(CTest)
 
 option(TARGET_POSIX "Use POSIX API only" OFF)
-option(BUILD_STATIC "Build static executables" OFF)
+option(BUILD_STATIC "Build static executables, link everything statically" OFF)
 option(LINK_STATIC_LIBS "Link against static libraries" OFF)
 option(ENABLE_SANITIZERS "Build with sanitizers" OFF)
 

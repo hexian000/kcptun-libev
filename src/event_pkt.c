@@ -5,7 +5,7 @@
 #include "event_impl.h"
 #include "sockutil.h"
 #include "util.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "utils/slog.h"
 #include "server.h"
 #include "pktqueue.h"

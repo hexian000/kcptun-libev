@@ -4,7 +4,7 @@
 #include "pktqueue.h"
 #include "algo/hashtable.h"
 #include "math/rand.h"
-#include "utils/check.h"
+#include "utils/debug.h"
 #include "utils/slog.h"
 #include "conf.h"
 #include "event.h"
