@@ -18,7 +18,7 @@ print_txt(struct vbuffer *vbuf, const char *indent, const void *data, size_t n);
 struct vbuffer *
 print_bin(struct vbuffer *vbuf, const char *indent, const void *data, size_t n);
 
-#if WITH_LIBUNWIND
+#if WITH_STACKTRACE
 void print_stack(struct buffer *buf, const char *indent);
 
 #define LOG_STACK_F(level, format, ...)                                        \

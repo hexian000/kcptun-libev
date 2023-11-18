@@ -90,6 +90,7 @@ endif()
 
 # find libunwind
 if(NOT BUILD_STATIC AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+    check_symbol_exists(backtrace "execinfo.h" HAVE_BACKTRACE)
     find_path(LIBUNWIND_INCLUDE_DIR NAMES libunwind.h)
     find_library(LIBUNWIND_LIBRARY NAMES unwind)
     if((EXISTS ${LIBUNWIND_INCLUDE_DIR}) AND (EXISTS ${LIBUNWIND_LIBRARY}))
@@ -98,6 +99,10 @@ if(NOT BUILD_STATIC AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE S
         target_include_directories(kcptun-libev SYSTEM PRIVATE ${LIBUNWIND_INCLUDE_DIR})
         target_link_libraries(kcptun-libev PRIVATE ${LIBUNWIND_LIBRARY})
     endif()
+endif()
+
+if(HAVE_BACKTRACE OR WITH_LIBUNWIND)
+    set(WITH_STACKTRACE TRUE)
 endif()
 
 install(TARGETS kcptun-libev DESTINATION bin)

@@ -5,6 +5,8 @@
 #if WITH_LIBUNWIND
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
+#elif HAVE_BACKTRACE
+#include <execinfo.h>
 #endif
 
 #include <ctype.h>
@@ -79,9 +81,10 @@ print_bin(struct vbuffer *vbuf, const char *indent, const void *data, size_t n)
 	return vbuf;
 }
 
-#if WITH_LIBUNWIND
+#if WITH_STACKTRACE
 void print_stack(struct buffer *buf, const char *indent)
 {
+#if WITH_LIBUNWIND
 	unw_context_t uc;
 	unw_getcontext(&uc);
 	unw_cursor_t cursor;
@@ -107,5 +110,24 @@ void print_stack(struct buffer *buf, const char *indent)
 		buf->len += strlen(sym);
 		BUF_APPENDF(*buf, "+0x%jx\n", (uintmax_t)offset);
 	}
+#elif HAVE_BACKTRACE
+	char **syms;
+	int n;
+	{
+		void *bt[256];
+		n = backtrace(bt, sizeof(bt));
+		syms = backtrace_symbols(bt, n);
+	}
+	if (syms == NULL) {
+		return;
+	}
+	for (int i = 1; i < n; i++) {
+		BUF_APPENDF(*buf, "%s#%zu %s\n", indent, i, syms[i]);
+	}
+	free(syms);
+#else
+	(void)buf;
+	(void)indent;
+#endif
 }
 #endif
