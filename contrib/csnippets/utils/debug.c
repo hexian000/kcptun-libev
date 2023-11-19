@@ -110,13 +110,9 @@ void print_stacktrace(struct buffer *buf, const char *indent)
 		BUF_APPENDF(*buf, "+0x%jx\n", (uintmax_t)offset);
 	}
 #elif HAVE_BACKTRACE
-	char **syms;
-	int n;
-	{
-		void *bt[256];
-		n = backtrace(bt, sizeof(bt));
-		syms = backtrace_symbols(bt, n);
-	}
+	void *bt[256];
+	const int n = backtrace(bt, sizeof(bt));
+	char **syms = backtrace_symbols(bt, n);
 	if (syms == NULL) {
 		for (int i = 1; i < n; i++) {
 			BUF_APPENDF(*buf, "%s#%zu %p\n", indent, i, bt[i]);
