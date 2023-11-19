@@ -81,8 +81,7 @@ print_bin(struct vbuffer *vbuf, const char *indent, const void *data, size_t n)
 	return vbuf;
 }
 
-#if WITH_STACKTRACE
-void print_stack(struct buffer *buf, const char *indent)
+void print_stacktrace(struct buffer *buf, const char *indent)
 {
 #if WITH_LIBUNWIND
 	unw_context_t uc;
@@ -130,4 +129,3 @@ void print_stack(struct buffer *buf, const char *indent)
 	(void)indent;
 #endif
 }
-#endif

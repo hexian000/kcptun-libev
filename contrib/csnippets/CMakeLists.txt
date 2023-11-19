@@ -1,6 +1,6 @@
 add_library(csnippets STATIC)
 target_include_directories(csnippets BEFORE PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(csnippets PRIVATE -include "${PROJECT_BINARY_DIR}/src/config.h")
+target_compile_options(csnippets PUBLIC "-include${CMAKE_CURRENT_BINARY_DIR}/config.h")
 target_compile_options(csnippets PRIVATE -pedantic -Wall -Wextra)
 
 if(TARGET_GNU_LINUX OR TARGET_ANDROID)
@@ -13,3 +13,24 @@ add_subdirectory(algo)
 add_subdirectory(math)
 add_subdirectory(net)
 add_subdirectory(utils)
+
+include(CheckSymbolExists)
+check_symbol_exists(clock_gettime "time.h" HAVE_CLOCK_GETTIME)
+check_symbol_exists(gettimeofday "sys/time.h" HAVE_GETTIMEOFDAY)
+check_symbol_exists(syslog "syslog.h" HAVE_SYSLOG)
+check_symbol_exists(localtime_r "time.h" HAVE_LOCALTIME_R)
+
+# find libunwind
+if(NOT BUILD_STATIC AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+    check_symbol_exists(backtrace "execinfo.h" HAVE_BACKTRACE)
+    find_path(LIBUNWIND_INCLUDE_DIR NAMES libunwind.h)
+    find_library(LIBUNWIND_LIBRARY NAMES unwind)
+    if((EXISTS ${LIBUNWIND_INCLUDE_DIR}) AND (EXISTS ${LIBUNWIND_LIBRARY}))
+        message(STATUS "libunwind: ${LIBUNWIND_LIBRARY}")
+        set(WITH_LIBUNWIND TRUE)
+        target_include_directories(csnippets SYSTEM PRIVATE ${LIBUNWIND_INCLUDE_DIR})
+        target_link_libraries(csnippets PRIVATE ${LIBUNWIND_LIBRARY})
+    endif()
+endif()
+
+configure_file(config.h.in config.h ESCAPE_QUOTES)

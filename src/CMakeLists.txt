@@ -10,22 +10,16 @@ add_executable(kcptun-libev main.c
     nonce.c nonce.h
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
-target_include_directories(kcptun-libev PRIVATE ../contrib/csnippets ../contrib)
+target_include_directories(kcptun-libev PRIVATE ../contrib)
 target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=0)
 
 if(TARGET_GNU_LINUX OR TARGET_ANDROID)
-    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
-    target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
+    target_compile_definitions(csnippets PRIVATE _GNU_SOURCE)
 else()
-    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_POSIX_C_SOURCE=200809L")
-    target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=200809L)
+    target_compile_definitions(csnippets PRIVATE _POSIX_C_SOURCE=200809L)
 endif()
 
 include(CheckSymbolExists)
-check_symbol_exists(clock_gettime "time.h" HAVE_CLOCK_GETTIME)
-check_symbol_exists(gettimeofday "sys/time.h" HAVE_GETTIMEOFDAY)
-check_symbol_exists(syslog "syslog.h" HAVE_SYSLOG)
-check_symbol_exists(localtime_r "time.h" HAVE_LOCALTIME_R)
 check_symbol_exists(sendmmsg "sys/socket.h" HAVE_API_SENDMMSG)
 check_symbol_exists(SYS_sendmmsg "sys/syscall.h" HAVE_SYS_SENDMMSG)
 check_symbol_exists(recvmmsg "sys/socket.h" HAVE_API_RECVMMSG)
@@ -38,7 +32,7 @@ if(HAVE_API_RECVMMSG AND HAVE_SYS_RECVMMSG)
     set(HAVE_RECVMMSG TRUE)
 endif()
 
-target_compile_options(kcptun-libev PRIVATE -include "${CMAKE_CURRENT_BINARY_DIR}/config.h")
+target_compile_options(kcptun-libev PRIVATE "-include${CMAKE_CURRENT_BINARY_DIR}/config.h")
 
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
@@ -86,23 +80,6 @@ include(CheckLibraryExists)
 check_library_exists(m fmod "" LIBM)
 if(LIBM)
     target_link_libraries(kcptun-libev PRIVATE m)
-endif()
-
-# find libunwind
-if(NOT BUILD_STATIC AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
-    check_symbol_exists(backtrace "execinfo.h" HAVE_BACKTRACE)
-    find_path(LIBUNWIND_INCLUDE_DIR NAMES libunwind.h)
-    find_library(LIBUNWIND_LIBRARY NAMES unwind)
-    if((EXISTS ${LIBUNWIND_INCLUDE_DIR}) AND (EXISTS ${LIBUNWIND_LIBRARY}))
-        message(STATUS "libunwind: ${LIBUNWIND_LIBRARY}")
-        set(WITH_LIBUNWIND TRUE)
-        target_include_directories(kcptun-libev SYSTEM PRIVATE ${LIBUNWIND_INCLUDE_DIR})
-        target_link_libraries(kcptun-libev PRIVATE ${LIBUNWIND_LIBRARY})
-    endif()
-endif()
-
-if(HAVE_BACKTRACE OR WITH_LIBUNWIND)
-    set(WITH_STACKTRACE TRUE)
 endif()
 
 install(TARGETS kcptun-libev DESTINATION bin)

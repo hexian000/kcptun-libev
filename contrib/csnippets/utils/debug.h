@@ -18,8 +18,7 @@ print_txt(struct vbuffer *vbuf, const char *indent, const void *data, size_t n);
 struct vbuffer *
 print_bin(struct vbuffer *vbuf, const char *indent, const void *data, size_t n);
 
-#if WITH_STACKTRACE
-void print_stack(struct buffer *buf, const char *indent);
+void print_stacktrace(struct buffer *buf, const char *indent);
 
 #define LOG_STACK_F(level, format, ...)                                        \
 	do {                                                                   \
@@ -31,7 +30,7 @@ void print_stack(struct buffer *buf, const char *indent);
 			unsigned char data[4096];                              \
 		} buf;                                                         \
 		BUF_INIT(buf, 0);                                              \
-		print_stack((struct buffer *)&buf, "  ");                      \
+		print_stacktrace((struct buffer *)&buf, "  ");                 \
 		if (buf.len > 0 && buf.data[buf.len - 1] == '\n') {            \
 			buf.len--;                                             \
 		}                                                              \
@@ -39,16 +38,6 @@ void print_stack(struct buffer *buf, const char *indent);
 		      buf.data);                                               \
 	} while (0)
 #define LOG_STACK(level, msg) LOG_STACK_F(level, "%s", msg)
-#else
-#define LOG_STACK_F(level, format, ...)                                        \
-	do {                                                                   \
-		if (!LOGLEVEL(level)) {                                        \
-			break;                                                 \
-		}                                                              \
-		LOG_F(level, format, __VA_ARGS__);                             \
-	} while (0)
-#define LOG_STACK(level, msg) LOG_STACK_F(level, "%s", msg)
-#endif
 
 #define LOG_TXT_F(level, txt, txtsize, format, ...)                            \
 	do {                                                                   \

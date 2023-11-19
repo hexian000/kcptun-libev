@@ -87,5 +87,11 @@ else()
     message(STATUS "POSIX-compliant system: ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_VERSION}")
 endif()
 
+if(TARGET_GNU_LINUX OR TARGET_ANDROID)
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
+else()
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_POSIX_C_SOURCE=200809L")
+endif()
+
 add_subdirectory(contrib)
 add_subdirectory(src)
