@@ -118,6 +118,9 @@ void print_stacktrace(struct buffer *buf, const char *indent)
 		syms = backtrace_symbols(bt, n);
 	}
 	if (syms == NULL) {
+		for (int i = 1; i < n; i++) {
+			BUF_APPENDF(*buf, "%s#%zu %p\n", indent, i, bt[i]);
+		}
 		return;
 	}
 	for (int i = 1; i < n; i++) {
