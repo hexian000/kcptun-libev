@@ -11,11 +11,11 @@
 #include "pktqueue.h"
 
 #include <ev.h>
+#include <sys/socket.h>
 
 #include <inttypes.h>
 #include <stddef.h>
 #include <string.h>
-#include <sys/socket.h>
 
 #define MSG_LOGV(what, msg)                                                    \
 	do {                                                                   \

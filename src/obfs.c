@@ -28,13 +28,13 @@
 #include <ev.h>
 #include <unistd.h>
 #include <sys/socket.h>
-#include <netinet/if_ether.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <net/if.h>
 #include <linux/filter.h>
+#include <linux/if_ether.h>
 #include <linux/if_packet.h>
 
 #include <assert.h>

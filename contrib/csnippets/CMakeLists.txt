@@ -3,7 +3,7 @@ target_include_directories(csnippets BEFORE PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(csnippets PUBLIC "-include${CMAKE_CURRENT_BINARY_DIR}/config.h")
 target_compile_options(csnippets PRIVATE -pedantic -Wall -Wextra)
 
-if(TARGET_GNU_LINUX OR TARGET_ANDROID)
+if(NOT TARGET_POSIX AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
     target_compile_definitions(csnippets PRIVATE _GNU_SOURCE)
 else()
     target_compile_definitions(csnippets PRIVATE _POSIX_C_SOURCE=200809L)

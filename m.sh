@@ -5,13 +5,13 @@ set -ex
 
 case "$1" in
 "x")
-    # cross compiling, SYSROOT need to be set
+    # cross compiling, environment vars need to be set
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_SYSTEM_NAME="Linux" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -S "." -B "build"
     nice cmake --build "build"
     ls -lh "build/src/kcptun-libev"
@@ -23,7 +23,7 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_SYSTEM_NAME="Linux" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT}" \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -DBUILD_STATIC=ON \
         -S "." -B "build"
     nice cmake --build "build"
@@ -86,7 +86,7 @@ case "$1" in
     ls -lh "build/src/kcptun-libev"
     ;;
 "msys2")
-    # set SYSROOT for finding dependencies
+    # set FIND_ROOT for finding dependencies
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
@@ -95,10 +95,26 @@ case "$1" in
         -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    zip -9j "build/kcptun-libev-win32.$(cc -dumpmachine).zip" \
+    TARGET="$(cc -dumpmachine)"
+    zip -9j "build/kcptun-libev-win32.${TARGET}.zip" \
         "/usr/bin/msys-2.0.dll" \
         "build/src/kcptun-libev.exe"
-    ls -lh "build/kcptun-libev-win32.$(cc -dumpmachine).zip"
+    ls -lh "build/kcptun-libev-win32.${TARGET}.zip"
+    ;;
+"ndk")
+    # cross compiling, environment vars need to be set
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_ANDROID_NDK="${NDK}" \
+        -DCMAKE_SYSTEM_NAME="Android" \
+        -DCMAKE_SYSTEM_VERSION="${API}" \
+        -DCMAKE_ANDROID_ARCH_ABI="${ABI}" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+        -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
+        -S "." -B "build"
+    nice cmake --build "build"
+    ls -lh "build/src/kcptun-libev"
     ;;
 "single")
     # rebuild as single file

@@ -13,10 +13,10 @@ add_executable(kcptun-libev main.c
 target_include_directories(kcptun-libev PRIVATE ../contrib)
 target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=0)
 
-if(TARGET_GNU_LINUX OR TARGET_ANDROID)
-    target_compile_definitions(csnippets PRIVATE _GNU_SOURCE)
+if(NOT TARGET_POSIX AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
+    target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
 else()
-    target_compile_definitions(csnippets PRIVATE _POSIX_C_SOURCE=200809L)
+    target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=200809L)
 endif()
 
 include(CheckSymbolExists)
@@ -72,7 +72,7 @@ if(WITH_SODIUM)
     set(WITH_CRYPTO TRUE)
 endif()
 
-if(WITH_CRYPTO AND (TARGET_GNU_LINUX OR TARGET_ANDROID))
+if(WITH_CRYPTO AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
     set(WITH_OBFS TRUE)
 endif()
 
