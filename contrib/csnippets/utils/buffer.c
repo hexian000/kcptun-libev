@@ -70,7 +70,7 @@ struct vbuffer *vbuf_grow(struct vbuffer *restrict vbuf, const size_t want)
 	}
 	const size_t threshold1 = 256;
 	const size_t threshold2 = 4096;
-	while (cap < want) {
+	do {
 		size_t grow;
 		if (cap < threshold1) {
 			grow = threshold1;
@@ -85,8 +85,21 @@ struct vbuffer *vbuf_grow(struct vbuffer *restrict vbuf, const size_t want)
 			break;
 		}
 		cap += grow;
+	} while (cap < want);
+
+	struct vbuffer *restrict newbuf =
+		realloc(vbuf, sizeof(struct vbuffer) + cap);
+	if (newbuf != NULL) {
+		return newbuf;
 	}
-	return vbuf_alloc(vbuf, cap);
+	if (want < cap) {
+		/* retry with minimal required capacity */
+		newbuf = realloc(vbuf, sizeof(struct vbuffer) + want);
+		if (newbuf != NULL) {
+			return newbuf;
+		}
+	}
+	return vbuf;
 }
 
 struct vbuffer *

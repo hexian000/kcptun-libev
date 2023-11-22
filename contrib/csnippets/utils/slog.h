@@ -17,6 +17,7 @@ enum {
 	LOG_LEVEL_VERBOSE,
 };
 extern int slog_level;
+extern FILE *slog_file;
 
 enum {
 	SLOG_OUTPUT_DISCARD,

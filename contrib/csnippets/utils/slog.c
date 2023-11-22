@@ -18,8 +18,8 @@
 #include <time.h>
 
 int slog_level = LOG_LEVEL_VERBOSE;
+FILE *slog_file = NULL;
 static int slog_output_type = SLOG_OUTPUT_DISCARD;
-static FILE *slog_file = NULL;
 
 static const unsigned char slog_level_char[] = {
 	'-', 'F', 'E', 'W', 'N', 'I', 'D', 'V',
