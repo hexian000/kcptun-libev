@@ -83,7 +83,7 @@ In config file:
 "method": "// name here"
 ```
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, random packets could crash the server because no authenticate tag was added either. We are not responsible for such vulnerabilities.
+If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, unexpected packets may cause undefined behavior because no authenticate tag was added either. We are not responsible for such vulnerabilities. Please only disable encryption when no unexpected packets could be recieved. For example: traffic is already protected by Wireguard.
 
 In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random preshared key instead of using a simple password.
 

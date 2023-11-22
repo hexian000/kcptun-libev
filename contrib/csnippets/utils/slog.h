@@ -33,7 +33,7 @@ void slog_write(int level, const char *path, int line, const char *format, ...);
 	slog_write(                                                            \
 		(LOG_LEVEL_##level), __FILE__, __LINE__, (format),             \
 		__VA_ARGS__);
-#define LOG(level, message) LOG_F(LOG_LEVEL_##level, "%s", message)
+#define LOG(level, message) LOG_F(level, "%s", message)
 
 #define LOGLEVEL(level) ((LOG_LEVEL_##level) <= slog_level)
 

@@ -327,8 +327,7 @@ struct pktqueue *queue_new(struct server *restrict s)
 		return NULL;
 	}
 	if (q->crypto == NULL) {
-		/* for now, protocol security relies on encryption */
-		LOGW("packets will not be encrypted or authenticated. malformed packet may lead to crash, use at your own risk");
+		LOGW("packets will not be encrypted or authenticated");
 	}
 #endif
 #if WITH_OBFS

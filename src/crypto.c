@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "crypto.h"
+#include "utils/arraysize.h"
 #include "utils/slog.h"
 #include "utils/debug.h"
 #include "util.h"
@@ -183,64 +184,53 @@ bool crypto_unpad(const unsigned char *data, const size_t len, const size_t npad
 	return true;
 }
 
-enum crypto_method {
+enum crypto_methods {
 	method_xchacha20poly1305_ietf,
 	method_xsalsa20poly1305,
 	method_chacha20poly1305_ietf,
 	method_aes256gcm,
-	method_MAX,
 };
 
-static inline char *strmethod(const enum crypto_method m)
-{
-	switch (m) {
-	case method_xchacha20poly1305_ietf:
-		return "xchacha20poly1305_ietf";
-	case method_xsalsa20poly1305:
-		return "xsalsa20poly1305";
-	case method_chacha20poly1305_ietf:
-		return "chacha20poly1305_ietf";
-	case method_aes256gcm:
-		return "aes256gcm";
-	default:
-		break;
-	}
-	return NULL;
-}
+static const char *method_names[] = {
+	[method_xchacha20poly1305_ietf] = "xchacha20poly1305_ietf",
+	[method_xsalsa20poly1305] = "xsalsa20poly1305",
+	[method_chacha20poly1305_ietf] = "chacha20poly1305_ietf",
+	[method_aes256gcm] = "aes256gcm",
+};
 
 void crypto_list_methods(void)
 {
-	fprintf(stderr, "supported methods:\n");
-	for (int i = 0; i < method_MAX; i++) {
-		fprintf(stderr, "  %s\n", strmethod(i));
+	fprintf(stderr, "  supported methods:\n");
+	for (size_t i = 0; i < ARRAY_SIZE(method_names); i++) {
+		fprintf(stderr, "  - %s\n", method_names[i]);
 	}
 	fflush(stderr);
 }
 
 struct crypto *crypto_new(const char *method)
 {
-	enum crypto_method m;
+	enum crypto_methods m;
 	size_t nonce_size, overhead, key_size;
-	if (strcmp(method, strmethod(method_xchacha20poly1305_ietf)) == 0) {
+	if (strcmp(method, method_names[method_xchacha20poly1305_ietf]) == 0) {
 		m = method_xchacha20poly1305_ietf;
 		nonce_size = crypto_aead_xchacha20poly1305_ietf_npubbytes();
 		overhead = crypto_aead_xchacha20poly1305_ietf_abytes();
 		key_size = crypto_aead_xchacha20poly1305_ietf_keybytes();
-	} else if (strcmp(method, strmethod(method_xsalsa20poly1305)) == 0) {
+	} else if (strcmp(method, method_names[method_xsalsa20poly1305]) == 0) {
 		m = method_xsalsa20poly1305;
 		nonce_size = crypto_secretbox_xsalsa20poly1305_noncebytes();
 		overhead = crypto_secretbox_xsalsa20poly1305_macbytes();
 		key_size = crypto_secretbox_xsalsa20poly1305_keybytes();
-	} else if (strcmp(method, strmethod(method_chacha20poly1305_ietf)) == 0) {
+	} else if (strcmp(method, method_names[method_chacha20poly1305_ietf]) == 0) {
 		m = method_chacha20poly1305_ietf;
 		nonce_size = crypto_aead_chacha20poly1305_ietf_npubbytes();
 		overhead = crypto_aead_chacha20poly1305_ietf_abytes();
 		key_size = crypto_aead_chacha20poly1305_ietf_keybytes();
-	} else if (strcmp(method, strmethod(method_aes256gcm)) == 0) {
+	} else if (strcmp(method, method_names[method_aes256gcm]) == 0) {
 		m = method_aes256gcm;
 		if (!crypto_aead_aes256gcm_is_available()) {
 			LOGE_F("%s is not supported by current hardware",
-			       strmethod(m));
+			       method_names[m]);
 			return NULL;
 		}
 		nonce_size = crypto_aead_aes256gcm_npubbytes();

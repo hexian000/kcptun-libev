@@ -19,11 +19,16 @@
 
 #define MSG_LOGV(what, msg)                                                    \
 	do {                                                                   \
-		if (LOGLEVEL(VERBOSE)) {                                       \
-			char addr[64];                                         \
-			format_sa(&(msg)->addr.sa, addr, sizeof(addr));        \
-			LOG_F(VERBOSE, what ": %" PRIu16 " bytes to %s",       \
-			      (msg)->len, addr);                               \
+		if (!LOGLEVEL(VERBOSE)) {                                      \
+			break;                                                 \
+		}                                                              \
+		char addr[64];                                                 \
+		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
+		LOG_F(VERBOSE, what ": %" PRIu16 " bytes to %s", (msg)->len,   \
+		      addr);                                                   \
+		FILE *log_fp = slog_file;                                      \
+		if (log_fp != NULL) {                                          \
+			print_bin(log_fp, "  ", (msg)->buf, (msg)->len);       \
 		}                                                              \
 	} while (0)
 
