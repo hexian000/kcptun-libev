@@ -109,7 +109,7 @@ static void error_cb(void *data, const char *msg, const int errnum)
 	err->num = errnum;
 }
 
-void syminfo_cb(
+static void syminfo_cb(
 	void *data, const uintptr_t pc, const char *symname,
 	const uintptr_t symval, const uintptr_t symsize)
 {
@@ -245,6 +245,7 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 	free(syms);
 #else
 	(void)indent;
+	(void)skip;
 #endif
 	fflush(f);
 }
