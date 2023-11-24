@@ -59,8 +59,8 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 		CLOSE_FD(fd);
 		return -1;
 	}
-	/* Start listing on the socket */
-	if (listen(fd, 128)) {
+	/* Start listening on the socket */
+	if (listen(fd, SOMAXCONN)) {
 		const int err = errno;
 		LOGE_F("listen error: %s", strerror(err));
 		CLOSE_FD(fd);
