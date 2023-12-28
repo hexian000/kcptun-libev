@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <limits.h>
 
 bool socket_set_nonblock(const int fd)
 {

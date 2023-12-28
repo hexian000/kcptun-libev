@@ -10,8 +10,6 @@ add_executable(kcptun-libev main.c
     nonce.c nonce.h
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
-target_include_directories(kcptun-libev PRIVATE ../contrib)
-target_compile_definitions(kcptun-libev PRIVATE MCACHE_STATS=0)
 
 if(NOT TARGET_POSIX AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
     target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)

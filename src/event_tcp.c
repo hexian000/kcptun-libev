@@ -73,7 +73,9 @@ static void accept_one(
 		session_free(ss);
 		return;
 	}
-	table_set(s->sessions, (hashkey_t *)&ss->key, ss);
+	void *elem = ss;
+	s->sessions = table_set(s->sessions, (hashkey_t *)&ss->key, &elem);
+	assert(elem == NULL);
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(client_sa, addr_str, sizeof(addr_str));

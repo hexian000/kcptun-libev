@@ -4,20 +4,28 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "utils/arraysize.h"
 #include "utils/slog.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 
 #include <ev.h>
+#include <unistd.h>
 
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #define UNUSED(x) (void)(x)
+
+#define CONSTSTREQUAL(s, len, literal)                                         \
+	((len) == (ARRAY_SIZE(literal) - 1) &&                                 \
+	 strncmp((s), literal "",                                              \
+		 (ARRAY_SIZE(literal) - 1) * sizeof((literal)[0])) == 0)
 
 #define TSTAMP_NIL (-1.0)
 

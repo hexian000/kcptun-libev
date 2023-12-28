@@ -17,7 +17,7 @@
 #include "util.h"
 #include "sockutil.h"
 
-#include "kcp/ikcp.h"
+#include "ikcp.h"
 
 #include <ev.h>
 #include <unistd.h>
@@ -473,7 +473,7 @@ void server_stop(struct server *restrict s)
 {
 	struct ev_loop *loop = s->loop;
 	listener_stop(loop, &s->listener);
-	table_filter(s->sessions, shutdown_filt, NULL);
+	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
 	ev_timer_stop(loop, &s->w_kcp_update);
 	ev_timer_stop(loop, &s->w_keepalive);
 	ev_timer_stop(loop, &s->w_resolve);
@@ -600,7 +600,7 @@ static struct vbuffer *print_session_table(
 	const struct server *restrict s, struct vbuffer *restrict buf,
 	const int level)
 {
-	struct server_stats_ctx ctx = (struct server_stats_ctx){
+	struct server_stats_ctx ctx = {
 		.level = level,
 		.now = ev_now(s->loop),
 		.buf = buf,
@@ -696,7 +696,7 @@ struct vbuffer *server_stats(
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
 	const struct link_stats *restrict last_stats = &s->last_stats;
-	const struct link_stats dstats = (struct link_stats){
+	const struct link_stats dstats = {
 		.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
 		.tcp_tx = stats->tcp_tx - last_stats->tcp_tx,
 		.kcp_rx = stats->kcp_rx - last_stats->kcp_rx,

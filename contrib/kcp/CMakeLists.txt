@@ -1,4 +1,5 @@
 add_library(kcp STATIC ikcp.c ikcp.h)
-target_include_directories(kcp BEFORE PRIVATE ../csnippets)
-target_compile_definitions(kcp PRIVATE IKCP_FASTACK_CONSERVE=1 MCACHE_STATS=0)
+target_include_directories(kcp BEFORE PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(kcp PRIVATE IKCP_FASTACK_CONSERVE=1)
 target_compile_options(kcp PRIVATE -w)
+target_link_libraries(kcp PUBLIC csnippets)

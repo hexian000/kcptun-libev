@@ -16,7 +16,8 @@
 #include "session.h"
 #include "util.h"
 #include "sockutil.h"
-#include "kcp/ikcp.h"
+
+#include "ikcp.h"
 
 #include <ev.h>
 #include <sys/socket.h>
@@ -120,7 +121,10 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			return;
 		}
 		ss->is_accepted = true;
-		table_set(s->sessions, (hashkey_t *)&ss->key, ss);
+		void *elem = ss;
+		s->sessions =
+			table_set(s->sessions, (hashkey_t *)&ss->key, &elem);
+		assert(elem == NULL);
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
 			format_sa(sa, addr_str, sizeof(addr_str));

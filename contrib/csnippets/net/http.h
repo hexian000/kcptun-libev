@@ -28,7 +28,9 @@ enum http_status_code {
 	HTTP_NOT_FOUND = 404,
 	HTTP_METHOD_NOT_ALLOWED = 405,
 	HTTP_REQUEST_TIMEOUT = 408,
+	HTTP_LENGTH_REQUIRED = 411,
 	HTTP_ENTITY_TOO_LARGE = 413,
+	HTTP_UNSUPPORTED_MEDIA_TYPE = 415,
 	HTTP_EXPECTATION_FAILED = 417,
 	HTTP_INTERNAL_SERVER_ERROR = 500,
 	HTTP_NOT_IMPLEMENTED = 501,
@@ -69,7 +71,7 @@ char *http_parse(char *buf, struct http_message *msg);
 /**
  * @brief Parse a HTTP header line.
  * @details No allocations, the raw message until next position is destructed.
- * @param buf HTTP header line start.
+ * @param buf HTTP header line start, usually the return value of http_parse.
  * @param[out] key Header key, or NULL when HTTP header ends.
  * @param[out] value Header value, or NULL when HTTP header ends.
  * @return The start position of next parsing, or NULL when parsing failed.

@@ -295,7 +295,7 @@ static bool filter_compile_inet6(
 static bool
 filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 {
-	struct filter_compiler_ctx ctx = (struct filter_compiler_ctx){
+	struct filter_compiler_ctx ctx = {
 		.filter = fprog->filter,
 		.cap = fprog->len,
 		.len = 0,
@@ -369,7 +369,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		LOGD_F("obfs bind: device index=%u", ifindex);
 	}
 
-	struct sockaddr_ll addr = (struct sockaddr_ll){
+	struct sockaddr_ll addr = {
 		.sll_family = AF_PACKET,
 		.sll_ifindex = (int)ifindex,
 	};
@@ -394,7 +394,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		LOG_F(DEBUG, "obfs: cap bind %s", addr_str);
 	}
 	struct sock_filter filter[32];
-	struct sock_fprog fprog = (struct sock_fprog){
+	struct sock_fprog fprog = {
 		.filter = filter,
 		.len = ARRAY_SIZE(filter),
 	};
@@ -543,9 +543,11 @@ obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 		obfs_sched_redial(obfs);
 	}
 	/* free all related sessions */
-	table_filter(obfs->server->sessions, ctx_del_filter, &ctx->raddr.sa);
+	struct server *restrict s = obfs->server;
+	s->sessions = table_filter(s->sessions, ctx_del_filter, &ctx->raddr.sa);
 	if (ctx->in_table) {
-		(void)table_del(obfs->contexts, (hashkey_t *)&ctx->key);
+		obfs->contexts =
+			table_del(obfs->contexts, (hashkey_t *)&ctx->key, NULL);
 		ctx->in_table = false;
 	}
 }
@@ -610,9 +612,11 @@ static bool obfs_ctx_start(
 		return false;
 	}
 
-	struct obfs_ctx *restrict old_ctx =
-		table_set(obfs->contexts, (hashkey_t *)&ctx->key, ctx);
-	if (old_ctx != NULL) {
+	void *elem = ctx;
+	obfs->contexts =
+		table_set(obfs->contexts, (hashkey_t *)&ctx->key, &elem);
+	if (elem != NULL) {
+		struct obfs_ctx *restrict old_ctx = elem;
 		old_ctx->in_table = false;
 		OBFS_CTX_LOG(DEBUG, old_ctx, "context replaced");
 		obfs_ctx_stop(s->loop, old_ctx);
@@ -857,7 +861,8 @@ obfs_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	UNUSED(loop);
 	struct obfs *restrict obfs = watcher->data;
 	/* context timeout */
-	table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
+	obfs->contexts =
+		table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 }
 
 struct obfs *obfs_new(struct server *restrict s)
@@ -946,7 +951,7 @@ struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
 {
 	const ev_tstamp now = ev_now(obfs->server->loop);
 
-	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
+	struct obfs_stats_ctx stats_ctx = {
 		.now = now,
 		.buf = buf,
 	};
@@ -978,7 +983,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 {
 	const ev_tstamp now = ev_now(obfs->server->loop);
 
-	struct obfs_stats_ctx stats_ctx = (struct obfs_stats_ctx){
+	struct obfs_stats_ctx stats_ctx = {
 		.now = now,
 		.buf = buf,
 	};
@@ -988,7 +993,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	const double dt = now - obfs->last_stats_time;
 	const struct obfs_stats *restrict stats = &obfs->stats;
 	const struct obfs_stats *restrict last_stats = &obfs->last_stats;
-	const struct obfs_stats dstats = (struct obfs_stats){
+	const struct obfs_stats dstats = {
 		.pkt_cap = stats->pkt_cap - last_stats->pkt_cap,
 		.byt_cap = stats->byt_cap - last_stats->byt_cap,
 		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
@@ -1114,7 +1119,7 @@ static bool obfs_shutdown_filt(
 
 void obfs_stop(struct obfs *restrict obfs, struct server *s)
 {
-	table_filter(obfs->contexts, obfs_shutdown_filt, obfs);
+	obfs->contexts = table_filter(obfs->contexts, obfs_shutdown_filt, obfs);
 	obfs->client = NULL;
 	struct ev_loop *loop = obfs->server->loop;
 	ev_timer_stop(loop, &obfs->w_listener);
@@ -1142,10 +1147,7 @@ void obfs_free(struct obfs *obfs)
 	if (obfs == NULL) {
 		return;
 	}
-	if (obfs->contexts != NULL) {
-		table_free(obfs->contexts);
-		obfs->contexts = NULL;
-	}
+	table_free(obfs->contexts);
 	free(obfs);
 }
 
@@ -1241,7 +1243,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		return NULL;
 	}
 	if ((ntohl(ip.saddr) >> IN_CLASSA_NSHIFT) != IN_LOOPBACKNET) {
-		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
+		const struct pseudo_iphdr pseudo = {
 			.saddr = ip.saddr,
 			.daddr = ip.daddr,
 			.protocol = IPPROTO_TCP,
@@ -1257,7 +1259,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			return NULL;
 		}
 	}
-	const struct sockaddr_in dest = (struct sockaddr_in){
+	const struct sockaddr_in dest = {
 		.sin_family = AF_INET,
 		.sin_addr.s_addr = ip.daddr,
 		.sin_port = tcp.dest,
@@ -1331,7 +1333,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	}
 	const struct in6_addr ip6_src = ip6.ip6_src;
 	if (!IN6_IS_ADDR_LOOPBACK(&ip6_src)) {
-		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
+		struct pseudo_ip6hdr pseudo = {
 			.src = ip6.ip6_src,
 			.dst = ip6.ip6_dst,
 			.nxt = IPPROTO_TCP,
@@ -1434,7 +1436,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 	const struct sockaddr_in *restrict dst = &msg->addr.in;
 	assert(dst->sin_family == AF_INET);
 	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
-	struct iphdr ip = (struct iphdr){
+	struct iphdr ip = {
 		.version = IPVERSION,
 		.ihl = sizeof(struct iphdr) / 4u,
 		.tos = ECN_ECT0,
@@ -1451,7 +1453,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 	if (ecn) {
 		ctx->cap_ecn = false;
 	}
-	struct tcphdr tcp = (struct tcphdr){
+	struct tcphdr tcp = {
 		.source = src->sin_port,
 		.dest = dst->sin_port,
 		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
@@ -1463,7 +1465,7 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.window = htons(32748),
 	};
 	{
-		struct pseudo_iphdr pseudo = (struct pseudo_iphdr){
+		struct pseudo_iphdr pseudo = {
 			.saddr = src->sin_addr.s_addr,
 			.daddr = dst->sin_addr.s_addr,
 			.protocol = IPPROTO_TCP,
@@ -1491,7 +1493,7 @@ obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
 	const uint32_t flow =
 		(UINT32_C(6) << 28u) | (ECN_ECT0 << 20u) | ctx->cap_flow;
-	struct ip6_hdr ip6 = (struct ip6_hdr){
+	struct ip6_hdr ip6 = {
 		.ip6_flow = htonl(flow),
 		.ip6_plen = htons(plen),
 		.ip6_nxt = IPPROTO_TCP,
@@ -1504,7 +1506,7 @@ obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 	if (ecn) {
 		ctx->cap_ecn = false;
 	}
-	struct tcphdr tcp = (struct tcphdr){
+	struct tcphdr tcp = {
 		.source = src->sin6_port,
 		.dest = dst->sin6_port,
 		.seq = htonl(ctx->cap_ack_seq + UINT32_C(1492)),
@@ -1516,7 +1518,7 @@ obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 		.window = htons(32748),
 	};
 	{
-		struct pseudo_ip6hdr pseudo = (struct pseudo_ip6hdr){
+		const struct pseudo_ip6hdr pseudo = {
 			.src = src->sin6_addr,
 			.dst = dst->sin6_addr,
 			.nxt = IPPROTO_TCP,

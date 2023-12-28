@@ -20,15 +20,6 @@
 		}                                                              \
 	} while (0)
 
-/* Check if the error is generally "transient":
- *   In accept()/send()/recv()/sendmsg()/recvmsg()/sendmmsg()/recvmmsg(),
- * transient errors should not cause the socket to fail. The operation should
- * be retried later if the corresponding event is still available.
- */
-#define IS_TRANSIENT_ERROR(err)                                                \
-	((err) == EINTR || (err) == EAGAIN || (err) == EWOULDBLOCK ||          \
-	 (err) == ENOBUFS || (err) == ENOMEM)
-
 #define LOG_RATELIMITED_F(level, now, rate, format, ...)                       \
 	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__));
 

@@ -10,7 +10,8 @@
 #include "util.h"
 #include "server.h"
 #include "pktqueue.h"
-#include "kcp/ikcp.h"
+
+#include "ikcp.h"
 
 #include <ev.h>
 
@@ -85,7 +86,7 @@ static bool kcp_send(
 bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg)
 {
 	unsigned char buf[TLV_HEADER_SIZE];
-	struct tlv_header header = (struct tlv_header){
+	struct tlv_header header = {
 		.msg = msg,
 		.len = TLV_HEADER_SIZE,
 	};
@@ -97,7 +98,7 @@ bool kcp_push(struct session *restrict ss)
 {
 	assert(ss->rbuf->len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf->len;
-	struct tlv_header header = (struct tlv_header){
+	struct tlv_header header = {
 		.msg = SMSG_PUSH,
 		.len = (uint16_t)len,
 	};

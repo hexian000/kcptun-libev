@@ -6,7 +6,8 @@
 
 #include "crypto.h"
 #include "utils/buffer.h"
-#include "libbloom/bloom.h"
+
+#include "bloom.h"
 
 #include <stdbool.h>
 #include <stddef.h>

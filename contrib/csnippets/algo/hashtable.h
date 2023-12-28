@@ -16,7 +16,7 @@
  * @{
  */
 
-typedef struct vbuffer hashkey_t;
+typedef struct buffer hashkey_t;
 
 struct hashtable;
 
@@ -47,21 +47,23 @@ void table_free(struct hashtable *table);
  * @brief Explicitly reallocate memory for the table.
  * @details 1. Preallocate memory for faster table filling. <br>
  * 2. Passing any new_size less than current size to shrink a table.
- * @param table Pointer to the table.
+ * @param table Pointer to the table is invalidated after call.
  * @param new_size Expected new table size.
+ * @return Pointer to the modified table.
  */
-void table_reserve(struct hashtable *table, int new_size);
+struct hashtable *table_reserve(struct hashtable *table, int new_size);
 
 /**
  * @brief Insert or assign to an element in the table.
- * @param table Pointer to the table.
+ * @param table Pointer to the table is invalidated after call.
  * @param key The key of the new element.
- * @param element The new element where the key should be stored, not NULL.
- * @return When success, the existing element or NULL. If allocation failed or
- * the table size will exceed INT_MAX, no operation is performed and the new
- * element is returned.
+ * @param[inout] element The new element in, the replaced element out.
+ * If allocation failed or the table size will exceed INT_MAX, no operation
+ * is performed and the new element is returned.
+ * @return Pointer to the modified table.
  */
-void *table_set(struct hashtable *table, const hashkey_t *key, void *element);
+struct hashtable *
+table_set(struct hashtable *table, const hashkey_t *key, void **element);
 
 /**
  * @brief Find an element by key.
@@ -73,19 +75,23 @@ void *table_find(const struct hashtable *table, const hashkey_t *key);
 
 /**
  * @brief Delete an element by key.
- * @param table Pointer to the table.
+ * @param table Pointer to the table is invalidated after call.
  * @param key The key to find and delete.
- * @return The existing element or NULL.
+ * @param[out] element The existing element or NULL.
+ * @return Pointer to the modified table.
  */
-void *table_del(struct hashtable *table, const hashkey_t *key);
+struct hashtable *
+table_del(struct hashtable *table, const hashkey_t *key, void **element);
 
 /**
  * @brief Delete elements while iterating over the table.
- * @param table Pointer to the table.
+ * @param table Pointer to the table is invalidated after call.
  * @param f Callback function, return false to delete.
  * @param data Transparently passed to f
+ * @return Pointer to the modified table.
  */
-void table_filter(struct hashtable *table, table_iterate_cb f, void *data);
+struct hashtable *
+table_filter(struct hashtable *table, table_iterate_cb f, void *data);
 
 /**
  * @brief Iterate over a table.

@@ -7,10 +7,10 @@
 #include "utils/debug.h"
 #include "utils/minmax.h"
 #include "utils/mcache.h"
-#include "utils/posixtime.h"
 #include "crypto.h"
 #include "pktqueue.h"
-#include "kcp/ikcp.h"
+
+#include "ikcp.h"
 
 #include <ev.h>
 #include <unistd.h>
@@ -26,7 +26,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 
 bool check_rate_limit(
 	ev_tstamp *restrict last, const ev_tstamp now, const double interval)

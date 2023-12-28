@@ -3,7 +3,8 @@
 
 #include "jsonutil.h"
 #include "utils/slog.h"
-#include "json/json.h"
+
+#include "json.h"
 
 #include <limits.h>
 #include <string.h>

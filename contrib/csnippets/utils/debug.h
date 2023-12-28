@@ -64,7 +64,7 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 		abort();                                                       \
 	} while (0)
 #define FAILMSG(msg) FAILMSGF("%s", msg)
-#define FAIL() FAILMSG("program entered an unexpected state (bug?)")
+#define FAIL() FAILMSG("program encountered an unexpected state (bug?)")
 
 /* CHECK*: check runtime condition or FAIL */
 #define CHECKMSGF(cond, format, ...)                                           \

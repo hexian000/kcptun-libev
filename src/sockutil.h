@@ -6,11 +6,21 @@
 
 #include "algo/hashtable.h"
 
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <errno.h>
+
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <netinet/in.h>
-#include <sys/socket.h>
+/* Check if the error is generally "transient":
+ *   In accept()/send()/recv()/sendmsg()/recvmsg()/sendmmsg()/recvmmsg(),
+ * transient errors should not cause the socket to fail. The operation should
+ * be retried later if the corresponding event is still available.
+ */
+#define IS_TRANSIENT_ERROR(err)                                                \
+	((err) == EINTR || (err) == EAGAIN || (err) == EWOULDBLOCK ||          \
+	 (err) == ENOBUFS || (err) == ENOMEM)
 
 typedef union {
 	struct sockaddr sa;

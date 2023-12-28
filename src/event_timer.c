@@ -170,7 +170,7 @@ void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	struct server *restrict s = watcher->data;
 
 	/* session timeout */
-	table_filter(s->sessions, timeout_filt, s);
+	s->sessions = table_filter(s->sessions, timeout_filt, s);
 
 	/* mcache maintenance */
 	mcache_shrink(msgpool, 1);

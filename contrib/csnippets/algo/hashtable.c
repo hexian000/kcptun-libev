@@ -53,7 +53,6 @@ struct hash_item {
 };
 
 struct hashtable {
-	struct hash_item *p;
 	int size, capacity, max_load;
 	int freelist;
 	uint32_t seed;
@@ -61,9 +60,10 @@ struct hashtable {
 #ifndef NDEBUG
 	unsigned int version;
 #endif
+	struct hash_item p[];
 };
 
-#define KEY_EQUALS(a, b) VBUF_EQUALS(a, b)
+#define KEY_EQUALS(a, b) BUF_EQUALS(*(a), *(b))
 
 static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
 {
@@ -71,7 +71,7 @@ static inline int get_hash(const hashkey_t *restrict x, const uint32_t seed)
 	return (int)(h & (uint32_t)INT_MAX);
 }
 
-static inline void table_init(struct hashtable *restrict table, const int start)
+static inline void init_items(struct hashtable *restrict table, const int start)
 {
 	const int capacity = table->capacity;
 	/* initialize items */
@@ -126,40 +126,47 @@ static inline void table_rehash(struct hashtable *restrict table)
 }
 
 static inline void
+update_capacity(struct hashtable *restrict table, const size_t new_capacity)
+{
+	table->capacity = new_capacity;
+	/* max load factor: 1.0 - normal, 0.75 - fast */
+	if (table->flags & TABLE_FAST) {
+		table->max_load = table->capacity / 4 * 3;
+	} else {
+		table->max_load = table->capacity;
+	}
+}
+
+static inline struct hashtable *
 table_realloc(struct hashtable *restrict table, const int new_capacity)
 {
 	const int old_capacity = table->capacity;
 	if (old_capacity == new_capacity) {
-		return;
+		return table;
 	}
 	assert(new_capacity >= table->size);
-	const size_t item_size = new_capacity * sizeof(struct hash_item);
-	struct hash_item *m = (struct hash_item *)realloc(table->p, item_size);
+	struct hashtable *restrict m = (struct hashtable *)realloc(
+		table, sizeof(struct hashtable) +
+			       new_capacity * sizeof(struct hash_item));
 	if (m == NULL) {
-		return;
+		return table;
 	}
 #if HASHTABLE_LOG
-	if (table->p != NULL && table->p != m) {
+	if (table != m) {
 		fprintf(stderr, " * realloc moved memory from %p to %p\n",
-			(void *)table->p, (void *)m);
+			(void *)table, (void *)m);
 	}
 #endif
-	table->p = m;
-	table->capacity = new_capacity;
-	/* max load factor: 1.0 - normal, 0.75 - fast */
-	if (table->flags & TABLE_FAST) {
-		table->max_load = new_capacity / 4 * 3;
-	} else {
-		table->max_load = new_capacity;
-	}
+	update_capacity(m, new_capacity);
 
 	if (new_capacity > old_capacity) {
 		/* init newly allocated memory */
-		table_init(table, old_capacity);
+		init_items(m, old_capacity);
 	}
+	return m;
 }
 
-static inline void table_grow(struct hashtable *restrict table)
+static inline struct hashtable *table_grow(struct hashtable *restrict table)
 {
 	const int want = table->size / 3 + 1;
 	int estimated = table->size;
@@ -168,7 +175,7 @@ static inline void table_grow(struct hashtable *restrict table)
 	} else {
 		estimated = INT_MAX;
 	}
-	table_reserve(table, estimated);
+	return table_reserve(table, estimated);
 }
 
 static inline void table_reseed(struct hashtable *restrict table)
@@ -182,8 +189,9 @@ static inline void table_reseed(struct hashtable *restrict table)
 	table_rehash(table);
 }
 
-void *
-table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
+struct hashtable *table_set(
+	struct hashtable *restrict table, const hashkey_t *key,
+	void **restrict element)
 {
 	assert(element != NULL);
 	const int hash = get_hash(key, table->seed);
@@ -195,14 +203,15 @@ table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 			/* replace existing element */
 			void *old_elem = p->element;
 			p->key = key;
-			p->element = element;
+			p->element = *element;
 #ifndef NDEBUG
 			table->version++;
 #endif
 			if (collision > COLLISION_THRESHOLD) {
 				table_reseed(table);
 			}
-			return old_elem;
+			*element = old_elem;
+			return table;
 		}
 		collision++;
 	}
@@ -215,10 +224,10 @@ table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 		table->size++;
 	} else {
 		if (table->size >= table->max_load) {
-			table_grow(table);
+			table = table_grow(table);
 			if (table->size == table->capacity) {
 				/* allocation failed */
-				return element;
+				return table;
 			}
 			bucket = hash % table->capacity;
 		}
@@ -228,7 +237,7 @@ table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 
 	struct hash_item *restrict p = &(table->p[index]);
 	p->key = key;
-	p->element = element;
+	p->element = *element;
 	p->hash = hash;
 	int *old_bucket = &(table->p[bucket].bucket);
 	p->next = *old_bucket;
@@ -240,15 +249,19 @@ table_set(struct hashtable *restrict table, const hashkey_t *key, void *element)
 	if (collision > COLLISION_THRESHOLD) {
 		table_reseed(table);
 	}
-	return NULL;
+	*element = NULL;
+	return table;
 }
 
 void *table_find(const struct hashtable *restrict table, const hashkey_t *key)
 {
+	if (table == NULL) {
+		return NULL;
+	}
 	const int hash = get_hash(key, table->seed);
 	const int bucket = hash % table->capacity;
 	for (int i = table->p[bucket].bucket; i >= 0; i = table->p[i].next) {
-		struct hash_item *restrict p = &(table->p[i]);
+		const struct hash_item *restrict p = &(table->p[i]);
 		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
 			/* found */
 			return p->element;
@@ -257,8 +270,13 @@ void *table_find(const struct hashtable *restrict table, const hashkey_t *key)
 	return NULL;
 }
 
-void *table_del(struct hashtable *restrict table, const hashkey_t *key)
+struct hashtable *table_del(
+	struct hashtable *restrict table, const hashkey_t *key,
+	void **restrict element)
 {
+	if (table == NULL) {
+		return NULL;
+	}
 	const int hash = get_hash(key, table->seed);
 	int bucket = hash % table->capacity;
 	int *last_next = &(table->p[bucket].bucket);
@@ -273,22 +291,48 @@ void *table_del(struct hashtable *restrict table, const hashkey_t *key)
 #ifndef NDEBUG
 			table->version++;
 #endif
-			return p->element;
+			if (element != NULL) {
+				*element = p->element;
+			}
+			return table;
 		}
 		last_next = &(p->next);
 	}
-	return NULL;
+	if (element != NULL) {
+		*element = NULL;
+	}
+	return table;
+}
+
+struct hashtable *table_new(const int flags)
+{
+	struct hashtable *restrict table =
+		malloc(sizeof(struct hashtable) +
+		       sizeof(struct hash_item) * INITIAL_CAPACITY);
+	if (table == NULL) {
+		return NULL;
+	}
+	*table = (struct hashtable){
+		.size = 0,
+		.freelist = -1,
+		.seed = (uint32_t)rand64(),
+		.flags = flags,
+#ifndef NDEBUG
+		.version = 0,
+#endif
+	};
+	update_capacity(table, INITIAL_CAPACITY);
+	init_items(table, 0);
+	return table;
 }
 
 void table_free(struct hashtable *restrict table)
 {
-	if (table != NULL) {
-		free(table->p);
-	}
 	free(table);
 }
 
-void table_reserve(struct hashtable *restrict table, const int new_size)
+struct hashtable *
+table_reserve(struct hashtable *restrict table, const int new_size)
 {
 	int new_capacity = new_size;
 	if (new_capacity < table->size) {
@@ -304,7 +348,7 @@ void table_reserve(struct hashtable *restrict table, const int new_size)
 	}
 	new_capacity = ceil_capacity(new_capacity);
 	if (table->capacity == new_capacity) {
-		return;
+		return table;
 	}
 #if HASHTABLE_LOG
 	fprintf(stderr, "table resize: size=%d capacity=%d new_capacity=%d\n",
@@ -314,41 +358,16 @@ void table_reserve(struct hashtable *restrict table, const int new_size)
 	table->version++;
 #endif
 	table_compact(table);
-	table_realloc(table, new_capacity);
+	table = table_realloc(table, new_capacity);
 	table_rehash(table);
-}
-
-struct hashtable *table_new(const int flags)
-{
-	struct hashtable *restrict table = malloc(sizeof(struct hashtable));
-	if (table == NULL) {
-		return NULL;
-	}
-	*table = (struct hashtable){
-		.p = NULL,
-		.size = 0,
-		.capacity = 0,
-		.max_load = 0,
-		.freelist = -1,
-		.seed = (uint32_t)rand64(),
-		.flags = flags,
-#ifndef NDEBUG
-		.version = 0,
-#endif
-	};
-	table_realloc(table, INITIAL_CAPACITY);
-	if (table->p == NULL) {
-		free(table);
-		return NULL;
-	}
 	return table;
 }
 
-void table_filter(
-	struct hashtable *restrict table, table_iterate_cb f, void *data)
+struct hashtable *
+table_filter(struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
-	if (table->size == 0) {
-		return;
+	if (table == NULL) {
+		return NULL;
 	}
 #ifndef NDEBUG
 	const unsigned int version = table->version;
@@ -374,12 +393,13 @@ void table_filter(
 			table->size--;
 		}
 	}
+	return table;
 }
 
 void table_iterate(
 	const struct hashtable *restrict table, table_iterate_cb f, void *data)
 {
-	if (table->size == 0) {
+	if (table == NULL) {
 		return;
 	}
 #ifndef NDEBUG
@@ -390,7 +410,7 @@ void table_iterate(
 #ifndef NDEBUG
 		assert(version == table->version);
 #endif
-		struct hash_item *restrict p = &(table->p[i]);
+		const struct hash_item *restrict p = &(table->p[i]);
 		if (p->hash < 0) {
 			continue;
 		}
@@ -402,5 +422,8 @@ void table_iterate(
 
 int table_size(const struct hashtable *restrict table)
 {
+	if (table == NULL) {
+		return 0;
+	}
 	return table->size;
 }

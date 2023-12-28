@@ -2,7 +2,6 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "conf.h"
-#include "utils/arraysize.h"
 #include "utils/slog.h"
 #include "util.h"
 #include "jsonutil.h"
@@ -70,30 +69,28 @@ static struct jutil_value *conf_parse(const char *filename)
 	return obj;
 }
 
-#define CASE_NAME(c)                                                           \
-	(namelen == (ARRAY_SIZE(c) - 1) &&                                     \
-	 memcmp(name, c, (ARRAY_SIZE(c) - 1) * sizeof((c)[0])) == 0)
+#define NAME_EQUAL(c) CONSTSTREQUAL(name, namelen, c)
 
 static bool kcp_scope_cb(
 	void *ud, const char *name, const size_t namelen,
 	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (CASE_NAME("mtu")) {
+	if (NAME_EQUAL("mtu")) {
 		return jutil_get_int(value, &conf->kcp_mtu);
-	} else if (CASE_NAME("sndwnd")) {
+	} else if (NAME_EQUAL("sndwnd")) {
 		return jutil_get_int(value, &conf->kcp_sndwnd);
-	} else if (CASE_NAME("rcvwnd")) {
+	} else if (NAME_EQUAL("rcvwnd")) {
 		return jutil_get_int(value, &conf->kcp_rcvwnd);
-	} else if (CASE_NAME("nodelay")) {
+	} else if (NAME_EQUAL("nodelay")) {
 		return jutil_get_int(value, &conf->kcp_nodelay);
-	} else if (CASE_NAME("interval")) {
+	} else if (NAME_EQUAL("interval")) {
 		return jutil_get_int(value, &conf->kcp_interval);
-	} else if (CASE_NAME("resend")) {
+	} else if (NAME_EQUAL("resend")) {
 		return jutil_get_int(value, &conf->kcp_resend);
-	} else if (CASE_NAME("nc")) {
+	} else if (NAME_EQUAL("nc")) {
 		return jutil_get_int(value, &conf->kcp_nc);
-	} else if (CASE_NAME("flush")) {
+	} else if (NAME_EQUAL("flush")) {
 		return jutil_get_int(value, &conf->kcp_flush);
 	}
 	LOGW_F("unknown config: \"kcp.%s\"", name);
@@ -105,15 +102,15 @@ static bool tcp_scope_cb(
 	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (CASE_NAME("reuseport")) {
+	if (NAME_EQUAL("reuseport")) {
 		return jutil_get_bool(value, &conf->tcp_reuseport);
-	} else if (CASE_NAME("keepalive")) {
+	} else if (NAME_EQUAL("keepalive")) {
 		return jutil_get_bool(value, &conf->tcp_keepalive);
-	} else if (CASE_NAME("nodelay")) {
+	} else if (NAME_EQUAL("nodelay")) {
 		return jutil_get_bool(value, &conf->tcp_nodelay);
-	} else if (CASE_NAME("sndbuf")) {
+	} else if (NAME_EQUAL("sndbuf")) {
 		return jutil_get_int(value, &conf->tcp_sndbuf);
-	} else if (CASE_NAME("rcvbuf")) {
+	} else if (NAME_EQUAL("rcvbuf")) {
 		return jutil_get_int(value, &conf->tcp_rcvbuf);
 	}
 	LOGW_F("unknown config: \"tcp.%s\"", name);
@@ -125,9 +122,9 @@ static bool udp_scope_cb(
 	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (CASE_NAME("sndbuf")) {
+	if (NAME_EQUAL("sndbuf")) {
 		return jutil_get_int(value, &conf->udp_sndbuf);
-	} else if (CASE_NAME("rcvbuf")) {
+	} else if (NAME_EQUAL("rcvbuf")) {
 		return jutil_get_int(value, &conf->udp_rcvbuf);
 	}
 	LOGW_F("unknown config: \"udp.%s\"", name);
@@ -139,60 +136,60 @@ static bool main_scope_cb(
 	const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (CASE_NAME("kcp")) {
+	if (NAME_EQUAL("kcp")) {
 		return jutil_walk_object(conf, value, kcp_scope_cb);
-	} else if (CASE_NAME("udp")) {
+	} else if (NAME_EQUAL("udp")) {
 		return jutil_walk_object(conf, value, udp_scope_cb);
-	} else if (CASE_NAME("tcp")) {
+	} else if (NAME_EQUAL("tcp")) {
 		return jutil_walk_object(conf, value, tcp_scope_cb);
-	} else if (CASE_NAME("listen")) {
+	} else if (NAME_EQUAL("listen")) {
 		conf->listen = jutil_strdup(value);
 		return conf->listen != NULL;
-	} else if (CASE_NAME("connect")) {
+	} else if (NAME_EQUAL("connect")) {
 		conf->connect = jutil_strdup(value);
 		return conf->connect != NULL;
-	} else if (CASE_NAME("kcp_bind")) {
+	} else if (NAME_EQUAL("kcp_bind")) {
 		conf->kcp_bind = jutil_strdup(value);
 		return conf->kcp_bind != NULL;
-	} else if (CASE_NAME("kcp_connect")) {
+	} else if (NAME_EQUAL("kcp_connect")) {
 		conf->kcp_connect = jutil_strdup(value);
 		return conf->kcp_connect != NULL;
-	} else if (CASE_NAME("http_listen")) {
+	} else if (NAME_EQUAL("http_listen")) {
 		conf->http_listen = jutil_strdup(value);
 		return conf->http_listen != NULL;
-	} else if (CASE_NAME("netdev")) {
+	} else if (NAME_EQUAL("netdev")) {
 		conf->netdev = jutil_strdup(value);
 		return conf->netdev != NULL;
 	}
 #if WITH_CRYPTO
-	else if (CASE_NAME("method")) {
+	else if (NAME_EQUAL("method")) {
 		conf->method = jutil_strdup(value);
 		return conf->method != NULL;
-	} else if (CASE_NAME("password")) {
+	} else if (NAME_EQUAL("password")) {
 		conf->password = jutil_strdup(value);
 		return conf->password != NULL;
-	} else if (CASE_NAME("psk")) {
+	} else if (NAME_EQUAL("psk")) {
 		conf->psk = jutil_strdup(value);
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
 #if WITH_OBFS
-	else if (CASE_NAME("obfs")) {
+	else if (NAME_EQUAL("obfs")) {
 		conf->obfs = jutil_strdup(value);
 		return conf->obfs != NULL;
 	}
 #endif /* WITH_OBFS */
-	else if (CASE_NAME("linger")) {
+	else if (NAME_EQUAL("linger")) {
 		return jutil_get_int(value, &conf->linger);
-	} else if (CASE_NAME("timeout")) {
+	} else if (NAME_EQUAL("timeout")) {
 		return jutil_get_int(value, &conf->timeout);
-	} else if (CASE_NAME("keepalive")) {
+	} else if (NAME_EQUAL("keepalive")) {
 		return jutil_get_int(value, &conf->keepalive);
-	} else if (CASE_NAME("time_wait")) {
+	} else if (NAME_EQUAL("time_wait")) {
 		return jutil_get_int(value, &conf->time_wait);
-	} else if (CASE_NAME("loglevel")) {
+	} else if (NAME_EQUAL("loglevel")) {
 		return jutil_get_int(value, &conf->log_level);
-	} else if (CASE_NAME("user")) {
+	} else if (NAME_EQUAL("user")) {
 		conf->user = jutil_strdup(value);
 		return conf->user != NULL;
 	}
@@ -200,7 +197,7 @@ static bool main_scope_cb(
 	return true;
 }
 
-#undef CASE_NAME
+#undef NAME_EQUAL
 
 const char *runmode_str(const int mode)
 {

@@ -15,7 +15,8 @@
 #include "pktqueue.h"
 #include "sockutil.h"
 #include "util.h"
-#include "kcp/ikcp.h"
+
+#include "ikcp.h"
 
 #include <ev.h>
 #include <sys/socket.h>
