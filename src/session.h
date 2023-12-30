@@ -5,9 +5,9 @@
 #define SESSION_H
 
 #include "conf.h"
+#include "algo/hashtable.h"
 #include "utils/buffer.h"
 #include "utils/serialize.h"
-#include "algo/hashtable.h"
 #include "sockutil.h"
 #include "util.h"
 
@@ -74,24 +74,10 @@ struct link_stats {
 struct IKCPCB;
 
 #define SESSION_BUF_SIZE 16384
-
 #define SESSION_KEY_SIZE (sizeof(uint32_t) + sizeof(sockaddr_max_t))
 
-struct session_key {
-	BUFFER_HDR;
-	unsigned char data[SESSION_KEY_SIZE];
-};
-
-#define SESSION_MAKE_KEY(key, sa, conv)                                        \
-	do {                                                                   \
-		const size_t n = getsocklen(sa);                               \
-		BUF_INIT(key, sizeof(uint32_t) + n);                           \
-		write_uint32((key).data, conv);                                \
-		memcpy((key).data + sizeof(uint32_t), (sa), n);                \
-	} while (0)
-
 struct session {
-	struct session_key key;
+	unsigned char key[SESSION_KEY_SIZE];
 	struct server *server;
 	struct IKCPCB *kcp;
 	int tcp_state, kcp_state;
@@ -115,6 +101,24 @@ struct session {
 
 	struct link_stats stats;
 };
+
+#define SESSION_GETKEY(ss)                                                     \
+	((struct hashkey){                                                     \
+		.len = SESSION_KEY_SIZE,                                       \
+		.data = (ss)->key,                                             \
+	})
+
+#define SESSION_MAKEKEY(key, sa, conv)                                         \
+	do {                                                                   \
+		unsigned char *p = (key);                                      \
+		size_t size = SESSION_KEY_SIZE;                                \
+		const size_t n = getsocklen(sa);                               \
+		write_uint32(p, conv);                                         \
+		p += sizeof(uint32_t), size -= sizeof(uint32_t);               \
+		memcpy(p, (sa), n);                                            \
+		p += n, size -= n;                                             \
+		memset(p, 0, size);                                            \
+	} while (0)
 
 struct session *
 session_new(struct server *s, const struct sockaddr *addr, uint32_t conv);

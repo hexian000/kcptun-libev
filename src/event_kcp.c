@@ -3,13 +3,14 @@
 
 #include "event.h"
 #include "event_impl.h"
-#include "sockutil.h"
+#include "algo/hashtable.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 #include "session.h"
-#include "util.h"
 #include "server.h"
 #include "pktqueue.h"
+#include "sockutil.h"
+#include "util.h"
 
 #include "ikcp.h"
 
@@ -148,14 +149,14 @@ static void kcp_update(struct session *restrict ss)
 }
 
 static bool kcp_update_iter(
-	const struct hashtable *t, const hashkey_t *key, void *element,
+	const struct hashtable *t, const struct hashkey key, void *element,
 	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	assert(key == (hashkey_t *)&ss->key);
+	assert(key.data == ss->key);
 	kcp_update(ss);
 	return true;
 }

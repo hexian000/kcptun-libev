@@ -90,7 +90,7 @@ struct session *session_new(
 		return NULL;
 	}
 	const ev_tstamp now = ev_now(s->loop);
-	SESSION_MAKE_KEY(ss->key, addr, conv);
+	SESSION_MAKEKEY(ss->key, addr, conv);
 	ss->created = now;
 	ss->last_send = TSTAMP_NIL;
 	ss->last_recv = TSTAMP_NIL;
@@ -501,11 +501,14 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	const uint32_t conv = read_uint32(msgbuf);
-	struct session_key key;
-	SESSION_MAKE_KEY(key, &msg->addr.sa, conv);
-	struct session *restrict ss =
-		table_find(s->sessions, (hashkey_t *)&key);
-	if (ss == NULL) {
+	unsigned char sskey[SESSION_KEY_SIZE];
+	SESSION_MAKEKEY(sskey, &msg->addr.sa, conv);
+	const struct hashkey hkey = {
+		.len = sizeof(sskey),
+		.data = sskey,
+	};
+	struct session *restrict ss;
+	if (!table_find(s->sessions, hkey, (void **)&ss)) {
 		return;
 	}
 	if (ss->kcp_state == STATE_TIME_WAIT) {

@@ -130,8 +130,9 @@ case "$1" in
         -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
     ls -lh "build/src/kcptun-libev"
     ;;
-"asan")
-    # rebuild with asan
+"d")
+    find src -name '*.c' -o -name '*.h' | xargs clang-format -i
+    # debug
     rm -rf "build" && mkdir -p "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Debug" \
@@ -142,8 +143,8 @@ case "$1" in
     nice cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"
     ;;
-"clang-asan")
-    # rebuild with clang & asan
+"san")
+    # rebuild with clang & sanitizers
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Debug" \

@@ -4,8 +4,6 @@
 #ifndef ALGO_HASHTABLE_H
 #define ALGO_HASHTABLE_H
 
-#include "utils/buffer.h"
-
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,12 +14,15 @@
  * @{
  */
 
-typedef struct buffer hashkey_t;
+struct hashkey {
+	size_t len;
+	const void *data;
+};
 
 struct hashtable;
 
 typedef bool (*table_iterate_cb)(
-	const struct hashtable *table, const hashkey_t *key, void *element,
+	const struct hashtable *table, struct hashkey key, void *element,
 	void *data);
 
 enum table_flags {
@@ -45,13 +46,13 @@ void table_free(struct hashtable *table);
 
 /**
  * @brief Explicitly reallocate memory for the table.
- * @details 1. Preallocate memory for faster table filling. <br>
- * 2. Passing any new_size less than current size to shrink a table.
  * @param table Pointer to the table is invalidated after call.
  * @param new_size Expected new table size.
  * @return Pointer to the modified table.
+ * @details 1. Preallocate memory for faster table filling. <br>
+ * 2. Passing any new_size less than current size to shrink a table.
  */
-struct hashtable *table_reserve(struct hashtable *table, int new_size);
+struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
 
 /**
  * @brief Insert or assign to an element in the table.
@@ -63,15 +64,18 @@ struct hashtable *table_reserve(struct hashtable *table, int new_size);
  * @return Pointer to the modified table.
  */
 struct hashtable *
-table_set(struct hashtable *table, const hashkey_t *key, void **element);
+table_set(struct hashtable *table, struct hashkey key, void **element);
 
 /**
  * @brief Find an element by key.
  * @param table Pointer to the table.
  * @param key The key to find.
- * @return The existing element or NULL.
+ * @param[out] element If found, returns the element when not NULL. Otherwise
+ * undefined.
+ * @return false if not found.
  */
-void *table_find(const struct hashtable *table, const hashkey_t *key);
+bool table_find(
+	const struct hashtable *table, struct hashkey key, void **element);
 
 /**
  * @brief Delete an element by key.
@@ -81,7 +85,7 @@ void *table_find(const struct hashtable *table, const hashkey_t *key);
  * @return Pointer to the modified table.
  */
 struct hashtable *
-table_del(struct hashtable *table, const hashkey_t *key, void **element);
+table_del(struct hashtable *table, struct hashkey key, void **element);
 
 /**
  * @brief Delete elements while iterating over the table.
@@ -107,7 +111,7 @@ void table_iterate(
  * @param table Pointer to a table.
  * @return The number of elements in the table.
  */
-int table_size(const struct hashtable *table);
+size_t table_size(const struct hashtable *table);
 
 /** @} */
 

@@ -74,7 +74,7 @@ static void accept_one(
 		return;
 	}
 	void *elem = ss;
-	s->sessions = table_set(s->sessions, (hashkey_t *)&ss->key, &elem);
+	s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
 	assert(elem == NULL);
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];

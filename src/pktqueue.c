@@ -99,11 +99,14 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	}
 
 	const struct sockaddr *sa = &msg->addr.sa;
-	struct session_key sskey;
-	SESSION_MAKE_KEY(sskey, sa, conv);
-	struct session *restrict ss =
-		table_find(s->sessions, (hashkey_t *)&sskey);
-	if (ss == NULL) {
+	unsigned char sskey[SESSION_KEY_SIZE];
+	SESSION_MAKEKEY(sskey, sa, conv);
+	const struct hashkey hkey = {
+		.len = sizeof(sskey),
+		.data = sskey,
+	};
+	struct session *restrict ss;
+	if (!table_find(s->sessions, hkey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			if (LOGLEVEL(WARNING)) {
 				LOG_RATELIMITED_F(
@@ -122,8 +125,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		ss->is_accepted = true;
 		void *elem = ss;
-		s->sessions =
-			table_set(s->sessions, (hashkey_t *)&ss->key, &elem);
+		s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
 		assert(elem == NULL);
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];

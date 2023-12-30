@@ -457,14 +457,14 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 }
 
 static bool shutdown_filt(
-	const struct hashtable *t, const hashkey_t *key, void *element,
+	const struct hashtable *t, const struct hashkey key, void *element,
 	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	assert(key == (hashkey_t *)&ss->key);
+	assert(key.data == ss->key);
 	session_free(ss);
 	return false;
 }
@@ -512,18 +512,22 @@ static uint32_t conv_next(uint32_t conv)
 uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 {
 	uint32_t conv = conv_next(s->m_conv);
-	struct session_key key;
-	SESSION_MAKE_KEY(key, sa, conv);
-	if (table_find(s->sessions, (hashkey_t *)&key) != NULL) {
+	unsigned char key[SESSION_KEY_SIZE];
+	const struct hashkey hkey = {
+		.len = sizeof(key),
+		.data = key,
+	};
+	SESSION_MAKEKEY(key, sa, conv);
+	if (table_find(s->sessions, hkey, NULL)) {
 		const double usage =
-			(double)table_size(s->sessions) / (double)INT_MAX;
+			(double)table_size(s->sessions) / (double)UINT32_MAX;
 		do {
 			if (usage < 1e-3) {
 				conv = (uint32_t)rand64();
 			}
 			conv = conv_next(conv);
-			SESSION_MAKE_KEY(key, sa, conv);
-		} while (table_find(s->sessions, (hashkey_t *)&key) != NULL);
+			SESSION_MAKEKEY(key, sa, conv);
+		} while (table_find(s->sessions, hkey, NULL));
 	}
 	s->m_conv = conv;
 	return conv;
@@ -538,13 +542,13 @@ struct server_stats_ctx {
 };
 
 static bool print_session_iter(
-	const struct hashtable *t, const hashkey_t *key, void *element,
+	const struct hashtable *t, const struct hashkey key, void *element,
 	void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = element;
-	assert(key == (hashkey_t *)&ss->key);
+	assert(key.data == ss->key);
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;
