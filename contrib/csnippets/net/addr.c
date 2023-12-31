@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "addr.h"
+
 #include <stddef.h>
 #include <string.h>
 

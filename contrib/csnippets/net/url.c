@@ -18,7 +18,7 @@ static void hex(char *p, uint8_t c)
 
 static int unhex(char c)
 {
-	if (isdigit(c)) {
+	if (isdigit((unsigned char)c)) {
 		return c - '0';
 	}
 	if ('A' <= c && c <= 'F') {
@@ -84,7 +84,7 @@ escape(char *buf, size_t buf_size, const char *str, const char *allowed_symbols,
 {
 	const size_t cap = buf_size;
 	for (const char *p = str; *p != '\0'; ++p) {
-		const char ch = *p;
+		const unsigned char ch = *p;
 		if (islower(ch) || isupper(ch) || isdigit(ch) ||
 		    strchr(allowed_symbols, ch) != NULL) {
 			APPENDCH(ch);
@@ -274,7 +274,7 @@ bool url_unescape_query(char *str)
 static inline char *strlower(char *s)
 {
 	for (char *p = s; *p != '\0'; ++p) {
-		*s = (char)tolower(*s);
+		*s = (unsigned char)tolower((unsigned char)*s);
 	}
 	return s;
 }
@@ -308,8 +308,10 @@ bool url_parse(char *raw, struct url *restrict url)
 	/* parse scheme */
 	for (char *p = raw; *p != '\0'; ++p) {
 		/* RFC 2396: Section 3.1 */
-		if (isupper(*p) || islower(*p)) {
-		} else if (isdigit(*p) || *p == '+' || *p == '-' || *p == '.') {
+		if (isupper((unsigned char)*p) || islower((unsigned char)*p)) {
+		} else if (
+			isdigit((unsigned char)*p) || *p == '+' || *p == '-' ||
+			*p == '.') {
 			if (p == raw) {
 				break;
 			}
