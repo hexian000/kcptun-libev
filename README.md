@@ -288,6 +288,6 @@ Thanks to:
 - [kcp](https://github.com/skywind3000/kcp) (with modifications)
 - [libev](http://software.schmorp.de/pkg/libev.html)
 - [libsodium](https://github.com/jedisct1/libsodium)
-- [json-parser](https://github.com/udp/json-parser)
+- [json-parser](https://github.com/json-parser/json-parser)
 - [libbloom](https://github.com/jvirkki/libbloom) (with modifications)
 - [cityhash](https://github.com/google/cityhash) (with modifications)
