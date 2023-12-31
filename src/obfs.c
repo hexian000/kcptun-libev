@@ -401,11 +401,6 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		const int err = errno;
 		LOGW_F("cap bind: %s", strerror(err));
 	}
-	if (LOGLEVEL(DEBUG)) {
-		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
-		LOG_F(DEBUG, "obfs: cap bind %s", addr_str);
-	}
 	struct sock_filter filter[32];
 	struct sock_fprog fprog = {
 		.filter = filter,
@@ -420,6 +415,11 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		    sizeof(fprog))) {
 		const int err = errno;
 		LOGW_F("cap filter: %s", strerror(err));
+	}
+	if (LOGLEVEL(NOTICE)) {
+		char addr_str[64];
+		format_sa(sa, addr_str, sizeof(addr_str));
+		LOG_F(NOTICE, "obfs: bind %s", addr_str);
 	}
 	return true;
 }

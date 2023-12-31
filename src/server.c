@@ -55,14 +55,14 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	/* Bind socket to address */
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
 		const int err = errno;
-		LOGE_F("bind error: %s", strerror(err));
+		LOGE_F("tcp bind: %s", strerror(err));
 		CLOSE_FD(fd);
 		return -1;
 	}
 	/* Start listening on the socket */
 	if (listen(fd, SOMAXCONN)) {
 		const int err = errno;
-		LOGE_F("listen error: %s", strerror(err));
+		LOGE_F("tcp listen: %s", strerror(err));
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -90,10 +90,10 @@ static bool listener_start(struct server *restrict s)
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd = fd;
-		if (LOGLEVEL(INFO)) {
+		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(INFO, "listen at: %s", addr_str);
+			LOG_F(NOTICE, "listen at %s", addr_str);
 		}
 	}
 
@@ -112,10 +112,10 @@ static bool listener_start(struct server *restrict s)
 		w_accept->data = s;
 		ev_io_start(s->loop, w_accept);
 		l->fd_http = fd;
-		if (LOGLEVEL(INFO)) {
+		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(INFO, "http listen at: %s", addr_str);
+			LOG_F(NOTICE, "http listen at %s", addr_str);
 		}
 	}
 

@@ -193,16 +193,15 @@ int main(int argc, char **argv)
 	}
 
 	/* start event loop */
-	LOGN_F("%s start", runmode_str(conf->mode));
 	ev_run(loop, 0);
 
 	server_stop(s);
 	server_free(s);
-	LOGN_F("%s shutdown", runmode_str(conf->mode));
+	LOGN_F("%s shutdown gracefully", runmode_str(conf->mode));
 	ev_loop_destroy(loop);
 	conf_free(conf);
 
-	LOGI("program terminated normally.");
+	LOGD("program terminated normally");
 	return EXIT_SUCCESS;
 }
 
