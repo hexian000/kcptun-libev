@@ -33,10 +33,7 @@ endif()
 target_compile_options(kcptun-libev PRIVATE "-include${CMAKE_CURRENT_BINARY_DIR}/config.h")
 
 # be strict with original sources
-target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra)
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_options(kcptun-libev PRIVATE -Werror)
-endif()
+target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
 
 target_link_libraries(kcptun-libev PRIVATE kcp json bloom csnippets)
 
