@@ -253,7 +253,7 @@ Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read th
 	2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
-- "kcp.mtu": IP header is included. 1492 by default.
+- "kcp.mtu": Specifies the final IP packet size, including all overhead.
 
 Again, there is some kcptun-libev specific options:
 
