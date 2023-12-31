@@ -620,11 +620,8 @@ static struct vbuffer *print_session_table(
 }
 
 static struct vbuffer *append_traffic_stats(
-	struct vbuffer *buf, const double uptime,
-	const struct link_stats *restrict stats)
+	struct vbuffer *buf, const struct link_stats *restrict stats)
 {
-	const double uptime_hrs = uptime / 3600.0;
-
 #define FORMAT_BYTES(name, value)                                              \
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
@@ -636,18 +633,10 @@ static struct vbuffer *append_traffic_stats(
 	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
 	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
 
-	FORMAT_BYTES(avgtcp_rx, (double)(stats->tcp_rx) / uptime_hrs);
-	FORMAT_BYTES(avgtcp_tx, (double)(stats->tcp_tx) / uptime_hrs);
-	FORMAT_BYTES(avgpkt_rx, (double)(stats->pkt_rx) / uptime_hrs);
-	FORMAT_BYTES(avgpkt_tx, (double)(stats->pkt_tx) / uptime_hrs);
-
 #undef FORMAT_BYTES
 	return VBUF_APPENDF(
-		buf,
-		"[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n"
-		"[avgbw] tcp: %s/hrs, %s/hrs; pkt: %s/hrs, %s/hrs\n",
-		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx,
-		/* avgbw */ avgtcp_rx, avgtcp_tx, avgpkt_rx, avgpkt_tx);
+		buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
+		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 }
 
 static bool update_load(
@@ -676,7 +665,7 @@ server_stats_const(const struct server *s, struct vbuffer *buf, int level)
 	char uptime_str[16];
 	(void)format_duration(
 		uptime_str, sizeof(uptime_str), make_duration(uptime));
-	buf = append_traffic_stats(buf, uptime, &s->stats);
+	buf = append_traffic_stats(buf, &s->stats);
 	buf = VBUF_APPENDF(buf, "  = uptime: %s\n", uptime_str);
 	return buf;
 }
@@ -724,7 +713,7 @@ struct vbuffer *server_stats(
 			dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx);
 	}
 
-	buf = append_traffic_stats(buf, uptime, &s->stats);
+	buf = append_traffic_stats(buf, &s->stats);
 
 	{
 		char load_buf[16];
