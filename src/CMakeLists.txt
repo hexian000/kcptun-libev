@@ -11,7 +11,7 @@ add_executable(kcptun-libev main.c
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h event_impl.h)
 
-if(NOT TARGET_POSIX AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
+if(TARGET_LINUX)
     target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
 else()
     target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=200809L)
@@ -71,7 +71,7 @@ if(WITH_SODIUM)
     set(WITH_CRYPTO TRUE)
 endif()
 
-if(WITH_CRYPTO AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android"))
+if(WITH_CRYPTO AND TARGET_LINUX)
     set(WITH_OBFS TRUE)
 endif()
 

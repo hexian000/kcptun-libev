@@ -67,7 +67,7 @@ case "$1" in
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-        -DTARGET_POSIX=1 \
+        -DFORCE_POSIX=1 \
         -S "." -B "build"
     nice cmake --build "build"
     ls -lh "build/src/kcptun-libev"
