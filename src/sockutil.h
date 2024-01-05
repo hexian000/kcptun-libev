@@ -8,8 +8,8 @@
 
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <errno.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -22,11 +22,11 @@
 	((err) == EINTR || (err) == EAGAIN || (err) == EWOULDBLOCK ||          \
 	 (err) == ENOBUFS || (err) == ENOMEM)
 
-typedef union {
+union sockaddr_max {
 	struct sockaddr sa;
 	struct sockaddr_in in;
 	struct sockaddr_in6 in6;
-} sockaddr_max_t;
+};
 
 bool socket_set_nonblock(int fd);
 void socket_set_reuseport(int fd, bool reuseport);
@@ -45,6 +45,6 @@ enum {
 	RESOLVE_UDP = 0x1,
 	RESOLVE_PASSIVE = 0x2,
 };
-bool resolve_addr(sockaddr_max_t *sa, const char *s, int flags);
+bool resolve_addr(union sockaddr_max *sa, const char *s, int flags);
 
 #endif /* SOCKUTIL_H */

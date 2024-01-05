@@ -19,15 +19,16 @@
 #include "ikcp.h"
 
 #include <ev.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <inttypes.h>
 #include <stdint.h>
 #include <string.h>
+#include <inttypes.h>
 
 const char session_state_char[STATE_MAX] = {
 	[STATE_INIT] = ' ',   [STATE_CONNECT] = '>',   [STATE_CONNECTED] = '-',
@@ -54,7 +55,7 @@ kcp_new(struct session *restrict ss, const struct config *restrict conf,
 	ikcp_nodelay(
 		kcp, conf->kcp_nodelay, conf->kcp_interval, conf->kcp_resend,
 		conf->kcp_nc);
-	ikcp_setoutput(kcp, udp_output);
+	ikcp_setoutput(kcp, kcp_output);
 	if (LOGLEVEL(VERBOSE)) {
 		kcp->logmask = -1;
 		kcp->writelog = kcp_log;
@@ -419,6 +420,99 @@ ss0_header_write(unsigned char *d, struct session0_header header)
 	write_uint16(d + sizeof(uint32_t), header.what);
 }
 
+size_t inetaddr_read(union sockaddr_max *addr, const void *b, const size_t n)
+{
+	const unsigned char *p = b;
+	if (n < sizeof(uint8_t)) {
+		return 0;
+	}
+	const enum inetaddr_type addrtype = read_uint8(p);
+	p += sizeof(uint8_t);
+	switch (addrtype) {
+	case ATYP_INET:
+		if (n < INETADDR_LENGTH) {
+			return 0;
+		}
+		addr->in = (struct sockaddr_in){
+			.sin_family = AF_INET,
+		};
+		memcpy(&addr->in.sin_addr, p, sizeof(struct in_addr));
+		p += sizeof(struct in_addr);
+		memcpy(&addr->in.sin_port, p, sizeof(in_port_t));
+		return INETADDR_LENGTH;
+	case ATYP_INET6:
+		if (n < INET6ADDR_LENGTH) {
+			return 0;
+		}
+		addr->in6 = (struct sockaddr_in6){
+			.sin6_family = AF_INET6,
+		};
+		memcpy(&addr->in6.sin6_addr, p, sizeof(struct in6_addr));
+		p += sizeof(struct in6_addr);
+		memcpy(&addr->in6.sin6_port, p, sizeof(in_port_t));
+		return INET6ADDR_LENGTH;
+	default:
+		break;
+	}
+	return 0;
+}
+
+size_t inetaddr_write(void *b, const size_t n, const struct sockaddr *sa)
+{
+	unsigned char *p = b;
+	switch (sa->sa_family) {
+	case AF_INET: {
+		if (n < INETADDR_LENGTH) {
+			return 0;
+		}
+		const struct sockaddr_in *restrict in =
+			(const struct sockaddr_in *)sa;
+		write_uint8(p, ATYP_INET);
+		p += sizeof(uint8_t);
+		memcpy(p, &in->sin_addr, sizeof(struct in_addr));
+		p += sizeof(struct in_addr);
+		memcpy(p, &in->sin_port, sizeof(in_port_t));
+		return INETADDR_LENGTH;
+	}
+	case AF_INET6: {
+		if (n < INET6ADDR_LENGTH) {
+			return 0;
+		}
+		const struct sockaddr_in6 *restrict in6 =
+			(const struct sockaddr_in6 *)sa;
+		write_uint8(p, ATYP_INET6);
+		p += sizeof(uint8_t);
+		memcpy(p, &in6->sin6_addr, sizeof(struct in6_addr));
+		p += sizeof(struct in6_addr);
+		memcpy(p, &in6->sin6_port, sizeof(in_port_t));
+		return INET6ADDR_LENGTH;
+	}
+	default:
+		break;
+	}
+	return 0;
+}
+
+bool inetaddr_is_valid(const struct sockaddr *sa)
+{
+	switch (sa->sa_family) {
+	case AF_INET: {
+		const struct sockaddr_in *restrict in =
+			(const struct sockaddr_in *)sa;
+		return in->sin_addr.s_addr != INADDR_ANY && in->sin_port != 0;
+	}
+	case AF_INET6: {
+		const struct sockaddr_in6 *restrict in6 =
+			(const struct sockaddr_in6 *)sa;
+		return !IN6_IS_ADDR_UNSPECIFIED(&in6->sin6_addr) &&
+		       in6->sin6_port != 0;
+	}
+	default:
+		break;
+	}
+	return false;
+}
+
 void ss0_reset(struct server *s, const struct sockaddr *sa, uint32_t conv)
 {
 	unsigned char b[sizeof(uint32_t)];
@@ -447,12 +541,11 @@ bool ss0_send(
 	return queue_send(s, msg);
 }
 
-static void
+static bool
 ss0_on_ping(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
-		LOGW_F("short ping message: %" PRIu16 " bytes", msg->len);
-		return;
+		return false;
 	}
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
@@ -461,15 +554,14 @@ ss0_on_ping(struct server *restrict s, struct msgframe *restrict msg)
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, &msg->addr.sa, S0MSG_PONG, b, sizeof(b));
+	return true;
 }
 
-static void
+static bool
 ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 {
-	UNUSED(s);
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
-		LOGW_F("short pong message: %" PRIu16 " bytes", msg->len);
-		return;
+		return false;
 	}
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
@@ -486,17 +578,23 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	format_iec_bytes(bw_tx, sizeof(bw_tx), tx);
 
 	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms, "
-	       "bandwidth rx: %s/s, tx: %s/s",
+	       "capability rx: %s/s, tx: %s/s",
 	       now_ms - tstamp, bw_rx, bw_tx);
 	s->pkt.inflight_ping = TSTAMP_NIL;
+
+	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
+	    (MODE_RENDEZVOUS | MODE_CLIENT)) {
+		s->pkt.kcp_connect = msg->addr;
+		s->pkt.connected = true;
+	}
+	return true;
 }
 
-static void
+static bool
 ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
-		LOGW_F("short reset message: %" PRIu16 " bytes", msg->len);
-		return;
+		return false;
 	}
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
@@ -509,15 +607,146 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	};
 	struct session *restrict ss;
 	if (!table_find(s->sessions, hkey, (void **)&ss)) {
-		return;
+		return true;
 	}
 	if (ss->kcp_state == STATE_TIME_WAIT) {
-		return;
+		return true;
 	}
 	LOGI_F("session [%08" PRIX32 "] kcp: reset by peer", conv);
 	session_tcp_stop(ss);
 	session_kcp_stop(ss);
+	return true;
 }
+
+static bool
+ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
+{
+	size_t msglen = msg->len;
+	const unsigned char *msgbuf =
+		msg->buf + msg->off + SESSION0_HEADER_SIZE;
+	msglen -= SESSION0_HEADER_SIZE;
+	size_t n = inetaddr_read(&s->pkt.server_addr[0], msgbuf, msglen);
+	if (n == 0) {
+		return false;
+	}
+	s->pkt.server_addr[1] = msg->addr;
+	if (LOGLEVEL(DEBUG)) {
+		char addr1_str[64], addr2_str[64];
+		format_sa(
+			&s->pkt.server_addr[0].sa, addr1_str,
+			sizeof(addr1_str));
+		format_sa(
+			&s->pkt.server_addr[1].sa, addr2_str,
+			sizeof(addr2_str));
+		LOG_F(DEBUG, "rendezvous listen: (%s, %s)", addr1_str,
+		      addr2_str);
+	}
+	return true;
+}
+
+static bool
+ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
+{
+	size_t msglen = msg->len;
+	const unsigned char *msgbuf =
+		msg->buf + msg->off + SESSION0_HEADER_SIZE;
+	msglen -= SESSION0_HEADER_SIZE;
+	union sockaddr_max addr;
+	size_t n = inetaddr_read(&addr, msgbuf, msglen);
+	if (n == 0) {
+		return false;
+	}
+	if (LOGLEVEL(INFO)) {
+		char saddr1_str[64], saddr2_str[64];
+		format_sa(
+			&s->pkt.server_addr[0].sa, saddr1_str,
+			sizeof(saddr1_str));
+		format_sa(
+			&s->pkt.server_addr[1].sa, saddr2_str,
+			sizeof(saddr2_str));
+		char caddr1_str[64], caddr2_str[64];
+		format_sa(&addr.sa, caddr1_str, sizeof(caddr1_str));
+		format_sa(&msg->addr.sa, caddr2_str, sizeof(caddr2_str));
+		LOG_F(INFO, "rendezvous connect: (%s, %s) -> (%s, %s)",
+		      caddr1_str, caddr2_str, saddr1_str, saddr2_str);
+	}
+
+	/* notify the server */
+	unsigned char b[INET6ADDR_LENGTH + INET6ADDR_LENGTH];
+	unsigned char *p = b;
+	size_t len = sizeof(b);
+	n = inetaddr_write(p, len, &addr.sa);
+	if (n == 0) {
+		return false;
+	}
+	p += n, len -= n;
+	n = inetaddr_write(p, len, &msg->addr.sa);
+	if (n == 0) {
+		return false;
+	}
+	len -= n;
+	n = sizeof(b) - len;
+	ss0_send(s, &s->pkt.server_addr[1].sa, S0MSG_PUNCH, b, n);
+
+	/* notify the client */
+	p = b;
+	len = sizeof(b);
+	n = inetaddr_write(p, len, &s->pkt.server_addr[0].sa);
+	if (n == 0) {
+		return false;
+	}
+	p += n, len -= n;
+	n = inetaddr_write(p, len, &s->pkt.server_addr[1].sa);
+	if (n == 0) {
+		return false;
+	}
+	len -= n;
+	n = sizeof(b) - len;
+	ss0_send(s, &msg->addr.sa, S0MSG_PUNCH, b, n);
+	return true;
+}
+
+static bool
+ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
+{
+	size_t msglen = msg->len;
+	const unsigned char *msgbuf =
+		msg->buf + msg->off + SESSION0_HEADER_SIZE;
+	msglen -= SESSION0_HEADER_SIZE;
+	union sockaddr_max addr[2];
+	size_t n = inetaddr_read(&addr[0], msgbuf, msglen);
+	if (n == 0) {
+		return false;
+	}
+	msgbuf += n, msglen -= n;
+	n = inetaddr_read(&addr[1], msgbuf, msglen);
+	if (n == 0) {
+		return false;
+	}
+	if (LOGLEVEL(DEBUG)) {
+		char addr1_str[64], addr2_str[64];
+		format_sa(&addr[0].sa, addr1_str, sizeof(addr1_str));
+		format_sa(&addr[1].sa, addr2_str, sizeof(addr2_str));
+		LOG_F(DEBUG, "punch: (%s, %s)", addr1_str, addr2_str);
+	}
+	const ev_tstamp now = ev_now(s->loop);
+	const uint32_t tstamp = TSTAMP2MS(now);
+	unsigned char b[sizeof(uint32_t)];
+	write_uint32(b, tstamp);
+	if (inetaddr_is_valid(&addr[0].sa)) {
+		ss0_send(s, &addr[0].sa, S0MSG_PING, b, sizeof(b));
+	}
+	if (inetaddr_is_valid(&addr[1].sa)) {
+		ss0_send(s, &addr[1].sa, S0MSG_PING, b, sizeof(b));
+	}
+	return true;
+}
+
+static bool (*const ss0_handler[])(struct server *, struct msgframe *) = {
+	[S0MSG_PING] = ss0_on_ping,	  [S0MSG_PONG] = ss0_on_pong,
+	[S0MSG_RESET] = ss0_on_reset,	  [S0MSG_LISTEN] = ss0_on_listen,
+	[S0MSG_CONNECT] = ss0_on_connect, [S0MSG_PUNCH] = ss0_on_punch,
+};
 
 void session0(struct server *restrict s, struct msgframe *restrict msg)
 {
@@ -527,18 +756,11 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	const unsigned char *packet = msg->buf + msg->off;
 	struct session0_header header = ss0_header_read(packet);
-	switch (header.what) {
-	case S0MSG_PING:
-		ss0_on_ping(s, msg);
-		break;
-	case S0MSG_PONG:
-		ss0_on_pong(s, msg);
-		break;
-	case S0MSG_RESET:
-		ss0_on_reset(s, msg);
-		break;
-	default:
-		LOGW_F("unknown session 0 message: %04" PRIX16, header.what);
-		break;
+	if (header.what < ARRAY_SIZE(ss0_handler)) {
+		if (ss0_handler[header.what](s, msg)) {
+			return;
+		}
 	}
+	LOGW_F("invalid session 0 message: %04" PRIX16 ", len=%04" PRIX16,
+	       header.what, msg->len - SESSION0_HEADER_SIZE);
 }

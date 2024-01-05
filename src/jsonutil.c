@@ -80,7 +80,7 @@ bool jutil_get_int(const struct jutil_value *value, int *i)
 	if (v->type != json_integer) {
 		return false;
 	}
-	if (v->u.integer < INT_MIN && INT_MAX < v->u.integer) {
+	if (v->u.integer < INT_MIN || INT_MAX < v->u.integer) {
 		return false;
 	}
 	if (i != NULL) {

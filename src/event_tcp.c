@@ -16,9 +16,9 @@
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <errno.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -93,7 +93,7 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	const struct config *restrict conf = s->conf;
 
 	for (;;) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		socklen_t addrlen = sizeof(addr);
 		/* accept client request */
 		const int fd = accept(watcher->fd, &addr.sa, &addrlen);
@@ -128,6 +128,11 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
 		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 
+		if (!s->pkt.connected) {
+			LOGE("packet connection is not ready, refusing");
+			CLOSE_FD(fd);
+			return;
+		}
 		accept_one(s, fd, &addr.sa);
 	}
 }
@@ -322,7 +327,7 @@ void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	CHECK_EV_ERROR(revents);
 
-	LOGD_F("io fd=%d revents=0x%x", watcher->fd, revents);
+	LOGV_F("io fd=%d revents=0x%x", watcher->fd, revents);
 	struct session *restrict ss = watcher->data;
 	if (ss->tcp_state == STATE_CONNECT) {
 		connected_cb(ss);

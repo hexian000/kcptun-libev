@@ -24,11 +24,13 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <time.h>
@@ -75,7 +77,7 @@ static bool listener_start(struct server *restrict s)
 	struct listener *restrict l = &(s->listener);
 
 	if (conf->listen != NULL) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		if (!resolve_addr(&addr, conf->listen, RESOLVE_PASSIVE)) {
 			return false;
 		}
@@ -98,7 +100,7 @@ static bool listener_start(struct server *restrict s)
 	}
 
 	if (conf->http_listen != NULL) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		if (!resolve_addr(&addr, conf->http_listen, RESOLVE_PASSIVE)) {
 			return false;
 		}
@@ -149,7 +151,7 @@ static bool
 udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 {
 	if (conf->kcp_bind != NULL) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		if (!resolve_addr(
 			    &addr, conf->kcp_bind,
 			    RESOLVE_UDP | RESOLVE_PASSIVE)) {
@@ -166,14 +168,14 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			LOGE_F("udp bind: %s", strerror(err));
 			return false;
 		}
-		if (LOGLEVEL(INFO)) {
+		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(INFO, "udp bind: %s", addr_str);
+			LOG_F(NOTICE, "udp bind: %s", addr_str);
 		}
 	}
 	if (conf->kcp_connect != NULL) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_UDP)) {
 			return false;
 		}
@@ -194,6 +196,25 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
 			LOG_F(INFO, "udp connect: %s", addr_str);
+		}
+		udp->connected = true;
+	}
+	if ((conf->mode & MODE_RENDEZVOUS) != 0) {
+		union sockaddr_max addr;
+		if (!resolve_addr(&addr, conf->rendezvous_server, RESOLVE_UDP)) {
+			return false;
+		}
+		udp->domain = addr.sa.sa_family;
+		if (udp->fd == -1) {
+			if (!udp_init(udp, conf, addr.sa.sa_family)) {
+				return false;
+			}
+		}
+		udp->rendezvous_server = addr;
+		if (LOGLEVEL(INFO)) {
+			char addr_str[64];
+			format_sa(&addr.sa, addr_str, sizeof(addr_str));
+			LOG_F(INFO, "rendezvous server: %s", addr_str);
 		}
 	}
 	if (conf->netdev != NULL) {
@@ -261,18 +282,39 @@ bool server_resolve(struct server *restrict s)
 		return true;
 	}
 #endif
+	s->pkt.connected = false;
 	if (!udp_bind(&s->pkt, conf)) {
 		return false;
+	}
+	if ((conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
+	    (MODE_RENDEZVOUS | MODE_CLIENT)) {
+		udp_rendezvous(s, S0MSG_CONNECT);
 	}
 	q->mss = (uint16_t)server_mss(s);
 	return true;
 }
 
+void udp_rendezvous(struct server *restrict s, const uint16_t what)
+{
+	const int fd = s->pkt.fd;
+	assert(fd != -1);
+	union sockaddr_max addr;
+	socklen_t len = sizeof(addr);
+	if (getsockname(fd, &addr.sa, &len)) {
+		const int err = errno;
+		LOGE_F("getsockname: %s", strerror(err));
+		return;
+	}
+	unsigned char b[INET6ADDR_LENGTH];
+	const size_t n = inetaddr_write(b, sizeof(b), &addr.sa);
+	assert(n > 0);
+	ss0_send(s, &s->pkt.rendezvous_server.sa, what, b, n);
+}
+
 static bool udp_start(struct server *restrict s)
 {
 	struct pktconn *restrict udp = &s->pkt;
-	const struct config *restrict conf = s->conf;
-	if (!udp_bind(udp, conf)) {
+	if (!udp_bind(udp, s->conf)) {
 		return false;
 	}
 
@@ -348,7 +390,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		w_timeout->data = s;
 	}
 
-	if (conf->mode == MODE_SERVER) {
+	if ((conf->mode & MODE_SERVER) != 0) {
 		s->sessions = table_new(TABLE_FAST);
 	} else {
 		s->sessions = table_new(TABLE_DEFAULT);
@@ -383,7 +425,13 @@ bool server_start(struct server *s)
 	}
 	s->last_resolve_time = now;
 	ev_timer_start(loop, &s->w_kcp_update);
-	if ((s->conf->mode & MODE_CLIENT) && conf->keepalive > 0.0) {
+	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) != 0 &&
+	    conf->keepalive > 0.0) {
+		if ((s->conf->mode & MODE_RENDEZVOUS) != 0 &&
+		    conf->keepalive > 25.0) {
+			LOGW_F("in rendezvous mode, keepalive interval %f may be too long",
+			       conf->keepalive);
+		}
 		ev_timer_start(loop, &s->w_keepalive);
 		ev_timer_start(loop, &s->w_resolve);
 	}
@@ -407,6 +455,10 @@ bool server_start(struct server *s)
 
 void server_ping(struct server *restrict s)
 {
+	if ((s->conf->mode & MODE_CLIENT) == 0) {
+		return;
+	}
+
 	const ev_tstamp now = ev_now(s->loop);
 	const uint32_t tstamp = TSTAMP2MS(now);
 	unsigned char b[sizeof(uint32_t)];
@@ -640,7 +692,8 @@ static struct vbuffer *append_traffic_stats(
 }
 
 static bool update_load(
-	struct server *restrict s, char *buf, size_t bufsize, const double dt)
+	struct server *restrict s, char *buf, const size_t bufsize,
+	const double dt)
 {
 	bool ok = false;
 	s->clock = clock();

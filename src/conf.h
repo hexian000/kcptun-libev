@@ -12,17 +12,17 @@ struct sockaddr;
 enum runmode {
 	MODE_SERVER = 1 << 0,
 	MODE_CLIENT = 1 << 1,
+	MODE_RENDEZVOUS = 1 << 2,
 };
 
-const char *runmode_str(int mode);
-
 struct config {
-	const char *netdev;
 	const char *listen;
 	const char *connect;
 	const char *kcp_bind;
 	const char *kcp_connect;
+	const char *rendezvous_server;
 	const char *http_listen;
+	const char *netdev;
 
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
@@ -50,6 +50,7 @@ struct config {
 };
 
 struct config *conf_read(const char *path);
+const char *conf_modestr(const struct config *conf);
 void conf_free(struct config *conf);
 
 #endif /* CONF_H */

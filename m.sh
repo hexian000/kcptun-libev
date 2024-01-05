@@ -125,13 +125,14 @@ case "$1" in
         -S "." -B "build"
     find contrib src -name '*.c' | while read -r FILE; do
         echo "#include \"${FILE}\""
-    done | gcc -pipe -O2 -g -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=gnu11 \
-        -Icontrib/csnippets -Icontrib -Isrc -include build/src/config.h \
+    done | gcc -pipe -O3 -s -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=c11 \
+        -Icontrib/csnippets -Icontrib/json -Icontrib/kcp -Icontrib/libbloom -Isrc \
+	-include build/src/config.h \
         -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
     ls -lh "build/src/kcptun-libev"
     ;;
 "d")
-    find src -name '*.c' -o -name '*.h' | xargs clang-format -i
+    find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
     # debug
     rm -rf "build" && mkdir -p "build"
     cmake -G "${GENERATOR}" \

@@ -6,12 +6,13 @@
 
 #include "conf.h"
 #include "algo/hashtable.h"
-#include "sockutil.h"
 #include "utils/buffer.h"
 #include "session.h"
+#include "sockutil.h"
 #include "util.h"
 
 #include <ev.h>
+#include <netinet/in.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -30,10 +31,14 @@ struct pktconn {
 	struct pktqueue *queue;
 	int fd;
 	int domain;
-	sockaddr_max_t kcp_connect;
+	bool connected;
+	union sockaddr_max kcp_connect;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;
 	ev_tstamp inflight_ping;
+
+	union sockaddr_max server_addr[2];
+	union sockaddr_max rendezvous_server;
 };
 
 #define MAX_SESSIONS 65535
@@ -46,7 +51,7 @@ struct server {
 	uint32_t m_conv;
 	struct hashtable *sessions;
 	struct {
-		sockaddr_max_t connect;
+		union sockaddr_max connect;
 
 		double dial_timeout;
 		double session_timeout, session_keepalive;
@@ -76,6 +81,7 @@ struct vbuffer *
 server_stats_const(const struct server *s, struct vbuffer *buf, int level);
 struct vbuffer *server_stats(struct server *s, struct vbuffer *buf, int level);
 bool server_resolve(struct server *s);
+void udp_rendezvous(struct server *s, uint16_t what);
 void server_stop(struct server *s);
 void server_free(struct server *s);
 

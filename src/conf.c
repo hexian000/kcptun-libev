@@ -2,11 +2,11 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "conf.h"
+#include "utils/debug.h"
 #include "utils/slog.h"
 #include "util.h"
 #include "jsonutil.h"
 
-#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -154,6 +154,9 @@ static bool main_scope_cb(
 	} else if (NAME_EQUAL("kcp_connect")) {
 		conf->kcp_connect = jutil_strdup(value);
 		return conf->kcp_connect != NULL;
+	} else if (NAME_EQUAL("rendezvous_server")) {
+		conf->rendezvous_server = jutil_strdup(value);
+		return conf->rendezvous_server != NULL;
 	} else if (NAME_EQUAL("http_listen")) {
 		conf->http_listen = jutil_strdup(value);
 		return conf->http_listen != NULL;
@@ -199,15 +202,15 @@ static bool main_scope_cb(
 
 #undef NAME_EQUAL
 
-const char *runmode_str(const int mode)
+const char *conf_modestr(const struct config *restrict conf)
 {
-	static const char *str[] = {
-		[MODE_SERVER] = "server",
-		[MODE_CLIENT] = "client",
-	};
-	assert(mode >= 0);
-	assert((size_t)mode < ARRAY_SIZE(str));
-	return str[mode];
+	if (conf->mode & MODE_SERVER) {
+		return "server";
+	}
+	if (conf->mode & MODE_CLIENT) {
+		return "client";
+	}
+	return "rendezvous server";
 }
 
 static struct config conf_default(void)
@@ -249,13 +252,23 @@ static bool conf_check(struct config *restrict conf)
 {
 	/* 1. network address check */
 	int mode = 0;
-	if (conf->kcp_bind != NULL && conf->connect != NULL) {
+	if (conf->connect != NULL) {
 		mode |= MODE_SERVER;
 	}
-	if (conf->listen != NULL && conf->kcp_connect != NULL) {
+	if (conf->listen != NULL) {
 		mode |= MODE_CLIENT;
 	}
-	if (mode != MODE_SERVER && mode != MODE_CLIENT) {
+	if (conf->rendezvous_server != NULL) {
+		mode |= MODE_RENDEZVOUS;
+		if (conf->keepalive <= 0) {
+			LOGE("config: keepalive can't be disabled in rendezvous mode");
+			return false;
+		}
+	}
+	if (((mode & (MODE_RENDEZVOUS | MODE_SERVER)) == MODE_SERVER &&
+	     conf->kcp_bind == NULL) ||
+	    ((mode & (MODE_RENDEZVOUS | MODE_CLIENT)) == MODE_CLIENT &&
+	     conf->kcp_connect == NULL)) {
 		LOGE("config: no forward could be provided (are you missing some address field?)");
 		return false;
 	}
@@ -333,6 +346,7 @@ void conf_free(struct config *conf)
 	UTIL_SAFE_FREE(conf->connect);
 	UTIL_SAFE_FREE(conf->kcp_bind);
 	UTIL_SAFE_FREE(conf->kcp_connect);
+	UTIL_SAFE_FREE(conf->rendezvous_server);
 	UTIL_SAFE_FREE(conf->http_listen);
 	UTIL_SAFE_FREE(conf->netdev);
 	UTIL_SAFE_FREE(conf->user);

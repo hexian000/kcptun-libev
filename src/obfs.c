@@ -57,7 +57,7 @@ struct obfs {
 	int cap_fd, raw_fd;
 	int fd;
 	int domain;
-	sockaddr_max_t bind_addr;
+	union sockaddr_max bind_addr;
 	size_t num_authenticated;
 	struct {
 		struct ev_io w_accept;
@@ -79,13 +79,13 @@ struct obfs {
 #define OBFS_STARTUP_LIMIT_RATE 30
 #define OBFS_STARTUP_LIMIT_FULL 60
 
-#define OBFS_CTX_KEY_SIZE (sizeof(sockaddr_max_t))
+#define OBFS_CTX_KEY_SIZE (sizeof(union sockaddr_max))
 
 struct obfs_ctx {
 	unsigned char key[OBFS_CTX_KEY_SIZE];
 	struct obfs *obfs;
 	struct ev_io w_read, w_write;
-	sockaddr_max_t laddr, raddr;
+	union sockaddr_max laddr, raddr;
 	ev_tstamp created;
 	ev_tstamp last_seen;
 	struct http_message http_msg;
@@ -350,10 +350,14 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 
 #undef FILTER_GENCODE
 
-static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
+static void obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 {
-	const socklen_t len = getsocklen(sa);
-	memmove(&obfs->bind_addr.sa, sa, len);
+	if (sa != NULL) {
+		const socklen_t len = getsocklen(sa);
+		memmove(&obfs->bind_addr.sa, sa, len);
+	} else {
+		sa = &obfs->bind_addr.sa;
+	}
 
 	uint32_t scope_id = 0;
 	if (sa->sa_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(sa)) {
@@ -395,7 +399,6 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		break;
 	default:
 		FAIL();
-		return false;
 	}
 	if (bind(obfs->cap_fd, (struct sockaddr *)&addr, sizeof(addr))) {
 		const int err = errno;
@@ -408,7 +411,7 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	};
 	if (!filter_compile(&fprog, sa)) {
 		LOGW("obfs: cap filter failed");
-		return true;
+		return;
 	}
 	if (setsockopt(
 		    obfs->cap_fd, SOL_SOCKET, SO_ATTACH_FILTER, &fprog,
@@ -421,7 +424,6 @@ static bool obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		format_sa(sa, addr_str, sizeof(addr_str));
 		LOG_F(NOTICE, "obfs: bind %s", addr_str);
 	}
-	return true;
 }
 
 static bool obfs_raw_start(struct obfs *restrict obfs)
@@ -438,7 +440,6 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		break;
 	default:
 		FAIL();
-		return false;
 	}
 	obfs->cap_fd = socket(PF_PACKET, SOCK_DGRAM, protocol);
 	if (obfs->cap_fd < 0) {
@@ -485,7 +486,6 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		break;
 	default:
 		FAIL();
-		return false;
 	}
 	socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
 	return true;
@@ -644,7 +644,7 @@ static bool obfs_ctx_start(
 
 	ctx->fd = fd;
 	void (*const obfs_read_cb)(
-		struct ev_loop * loop, struct ev_io * watcher, int revents) =
+		struct ev_loop *loop, struct ev_io *watcher, int revents) =
 		(s->conf->mode & MODE_CLIENT) ? obfs_client_read_cb :
 						obfs_server_read_cb;
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -744,9 +744,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	memcpy(&ctx->raddr, sa, socklen);
 	OBFS_CTX_LOG(INFO, ctx, "connect");
 
-	if (!obfs_bind(obfs, &ctx->laddr.sa)) {
-		return false;
-	}
+	obfs_bind(obfs, &ctx->laddr.sa);
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
 		obfs_ctx_free(loop, ctx);
 		return false;
@@ -849,7 +847,7 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	}
 	const int redial_count = ++obfs->redial_count;
 	LOGI_F("obfs: redial #%d to \"%s\"", redial_count, conf->kcp_connect);
-	sockaddr_max_t addr;
+	union sockaddr_max addr;
 	if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_TCP)) {
 		return;
 	}
@@ -899,7 +897,7 @@ struct obfs *obfs_new(struct server *restrict s)
 			.fd = -1,
 			.last_stats_time = ev_now(s->loop),
 		};
-		if (conf->mode == MODE_SERVER) {
+		if ((conf->mode & MODE_SERVER) != 0) {
 			obfs->contexts = table_new(TABLE_FAST);
 		} else {
 			obfs->contexts = table_new(TABLE_DEFAULT);
@@ -917,10 +915,7 @@ bool obfs_resolve(struct obfs *obfs)
 {
 	const struct config *restrict conf = obfs->server->conf;
 	if (conf->mode & MODE_SERVER) {
-		const struct sockaddr *sa = &obfs->bind_addr.sa;
-		if (!obfs_bind(obfs, sa)) {
-			return false;
-		}
+		obfs_bind(obfs, NULL);
 	} else if (conf->mode & MODE_CLIENT) {
 		obfs_sched_redial(obfs);
 	}
@@ -1050,7 +1045,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	const struct config *restrict conf = obfs->server->conf;
 	struct pktconn *restrict pkt = &s->pkt;
 	if (conf->mode & MODE_SERVER) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		if (!resolve_addr(
 			    &addr, conf->kcp_bind,
 			    RESOLVE_TCP | RESOLVE_PASSIVE)) {
@@ -1060,15 +1055,13 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		if (!obfs_raw_start(obfs)) {
 			return false;
 		}
-		if (!obfs_bind(obfs, &addr.sa)) {
-			return false;
-		}
+		obfs_bind(obfs, &addr.sa);
 		if (!obfs_tcp_listen(obfs, &addr.sa)) {
 			return false;
 		}
 	}
 	if (conf->mode & MODE_CLIENT) {
-		sockaddr_max_t addr;
+		union sockaddr_max addr;
 		if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_TCP)) {
 			return false;
 		}
@@ -1438,7 +1431,7 @@ obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	return ctx;
 }
 
-static bool
+static void
 obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 {
 	assert(msg->off == sizeof(struct iphdr) + sizeof(struct tcphdr));
@@ -1490,10 +1483,9 @@ obfs_seal_ipv4(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 	memcpy(msg->buf + sizeof(ip), &tcp, sizeof(tcp));
 	msg->len += msg->off;
 	msg->addr.in.sin_port = 0;
-	return true;
 }
 
-static bool
+static void
 obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 {
 	assert(msg->off == sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
@@ -1543,7 +1535,6 @@ obfs_seal_ipv6(struct obfs_ctx *restrict ctx, struct msgframe *restrict msg)
 	memcpy(msg->buf + sizeof(ip6), &tcp, sizeof(tcp));
 	msg->len += msg->off;
 	msg->addr.in6.sin6_port = 0;
-	return true;
 }
 
 bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
@@ -1565,25 +1556,21 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 	if (!ctx->captured) {
 		return false;
 	}
-	bool ok = false;
 	switch (obfs->domain) {
 	case AF_INET:
-		ok = obfs_seal_ipv4(ctx, msg);
+		obfs_seal_ipv4(ctx, msg);
 		break;
 	case AF_INET6:
-		ok = obfs_seal_ipv6(ctx, msg);
+		obfs_seal_ipv6(ctx, msg);
 		break;
 	default:
 		FAIL();
-		break;
 	}
-	if (ok) {
-		ctx->pkt_tx++;
-		ctx->byt_tx += msg->len;
-		obfs->stats.pkt_tx++;
-		obfs->stats.byt_tx += msg->len;
-	}
-	return ok;
+	ctx->pkt_tx++;
+	ctx->byt_tx += msg->len;
+	obfs->stats.pkt_tx++;
+	obfs->stats.byt_tx += msg->len;
+	return true;
 }
 
 void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
@@ -1651,7 +1638,7 @@ void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct obfs *restrict obfs = watcher->data;
-	sockaddr_max_t m_sa;
+	union sockaddr_max m_sa;
 	socklen_t len = sizeof(m_sa);
 
 	for (;;) {
@@ -1853,9 +1840,8 @@ void obfs_server_read_cb(
 		ctx->wbuf.len = (size_t)ret;
 	}
 	ctx->http_keepalive = true;
-	obfs_ctx_write(ctx, loop);
-
 	obfs_on_ready(ctx);
+	obfs_ctx_write(ctx, loop);
 }
 
 void obfs_client_read_cb(

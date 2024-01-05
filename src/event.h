@@ -30,7 +30,7 @@ void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 
-int udp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
+int kcp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 bool kcp_sendmsg(struct session *ss, uint16_t msg);
 bool kcp_push(struct session *ss);
 void kcp_recv(struct session *ss);

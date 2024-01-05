@@ -20,7 +20,7 @@
 #define MMSG_BATCH_SIZE 128
 
 struct msgframe {
-	sockaddr_max_t addr;
+	union sockaddr_max addr;
 	uint16_t len;
 	uint16_t off;
 	ev_tstamp ts;

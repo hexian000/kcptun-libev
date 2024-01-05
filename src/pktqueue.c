@@ -338,6 +338,11 @@ struct pktqueue *queue_new(struct server *restrict s)
 #endif
 #if WITH_OBFS
 	if (conf->obfs != NULL) {
+		if ((conf->mode & MODE_RENDEZVOUS) != 0) {
+			LOGE("rendezvous mode is not compatible with obfs");
+			queue_free(q);
+			return NULL;
+		}
 		if (q->crypto == NULL) {
 			LOGE("encryption must be enabled to use obfs");
 			queue_free(q);

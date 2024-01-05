@@ -154,13 +154,13 @@ int main(int argc, char **argv)
 
 	struct server *restrict s = server_new(loop, conf);
 	if (s == NULL) {
-		LOGE_F("failed to init %s", runmode_str(conf->mode));
+		LOGE_F("failed to init %s", conf_modestr(conf));
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
 	bool ok = server_start(s);
 	if (!ok) {
-		LOGE_F("failed to start %s", runmode_str(conf->mode));
+		LOGE_F("failed to start %s", conf_modestr(conf));
 		server_free(s);
 		conf_free(conf);
 		return EXIT_FAILURE;
@@ -193,11 +193,12 @@ int main(int argc, char **argv)
 	}
 
 	/* start event loop */
+	LOGI_F("%s start", conf_modestr(conf));
 	ev_run(loop, 0);
 
 	server_stop(s);
 	server_free(s);
-	LOGN_F("%s shutdown gracefully", runmode_str(conf->mode));
+	LOGN_F("%s shutdown gracefully", conf_modestr(conf));
 	ev_loop_destroy(loop);
 	conf_free(conf);
 

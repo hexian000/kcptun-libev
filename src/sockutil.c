@@ -226,7 +226,7 @@ int format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
 	return snprintf(buf, buf_size, "<af:%jd>", (intmax_t)sa->sa_family);
 }
 
-static bool find_addrinfo(sockaddr_max_t *sa, const struct addrinfo *it)
+static bool find_addrinfo(union sockaddr_max *sa, const struct addrinfo *it)
 {
 	for (; it != NULL; it = it->ai_next) {
 		switch (it->ai_family) {
@@ -249,7 +249,7 @@ static bool find_addrinfo(sockaddr_max_t *sa, const struct addrinfo *it)
 /* RFC 1035: Section 2.3.4 */
 #define FQDN_MAX_LENGTH ((size_t)(255))
 
-bool resolve_addr(sockaddr_max_t *sa, const char *s, const int flags)
+bool resolve_addr(union sockaddr_max *sa, const char *s, const int flags)
 {
 	const size_t addrlen = strlen(s);
 	assert(addrlen <= FQDN_MAX_LENGTH + 1 + 5);

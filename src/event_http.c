@@ -14,7 +14,6 @@
 #include "obfs.h"
 
 #include <ev.h>
-
 #include <unistd.h>
 #include <sys/socket.h>
 
@@ -66,7 +65,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	CHECK_EV_ERROR(revents);
 
 	struct server *restrict s = watcher->data;
-	sockaddr_max_t addr;
+	union sockaddr_max addr;
 	socklen_t addrlen = sizeof(addr);
 	const int fd = accept(watcher->fd, &addr.sa, &addrlen);
 	if (fd < 0) {

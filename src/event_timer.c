@@ -1,6 +1,7 @@
 /* kcptun-libev (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
+#include "conf.h"
 #include "event.h"
 #include "event_impl.h"
 #include "algo/hashtable.h"
@@ -14,6 +15,7 @@
 
 #include <ev.h>
 
+#include <assert.h>
 #include <inttypes.h>
 
 static bool timeout_filt(
@@ -98,8 +100,20 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	CHECK_EV_ERROR(revents);
 	struct server *restrict s = watcher->data;
-	const ev_tstamp now = ev_now(loop);
+	const int mode = s->conf->mode;
+	if ((mode & MODE_RENDEZVOUS) != 0) {
+		if ((mode & MODE_SERVER) != 0) {
+			udp_rendezvous(s, S0MSG_LISTEN);
+		}
+		if ((mode & MODE_CLIENT) != 0 && !s->pkt.connected) {
+			udp_rendezvous(s, S0MSG_CONNECT);
+		}
+	}
+	if ((mode & MODE_CLIENT) == 0) {
+		return;
+	}
 
+	const ev_tstamp now = ev_now(loop);
 	if (s->pkt.inflight_ping != TSTAMP_NIL) {
 		const double next = s->pkt.inflight_ping + s->ping_timeout;
 		if (now < next) {

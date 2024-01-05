@@ -14,17 +14,19 @@ Status: **Stable**
 - [Introduction](#introduction)
 - [Features](#features)
 - [Security](#security)
-	- [Encryption](#encryption)
-	- [Obfuscation](#obfuscation)
+  - [Encryption](#encryption)
+  - [Obfuscation](#obfuscation)
 - [Compatibility](#compatibility)
-	- [System](#system)
-	- [Version Compatibility](#version-compatibility)
+  - [System](#system)
+  - [Version Compatibility](#version-compatibility)
 - [Build](#build)
-	- [Dependencies](#dependencies)
-	- [Build on Unix-like systems](#build-on-unix-like-systems)
+  - [Dependencies](#dependencies)
+  - [Build on Unix-like systems](#build-on-unix-like-systems)
 - [Runtime](#runtime)
-	- [Dependencies](#dependencies-1)
-	- [Configurations](#configurations)
+  - [Dependencies](#dependencies-1)
+  - [Configurations](#configurations)
+    - [Basic Usage](#basic-usage)
+    - [Rendezvous Mode](#rendezvous-mode)
 - [Tunables](#tunables)
 - [Observability](#observability)
 - [Credits](#credits)
@@ -48,6 +50,8 @@ network access -> proxy client -> kcptun-libev client ->
 -> kcptun-libev server -> proxy server -> stable network
 ```
 
+Less typically, reliable UDP can help users connect to TCP services behind NAT, see [rendezvous mode](#rendezvous-mode).
+
 Since KCP retransmits packets more aggressively. It is recommended to enable proper QoS at the NIC level when running on a public network.
 
 Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
@@ -59,7 +63,8 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Proper: KCP will be flushed on demand, no mechanistic lag introduced.
 - Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder.
 - Morden: Full IPv6 support.
-- DDNS aware: Dynamic IP addresses are automatically resolved.
+- DDNS aware: Dynamic IP addresses can be automatically resolved.
+- NAT traversal: Server behind certain types of NAT can be connected directly with the help of a well-known rendezvous server.
 - Configurable: If you plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
 - Portable: Compliant with ISO C standard. Support both GNU/Linux and POSIX APIs.
 
@@ -186,6 +191,7 @@ opkg install libev libsodium
 ```
 
 ### Configurations
+#### Basic Usage
 
 Generate a random key for encryption:
 
@@ -193,7 +199,7 @@ Generate a random key for encryption:
 ./kcptun-libev --genpsk xchacha20poly1305_ietf
 ```
 
-Create a server.json file and fill in the options:
+Create a `server.json` file and fill in the options:
 
 ```json
 {
@@ -210,7 +216,7 @@ Start the server:
 ./kcptun-libev -c server.json
 ```
 
-Create a client.json file and fill in the options:
+Create a `client.json` file and fill in the options:
 
 ```json
 {
@@ -235,7 +241,47 @@ Let's explain some common fields in server.json/client.json:
 - The client side "listen" TCP ports and send data to "kcp_connect".
 - The server side receive data from "kcp_bind" and forward the connections to "connect".
 - Set a "password" or "psk" is strongly suggested when using in public networks.
-- "loglevel": 0-7 are Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose respectively. The default is 4 (NOTICE). High log levels can affect performance.
+- "loglevel": 0-7 are Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose respectively. The default is 4 (Notice). High log levels can affect performance.
+
+#### Rendezvous Mode
+
+Rendezvous mode may be useful for accessing servers behind NAT. The rendezvous server only helps establish the connection, the traffic goes directly between client and server.
+
+*The method is non-standard and may not work with all NAT implementations.*
+
+`rendezvous_server.json`: The rendezvous server should have an address which is reachable by both client and server.
+
+```json
+{
+    "kcp_bind": "0.0.0.0:12345",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+`server.json`: The server may be behind one or more levels of NAT.
+
+```json
+{
+    "connect": "127.0.0.1:1080",
+    "rendezvous_server": "203.0.113.1:12345",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+`client.json`: The client may be behind one or more levels of NAT, which may or may not be the same ones as the server.
+
+```json
+{
+    "listen": "127.0.0.1:1080",
+    "rendezvous_server": "203.0.113.1:12345",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+rendezvous_server : server : client = 1 : 1 : n
 
 ## Tunables
 
@@ -244,13 +290,13 @@ Let's explain some common fields in server.json/client.json:
 Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here are some hints:
 
 - "kcp.sndwnd", "kcp.rcvwnd":
-	1. Should be tuned according to RTT.
-	2. For enthusiasts, you can start an idle client with loglevel >= 5 and wait 1 minute to check the theoretical bandwidth of current window values.
-	3. On systems with very little memory, you may need to reduce it to save memory.
+  1. Should be tuned according to RTT.
+  2. For enthusiasts, you can start an idle client with loglevel >= 5 and wait 1 minute to check the theoretical bandwidth of current window values.
+  3. On systems with very little memory, you may need to reduce it to save memory.
 - "kcp.nodelay": Enabled by default. Note that this is not an equivalent to `TCP_NODELAY`.
 - "kcp.interval":
-	1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
-	2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
+  1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
+  2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
 - "kcp.resend": Disabled by default.
 - "kcp.nc": Enabled by default.
 - "kcp.mtu": Specifies the final IP packet size, including all overhead.
@@ -259,9 +305,9 @@ Again, there is some kcptun-libev specific options:
 
 - "kcp.flush": 0 - periodic only, 1 - flush after sending, 2 - also flush acks (for benchmarking)
 - "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
-	1. Normally, default value just works.
-	2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
-	3. All buffers should not be too small, otherwise you may experience performance degradation.
+  1. Normally, default value just works.
+  2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
+  3. All buffers should not be too small, otherwise you may experience performance degradation.
 - "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
 
 ## Observability

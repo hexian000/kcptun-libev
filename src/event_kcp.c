@@ -24,7 +24,7 @@
 #include <stdint.h>
 #include <string.h>
 
-int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
+int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
 	UNUSED(kcp);
 	assert(len > 0 && len < MAX_PACKET_SIZE);
@@ -35,9 +35,9 @@ int udp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 		LOGOOM();
 		return -1;
 	}
-	memcpy(&msg->addr.sa, &ss->raddr.sa, getsocklen(&ss->raddr.sa));
-	unsigned char *kcp_packet = msg->buf + msg->off;
-	memcpy(kcp_packet, buf, len);
+	msg->addr = ss->raddr;
+	unsigned char *dst = msg->buf + msg->off;
+	memcpy(dst, buf, len);
 	msg->len = len;
 	s->stats.kcp_tx += len;
 	ss->stats.kcp_tx += len;

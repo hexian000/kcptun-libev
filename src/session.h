@@ -25,7 +25,7 @@ struct tlv_header {
 	uint16_t len;
 };
 
-#define TLV_HEADER_SIZE (sizeof(struct tlv_header))
+#define TLV_HEADER_SIZE (sizeof(uint16_t) + sizeof(uint16_t))
 /* reserve space for one more kcp segment */
 #define TLV_MAX_LENGTH (SESSION_BUF_SIZE - MAX_PACKET_SIZE)
 
@@ -37,7 +37,8 @@ static inline struct tlv_header tlv_header_read(const unsigned char *d)
 	};
 }
 
-static inline void tlv_header_write(unsigned char *d, struct tlv_header header)
+static inline void
+tlv_header_write(unsigned char *d, const struct tlv_header header)
 {
 	write_uint16(d, header.msg);
 	write_uint16(d + sizeof(uint16_t), header.len);
@@ -74,7 +75,7 @@ struct link_stats {
 struct IKCPCB;
 
 #define SESSION_BUF_SIZE 16384
-#define SESSION_KEY_SIZE (sizeof(uint32_t) + sizeof(sockaddr_max_t))
+#define SESSION_KEY_SIZE (sizeof(uint32_t) + sizeof(union sockaddr_max))
 
 struct session {
 	unsigned char key[SESSION_KEY_SIZE];
@@ -83,7 +84,7 @@ struct session {
 	int tcp_state, kcp_state;
 	int kcp_flush;
 	uint32_t conv;
-	sockaddr_max_t raddr;
+	union sockaddr_max raddr;
 	struct {
 		struct ev_io w_socket;
 		struct ev_idle w_flush;
@@ -139,7 +140,23 @@ enum session0_messages {
 	S0MSG_PING = 0x0000,
 	S0MSG_PONG = 0x0001,
 	S0MSG_RESET = 0x0002,
+	/* for rendezvous mode */
+	S0MSG_LISTEN = 0x0003,
+	S0MSG_CONNECT = 0x0004,
+	S0MSG_PUNCH = 0x0005,
 };
+
+enum inetaddr_type {
+	ATYP_INET,
+	ATYP_INET6,
+};
+#define INETADDR_LENGTH                                                        \
+	(sizeof(uint8_t) + sizeof(struct in_addr) + sizeof(in_port_t))
+#define INET6ADDR_LENGTH                                                       \
+	(sizeof(uint8_t) + sizeof(struct in6_addr) + sizeof(in_port_t))
+size_t inetaddr_read(union sockaddr_max *addr, const void *b, size_t n);
+size_t inetaddr_write(void *b, size_t n, const struct sockaddr *sa);
+bool inetaddr_is_valid(const struct sockaddr *sa);
 
 bool ss0_send(
 	struct server *s, const struct sockaddr *sa, uint16_t what,

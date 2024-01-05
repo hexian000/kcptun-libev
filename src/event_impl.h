@@ -4,6 +4,8 @@
 #ifndef EVENT_IMPL_H
 #define EVENT_IMPL_H
 
+#include "utils/slog.h"
+
 #include <ev.h>
 
 #include <errno.h>
