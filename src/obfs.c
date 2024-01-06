@@ -644,7 +644,7 @@ static bool obfs_ctx_start(
 
 	ctx->fd = fd;
 	void (*const obfs_read_cb)(
-		struct ev_loop *loop, struct ev_io *watcher, int revents) =
+		struct ev_loop * loop, struct ev_io * watcher, int revents) =
 		(s->conf->mode & MODE_CLIENT) ? obfs_client_read_cb :
 						obfs_server_read_cb;
 	struct ev_io *restrict w_read = &ctx->w_read;
@@ -1733,6 +1733,7 @@ static void obfs_on_ready(struct obfs_ctx *restrict ctx)
 	if (!is_client) {
 		return;
 	}
+	s->pkt.connected = true;
 	obfs->redial_count = 0;
 	server_ping(s);
 }
