@@ -31,12 +31,13 @@ struct pktconn {
 	struct pktqueue *queue;
 	int fd;
 	int domain;
-	bool connected;
 	union sockaddr_max kcp_connect;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;
 	ev_tstamp inflight_ping;
 
+	bool listened : 1;
+	bool connected : 1;
 	union sockaddr_max server_addr[2];
 	union sockaddr_max rendezvous_server;
 };

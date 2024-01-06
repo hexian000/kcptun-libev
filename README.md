@@ -283,6 +283,8 @@ Rendezvous mode may be useful for accessing servers behind NAT. The rendezvous s
 
 rendezvous_server : server : client = 1 : 1 : n
 
+Peers should be all IPv4 or all IPv6.
+
 ## Tunables
 
 *kcptun-libev works out of the box. In most cases, the default options are recommended.*

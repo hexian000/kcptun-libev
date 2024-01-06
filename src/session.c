@@ -641,6 +641,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		LOG_F(DEBUG, "rendezvous listen: (%s, %s)", addr1_str,
 		      addr2_str);
 	}
+	s->pkt.listened = true;
 	return true;
 }
 
@@ -657,6 +658,9 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 	if (LOGLEVEL(INFO)) {
+		char caddr1_str[64], caddr2_str[64];
+		format_sa(&addr.sa, caddr1_str, sizeof(caddr1_str));
+		format_sa(&msg->addr.sa, caddr2_str, sizeof(caddr2_str));
 		char saddr1_str[64], saddr2_str[64];
 		format_sa(
 			&s->pkt.server_addr[0].sa, saddr1_str,
@@ -664,11 +668,12 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		format_sa(
 			&s->pkt.server_addr[1].sa, saddr2_str,
 			sizeof(saddr2_str));
-		char caddr1_str[64], caddr2_str[64];
-		format_sa(&addr.sa, caddr1_str, sizeof(caddr1_str));
-		format_sa(&msg->addr.sa, caddr2_str, sizeof(caddr2_str));
 		LOG_F(INFO, "rendezvous connect: (%s, %s) -> (%s, %s)",
 		      caddr1_str, caddr2_str, saddr1_str, saddr2_str);
+	}
+	if (!s->pkt.listened) {
+		LOGE("rendezvous connect: no server available");
+		return true;
 	}
 
 	/* notify the server */
