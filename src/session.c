@@ -577,8 +577,8 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	format_iec_bytes(bw_rx, sizeof(bw_rx), rx);
 	format_iec_bytes(bw_tx, sizeof(bw_tx), tx);
 
-	LOGD_F("roundtrip finished, RTT: %" PRIu32 " ms, "
-	       "capability rx: %s/s, tx: %s/s",
+	LOGD_F("roundtrip finished in %" PRIu32 " ms, "
+	       "capacity rx: %s/s, tx: %s/s",
 	       now_ms - tstamp, bw_rx, bw_tx);
 	s->pkt.inflight_ping = TSTAMP_NIL;
 

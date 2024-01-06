@@ -263,7 +263,7 @@ Rendezvous mode may be useful for accessing servers behind NAT. The rendezvous s
 
 ```json
 {
-    "connect": "127.0.0.1:1080",
+    "connect": "127.0.0.1:25565",
     "rendezvous_server": "203.0.113.1:12345",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
@@ -274,7 +274,7 @@ Rendezvous mode may be useful for accessing servers behind NAT. The rendezvous s
 
 ```json
 {
-    "listen": "127.0.0.1:1080",
+    "listen": "127.0.0.1:25565",
     "rendezvous_server": "203.0.113.1:12345",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
