@@ -51,6 +51,12 @@ network access -> proxy client -> kcptun-libev client ->
 ```
 
 Less typically, reliable UDP can help users connect to TCP services behind NAT, see [rendezvous mode](#rendezvous-mode).
+```
+client -> NAT1 -> rendezvous server
+server -> NAT2 -> rendezvous server
+
+client -> NAT1 -> NAT2 -> server
+```
 
 Since KCP retransmits packets more aggressively. It is recommended to enable proper QoS at the NIC level when running on a public network.
 
