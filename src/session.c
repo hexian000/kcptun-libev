@@ -181,7 +181,7 @@ static void consume_wbuf(struct session *restrict ss, const size_t n)
 	ss->wbuf_next = 0;
 }
 
-static bool proxy_dial(struct session *restrict ss, const struct sockaddr *sa)
+static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 {
 	/* Create client socket */
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
@@ -236,7 +236,7 @@ static bool session_on_msg(
 		if (ss->tcp_state != STATE_INIT) {
 			break;
 		}
-		if (!proxy_dial(ss, &ss->server->connect.sa)) {
+		if (!forward_dial(ss, &ss->server->connect.sa)) {
 			break;
 		}
 		return true;
