@@ -9,7 +9,8 @@
 #cmakedefine01 HAVE_SYSLOG
 #cmakedefine01 HAVE_LOCALTIME_R
 
-#cmakedefine01 HAVE_BACKTRACE_SYMBOLS
+#cmakedefine01 WITH_LIBBACKTRACE
 #cmakedefine01 WITH_LIBUNWIND
+#cmakedefine01 HAVE_BACKTRACE_SYMBOLS
 
 #endif /* CSNIPPETS_CONFIG_H */
