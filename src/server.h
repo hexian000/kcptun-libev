@@ -40,6 +40,7 @@ struct pktconn {
 	bool connected : 1;
 	union sockaddr_max server_addr[2];
 	union sockaddr_max rendezvous_server;
+	union sockaddr_max rendezvous_local;
 };
 
 #define MAX_SESSIONS 65535

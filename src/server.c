@@ -147,6 +147,52 @@ static bool udp_init(
 	return true;
 }
 
+static void addr_set_any(union sockaddr_max *addr, const int family)
+{
+	switch (family) {
+	case AF_INET:
+		addr->in = (struct sockaddr_in){
+			.sin_family = family,
+			.sin_addr = (struct in_addr){ INADDR_ANY },
+			.sin_port = 0,
+		};
+		return;
+	case AF_INET6:
+		addr->in6 = (struct sockaddr_in6){
+			.sin6_family = family,
+			.sin6_addr = IN6ADDR_ANY_INIT,
+			.sin6_port = 0,
+		};
+		return;
+	default:
+		break;
+	}
+	FAIL();
+}
+
+static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
+{
+	const int fd = socket(sa->sa_family, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd < 0) {
+		const int err = errno;
+		LOGW_F("socket: %s", strerror(err));
+		return false;
+	}
+	if (connect(fd, sa, getsocklen(sa))) {
+		const int err = errno;
+		LOGW_F("connect: %s", strerror(err));
+		return false;
+	}
+	socklen_t len = sizeof(*addr);
+	if (getsockname(fd, &addr->sa, &len)) {
+		const int err = errno;
+		LOGW_F("getsockname: %s", strerror(err));
+		return false;
+	}
+	CLOSE_FD(fd);
+	return true;
+}
+
 static bool
 udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 {
@@ -200,7 +246,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		udp->connected = true;
 	}
 	if ((conf->mode & MODE_RENDEZVOUS) != 0) {
-		union sockaddr_max addr;
+		union sockaddr_max addr, laddr;
 		if (!resolve_addr(&addr, conf->rendezvous_server, RESOLVE_UDP)) {
 			return false;
 		}
@@ -211,10 +257,16 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			}
 		}
 		udp->rendezvous_server = addr;
+		if (!addr_set_local(&laddr, &addr.sa)) {
+			addr_set_any(&laddr, addr.sa.sa_family);
+		}
+		udp->rendezvous_local = laddr;
 		if (LOGLEVEL(INFO)) {
-			char addr_str[64];
+			char addr_str[64], laddr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(INFO, "rendezvous server: %s", addr_str);
+			format_sa(&laddr.sa, laddr_str, sizeof(laddr_str));
+			LOG_F(INFO, "rendezvous mode: %s -> %s", laddr_str,
+			      addr_str);
 		}
 	}
 	if (conf->netdev != NULL) {
@@ -296,19 +348,12 @@ bool server_resolve(struct server *restrict s)
 
 void udp_rendezvous(struct server *restrict s, const uint16_t what)
 {
-	const int fd = s->pkt.fd;
-	assert(fd != -1);
-	union sockaddr_max addr;
-	socklen_t len = sizeof(addr);
-	if (getsockname(fd, &addr.sa, &len)) {
-		const int err = errno;
-		LOGE_F("getsockname: %s", strerror(err));
-		return;
-	}
+	const struct sockaddr *sa_server = &s->pkt.rendezvous_server.sa;
+	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
 	unsigned char b[INET6ADDR_LENGTH];
-	const size_t n = inetaddr_write(b, sizeof(b), &addr.sa);
+	const size_t n = inetaddr_write(b, sizeof(b), sa_local);
 	assert(n > 0);
-	ss0_send(s, &s->pkt.rendezvous_server.sa, what, b, n);
+	ss0_send(s, sa_server, what, b, n);
 }
 
 static bool udp_start(struct server *restrict s)

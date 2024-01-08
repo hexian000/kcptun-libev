@@ -493,26 +493,6 @@ size_t inetaddr_write(void *b, const size_t n, const struct sockaddr *sa)
 	return 0;
 }
 
-bool inetaddr_is_valid(const struct sockaddr *sa)
-{
-	switch (sa->sa_family) {
-	case AF_INET: {
-		const struct sockaddr_in *restrict in =
-			(const struct sockaddr_in *)sa;
-		return in->sin_addr.s_addr != INADDR_ANY && in->sin_port != 0;
-	}
-	case AF_INET6: {
-		const struct sockaddr_in6 *restrict in6 =
-			(const struct sockaddr_in6 *)sa;
-		return !IN6_IS_ADDR_UNSPECIFIED(&in6->sin6_addr) &&
-		       in6->sin6_port != 0;
-	}
-	default:
-		break;
-	}
-	return false;
-}
-
 void ss0_reset(struct server *s, const struct sockaddr *sa, uint32_t conv)
 {
 	unsigned char b[sizeof(uint32_t)];
@@ -657,6 +637,10 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	if (n == 0) {
 		return false;
 	}
+	if (!s->pkt.listened) {
+		LOGE("rendezvous connect: no server available");
+		return true;
+	}
 	if (LOGLEVEL(INFO)) {
 		char caddr1_str[64], caddr2_str[64];
 		format_sa(&addr.sa, caddr1_str, sizeof(caddr1_str));
@@ -670,10 +654,6 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 			sizeof(saddr2_str));
 		LOG_F(INFO, "rendezvous connect: (%s, %s) -> (%s, %s)",
 		      caddr1_str, caddr2_str, saddr1_str, saddr2_str);
-	}
-	if (!s->pkt.listened) {
-		LOGE("rendezvous connect: no server available");
-		return true;
 	}
 
 	/* notify the server */
@@ -711,6 +691,33 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	return true;
 }
 
+static bool is_punch_addr(const struct sockaddr *sa)
+{
+	switch (sa->sa_family) {
+	case AF_INET: {
+		const struct sockaddr_in *restrict in =
+			(const struct sockaddr_in *)sa;
+		const uint32_t addr = ntohl(in->sin_addr.s_addr);
+		return addr != INADDR_ANY &&
+		       ((addr & 0xff000000) != 0xff000000) && /* loopback */
+		       ((addr & 0xf0000000) != 0xe0000000) && /* multicast */
+		       in->sin_port != 0;
+	}
+	case AF_INET6: {
+		const struct sockaddr_in6 *restrict in6 =
+			(const struct sockaddr_in6 *)sa;
+		return !IN6_IS_ADDR_UNSPECIFIED(&in6->sin6_addr) &&
+		       !IN6_IS_ADDR_LOOPBACK(&in6->sin6_addr) &&
+		       !IN6_IS_ADDR_LINKLOCAL(&in6->sin6_addr) &&
+		       !IN6_IS_ADDR_MULTICAST(&in6->sin6_addr) &&
+		       in6->sin6_port != 0;
+	}
+	default:
+		break;
+	}
+	return false;
+}
+
 static bool
 ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
 {
@@ -738,10 +745,10 @@ ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
 	const uint32_t tstamp = TSTAMP2MS(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	if (inetaddr_is_valid(&addr[0].sa)) {
+	if (is_punch_addr(&addr[0].sa)) {
 		ss0_send(s, &addr[0].sa, S0MSG_PING, b, sizeof(b));
 	}
-	if (inetaddr_is_valid(&addr[1].sa)) {
+	if (is_punch_addr(&addr[1].sa)) {
 		ss0_send(s, &addr[1].sa, S0MSG_PING, b, sizeof(b));
 	}
 	return true;
