@@ -153,15 +153,11 @@ static void addr_set_any(union sockaddr_max *addr, const int family)
 	case AF_INET:
 		addr->in = (struct sockaddr_in){
 			.sin_family = family,
-			.sin_addr = (struct in_addr){ INADDR_ANY },
-			.sin_port = 0,
 		};
 		return;
 	case AF_INET6:
 		addr->in6 = (struct sockaddr_in6){
 			.sin6_family = family,
-			.sin6_addr = IN6ADDR_ANY_INIT,
-			.sin6_port = 0,
 		};
 		return;
 	default:

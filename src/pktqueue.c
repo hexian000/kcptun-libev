@@ -118,7 +118,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			return;
 		}
 		/* accept new kcp session */
-		ss = session_new(s, sa, conv);
+		ss = session_new(s, &msg->addr, conv);
 		if (ss == NULL) {
 			LOGE("out of memory");
 			return;
@@ -178,6 +178,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		session_kcp_flush(ss);
 	}
 	session_read_cb(ss);
+	tcp_notify(ss);
 }
 
 size_t queue_dispatch(struct server *restrict s)
