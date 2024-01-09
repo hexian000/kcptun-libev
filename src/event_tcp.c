@@ -307,7 +307,7 @@ void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	UNUSED(loop);
 	CHECK_EV_ERROR(revents);
 
-	LOGV_F("io fd=%d revents=0x%x", watcher->fd, revents);
+	LOGV_F("io: fd=%d revents=0x%x", watcher->fd, revents);
 	struct session *restrict ss = watcher->data;
 	if (ss->tcp_state == STATE_CONNECT) {
 		connected_cb(ss);

@@ -34,7 +34,6 @@ int kcp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 bool kcp_sendmsg(struct session *ss, uint16_t msg);
 bool kcp_push(struct session *ss);
 void kcp_recv(struct session *ss);
-void kcp_reset(struct session *ss);
 
 void tcp_flush(struct session *ss);
 void tcp_notify(struct session *ss);

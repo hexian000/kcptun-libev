@@ -56,21 +56,6 @@ bool kcp_canrecv(struct session *restrict ss)
 	return kcp != NULL && ikcp_peeksize(kcp) > 0;
 }
 
-void kcp_reset(struct session *ss)
-{
-	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-		break;
-	default:
-		return;
-	}
-	session_kcp_stop(ss);
-	ss0_reset(ss->server, &ss->raddr.sa, ss->conv);
-	ss->last_reset = ev_now(ss->server->loop);
-	LOGD_F("session [%08" PRIX32 "] kcp: send reset", ss->conv);
-}
-
 static bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {

@@ -171,33 +171,18 @@ static bool session_on_msg(
 /* returns: OK=0, wait=1, error=-1 */
 static int ss_process(struct session *restrict ss)
 {
-	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-		break;
-	default:
-		return -1;
-	}
-	switch (ss->tcp_state) {
-	case STATE_INIT:
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-		break;
-	default:
-		return -1;
-	}
-	kcp_recv(ss);
 	if (ss->wbuf_flush < ss->wbuf_next) {
 		/* tcp flushing is in progress */
-		return 1;
-	}
-	if (ss->wbuf->len < TLV_HEADER_SIZE) {
-		/* no header available */
 		return 1;
 	}
 	if (ss->wbuf_flush > 0) {
 		/* tcp flushing is done */
 		consume_wbuf(ss, ss->wbuf_flush);
+	}
+	kcp_recv(ss);
+	if (ss->wbuf->len < TLV_HEADER_SIZE) {
+		/* no header available */
+		return 1;
 	}
 	const struct tlv_header hdr = tlv_header_read(ss->wbuf->data);
 	if (hdr.len < TLV_HEADER_SIZE && hdr.len > TLV_MAX_LENGTH) {
@@ -215,7 +200,6 @@ static int ss_process(struct session *restrict ss)
 	}
 	if (ss->wbuf_flush > 0) {
 		tcp_flush(ss);
-		tcp_notify(ss);
 	} else {
 		/* nothing to flush */
 		consume_wbuf(ss, ss->wbuf_next);
@@ -251,12 +235,11 @@ void session_kcp_close(struct session *restrict ss)
 	case STATE_CONNECTED:
 		break;
 	default:
-		kcp_reset(ss);
 		return;
 	}
 	/* pass eof */
 	if (!kcp_sendmsg(ss, SMSG_EOF)) {
-		kcp_reset(ss);
+		session_kcp_stop(ss);
 		return;
 	}
 	LOGD_F("session [%08" PRIX32 "] kcp: close", ss->conv);
@@ -325,10 +308,10 @@ void session_free(struct session *restrict ss)
 
 void session_read_cb(struct session *restrict ss)
 {
-	int ret;
-	do {
+	int ret = 0;
+	while (ss->kcp_state == STATE_CONNECTED && ret == 0) {
 		ret = ss_process(ss);
-	} while (ret == 0);
+	}
 	if (ret < 0) {
 		session_tcp_stop(ss);
 		session_kcp_close(ss);
