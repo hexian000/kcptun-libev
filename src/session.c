@@ -171,6 +171,22 @@ static bool session_on_msg(
 /* returns: OK=0, wait=1, error=-1 */
 static int ss_process(struct session *restrict ss)
 {
+	switch (ss->kcp_state) {
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
+		return -1;
+	}
+	switch (ss->tcp_state) {
+	case STATE_INIT:
+	case STATE_CONNECT:
+	case STATE_CONNECTED:
+		break;
+	default:
+		return -1;
+	}
+	kcp_recv(ss);
 	if (ss->wbuf_flush < ss->wbuf_next) {
 		/* tcp flushing is in progress */
 		return 1;
@@ -199,6 +215,7 @@ static int ss_process(struct session *restrict ss)
 	}
 	if (ss->wbuf_flush > 0) {
 		tcp_flush(ss);
+		tcp_notify(ss);
 	} else {
 		/* nothing to flush */
 		consume_wbuf(ss, ss->wbuf_next);
@@ -310,28 +327,14 @@ void session_read_cb(struct session *restrict ss)
 {
 	int ret;
 	do {
-		switch (ss->kcp_state) {
-		case STATE_CONNECT:
-		case STATE_CONNECTED:
-			break;
-		default:
-			return;
-		}
-		switch (ss->tcp_state) {
-		case STATE_INIT:
-		case STATE_CONNECT:
-		case STATE_CONNECTED:
-			break;
-		default:
-			return;
-		}
-		kcp_recv(ss);
 		ret = ss_process(ss);
 	} while (ret == 0);
 	if (ret < 0) {
 		session_tcp_stop(ss);
 		session_kcp_close(ss);
+		return;
 	}
+	tcp_notify(ss);
 }
 
 static void

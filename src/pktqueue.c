@@ -178,7 +178,6 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		session_kcp_flush(ss);
 	}
 	session_read_cb(ss);
-	tcp_notify(ss);
 }
 
 size_t queue_dispatch(struct server *restrict s)

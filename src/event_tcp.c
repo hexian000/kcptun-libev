@@ -313,16 +313,17 @@ void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		connected_cb(ss);
 	}
 
+	if (revents & EV_READ) {
+		tcp_recv_all(ss);
+	}
+
 	if (revents & EV_WRITE) {
 		tcp_flush(ss);
 		if (ss->tcp_state == STATE_CONNECTED &&
 		    ss->wbuf_flush == ss->wbuf_next) {
 			session_read_cb(ss);
+			return;
 		}
-	}
-
-	if (revents & EV_READ) {
-		tcp_recv_all(ss);
 	}
 
 	tcp_notify(ss);
