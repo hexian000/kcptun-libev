@@ -35,7 +35,7 @@ target_compile_options(kcptun-libev PRIVATE "-include${CMAKE_CURRENT_BINARY_DIR}
 # be strict with original sources
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
 
-target_link_libraries(kcptun-libev PRIVATE kcp json bloom csnippets)
+target_link_libraries(kcptun-libev PRIVATE kcp cjson bloom csnippets)
 
 # find libev
 find_path(LIBEV_INCLUDE_DIR NAMES ev.h)

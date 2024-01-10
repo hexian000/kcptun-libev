@@ -50,7 +50,7 @@ network access -> proxy client -> kcptun-libev client ->
 -> kcptun-libev server -> proxy server -> stable network
 ```
 
-Less typically, reliable UDP can help users connect to TCP services behind NAT, see [rendezvous mode](#rendezvous-mode).
+Reliable UDP can also help users connect to TCP services behind NAT, see [rendezvous mode](#rendezvous-mode).
 ```
 client -> NAT1 -> rendezvous server
 server -> NAT2 -> rendezvous server
@@ -342,6 +342,6 @@ Thanks to:
 - [kcp](https://github.com/skywind3000/kcp) (with modifications)
 - [libev](http://software.schmorp.de/pkg/libev.html)
 - [libsodium](https://github.com/jedisct1/libsodium)
-- [json-parser](https://github.com/json-parser/json-parser)
+- [cJSON](https://github.com/DaveGamble/cJSON)
 - [libbloom](https://github.com/jvirkki/libbloom) (with modifications)
 - [cityhash](https://github.com/google/cityhash) (with modifications)

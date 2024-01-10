@@ -50,8 +50,6 @@ enum session_messages {
 	SMSG_PUSH = 0x0001,
 	SMSG_EOF = 0x0002,
 	SMSG_KEEPALIVE = 0x0003,
-
-	SMSG_MAX,
 };
 
 enum session_state {
