@@ -41,7 +41,7 @@ typedef struct IQUEUEHEAD iqueue_head;
 #define IQUEUE_INIT(ptr) ( \
 	(ptr)->next = (ptr), (ptr)->prev = (ptr))
 
-#define IOFFSETOF(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+#define IOFFSETOF(TYPE, MEMBER) (offsetof(TYPE, MEMBER))
 
 #define ICONTAINEROF(ptr, type, member) ( \
 		(type*)( ((char*)((type*)(ptr))) - IOFFSETOF(type, member)) )
