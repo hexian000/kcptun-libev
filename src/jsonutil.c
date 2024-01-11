@@ -29,8 +29,7 @@ bool jutil_walk_object(
 		return false;
 	}
 	for (const cJSON *o = v->child; o != NULL; o = o->next) {
-		if (!cb(ud, o->string, strlen(o->string),
-			(struct jutil_value *)o)) {
+		if (!cb(ud, o->string, (struct jutil_value *)o)) {
 			return false;
 		}
 	}
@@ -76,25 +75,12 @@ bool jutil_get_int(const struct jutil_value *value, int *i)
 	return true;
 }
 
-const char *jutil_get_string(const struct jutil_value *value, size_t *len)
+char *jutil_get_string(const struct jutil_value *value)
 {
 	const cJSON *restrict v = (const cJSON *)value;
 	if (!cJSON_IsString(v)) {
 		LOGE_F("unexpected json object type: %d", v->type);
 		return NULL;
 	}
-	if (len != NULL) {
-		*len = strlen(v->valuestring);
-	}
-	return v->valuestring;
-}
-
-char *jutil_strdup(const struct jutil_value *value)
-{
-	size_t n = 0;
-	const char *s = jutil_get_string(value, &n);
-	if (s == NULL) {
-		return NULL;
-	}
-	return strndup(s, n);
+	return strdup(v->valuestring);
 }

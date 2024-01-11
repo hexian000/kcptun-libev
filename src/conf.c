@@ -63,140 +63,162 @@ static struct jutil_value *conf_parse(const char *filename)
 	struct jutil_value *obj = jutil_parse(buf, nread);
 	free(buf);
 	if (obj == NULL) {
-		LOGF("conf_parse: json parse failed");
+		LOGF("conf_parse: failed parsing json");
 		return NULL;
 	}
 	return obj;
 }
 
-#define NAME_EQUAL(c) CONSTSTREQUAL(name, namelen, c)
-
-static bool kcp_scope_cb(
-	void *ud, const char *name, const size_t namelen,
-	const struct jutil_value *value)
+static bool
+kcp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (NAME_EQUAL("mtu")) {
+	if (strcmp(key, "mtu") == 0) {
 		return jutil_get_int(value, &conf->kcp_mtu);
-	} else if (NAME_EQUAL("sndwnd")) {
+	}
+	if (strcmp(key, "sndwnd") == 0) {
 		return jutil_get_int(value, &conf->kcp_sndwnd);
-	} else if (NAME_EQUAL("rcvwnd")) {
+	}
+	if (strcmp(key, "rcvwnd") == 0) {
 		return jutil_get_int(value, &conf->kcp_rcvwnd);
-	} else if (NAME_EQUAL("nodelay")) {
+	}
+	if (strcmp(key, "nodelay") == 0) {
 		return jutil_get_int(value, &conf->kcp_nodelay);
-	} else if (NAME_EQUAL("interval")) {
+	}
+	if (strcmp(key, "interval") == 0) {
 		return jutil_get_int(value, &conf->kcp_interval);
-	} else if (NAME_EQUAL("resend")) {
+	}
+	if (strcmp(key, "resend") == 0) {
 		return jutil_get_int(value, &conf->kcp_resend);
-	} else if (NAME_EQUAL("nc")) {
+	}
+	if (strcmp(key, "nc") == 0) {
 		return jutil_get_int(value, &conf->kcp_nc);
-	} else if (NAME_EQUAL("flush")) {
+	}
+	if (strcmp(key, "flush") == 0) {
 		return jutil_get_int(value, &conf->kcp_flush);
 	}
-	LOGW_F("unknown config: \"kcp.%s\"", name);
+	LOGW_F("unknown config: \"kcp.%s\"", key);
 	return true;
 }
 
-static bool tcp_scope_cb(
-	void *ud, const char *name, const size_t namelen,
-	const struct jutil_value *value)
+static bool
+tcp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (NAME_EQUAL("reuseport")) {
+	if (strcmp(key, "reuseport") == 0) {
 		return jutil_get_bool(value, &conf->tcp_reuseport);
-	} else if (NAME_EQUAL("keepalive")) {
+	}
+	if (strcmp(key, "keepalive") == 0) {
 		return jutil_get_bool(value, &conf->tcp_keepalive);
-	} else if (NAME_EQUAL("nodelay")) {
+	}
+	if (strcmp(key, "nodelay") == 0) {
 		return jutil_get_bool(value, &conf->tcp_nodelay);
-	} else if (NAME_EQUAL("sndbuf")) {
+	}
+	if (strcmp(key, "sndbuf") == 0) {
 		return jutil_get_int(value, &conf->tcp_sndbuf);
-	} else if (NAME_EQUAL("rcvbuf")) {
+	}
+	if (strcmp(key, "rcvbuf") == 0) {
 		return jutil_get_int(value, &conf->tcp_rcvbuf);
 	}
-	LOGW_F("unknown config: \"tcp.%s\"", name);
+	LOGW_F("unknown config: \"tcp.%s\"", key);
 	return true;
 }
 
-static bool udp_scope_cb(
-	void *ud, const char *name, const size_t namelen,
-	const struct jutil_value *value)
+static bool
+udp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (NAME_EQUAL("sndbuf")) {
+	if (strcmp(key, "sndbuf") == 0) {
 		return jutil_get_int(value, &conf->udp_sndbuf);
-	} else if (NAME_EQUAL("rcvbuf")) {
+	}
+	if (strcmp(key, "rcvbuf") == 0) {
 		return jutil_get_int(value, &conf->udp_rcvbuf);
 	}
-	LOGW_F("unknown config: \"udp.%s\"", name);
+	LOGW_F("unknown config: \"udp.%s\"", key);
 	return true;
 }
 
-static bool main_scope_cb(
-	void *ud, const char *name, const size_t namelen,
-	const struct jutil_value *value)
+static bool
+main_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
-	if (NAME_EQUAL("kcp")) {
+	if (strcmp(key, "kcp") == 0) {
 		return jutil_walk_object(conf, value, kcp_scope_cb);
-	} else if (NAME_EQUAL("udp")) {
+	}
+	if (strcmp(key, "udp") == 0) {
 		return jutil_walk_object(conf, value, udp_scope_cb);
-	} else if (NAME_EQUAL("tcp")) {
+	}
+	if (strcmp(key, "tcp") == 0) {
 		return jutil_walk_object(conf, value, tcp_scope_cb);
-	} else if (NAME_EQUAL("listen")) {
-		conf->listen = jutil_strdup(value);
+	}
+	if (strcmp(key, "listen") == 0) {
+		conf->listen = jutil_get_string(value);
 		return conf->listen != NULL;
-	} else if (NAME_EQUAL("connect")) {
-		conf->connect = jutil_strdup(value);
+	}
+	if (strcmp(key, "connect") == 0) {
+		conf->connect = jutil_get_string(value);
 		return conf->connect != NULL;
-	} else if (NAME_EQUAL("kcp_bind")) {
-		conf->kcp_bind = jutil_strdup(value);
+	}
+	if (strcmp(key, "kcp_bind") == 0) {
+		conf->kcp_bind = jutil_get_string(value);
 		return conf->kcp_bind != NULL;
-	} else if (NAME_EQUAL("kcp_connect")) {
-		conf->kcp_connect = jutil_strdup(value);
+	}
+	if (strcmp(key, "kcp_connect") == 0) {
+		conf->kcp_connect = jutil_get_string(value);
 		return conf->kcp_connect != NULL;
-	} else if (NAME_EQUAL("rendezvous_server")) {
-		conf->rendezvous_server = jutil_strdup(value);
+	}
+	if (strcmp(key, "rendezvous_server") == 0) {
+		conf->rendezvous_server = jutil_get_string(value);
 		return conf->rendezvous_server != NULL;
-	} else if (NAME_EQUAL("http_listen")) {
-		conf->http_listen = jutil_strdup(value);
+	}
+	if (strcmp(key, "http_listen") == 0) {
+		conf->http_listen = jutil_get_string(value);
 		return conf->http_listen != NULL;
-	} else if (NAME_EQUAL("netdev")) {
-		conf->netdev = jutil_strdup(value);
+	}
+	if (strcmp(key, "netdev") == 0) {
+		conf->netdev = jutil_get_string(value);
 		return conf->netdev != NULL;
 	}
 #if WITH_CRYPTO
-	else if (NAME_EQUAL("method")) {
-		conf->method = jutil_strdup(value);
+	if (strcmp(key, "method") == 0) {
+		conf->method = jutil_get_string(value);
 		return conf->method != NULL;
-	} else if (NAME_EQUAL("password")) {
-		conf->password = jutil_strdup(value);
+	}
+	if (strcmp(key, "password") == 0) {
+		conf->password = jutil_get_string(value);
 		return conf->password != NULL;
-	} else if (NAME_EQUAL("psk")) {
-		conf->psk = jutil_strdup(value);
+	}
+	if (strcmp(key, "psk") == 0) {
+		conf->psk = jutil_get_string(value);
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
 #if WITH_OBFS
-	else if (NAME_EQUAL("obfs")) {
-		conf->obfs = jutil_strdup(value);
+	if (strcmp(key, "obfs") == 0) {
+		conf->obfs = jutil_get_string(value);
 		return conf->obfs != NULL;
 	}
 #endif /* WITH_OBFS */
-	else if (NAME_EQUAL("linger")) {
+	if (strcmp(key, "linger") == 0) {
 		return jutil_get_int(value, &conf->linger);
-	} else if (NAME_EQUAL("timeout")) {
+	}
+	if (strcmp(key, "timeout") == 0) {
 		return jutil_get_int(value, &conf->timeout);
-	} else if (NAME_EQUAL("keepalive")) {
+	}
+	if (strcmp(key, "keepalive") == 0) {
 		return jutil_get_int(value, &conf->keepalive);
-	} else if (NAME_EQUAL("time_wait")) {
+	}
+	if (strcmp(key, "time_wait") == 0) {
 		return jutil_get_int(value, &conf->time_wait);
-	} else if (NAME_EQUAL("loglevel")) {
+	}
+	if (strcmp(key, "loglevel") == 0) {
 		return jutil_get_int(value, &conf->log_level);
-	} else if (NAME_EQUAL("user")) {
-		conf->user = jutil_strdup(value);
+	}
+	if (strcmp(key, "user") == 0) {
+		conf->user = jutil_get_string(value);
 		return conf->user != NULL;
 	}
-	LOGW_F("unknown config: \"%s\"", name);
+	LOGW_F("unknown config: \"%s\"", key);
 	return true;
 }
 

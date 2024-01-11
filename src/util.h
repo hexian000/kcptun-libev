@@ -22,11 +22,6 @@
 
 #define UNUSED(x) (void)(x)
 
-#define CONSTSTREQUAL(s, len, literal)                                         \
-	((len) == (ARRAY_SIZE(literal) - 1) &&                                 \
-	 strncmp((s), literal "",                                              \
-		 (ARRAY_SIZE(literal) - 1) * sizeof((literal)[0])) == 0)
-
 #define TSTAMP_NIL (-1.0)
 
 #define CLOSE_FD(fd)                                                           \

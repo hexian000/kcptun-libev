@@ -14,8 +14,7 @@ struct jutil_value *jutil_parse(const char *json, size_t length);
 void jutil_free(struct jutil_value *value);
 
 typedef bool (*jutil_walk_object_cb)(
-	void *ud, const char *name, size_t namelen,
-	const struct jutil_value *value);
+	void *ud, const char *key, const struct jutil_value *value);
 bool jutil_walk_object(
 	void *ud, const struct jutil_value *obj, jutil_walk_object_cb cb);
 
@@ -27,8 +26,7 @@ bool jutil_get_bool(const struct jutil_value *value, bool *b);
 
 bool jutil_get_int(const struct jutil_value *value, int *i);
 
-const char *jutil_get_string(const struct jutil_value *value, size_t *len);
-
-char *jutil_strdup(const struct jutil_value *value);
+/* the returned string needs to be freed */
+char *jutil_get_string(const struct jutil_value *value);
 
 #endif /* JSONUTIL_H */
