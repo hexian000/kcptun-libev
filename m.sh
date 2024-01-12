@@ -150,6 +150,7 @@ case "$1" in
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Debug" \
         -DENABLE_SANITIZERS=ON \
+        -DLINK_STATIC_LIBS=ON \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
