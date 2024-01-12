@@ -311,6 +311,7 @@ struct pktqueue *queue_new(struct server *restrict s)
 	const struct config *restrict conf = s->conf;
 	struct pktqueue *q = malloc(sizeof(struct pktqueue));
 	if (q == NULL) {
+		LOGOOM();
 		return NULL;
 	}
 	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, MMSG_BATCH_SIZE * 2);

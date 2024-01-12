@@ -243,6 +243,7 @@ struct crypto *crypto_new(const char *method)
 	}
 	struct crypto *crypto = malloc(sizeof(struct crypto));
 	if (crypto == NULL) {
+		LOGOOM();
 		return NULL;
 	}
 	*(size_t *)&crypto->nonce_size = nonce_size;
@@ -250,6 +251,7 @@ struct crypto *crypto_new(const char *method)
 	*(size_t *)&crypto->key_size = key_size;
 	crypto->impl = malloc(sizeof(struct crypto_impl));
 	if (crypto->impl == NULL) {
+		LOGOOM();
 		crypto_free(crypto);
 		return NULL;
 	}
