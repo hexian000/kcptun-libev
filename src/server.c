@@ -404,8 +404,9 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.clock = (clock_t)(-1),
 		.last_clock = (clock_t)(-1),
 	};
-	if ((conf->mode % (MODE_SERVER | MODE_CLIENT | MODE_RENDEZVOUS)) ==
-	    MODE_SERVER) {
+	const int mode =
+		conf->mode & (MODE_SERVER | MODE_CLIENT | MODE_RENDEZVOUS);
+	if (mode == MODE_SERVER || mode == MODE_RENDEZVOUS) {
 		/* server only: disable keepalive and resolve */
 		s->keepalive = 0.0;
 	}
