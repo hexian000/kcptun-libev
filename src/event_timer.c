@@ -107,6 +107,9 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		}
 		if ((mode & MODE_CLIENT) != 0 && !s->pkt.connected) {
 			udp_rendezvous(s, S0MSG_CONNECT);
+			watcher->repeat = s->ping_timeout;
+			ev_timer_again(loop, watcher);
+			return;
 		}
 	}
 	if ((mode & MODE_CLIENT) == 0) {

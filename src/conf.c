@@ -286,6 +286,10 @@ static bool conf_check(struct config *restrict conf)
 			LOGE("config: keepalive can't be disabled in rendezvous mode");
 			return false;
 		}
+		if (conf->keepalive > 25) {
+			LOGW_F("config: keepalive %d may be too long for rendezvous mode",
+			       conf->keepalive);
+		}
 	}
 	if (((mode & (MODE_RENDEZVOUS | MODE_SERVER)) == MODE_SERVER &&
 	     conf->kcp_bind == NULL) ||

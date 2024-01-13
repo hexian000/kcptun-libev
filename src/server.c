@@ -334,10 +334,6 @@ bool server_resolve(struct server *restrict s)
 	if (!udp_bind(&s->pkt, conf)) {
 		return false;
 	}
-	if ((conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
-	    (MODE_RENDEZVOUS | MODE_CLIENT)) {
-		udp_rendezvous(s, S0MSG_CONNECT);
-	}
 	q->mss = (uint16_t)server_mss(s);
 	return true;
 }
@@ -408,6 +404,11 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.clock = (clock_t)(-1),
 		.last_clock = (clock_t)(-1),
 	};
+	if ((conf->mode % (MODE_SERVER | MODE_CLIENT | MODE_RENDEZVOUS)) ==
+	    MODE_SERVER) {
+		/* server only: disable keepalive and resolve */
+		s->keepalive = 0.0;
+	}
 
 	{
 		const double interval = conf->kcp_interval * 1e-3;
@@ -466,13 +467,7 @@ bool server_start(struct server *s)
 	}
 	s->last_resolve_time = now;
 	ev_timer_start(loop, &s->w_kcp_update);
-	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) != 0 &&
-	    conf->keepalive > 0.0) {
-		if ((s->conf->mode & MODE_RENDEZVOUS) != 0 &&
-		    conf->keepalive > 25.0) {
-			LOGW_F("in rendezvous mode, keepalive interval %f may be too long",
-			       conf->keepalive);
-		}
+	if (s->keepalive > 0.0) {
 		ev_timer_start(loop, &s->w_keepalive);
 		ev_timer_start(loop, &s->w_resolve);
 	}
