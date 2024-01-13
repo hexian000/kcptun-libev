@@ -253,6 +253,7 @@ static struct config conf_default(void)
 		.tcp_reuseport = false,
 		.tcp_keepalive = false,
 		.tcp_nodelay = true,
+		.udp_reuseport = false,
 		.log_level = LOG_LEVEL_NOTICE,
 	};
 }

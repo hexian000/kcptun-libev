@@ -143,6 +143,7 @@ static bool udp_init(
 		LOGE_F("fcntl: %s", strerror(err));
 		return false;
 	}
+	socket_set_reuseport(udp->fd, conf->udp_reuseport);
 	socket_set_buffer(udp->fd, conf->udp_sndbuf, conf->udp_rcvbuf);
 	return true;
 }
@@ -404,12 +405,6 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.clock = (clock_t)(-1),
 		.last_clock = (clock_t)(-1),
 	};
-	const int mode =
-		conf->mode & (MODE_SERVER | MODE_CLIENT | MODE_RENDEZVOUS);
-	if (mode == MODE_SERVER || mode == MODE_RENDEZVOUS) {
-		/* server only: disable keepalive and resolve */
-		s->keepalive = 0.0;
-	}
 
 	{
 		const double interval = conf->kcp_interval * 1e-3;
@@ -433,7 +428,13 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		w_timeout->data = s;
 	}
 
-	if ((conf->mode & MODE_SERVER) != 0) {
+	const int mode =
+		conf->mode & (MODE_SERVER | MODE_CLIENT | MODE_RENDEZVOUS);
+	if (mode == MODE_SERVER || mode == MODE_RENDEZVOUS) {
+		/* server only: disable keepalive and resolve */
+		s->keepalive = 0.0;
+	}
+	if ((mode & MODE_SERVER) != 0) {
 		s->sessions = table_new(TABLE_FAST);
 	} else {
 		s->sessions = table_new(TABLE_DEFAULT);
