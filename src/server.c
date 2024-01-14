@@ -375,6 +375,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 {
 	struct server *restrict s = malloc(sizeof(struct server));
 	if (s == NULL) {
+		LOGOOM();
 		return NULL;
 	}
 	const double ping_timeout = 4.0;
@@ -434,12 +435,18 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 	}
 	if ((conf->mode & MODE_SERVER) != 0) {
 		s->sessions = table_new(TABLE_FAST);
-	} else {
+		if (s->sessions == NULL) {
+			LOGOOM();
+			server_free(s);
+			return NULL;
+		}
+	} else if ((conf->mode & MODE_CLIENT) != 0) {
 		s->sessions = table_new(TABLE_DEFAULT);
-	}
-	if (s->sessions == NULL) {
-		server_free(s);
-		return NULL;
+		if (s->sessions == NULL) {
+			LOGOOM();
+			server_free(s);
+			return NULL;
+		}
 	}
 	s->pkt.queue = queue_new(s);
 	if (s->pkt.queue == NULL) {

@@ -900,6 +900,7 @@ struct obfs *obfs_new(struct server *restrict s)
 		if ((conf->mode & MODE_SERVER) != 0) {
 			obfs->contexts = table_new(TABLE_FAST);
 		} else {
+			assert((conf->mode & MODE_CLIENT) != 0);
 			obfs->contexts = table_new(TABLE_DEFAULT);
 		}
 		if (obfs->contexts == NULL) {
