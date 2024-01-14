@@ -128,6 +128,9 @@ static bool
 udp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 {
 	struct config *restrict conf = ud;
+	if (strcmp(key, "reuseport") == 0) {
+		return jutil_get_bool(value, &conf->udp_reuseport);
+	}
 	if (strcmp(key, "sndbuf") == 0) {
 		return jutil_get_int(value, &conf->udp_sndbuf);
 	}
