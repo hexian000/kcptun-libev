@@ -37,7 +37,7 @@ extern struct mcache *msgpool;
 #define UTIL_SAFE_FREE(x)                                                      \
 	do {                                                                   \
 		if ((x) != NULL) {                                             \
-			free((void *)(x));                                     \
+			free((x));                                             \
 			(x) = NULL;                                            \
 		}                                                              \
 	} while (0)

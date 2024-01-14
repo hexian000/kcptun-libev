@@ -16,13 +16,13 @@ enum runmode {
 };
 
 struct config {
-	const char *listen;
-	const char *connect;
-	const char *kcp_bind;
-	const char *kcp_connect;
-	const char *rendezvous_server;
-	const char *http_listen;
-	const char *netdev;
+	char *listen;
+	char *connect;
+	char *kcp_bind;
+	char *kcp_connect;
+	char *rendezvous_server;
+	char *http_listen;
+	char *netdev;
 
 	int mode;
 	int kcp_mtu, kcp_sndwnd, kcp_rcvwnd;
@@ -42,12 +42,12 @@ struct config {
 #endif
 
 #if WITH_OBFS
-	const char *obfs;
+	char *obfs;
 #endif
 
 	int timeout, linger, keepalive, time_wait;
 	int log_level;
-	const char *user;
+	char *user;
 };
 
 struct config *conf_read(const char *path);

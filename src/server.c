@@ -428,13 +428,11 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		w_timeout->data = s;
 	}
 
-	const int mode =
-		conf->mode & (MODE_SERVER | MODE_CLIENT | MODE_RENDEZVOUS);
-	if (mode == MODE_SERVER || mode == MODE_RENDEZVOUS) {
+	if ((conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) == 0) {
 		/* server only: disable keepalive and resolve */
 		s->keepalive = 0.0;
 	}
-	if ((mode & MODE_SERVER) != 0) {
+	if ((conf->mode & MODE_SERVER) != 0) {
 		s->sessions = table_new(TABLE_FAST);
 	} else {
 		s->sessions = table_new(TABLE_DEFAULT);
