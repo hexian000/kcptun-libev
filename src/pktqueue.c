@@ -339,8 +339,9 @@ struct pktqueue *queue_new(struct server *restrict s)
 #endif
 #if WITH_OBFS
 	if (conf->obfs != NULL) {
-		if ((conf->mode & MODE_RENDEZVOUS) != 0) {
-			LOGE("rendezvous mode is not compatible with obfs");
+		if ((conf->mode & (MODE_SERVER | MODE_CLIENT)) == 0 ||
+		    (conf->mode & MODE_RENDEZVOUS) != 0) {
+			LOGE("current mode is not compatible with obfs");
 			queue_free(q);
 			return NULL;
 		}

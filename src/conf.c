@@ -286,6 +286,13 @@ static bool conf_check(struct config *restrict conf)
 	}
 	if (conf->rendezvous_server != NULL) {
 		mode |= MODE_RENDEZVOUS;
+	}
+	if ((mode & (MODE_SERVER | MODE_CLIENT)) ==
+	    (MODE_SERVER | MODE_CLIENT)) {
+		LOGE("config: can't be both client and server at the same time");
+		return false;
+	}
+	if ((mode & MODE_RENDEZVOUS) != 0) {
 		if (conf->keepalive <= 0) {
 			LOGE("config: keepalive can't be disabled in rendezvous mode");
 			return false;
@@ -298,8 +305,10 @@ static bool conf_check(struct config *restrict conf)
 	if (((mode & (MODE_RENDEZVOUS | MODE_SERVER)) == MODE_SERVER &&
 	     conf->kcp_bind == NULL) ||
 	    ((mode & (MODE_RENDEZVOUS | MODE_CLIENT)) == MODE_CLIENT &&
-	     conf->kcp_connect == NULL)) {
-		LOGE("config: no forward could be provided (are you missing some address field?)");
+	     conf->kcp_connect == NULL) ||
+	    ((mode & (MODE_SERVER | MODE_CLIENT)) == 0 &&
+	     conf->kcp_bind == NULL)) {
+		LOGE("config: no service could be provided (are you missing some address field?)");
 		return false;
 	}
 	conf->mode = mode;

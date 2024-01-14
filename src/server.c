@@ -364,10 +364,6 @@ static bool udp_start(struct server *restrict s)
 	struct ev_io *restrict w_write = &udp->w_write;
 	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
 	w_write->data = s;
-
-	const ev_tstamp now = ev_time();
-	udp->last_send_time = now;
-	udp->last_recv_time = now;
 	return true;
 }
 
