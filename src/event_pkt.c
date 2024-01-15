@@ -3,12 +3,13 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "pktqueue.h"
+#include "server.h"
 #include "sockutil.h"
 #include "util.h"
+
 #include "utils/debug.h"
 #include "utils/slog.h"
-#include "server.h"
-#include "pktqueue.h"
 
 #include <ev.h>
 #include <sys/socket.h>
@@ -113,7 +114,8 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 			}
 			LOGE_F("recvmmsg: %s", strerror(err));
 			break;
-		} else if (ret == 0) {
+		}
+		if (ret == 0) {
 			for (size_t i = 0; i < nbatch; i++) {
 				msgframe_delete(q, frames[i]);
 			}
@@ -254,7 +256,8 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 			/* clear the send queue if the error is persistent */
 			drop = true;
 			break;
-		} else if (ret == 0) {
+		}
+		if (ret == 0) {
 			break;
 		}
 		const size_t n = (size_t)ret;

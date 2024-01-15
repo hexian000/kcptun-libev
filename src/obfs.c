@@ -7,43 +7,44 @@
 
 #if WITH_OBFS
 
-#include "utils/arraysize.h"
-#include "utils/buffer.h"
-#include "utils/formats.h"
-#include "utils/slog.h"
-#include "utils/debug.h"
-#include "algo/hashtable.h"
-#include "math/rand.h"
-#include "net/http.h"
 #include "conf.h"
-#include "pktqueue.h"
-#include "session.h"
-#include "sockutil.h"
-#include "util.h"
-#include "server.h"
 #include "crypto.h"
 #include "event.h"
 #include "event_impl.h"
+#include "pktqueue.h"
+#include "server.h"
+#include "session.h"
+#include "sockutil.h"
+#include "util.h"
+
+#include "algo/hashtable.h"
+#include "math/rand.h"
+#include "net/http.h"
+#include "utils/arraysize.h"
+#include "utils/buffer.h"
+#include "utils/debug.h"
+#include "utils/formats.h"
+#include "utils/slog.h"
 
 #include <ev.h>
-#include <unistd.h>
-#include <sys/socket.h>
+#include <linux/filter.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
-#include <net/if.h>
-#include <linux/filter.h>
-#include <linux/if_ether.h>
-#include <linux/if_packet.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <inttypes.h>
 
 struct obfs_stats {
 	uintmax_t pkt_cap, pkt_rx, pkt_tx;

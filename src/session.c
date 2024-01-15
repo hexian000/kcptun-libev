@@ -2,19 +2,20 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "session.h"
+#include "conf.h"
+#include "crypto.h"
+#include "event.h"
+#include "pktqueue.h"
+#include "server.h"
+#include "sockutil.h"
+#include "util.h"
+
+#include "algo/hashtable.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
 #include "utils/serialize.h"
 #include "utils/slog.h"
-#include "algo/hashtable.h"
-#include "crypto.h"
-#include "conf.h"
-#include "event.h"
-#include "server.h"
-#include "pktqueue.h"
-#include "sockutil.h"
-#include "util.h"
 
 #include "ikcp.h"
 
@@ -24,11 +25,11 @@
 #include <unistd.h>
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <inttypes.h>
 
 const char session_state_char[STATE_MAX] = {
 	[STATE_INIT] = ' ',   [STATE_CONNECT] = '>',   [STATE_CONNECTED] = '-',

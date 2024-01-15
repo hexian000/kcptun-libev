@@ -1,12 +1,13 @@
 /* kcptun-libev (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#include "utils/slog.h"
-#include "utils/debug.h"
 #include "crypto.h"
-#include "util.h"
 #include "conf.h"
 #include "server.h"
+#include "util.h"
+
+#include "utils/debug.h"
+#include "utils/slog.h"
 
 #include <ev.h>
 #include <signal.h>
@@ -36,11 +37,13 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents);
 
 static void print_usage(char *argv0)
 {
-	fprintf(stderr, "%s",
+	(void)fprintf(
+		stderr, "%s",
 		PROJECT_NAME " " PROJECT_VER "\n"
 			     "  " PROJECT_HOMEPAGE "\n\n");
-	fprintf(stderr, "usage: %s <option>... \n", argv0);
-	fprintf(stderr, "%s",
+	(void)fprintf(stderr, "usage: %s <option>... \n", argv0);
+	(void)fprintf(
+		stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
 		"  -c, --config <file>        specify json config\n"
 		"  -d, --daemonize            run in background and write logs to syslog\n"
@@ -54,7 +57,7 @@ static void print_usage(char *argv0)
 		"  --genpsk <method>          generate random preshared key for specified method\n"
 #endif
 		"\n");
-	fflush(stderr);
+	(void)fflush(stderr);
 }
 
 static void parse_args(int argc, char **argv)

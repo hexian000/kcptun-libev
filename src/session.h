@@ -5,11 +5,12 @@
 #define SESSION_H
 
 #include "conf.h"
+#include "sockutil.h"
+#include "util.h"
+
 #include "algo/hashtable.h"
 #include "utils/buffer.h"
 #include "utils/serialize.h"
-#include "sockutil.h"
-#include "util.h"
 
 #include <ev.h>
 

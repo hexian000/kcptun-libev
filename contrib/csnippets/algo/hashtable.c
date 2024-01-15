@@ -8,15 +8,15 @@
 #include "utils/minmax.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <limits.h>
 
 #if HASHTABLE_LOG
-#include <stdio.h>
 #include <inttypes.h>
+#include <stdio.h>
 #endif
 
 /* start from 2^4 */
@@ -156,7 +156,8 @@ table_realloc(struct hashtable *restrict table, const size_t new_capacity)
 	}
 #if HASHTABLE_LOG
 	if (table != m) {
-		fprintf(stderr, " * realloc moved memory from %p to %p\n",
+		(void)fprintf(
+			stderr, " * realloc moved memory from %p to %p\n",
 			(void *)table, (void *)m);
 	}
 #endif
@@ -185,7 +186,8 @@ static inline void table_reseed(struct hashtable *restrict table)
 {
 	table->seed = (uint32_t)rand64();
 #if HASHTABLE_LOG
-	fprintf(stderr, "table reseed: size=%zu new_seed=%" PRIX32 "\n",
+	(void)fprintf(
+		stderr, "table reseed: size=%zu new_seed=%" PRIX32 "\n",
 		table->size, table->seed);
 #endif
 	table_compact(table);
@@ -363,7 +365,8 @@ table_reserve(struct hashtable *restrict table, const size_t new_size)
 		return table;
 	}
 #if HASHTABLE_LOG
-	fprintf(stderr,
+	(void)fprintf(
+		stderr,
 		"table resize: size=%zu capacity=%zu new_capacity=%zu\n",
 		table->size, table->capacity, new_capacity);
 #endif

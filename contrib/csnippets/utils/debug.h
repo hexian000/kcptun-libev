@@ -7,8 +7,8 @@
 #include "slog.h"
 
 #include <stddef.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* NOTICE: debugging utils may not be efficient */
 
@@ -66,7 +66,13 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 #define FAILMSG(msg) FAILMSGF("%s", msg)
 #define FAIL() FAILMSG("program encountered an unexpected state (bug?)")
 
-/* CHECK*: check runtime condition or FAIL */
+/* CHECK*: check runtime condition or FAIL
+ *   Suggestions:
+ *   - Use assert() when the condition indicates our bug
+ *   - Use assert() when the condition does not always cause failure (crash)
+ *   - When the unexpected behavior of external component will definitely cause
+ *     failure, use CHECK()
+ */
 #define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
 		if (!(cond)) {                                                 \

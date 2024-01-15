@@ -4,9 +4,10 @@
 #include "nonce.h"
 
 #if WITH_SODIUM
+#include "crypto.h"
+
 #include "utils/buffer.h"
 #include "utils/debug.h"
-#include "crypto.h"
 
 #include <sodium.h>
 

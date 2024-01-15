@@ -2,19 +2,21 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "util.h"
-#include "math/rand.h"
-#include "utils/slog.h"
-#include "utils/debug.h"
-#include "utils/minmax.h"
-#include "utils/mcache.h"
 #include "crypto.h"
 #include "pktqueue.h"
+
+#include "math/rand.h"
+#include "utils/debug.h"
+#include "utils/mcache.h"
+#include "utils/minmax.h"
+#include "utils/slog.h"
 
 #include "ikcp.h"
 
 #include <ev.h>
-#include <unistd.h>
+#include <fcntl.h>
 #include <pwd.h>
+#include <unistd.h>
 #if _BSD_SOURCE || _GNU_SOURCE
 #include <grp.h>
 #endif
@@ -22,9 +24,9 @@
 #include <assert.h>
 #include <locale.h>
 #include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 bool check_rate_limit(
@@ -116,8 +118,8 @@ void genpsk(const char *method)
 		LOGF("failed to generate random key");
 		exit(EXIT_FAILURE);
 	}
-	fprintf(stdout, "%s\n", key);
-	fflush(stdout);
+	(void)fprintf(stdout, "%s\n", key);
+	(void)fflush(stdout);
 	crypto_free(crypto);
 }
 #endif
@@ -158,7 +160,7 @@ void daemonize(const char *user, const bool nochdir, const bool noclose)
 {
 	/* Create an anonymous pipe for communicating with daemon process. */
 	int fd[2];
-	if (pipe(fd) == -1) {
+	if (pipe2(fd, O_CLOEXEC) == -1) {
 		const int err = errno;
 		FAILMSGF("pipe: %s", strerror(err));
 	}

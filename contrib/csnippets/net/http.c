@@ -4,12 +4,12 @@
 #include "http.h"
 #include "utils/arraysize.h"
 
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <inttypes.h>
 
 static const struct {
 	const uint16_t code;

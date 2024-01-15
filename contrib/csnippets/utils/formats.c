@@ -7,11 +7,11 @@
 
 #include <float.h>
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 
 static char *si_prefix_pos[] = {
 	"k", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q",

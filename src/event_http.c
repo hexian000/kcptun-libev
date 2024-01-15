@@ -3,23 +3,24 @@
 
 #include "event.h"
 #include "event_impl.h"
+#include "nonce.h"
+#include "obfs.h"
+#include "server.h"
+#include "util.h"
+
+#include "net/http.h"
+#include "net/url.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
-#include "net/http.h"
-#include "net/url.h"
-#include "util.h"
-#include "server.h"
-#include "nonce.h"
-#include "obfs.h"
 
 #include <ev.h>
-#include <unistd.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <inttypes.h>
 #include <string.h>
 
 static void

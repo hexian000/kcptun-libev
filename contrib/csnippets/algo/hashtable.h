@@ -4,8 +4,8 @@
 #ifndef ALGO_HASHTABLE_H
 #define ALGO_HASHTABLE_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /**

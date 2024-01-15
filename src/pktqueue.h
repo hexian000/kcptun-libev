@@ -4,10 +4,11 @@
 #ifndef PACKET_H
 #define PACKET_H
 
-#include "utils/mcache.h"
-#include "utils/slog.h"
 #include "sockutil.h"
 #include "util.h"
+
+#include "utils/mcache.h"
+#include "utils/slog.h"
 
 #include <ev.h>
 #include <sys/socket.h>

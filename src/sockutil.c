@@ -2,29 +2,30 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "sockutil.h"
-#include "utils/minmax.h"
-#include "utils/slog.h"
-#include "utils/debug.h"
-#include "net/addr.h"
 #include "util.h"
 
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
+#include "net/addr.h"
+#include "utils/debug.h"
+#include "utils/minmax.h"
+#include "utils/slog.h"
+
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <net/if.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <inttypes.h>
 
 bool socket_set_nonblock(const int fd)
 {
@@ -70,14 +71,14 @@ void socket_set_buffer(const int fd, const int send, const int recv)
 {
 	int val;
 	if (send > 0) {
-		val = (int)send;
+		val = send;
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_SNDBUF: %s", strerror(err));
 		}
 	}
 	if (recv > 0) {
-		val = (int)recv;
+		val = recv;
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
 			const int err = errno;
 			LOGW_F("SO_RCVBUF: %s", strerror(err));

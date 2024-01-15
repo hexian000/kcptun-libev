@@ -2,37 +2,38 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "server.h"
-#include "utils/slog.h"
-#include "utils/debug.h"
-#include "utils/buffer.h"
-#include "utils/formats.h"
+#include "conf.h"
+#include "crypto.h"
+#include "event.h"
+#include "obfs.h"
+#include "pktqueue.h"
+#include "session.h"
+#include "sockutil.h"
+#include "util.h"
+
 #include "algo/hashtable.h"
 #include "math/rand.h"
-#include "conf.h"
-#include "event.h"
-#include "crypto.h"
-#include "pktqueue.h"
-#include "obfs.h"
-#include "session.h"
-#include "util.h"
-#include "sockutil.h"
+#include "utils/buffer.h"
+#include "utils/debug.h"
+#include "utils/formats.h"
+#include "utils/slog.h"
 
 #include "ikcp.h"
 
 #include <ev.h>
-#include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <assert.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <inttypes.h>
-#include <limits.h>
 #include <time.h>
 
 static int
@@ -677,8 +678,8 @@ static bool print_session_iter(
 
 	int rtt = -1, rto = -1;
 	if (ss->kcp != NULL) {
-		rtt = (int)CLAMP(ss->kcp->rx_srtt, INT_MIN, INT_MAX);
-		rto = (int)CLAMP(ss->kcp->rx_rto, INT_MIN, INT_MAX);
+		rtt = CLAMP(ss->kcp->rx_srtt, INT_MIN, INT_MAX);
+		rto = CLAMP(ss->kcp->rx_rto, INT_MIN, INT_MAX);
 	}
 	ctx->buf = VBUF_APPENDF(
 		ctx->buf,

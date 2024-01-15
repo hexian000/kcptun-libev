@@ -3,14 +3,15 @@
 
 #include "event.h"
 #include "event_impl.h"
-#include "algo/hashtable.h"
-#include "utils/slog.h"
-#include "utils/debug.h"
-#include "server.h"
 #include "pktqueue.h"
+#include "server.h"
 #include "session.h"
-#include "util.h"
 #include "sockutil.h"
+#include "util.h"
+
+#include "algo/hashtable.h"
+#include "utils/debug.h"
+#include "utils/slog.h"
 
 #include <ev.h>
 #include <stdbool.h>
@@ -19,10 +20,10 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
 
 static void modify_io_events(
 	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
@@ -252,7 +253,8 @@ static int tcp_send(struct session *restrict ss)
 		LOGE_F("session [%08" PRIX32 "] tcp send: %s", ss->conv,
 		       strerror(err));
 		return -1;
-	} else if (ret == 0) {
+	}
+	if (ret == 0) {
 		return 1;
 	}
 	assert(ret <= INT_MAX);

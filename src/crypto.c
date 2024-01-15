@@ -2,10 +2,11 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "crypto.h"
-#include "utils/arraysize.h"
-#include "utils/slog.h"
-#include "utils/debug.h"
 #include "util.h"
+
+#include "utils/arraysize.h"
+#include "utils/debug.h"
+#include "utils/slog.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -48,8 +49,8 @@ kdf(const size_t key_size, unsigned char *restrict key,
 		return r;
 	}
 	r = crypto_pwhash_argon2id(
-		(unsigned char *)key, key_size, password, strlen(password),
-		salt, crypto_pwhash_argon2id_OPSLIMIT_INTERACTIVE,
+		key, key_size, password, strlen(password), salt,
+		crypto_pwhash_argon2id_OPSLIMIT_INTERACTIVE,
 		crypto_pwhash_argon2id_MEMLIMIT_MIN,
 		crypto_pwhash_argon2id_ALG_ARGON2ID13);
 	return r;
@@ -200,11 +201,11 @@ static const char *method_names[] = {
 
 void crypto_list_methods(void)
 {
-	fprintf(stderr, "  supported methods:\n");
+	(void)fprintf(stderr, "  supported methods:\n");
 	for (size_t i = 0; i < ARRAY_SIZE(method_names); i++) {
-		fprintf(stderr, "  - %s\n", method_names[i]);
+		(void)fprintf(stderr, "  - %s\n", method_names[i]);
 	}
-	fflush(stderr);
+	(void)fflush(stderr);
 }
 
 struct crypto *crypto_new(const char *method)

@@ -5,11 +5,12 @@
 #define SERVER_H
 
 #include "conf.h"
-#include "algo/hashtable.h"
-#include "utils/buffer.h"
 #include "session.h"
 #include "sockutil.h"
 #include "util.h"
+
+#include "algo/hashtable.h"
+#include "utils/buffer.h"
 
 #include <ev.h>
 #include <netinet/in.h>

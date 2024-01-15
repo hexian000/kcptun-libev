@@ -2,10 +2,11 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "conf.h"
+#include "jsonutil.h"
+#include "util.h"
+
 #include "utils/debug.h"
 #include "utils/slog.h"
-#include "util.h"
-#include "jsonutil.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -25,35 +26,35 @@ static struct jutil_value *conf_parse(const char *filename)
 	if (fseek(f, 0, SEEK_END)) {
 		const int err = errno;
 		LOGE_F("unable to seek config file: %s", strerror(err));
-		fclose(f);
+		(void)fclose(f);
 		return NULL;
 	}
 	const long len = ftell(f);
 	if (len < 0) {
 		const int err = errno;
 		LOGE_F("unable to tell config file length: %s", strerror(err));
-		fclose(f);
+		(void)fclose(f);
 		return NULL;
 	}
 	if (len >= MAX_CONF_SIZE) {
 		LOGE("config file is too large");
-		fclose(f);
+		(void)fclose(f);
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_SET)) {
 		const int err = errno;
 		LOGE_F("unable to seek config file: %s", strerror(err));
-		fclose(f);
+		(void)fclose(f);
 		return NULL;
 	}
 	char *buf = malloc(len + 1); /* null terminator */
 	if (buf == NULL) {
 		LOGF("conf_parse: out of memory");
-		fclose(f);
+		(void)fclose(f);
 		return NULL;
 	}
 	const size_t nread = fread(buf, sizeof(char), (size_t)len, f);
-	fclose(f);
+	(void)fclose(f);
 	if (nread != (size_t)len) {
 		LOGE("unable to read the config file");
 		free(buf);

@@ -2,20 +2,21 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "pktqueue.h"
-#include "algo/hashtable.h"
-#include "math/rand.h"
-#include "utils/debug.h"
-#include "utils/slog.h"
 #include "conf.h"
+#include "crypto.h"
 #include "event.h"
 #include "event_impl.h"
-#include "crypto.h"
 #include "nonce.h"
 #include "obfs.h"
 #include "server.h"
 #include "session.h"
-#include "util.h"
 #include "sockutil.h"
+#include "util.h"
+
+#include "algo/hashtable.h"
+#include "math/rand.h"
+#include "utils/debug.h"
+#include "utils/slog.h"
 
 #include "ikcp.h"
 
@@ -23,11 +24,11 @@
 #include <sys/socket.h>
 
 #include <assert.h>
-#include <stddef.h>
+#include <inttypes.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <inttypes.h>
 
 #if WITH_CRYPTO
 

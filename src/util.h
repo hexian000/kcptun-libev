@@ -5,20 +5,20 @@
 #define UTIL_H
 
 #include "utils/arraysize.h"
-#include "utils/slog.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
+#include "utils/slog.h"
 
 #include <ev.h>
 #include <unistd.h>
 
 #include <errno.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
 #define UNUSED(x) (void)(x)
 

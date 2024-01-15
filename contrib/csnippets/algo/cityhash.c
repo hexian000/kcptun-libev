@@ -30,8 +30,8 @@
 /* csnippets: The following implementations are modified to conform to the ISO C standard. */
 
 #include "cityhash.h"
-#include "utils/serialize.h"
 #include "utils/likely.h"
+#include "utils/serialize.h"
 
 #include <stdint.h>
 

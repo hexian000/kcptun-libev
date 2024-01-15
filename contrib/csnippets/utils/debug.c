@@ -13,8 +13,8 @@
 #endif
 
 #include <ctype.h>
-#include <stddef.h>
 #include <inttypes.h>
+#include <stddef.h>
 
 void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 {
@@ -22,31 +22,31 @@ void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 	size_t line = 1, wrap = 0;
 	for (size_t i = 0; s[i] != '\0' && i < n; i++) {
 		if (wrap == 0) {
-			fprintf(f, "%s%4zu ", indent, line);
+			(void)fprintf(f, "%s%4zu ", indent, line);
 		}
 		unsigned char ch = s[i];
 		if (ch == '\n') {
 			/* soft wrap */
-			fputc('\n', f);
+			(void)fputc('\n', f);
 			line++;
 			wrap = 0;
 			continue;
 		}
 		if (wrap >= 70) {
 			/* hard wrap */
-			fprintf(f, " +\n%s     ", indent);
+			(void)fprintf(f, " +\n%s     ", indent);
 			wrap = 0;
 		}
 		if (!(isprint(ch) || isspace(ch))) {
 			ch = '?';
 		}
-		fputc(ch, f);
+		(void)fputc(ch, f);
 		wrap++;
 	}
 	if (wrap > 0) {
-		fputc('\n', f);
+		(void)fputc('\n', f);
 	}
-	fflush(f);
+	(void)fflush(f);
 }
 
 void print_bin(FILE *f, const char *indent, const void *data, size_t n)
@@ -54,15 +54,15 @@ void print_bin(FILE *f, const char *indent, const void *data, size_t n)
 	const size_t wrap = 16;
 	const unsigned char *restrict b = data;
 	for (size_t i = 0; i < n; i += wrap) {
-		fprintf(f, "%s%p: ", indent, (void *)(b + i));
+		(void)fprintf(f, "%s%p: ", indent, (void *)(b + i));
 		for (size_t j = 0; j < wrap; j++) {
 			if ((i + j) < n) {
-				fprintf(f, "%02" PRIX8 " ", b[i + j]);
+				(void)fprintf(f, "%02" PRIX8 " ", b[i + j]);
 			} else {
-				fputs("   ", f);
+				(void)fputs("   ", f);
 			}
 		}
-		fputc(' ', f);
+		(void)fputc(' ', f);
 		for (size_t j = 0; j < wrap; j++) {
 			unsigned char ch = ' ';
 			if ((i + j) < n) {
@@ -71,11 +71,11 @@ void print_bin(FILE *f, const char *indent, const void *data, size_t n)
 					ch = '.';
 				}
 			}
-			fputc(ch, f);
+			(void)fputc(ch, f);
 		}
-		fputc('\n', f);
+		(void)fputc('\n', f);
 	}
-	fflush(f);
+	(void)fflush(f);
 }
 
 #if WITH_LIBBACKTRACE
@@ -144,28 +144,33 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 	backtrace_syminfo(ctx->state, pc, syminfo_cb, error_cb, &syminfo);
 
 	if (syminfo.symname != NULL && pcinfo.filename != NULL) {
-		fprintf(ctx->f, "%s#%-3d 0x%jx: %s+0x%jx in %s (%s:%d)\n",
+		(void)fprintf(
+			ctx->f, "%s#%-3d 0x%jx: %s+0x%jx in %s (%s:%d)\n",
 			ctx->indent, ctx->index, (uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval),
 			pcinfo.function ? pcinfo.function : "???",
 			pcinfo.filename, pcinfo.lineno);
 	} else if (syminfo.symname != NULL) {
-		fprintf(ctx->f, "%s#%-3d 0x%jx: %s+0x%jx\n", ctx->indent,
+		(void)fprintf(
+			ctx->f, "%s#%-3d 0x%jx: %s+0x%jx\n", ctx->indent,
 			ctx->index, (uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval));
 	} else if (syminfo.err.msg != NULL) {
-		fprintf(ctx->f, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
+		(void)fprintf(
+			ctx->f, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
 			ctx->index, (uintmax_t)pc, syminfo.err.num,
 			syminfo.err.msg);
 	} else if (pcinfo.err.msg != NULL) {
-		fprintf(ctx->f, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
+		(void)fprintf(
+			ctx->f, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
 			ctx->index, (uintmax_t)pc, pcinfo.err.num,
 			pcinfo.err.msg);
 	} else {
-		fprintf(ctx->f, "%s#%-3d 0x%jx: <unknown>\n", ctx->indent,
+		(void)fprintf(
+			ctx->f, "%s#%-3d 0x%jx: <unknown>\n", ctx->indent,
 			ctx->index, (uintmax_t)pc);
 	}
-	fflush(ctx->f);
+	(void)fflush(ctx->f);
 	ctx->index++;
 	return 0;
 }
@@ -173,9 +178,10 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 static void print_error_cb(void *data, const char *msg, int errnum)
 {
 	struct bt_context *restrict ctx = data;
-	fprintf(ctx->f, "%sbacktrace error: (%d) %s\n", ctx->indent, errnum,
+	(void)fprintf(
+		ctx->f, "%sbacktrace error: (%d) %s\n", ctx->indent, errnum,
 		msg);
-	fflush(ctx->f);
+	(void)fflush(ctx->f);
 }
 #endif
 
@@ -220,10 +226,12 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 		char sym[256];
 		unw_word_t offset;
 		if (unw_get_proc_name(&cursor, sym, sizeof(sym), &offset)) {
-			fprintf(f, "%s#%-3d 0x%jx: <unknown>\n", indent, index,
+			(void)fprintf(
+				f, "%s#%-3d 0x%jx: <unknown>\n", indent, index,
 				(uintmax_t)pc);
 		} else {
-			fprintf(f, "%s#%-3d 0x%jx: %s+0x%jx\n", indent, index,
+			(void)fprintf(
+				f, "%s#%-3d 0x%jx: %s+0x%jx\n", indent, index,
 				(uintmax_t)pc, sym, (uintmax_t)offset);
 		}
 		index++;
@@ -235,14 +243,14 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 	if (syms == NULL) {
 		int index = 1;
 		for (int i = skip; i < n; i++) {
-			fprintf(f, "%s#%-3d %p\n", indent, index, bt[i]);
+			(void)fprintf(f, "%s#%-3d %p\n", indent, index, bt[i]);
 			index++;
 		}
 		return;
 	}
 	int index = 1;
 	for (int i = skip; i < n; i++) {
-		fprintf(f, "%s#%-3d %s\n", indent, index, syms[i]);
+		(void)fprintf(f, "%s#%-3d %s\n", indent, index, syms[i]);
 		index++;
 	}
 	free(syms);
@@ -250,5 +258,5 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 	(void)indent;
 	(void)skip;
 #endif
-	fflush(f);
+	(void)fflush(f);
 }
