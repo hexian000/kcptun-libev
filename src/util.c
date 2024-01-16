@@ -14,7 +14,6 @@
 #include "ikcp.h"
 
 #include <ev.h>
-#include <fcntl.h>
 #include <pwd.h>
 #include <unistd.h>
 #if _BSD_SOURCE || _GNU_SOURCE
@@ -160,7 +159,7 @@ void daemonize(const char *user, const bool nochdir, const bool noclose)
 {
 	/* Create an anonymous pipe for communicating with daemon process. */
 	int fd[2];
-	if (pipe2(fd, O_CLOEXEC) == -1) {
+	if (pipe(fd) == -1) {
 		const int err = errno;
 		FAILMSGF("pipe: %s", strerror(err));
 	}
