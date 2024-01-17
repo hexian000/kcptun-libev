@@ -553,10 +553,9 @@ static bool shutdown_filt(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	assert(key.data == ss->key);
+	(void)key, assert(key.data == ss->key);
 	session_free(ss);
 	return false;
 }
@@ -638,9 +637,8 @@ static bool print_session_iter(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	struct session *restrict ss = element;
-	assert(key.data == ss->key);
+	(void)key, assert(key.data == ss->key);
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;

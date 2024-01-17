@@ -87,7 +87,7 @@ static void accept_one(
 
 void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 
 	struct server *restrict s = watcher->data;
 	const struct config *restrict conf = s->conf;
@@ -307,7 +307,7 @@ void tcp_flush(struct session *restrict ss)
 void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ | EV_WRITE);
 
 	LOGV_F("io: fd=%d revents=0x%x", watcher->fd, revents);
 	struct session *restrict ss = watcher->data;

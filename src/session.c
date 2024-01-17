@@ -324,7 +324,7 @@ void session_read_cb(struct session *restrict ss)
 static void
 ss_flush_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
 {
-	UNUSED(revents);
+	(void)revents, assert(revents == EV_IDLE);
 	ev_idle_stop(loop, watcher);
 	struct session *restrict ss = watcher->data;
 	switch (ss->kcp_state) {

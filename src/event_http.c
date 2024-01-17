@@ -63,7 +63,7 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 
 void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 
 	struct server *restrict s = watcher->data;
 	union sockaddr_max addr;
@@ -125,7 +125,7 @@ static void http_serve(struct http_ctx *ctx);
 
 void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 
 	struct http_ctx *restrict ctx = watcher->data;
 	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
@@ -239,14 +239,14 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 void http_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_WRITE);
 	http_ctx_write(watcher->data);
 }
 
 void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	UNUSED(loop);
-	UNUSED(revents);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	http_ctx_free(watcher->data);
 }
 

@@ -28,7 +28,6 @@
 int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
 	UNUSED(kcp);
-	assert(len > 0 && len < MAX_PACKET_SIZE);
 	struct session *restrict ss = (struct session *)user;
 	struct server *restrict s = ss->server;
 	struct msgframe *restrict msg = msgframe_new(s->pkt.queue);
@@ -37,6 +36,7 @@ int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 		return -1;
 	}
 	msg->addr = ss->raddr;
+	assert(len > 0 && len + msg->off <= MAX_PACKET_SIZE);
 	unsigned char *dst = msg->buf + msg->off;
 	memcpy(dst, buf, len);
 	msg->len = len;
@@ -139,18 +139,17 @@ static bool kcp_update_iter(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	assert(key.data == ss->key);
+	(void)key, assert(key.data == ss->key);
 	kcp_update(ss);
 	return true;
 }
 
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 	table_iterate(s->sessions, kcp_update_iter, NULL);
 }

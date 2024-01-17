@@ -536,9 +536,8 @@ static bool ctx_del_filter(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	struct session *restrict ss = element;
-	assert(key.data == ss->key);
+	(void)key, assert(key.data == ss->key);
 	if (sa_equals(&ss->raddr.sa, user)) {
 		session_free(element);
 		return false;
@@ -806,11 +805,10 @@ static bool obfs_ctx_timeout_filt(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	struct obfs *restrict obfs = user;
 	struct ev_loop *loop = obfs->server->loop;
 	struct obfs_ctx *restrict ctx = element;
-	assert(key.data == ctx->key);
+	(void)key, assert(key.data == ctx->key);
 	const ev_tstamp now = ev_now(loop);
 	assert(now >= ctx->last_seen);
 	double not_seen, timeout;
@@ -838,8 +836,8 @@ static bool obfs_ctx_timeout_filt(
 static void
 obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct obfs *restrict obfs = watcher->data;
 	struct server *restrict s = obfs->server;
 	const struct config *restrict conf = s->conf;
@@ -861,7 +859,7 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 static void
 obfs_listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct obfs *restrict obfs = watcher->data;
 	/* check & restart accept watcher */
 	struct ev_io *restrict w_accept = &obfs->w_accept;
@@ -873,8 +871,8 @@ obfs_listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 static void
 obfs_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct obfs *restrict obfs = watcher->data;
 	/* context timeout */
 	obfs->contexts =
@@ -934,9 +932,8 @@ static bool print_ctx_iter(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	const struct obfs_ctx *restrict ctx = element;
-	assert(key.data == ctx->key);
+	(void)key, assert(key.data == ctx->key);
 	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
 	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
@@ -1121,9 +1118,8 @@ static bool obfs_shutdown_filt(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	struct obfs_ctx *restrict ctx = element;
-	assert(key.data == ctx->key);
+	(void)key, assert(key.data == ctx->key);
 	struct obfs *restrict obfs = (struct obfs *)user;
 	obfs_ctx_free(obfs->server->loop, ctx);
 	return false;
@@ -1637,7 +1633,7 @@ static bool is_startup_limited(struct obfs *restrict obfs)
 
 void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 
 	struct obfs *restrict obfs = watcher->data;
 	union sockaddr_max m_sa;
@@ -1716,7 +1712,7 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 
 void obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	obfs_ctx_stop(loop, ctx);
 	obfs_sched_redial(ctx->obfs);
@@ -1743,7 +1739,7 @@ static void obfs_on_ready(struct obfs_ctx *restrict ctx)
 void obfs_server_read_cb(
 	struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
@@ -1850,7 +1846,7 @@ void obfs_server_read_cb(
 void obfs_client_read_cb(
 	struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_READ);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
 
@@ -1915,7 +1911,7 @@ void obfs_client_read_cb(
 void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_WRITE);
 	struct obfs_ctx *restrict ctx = watcher->data;
 	obfs_ctx_write(ctx, loop);
 }

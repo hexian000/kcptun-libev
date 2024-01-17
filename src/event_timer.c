@@ -24,11 +24,10 @@ static bool timeout_filt(
 	void *user)
 {
 	UNUSED(t);
-	UNUSED(key);
 	struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
 	struct session *restrict ss = element;
-	assert(key.data == ss->key);
+	(void)key, assert(key.data == ss->key);
 	ev_tstamp not_seen = now - ss->created;
 	switch (ss->kcp_state) {
 	case STATE_INIT:
@@ -84,7 +83,7 @@ static bool timeout_filt(
 
 void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct listener *restrict l = watcher->data;
 	/* check & restart accept watchers */
 	struct ev_io *restrict w_accept = &l->w_accept;
@@ -99,7 +98,7 @@ void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 	const int mode = s->conf->mode;
 	if ((mode & MODE_RENDEZVOUS) != 0) {
@@ -145,7 +144,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 	const ev_tstamp now = ev_now(loop);
 
@@ -183,8 +182,8 @@ void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents);
 	UNUSED(loop);
+	CHECK_EV_ERROR(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 
 	/* session timeout */
