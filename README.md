@@ -2,7 +2,7 @@
 
 [![MIT License](https://img.shields.io/github/license/hexian000/kcptun-libev)](https://github.com/hexian000/kcptun-libev/blob/master/LICENSE)
 [![Build](https://github.com/hexian000/kcptun-libev/actions/workflows/build.yml/badge.svg)](https://github.com/hexian000/kcptun-libev/actions/workflows/build.yml)
-[![Lint](https://github.com/hexian000/kcptun-libev/actions/workflows/lint.yml/badge.svg)](https://github.com/hexian000/kcptun-libev/actions/workflows/lint.yml)
+[![Downloads](https://img.shields.io/github/downloads/hexian000/kcptun-libev/total.svg)](https://github.com/hexian000/kcptun-libev/releases)
 [![Release](https://img.shields.io/github/release/hexian000/kcptun-libev.svg?style=flat)](https://github.com/hexian000/kcptun-libev/releases)
 
 A powerful and extremely lightweight encrypted port forwarder based on reliable UDP protocol.
@@ -192,6 +192,8 @@ If you downloaded a *-static build in the [Releases](https://github.com/hexian00
 ```sh
 # Debian & Ubuntu
 sudo apt install libev4 libsodium23
+# Alpine Linux
+apk add libev libsodium
 # OpenWRT
 opkg install libev libsodium
 ```
