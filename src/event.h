@@ -4,9 +4,6 @@
 #ifndef EVENT_H
 #define EVENT_H
 
-#include "conf.h"
-#include "util.h"
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +26,9 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
 void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+
+bool kcp_cansend(struct session *ss);
+bool kcp_canrecv(struct session *ss);
 
 int kcp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 bool kcp_sendmsg(struct session *ss, uint16_t msg);

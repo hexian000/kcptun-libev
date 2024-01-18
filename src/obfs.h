@@ -4,13 +4,12 @@
 #ifndef OBFS_H
 #define OBFS_H
 
-#include "utils/buffer.h"
-#include "pktqueue.h"
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
+struct vbuffer;
+struct msgframe;
 struct server;
 struct obfs;
 struct obfs_ctx;

@@ -4,10 +4,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include "conf.h"
-#include "session.h"
 #include "sockutil.h"
-#include "util.h"
 
 #include "algo/hashtable.h"
 #include "utils/buffer.h"
@@ -45,6 +42,14 @@ struct pktconn {
 };
 
 #define MAX_SESSIONS 65535
+
+struct config;
+
+struct link_stats {
+	uintmax_t tcp_rx, tcp_tx;
+	uintmax_t kcp_rx, kcp_tx;
+	uintmax_t pkt_rx, pkt_tx;
+};
 
 struct server {
 	const struct config *conf;

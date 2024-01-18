@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "jsonutil.h"
+
 #include "utils/slog.h"
 
 #include "cJSON.h"

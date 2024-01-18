@@ -69,6 +69,12 @@ bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 		}                                                              \
 	} while (0)
 
+#define LOG_RATELIMITED_F(level, now, rate, format, ...)                       \
+	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__));
+
+#define LOG_RATELIMITED(level, now, rate, message)                             \
+	LOG_RATELIMITED_F(level, now, rate, "%s", message)
+
 void init(int argc, char **argv);
 void loadlibs(void);
 

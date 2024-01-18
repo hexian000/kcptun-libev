@@ -2,7 +2,6 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "event.h"
-#include "event_impl.h"
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"

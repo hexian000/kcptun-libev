@@ -5,7 +5,6 @@
 #include "conf.h"
 #include "crypto.h"
 #include "event.h"
-#include "event_impl.h"
 #include "nonce.h"
 #include "obfs.h"
 #include "server.h"
@@ -50,7 +49,6 @@ static bool crypto_open_inplace(
 	const size_t dst_len =
 		crypto_open(crypto, data, size, nonce, data, cipher_len);
 	if (dst_len + overhead + nonce_size != src_len) {
-		LOGV("failed to open packet");
 		return false;
 	}
 	if (!noncegen_verify(q->noncegen, nonce)) {
@@ -81,7 +79,6 @@ static bool crypto_seal_inplace(
 	size_t dst_len =
 		crypto_seal(crypto, data, dst_size, nonce, data, plain_len);
 	if (dst_len != plain_len + overhead) {
-		LOGE("failed to seal packet");
 		return false;
 	}
 	memcpy(data + dst_len, nonce, nonce_size);

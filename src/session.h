@@ -4,7 +4,7 @@
 #ifndef SESSION_H
 #define SESSION_H
 
-#include "conf.h"
+#include "server.h"
 #include "sockutil.h"
 #include "util.h"
 
@@ -64,12 +64,6 @@ enum session_state {
 };
 
 extern const char session_state_char[STATE_MAX];
-
-struct link_stats {
-	uintmax_t tcp_rx, tcp_tx;
-	uintmax_t kcp_rx, kcp_tx;
-	uintmax_t pkt_rx, pkt_tx;
-};
 
 struct IKCPCB;
 

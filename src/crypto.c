@@ -102,9 +102,7 @@ size_t crypto_seal(
 		const int r = impl->seal(
 			dst, mac, plain, plain_size, nonce, impl->key);
 		if (r != 0) {
-			LOGV_F("crypto_seal: (%p %p %zu %p %p) %d", (void *)dst,
-			       (void *)plain, plain_size, (void *)nonce,
-			       (void *)impl->key, r);
+			LOGE_F("crypto_seal: error %d", r);
 			return 0;
 		}
 		return plain_size + crypto->overhead;
@@ -115,7 +113,7 @@ size_t crypto_seal(
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, NULL, nonce,
 		impl->key);
 	if (r != 0) {
-		LOGV_F("crypto_seal: aead %d", r);
+		LOGE_F("crypto_seal: aead error %d", r);
 		return 0;
 	}
 	return r_len;
@@ -142,7 +140,9 @@ size_t crypto_open(
 		const int r = impl->open(
 			dst, cipher, mac, plain_size, nonce, impl->key);
 		if (r != 0) {
-			LOGV_F("crypto_open: %d", r);
+			LOG_BIN_F(
+				VERBOSE, cipher, cipher_size,
+				"crypto_open: error %d", r);
 			return 0;
 		}
 		return plain_size;
@@ -153,7 +153,9 @@ size_t crypto_open(
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, nonce,
 		impl->key);
 	if (r != 0) {
-		LOGV_F("crypto_open: aead %d", r);
+		LOG_BIN_F(
+			VERBOSE, cipher, cipher_size,
+			"crypto_open: aead error %d", r);
 		return 0;
 	}
 	return r_len;

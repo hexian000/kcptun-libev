@@ -10,7 +10,6 @@
 #include "conf.h"
 #include "crypto.h"
 #include "event.h"
-#include "event_impl.h"
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"

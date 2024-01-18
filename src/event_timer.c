@@ -1,9 +1,8 @@
 /* kcptun-libev (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#include "conf.h"
 #include "event.h"
-#include "event_impl.h"
+#include "conf.h"
 #include "nonce.h"
 #include "pktqueue.h"
 #include "server.h"

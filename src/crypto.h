@@ -4,17 +4,14 @@
 #ifndef CRYPTO_H
 #define CRYPTO_H
 
+#include "nonce.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 /* crypto interface */
 struct crypto_impl;
-
-enum noncegen_method {
-	noncegen_counter,
-	noncegen_random,
-};
 
 struct crypto {
 	const enum noncegen_method noncegen_method;

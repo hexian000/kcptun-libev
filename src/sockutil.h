@@ -4,8 +4,6 @@
 #ifndef SOCKUTIL_H
 #define SOCKUTIL_H
 
-#include "algo/hashtable.h"
-
 #include <netinet/in.h>
 #include <sys/socket.h>
 

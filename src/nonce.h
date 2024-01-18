@@ -4,7 +4,6 @@
 #ifndef NONCE_H
 #define NONCE_H
 
-#include "crypto.h"
 #include "utils/buffer.h"
 
 #include "bloom.h"
@@ -20,6 +19,11 @@ struct ppbloom {
 	size_t bloom_count[2];
 	size_t entries;
 	uint8_t current;
+};
+
+enum noncegen_method {
+	noncegen_counter,
+	noncegen_random,
 };
 
 struct noncegen {
