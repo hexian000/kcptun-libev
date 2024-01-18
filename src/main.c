@@ -211,7 +211,7 @@ int main(int argc, char **argv)
 
 void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 {
-	(void)revents, assert(revents == EV_SIGNAL);
+	CHECK_REVENTS(revents, EV_SIGNAL);
 
 	struct server *restrict s = watcher->data;
 	switch (watcher->signum) {

@@ -149,7 +149,7 @@ static bool kcp_update_iter(
 void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents, EV_TIMER);
+	CHECK_REVENTS(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 	table_iterate(s->sessions, kcp_update_iter, NULL);
 }

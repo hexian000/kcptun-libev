@@ -83,7 +83,7 @@ static bool timeout_filt(
 
 void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents, EV_TIMER);
+	CHECK_REVENTS(revents, EV_TIMER);
 	struct listener *restrict l = watcher->data;
 	/* check & restart accept watchers */
 	struct ev_io *restrict w_accept = &l->w_accept;
@@ -98,7 +98,7 @@ void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents, EV_TIMER);
+	CHECK_REVENTS(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 	const int mode = s->conf->mode;
 	if ((mode & MODE_RENDEZVOUS) != 0) {
@@ -144,7 +144,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
-	CHECK_EV_ERROR(revents, EV_TIMER);
+	CHECK_REVENTS(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 	const ev_tstamp now = ev_now(loop);
 
@@ -183,7 +183,7 @@ void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents, EV_TIMER);
+	CHECK_REVENTS(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
 
 	/* session timeout */

@@ -4,25 +4,13 @@
 #ifndef EVENT_IMPL_H
 #define EVENT_IMPL_H
 
+#include "util.h"
+
 #include "utils/slog.h"
 
 #include <ev.h>
 
-#include <assert.h>
-#include <errno.h>
 #include <stdbool.h>
-#include <string.h>
-
-#define CHECK_EV_ERROR(revents, accept)                                        \
-	do {                                                                   \
-		if (((revents)&EV_ERROR) != 0) {                               \
-			const int err = errno;                                 \
-			LOGE_F("error event: [errno=%d] %s", err,              \
-			       strerror(err));                                 \
-			return;                                                \
-		}                                                              \
-		assert(((revents) & (accept)) == (revents));                   \
-	} while (0)
 
 #define LOG_RATELIMITED_F(level, now, rate, format, ...)                       \
 	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__));

@@ -189,7 +189,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents, EV_READ);
+	CHECK_REVENTS(revents, EV_READ);
 	struct server *restrict s = watcher->data;
 	while (pkt_recv(s, watcher->fd) > 0) {
 		(void)queue_dispatch(s);
@@ -350,7 +350,7 @@ static void pkt_flush(struct server *restrict s)
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
 	UNUSED(loop);
-	CHECK_EV_ERROR(revents, EV_WRITE);
+	CHECK_REVENTS(revents, EV_WRITE);
 	struct server *restrict s = watcher->data;
 	if (s->pkt.queue->mq_send_len == 0) {
 		LOGD_F("pkt send fd=%d stop", watcher->fd);

@@ -12,6 +12,7 @@
 #include <ev.h>
 #include <unistd.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <math.h>
 #include <stdbool.h>
@@ -43,6 +44,20 @@ extern struct mcache *msgpool;
 	} while (0)
 
 #define TSTAMP2MS(t) ((uint32_t)fmod((t)*1e+3, UINT32_MAX + 1.0))
+
+#define CHECK_REVENTS(revents, accept)                                         \
+	do {                                                                   \
+		if (((revents)&EV_ERROR) != 0) {                               \
+			const int err = errno;                                 \
+			LOGE_F("error event: [errno=%d] %s", err,              \
+			       strerror(err));                                 \
+			if (((revents) & (accept)) == 0) {                     \
+				return;                                        \
+			}                                                      \
+		} else {                                                       \
+			assert(((revents) & (accept)) == (revents));           \
+		}                                                              \
+	} while (0)
 
 bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 
