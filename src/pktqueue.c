@@ -5,7 +5,6 @@
 #include "conf.h"
 #include "crypto.h"
 #include "event.h"
-#include "nonce.h"
 #include "obfs.h"
 #include "server.h"
 #include "session.h"

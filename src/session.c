@@ -3,7 +3,6 @@
 
 #include "session.h"
 #include "conf.h"
-#include "crypto.h"
 #include "event.h"
 #include "pktqueue.h"
 #include "server.h"
