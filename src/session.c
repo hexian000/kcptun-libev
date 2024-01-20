@@ -499,7 +499,9 @@ bool ss0_send(
 				.zero = 0,
 				.what = what,
 			});
-	memcpy(packet + SESSION0_HEADER_SIZE, b, n);
+	if (n > 0) {
+		memcpy(packet + SESSION0_HEADER_SIZE, b, n);
+	}
 	msg->len = SESSION0_HEADER_SIZE + n;
 	return queue_send(s, msg);
 }
@@ -553,9 +555,14 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	format_iec_bytes(bw_rx, sizeof(bw_rx), rx);
 	format_iec_bytes(bw_tx, sizeof(bw_tx), tx);
 
-	LOGD_F("roundtrip finished in %" PRIu32 " ms, "
-	       "capacity rx: %s/s, tx: %s/s",
-	       now_ms - tstamp, bw_rx, bw_tx);
+	if (LOGLEVEL(DEBUG)) {
+		char addr_str[64];
+		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		LOG_F(DEBUG,
+		      "roundtrip finished: %s, rtt: %" PRIu32 " ms, "
+		      "capacity rx: %s/s, tx: %s/s",
+		      addr_str, now_ms - tstamp, bw_rx, bw_tx);
+	}
 	s->pkt.inflight_ping = TSTAMP_NIL;
 	return true;
 }
@@ -746,7 +753,9 @@ ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
 	return true;
 }
 
-static bool (*const ss0_handler[])(struct server *, struct msgframe *) = {
+typedef bool (*ss0_handler_type)(struct server *, struct msgframe *);
+
+static const ss0_handler_type ss0_handler[] = {
 	[S0MSG_PING] = ss0_on_ping,	  [S0MSG_PONG] = ss0_on_pong,
 	[S0MSG_RESET] = ss0_on_reset,	  [S0MSG_LISTEN] = ss0_on_listen,
 	[S0MSG_CONNECT] = ss0_on_connect, [S0MSG_PUNCH] = ss0_on_punch,
@@ -761,7 +770,8 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 	const unsigned char *packet = msg->buf + msg->off;
 	struct session0_header header = ss0_header_read(packet);
 	if (header.what < ARRAY_SIZE(ss0_handler)) {
-		if (ss0_handler[header.what](s, msg)) {
+		const ss0_handler_type handler = ss0_handler[header.what];
+		if (handler == NULL || handler(s, msg)) {
 			return;
 		}
 	}

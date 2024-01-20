@@ -167,6 +167,8 @@ void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 	if ((s->conf->mode & MODE_CLIENT) != 0) {
 		LOGW("peer is not responding, try resolve addresses");
+	} else {
+		LOGI("server is idle, try resolve addresses");
 	}
 	(void)server_resolve(s);
 #if WITH_CRYPTO
