@@ -526,11 +526,24 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	if (msg->len < SESSION0_HEADER_SIZE + sizeof(uint32_t)) {
 		return false;
 	}
+
+	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
+		    (MODE_RENDEZVOUS | MODE_CLIENT) &&
+	    !s->pkt.connected) {
+		s->pkt.kcp_connect = msg->addr;
+		s->pkt.connected = true;
+		if (LOGLEVEL(INFO)) {
+			char addr_str[64];
+			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			LOG_F(INFO, "rendezvoused at: %s", addr_str);
+		}
+	}
+
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	const uint32_t tstamp = read_uint32(msgbuf);
 	/* calculate RTT & estimated bandwidth */
-	const uint32_t now_ms = TSTAMP2MS(ev_time());
+	const uint32_t now_ms = TSTAMP2MS(ev_now(s->loop));
 	const double rtt = (now_ms - tstamp) * 1e-3;
 	const struct config *restrict conf = s->conf;
 	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / rtt;
@@ -544,18 +557,6 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	       "capacity rx: %s/s, tx: %s/s",
 	       now_ms - tstamp, bw_rx, bw_tx);
 	s->pkt.inflight_ping = TSTAMP_NIL;
-
-	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
-		    (MODE_RENDEZVOUS | MODE_CLIENT) &&
-	    !s->pkt.connected) {
-		s->pkt.kcp_connect = msg->addr;
-		s->pkt.connected = true;
-		if (LOGLEVEL(INFO)) {
-			char addr_str[64];
-			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(INFO, "rendezvoused: %s", addr_str);
-		}
-	}
 	return true;
 }
 

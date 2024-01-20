@@ -43,7 +43,8 @@ extern struct mcache *msgpool;
 		}                                                              \
 	} while (0)
 
-#define TSTAMP2MS(t) ((uint32_t)fmod((t)*1e+3, UINT32_MAX + 1.0))
+#define TSTAMP2MS(t)                                                           \
+	(assert(!signbit(t) && isnormal(t)), (uint32_t)fmod((t)*1e+3, 0x1p32))
 
 #define CHECK_REVENTS(revents, accept)                                         \
 	do {                                                                   \

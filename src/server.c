@@ -499,7 +499,7 @@ void server_ping(struct server *restrict s)
 		return;
 	}
 
-	const ev_tstamp now = ev_now(s->loop);
+	const ev_tstamp now = ev_time();
 	const uint32_t tstamp = TSTAMP2MS(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
