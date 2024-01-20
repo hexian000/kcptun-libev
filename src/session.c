@@ -546,9 +546,15 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	s->pkt.inflight_ping = TSTAMP_NIL;
 
 	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
-	    (MODE_RENDEZVOUS | MODE_CLIENT)) {
+		    (MODE_RENDEZVOUS | MODE_CLIENT) &&
+	    !s->pkt.connected) {
 		s->pkt.kcp_connect = msg->addr;
 		s->pkt.connected = true;
+		if (LOGLEVEL(INFO)) {
+			char addr_str[64];
+			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			LOG_F(INFO, "rendezvoused: %s", addr_str);
+		}
 	}
 	return true;
 }

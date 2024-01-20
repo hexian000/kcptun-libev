@@ -346,7 +346,6 @@ static void pkt_flush(struct server *restrict s)
 
 void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 {
-	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_WRITE);
 	struct server *restrict s = watcher->data;
 	if (s->pkt.queue->mq_send_len == 0) {
