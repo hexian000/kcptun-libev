@@ -18,19 +18,15 @@
 #include <stddef.h>
 #include <string.h>
 
-#define MSG_LOGV(what, msg)                                                    \
+#define PKT_LOGV(what, msg)                                                    \
 	do {                                                                   \
 		if (!LOGLEVEL(VERBOSE)) {                                      \
 			break;                                                 \
 		}                                                              \
 		char addr[64];                                                 \
 		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
-		LOG_F(VERBOSE, what ": %" PRIu16 " bytes to %s", (msg)->len,   \
-		      addr);                                                   \
-		FILE *log_fp = slog_file;                                      \
-		if (log_fp != NULL) {                                          \
-			print_bin(log_fp, "  ", (msg)->buf, (msg)->len);       \
-		}                                                              \
+		LOG_F(VERBOSE, what ": %" PRIu16 " bytes, addr=%s",            \
+		      (msg)->len, addr);                                       \
 	} while (0)
 
 static void udp_reset(struct server *restrict s)
@@ -127,7 +123,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 			msg->len = (size_t)mmsgs[i].msg_len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
-			MSG_LOGV("pkt recv", msg);
+			PKT_LOGV("pkt recv", msg);
 		}
 		/* collect unused frames */
 		for (size_t i = n; i < nbatch; i++) {
@@ -176,7 +172,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		msg->len = (size_t)nbrecv;
 		msg->ts = now;
 		q->mq_recv[q->mq_recv_len++] = msg;
-		MSG_LOGV("pkt recv", msg);
+		PKT_LOGV("pkt recv", msg);
 		s->stats.pkt_rx += nbrecv;
 		nrecv++;
 		navail--;
@@ -203,6 +199,7 @@ static size_t pkt_send_drop(struct pktqueue *restrict q)
 		msgframe_delete(q, q->mq_send[i]);
 	}
 	q->mq_send_len = 0;
+	LOGV_F("pkt send: dropping %zu packets", count);
 	return count;
 }
 
@@ -265,7 +262,7 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 		for (size_t i = 0; i < n; i++) {
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
 			nbsend += msg->len;
-			MSG_LOGV("pkt send", msg);
+			PKT_LOGV("pkt send", msg);
 			msgframe_delete(q, msg);
 		}
 		nsend += n;
@@ -318,7 +315,7 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 	}
 	for (size_t i = 0; i < nsend; i++) {
 		struct msgframe *restrict msg = q->mq_send[i];
-		MSG_LOGV("pkt send", msg);
+		PKT_LOGV("pkt send", msg);
 		msgframe_delete(q, msg);
 	}
 	const size_t remain = count - nsend;

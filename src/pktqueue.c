@@ -28,6 +28,21 @@
 #include <stdint.h>
 #include <string.h>
 
+#define MSG_LOGV(what, msg)                                                    \
+	do {                                                                   \
+		if (!LOGLEVEL(VERBOSE)) {                                      \
+			break;                                                 \
+		}                                                              \
+		char addr[64];                                                 \
+		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
+		LOG_F(VERBOSE, what ": %" PRIu16 " bytes, addr=%s",            \
+		      (msg)->len, addr);                                       \
+		FILE *log_fp = slog_file;                                      \
+		if (log_fp != NULL) {                                          \
+			print_bin(log_fp, "  ", (msg)->buf, (msg)->len);       \
+		}                                                              \
+	} while (0)
+
 #if WITH_CRYPTO
 
 static bool crypto_open_inplace(
@@ -88,6 +103,7 @@ static bool crypto_seal_inplace(
 
 static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 {
+	MSG_LOGV("queue_recv", msg);
 	const unsigned char *kcp_packet = msg->buf + msg->off;
 	uint32_t conv = ikcp_getconv(kcp_packet);
 	if (conv == UINT32_C(0)) {
@@ -227,6 +243,7 @@ size_t queue_dispatch(struct server *restrict s)
 bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
+	MSG_LOGV("queue_send", msg);
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
 		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;

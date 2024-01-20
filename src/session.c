@@ -621,7 +621,9 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 	if (!s->pkt.listened) {
-		LOGE("rendezvous connect: no server available");
+		char addr_str[64];
+		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		LOGE_F("failed connecting %s: no server available", addr_str);
 		return true;
 	}
 	if (LOGLEVEL(INFO)) {
