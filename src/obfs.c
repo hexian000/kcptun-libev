@@ -550,6 +550,7 @@ obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 	if (ctx->authenticated) {
 		assert(obfs->num_authenticated > 0u);
 		obfs->num_authenticated--;
+		OBFS_CTX_LOG(INFO, ctx, "closed");
 	}
 	if (obfs->client == ctx) {
 		obfs_sched_redial(obfs);
@@ -822,7 +823,7 @@ static bool obfs_ctx_timeout_filt(
 		return true;
 	}
 	if (ctx->authenticated) {
-		OBFS_CTX_LOG_F(NOTICE, ctx, "timeout after %.1lfs", not_seen);
+		OBFS_CTX_LOG_F(INFO, ctx, "timeout after %.1lfs", not_seen);
 	} else {
 		OBFS_CTX_LOG_F(DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	}
@@ -1725,8 +1726,7 @@ static void obfs_on_ready(struct obfs_ctx *restrict ctx)
 	struct obfs *restrict obfs = ctx->obfs;
 	struct server *restrict s = obfs->server;
 	const bool is_client = !!(s->conf->mode & MODE_CLIENT);
-	OBFS_CTX_LOG_F(
-		NOTICE, ctx, "%s ready", is_client ? "client" : "server");
+	OBFS_CTX_LOG_F(INFO, ctx, "%s ready", is_client ? "client" : "server");
 	if (!is_client) {
 		return;
 	}

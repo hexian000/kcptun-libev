@@ -196,7 +196,7 @@ int main(int argc, char **argv)
 	}
 
 	/* start event loop */
-	LOGI_F("%s start", conf_modestr(conf));
+	LOGN_F("%s start", conf_modestr(conf));
 	ev_run(loop, 0);
 
 	server_stop(s);

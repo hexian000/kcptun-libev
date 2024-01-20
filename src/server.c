@@ -236,10 +236,10 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			return false;
 		}
 		memcpy(&udp->kcp_connect.sa, &addr.sa, socklen);
-		if (LOGLEVEL(INFO)) {
+		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(INFO, "udp connect: %s", addr_str);
+			LOG_F(NOTICE, "udp connect: %s", addr_str);
 		}
 		udp->connected = true;
 	}
@@ -259,11 +259,11 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			addr_set_any(&laddr, addr.sa.sa_family);
 		}
 		udp->rendezvous_local = laddr;
-		if (LOGLEVEL(INFO)) {
+		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64], laddr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
 			format_sa(&laddr.sa, laddr_str, sizeof(laddr_str));
-			LOG_F(INFO, "rendezvous mode: %s -> %s", laddr_str,
+			LOG_F(NOTICE, "rendezvous mode: %s -> %s", laddr_str,
 			      addr_str);
 		}
 	}

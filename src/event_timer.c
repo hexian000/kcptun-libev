@@ -165,7 +165,9 @@ void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		}
 	}
 
-	LOGW("peer is not responding, try resolve addresses");
+	if ((s->conf->mode & MODE_CLIENT) != 0) {
+		LOGW("peer is not responding, try resolve addresses");
+	}
 	(void)server_resolve(s);
 #if WITH_CRYPTO
 	struct noncegen *restrict noncegen = s->pkt.queue->noncegen;
