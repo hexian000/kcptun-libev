@@ -11,6 +11,9 @@
 
 #include <ev.h>
 #include <signal.h>
+#if WITH_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -195,6 +198,9 @@ int main(int argc, char **argv)
 		ev_signal_start(loop, w_sigterm);
 	}
 
+#if WITH_SYSTEMD
+	(void)sd_notify(0, "READY=1");
+#endif
 	/* start event loop */
 	LOGN_F("%s start", conf_modestr(conf));
 	ev_run(loop, 0);
@@ -216,6 +222,9 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 	struct server *restrict s = watcher->data;
 	switch (watcher->signum) {
 	case SIGHUP: {
+#if WITH_SYSTEMD
+		(void)sd_notify(0, "RELOADING=1");
+#endif
 		struct config *conf = conf_read(args.conf_path);
 		if (conf == NULL) {
 			LOGE_F("failed to read config: %s", args.conf_path);
@@ -224,12 +233,18 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 		conf_free((struct config *)s->conf);
 		slog_level = conf->log_level;
 		s->conf = conf;
-		(void)server_resolve(s);
 		LOGN("config successfully reloaded");
+		(void)server_resolve(s);
+#if WITH_SYSTEMD
+		(void)sd_notify(0, "READY=1");
+#endif
 	} break;
 	case SIGINT:
 	case SIGTERM: {
 		LOGD_F("signal %d received, breaking", watcher->signum);
+#if WITH_SYSTEMD
+		(void)sd_notify(0, "STOPPING=1");
+#endif
 		ev_break(loop, EVBREAK_ALL);
 	} break;
 	}

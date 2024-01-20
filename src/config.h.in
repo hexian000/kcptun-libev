@@ -14,5 +14,6 @@
 #cmakedefine01 WITH_SODIUM
 #cmakedefine01 WITH_CRYPTO
 #cmakedefine01 WITH_OBFS
+#cmakedefine01 WITH_SYSTEMD
 
 #endif /* CONFIG_H */
