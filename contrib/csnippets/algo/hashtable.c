@@ -52,7 +52,7 @@ typedef size_t itemref_type;
 struct hash_item {
 	itemref_type bucket, next;
 	bool valid : 1;
-	uint32_t hash;
+	uint_least32_t hash;
 	struct hashkey key;
 	void *element;
 };
@@ -60,7 +60,7 @@ struct hash_item {
 struct hashtable {
 	size_t size, capacity, max_load;
 	itemref_type freelist;
-	uint32_t seed;
+	uint_least32_t seed;
 	int flags;
 #ifndef NDEBUG
 	unsigned int version;
@@ -117,7 +117,7 @@ static inline void table_rehash(struct hashtable *restrict table)
 	/* perform rehash */
 	const size_t size = table->size;
 	const size_t capacity = table->capacity;
-	const uint32_t seed = table->seed;
+	const uint_least32_t seed = table->seed;
 	for (size_t i = 0; i < size; i++) {
 		struct hash_item *restrict p = &(table->p[i]);
 		const size_t hash = GET_HASH(p->key, seed);
@@ -184,7 +184,7 @@ static inline struct hashtable *table_grow(struct hashtable *restrict table)
 
 static inline void table_reseed(struct hashtable *restrict table)
 {
-	table->seed = (uint32_t)rand64();
+	table->seed = (uint_least32_t)rand64n(UINT32_MAX);
 #if HASHTABLE_LOG
 	(void)fprintf(
 		stderr, "table reseed: size=%zu new_seed=%" PRIX32 "\n",
@@ -199,7 +199,7 @@ struct hashtable *table_set(
 	void **restrict element)
 {
 	assert(table != NULL && element != NULL);
-	const uint32_t hash = GET_HASH(key, table->seed);
+	const uint_least32_t hash = GET_HASH(key, table->seed);
 	itemref_type bucket = hash % table->capacity;
 	size_t collision = 0;
 	for (itemref_type i = table->p[bucket].bucket; i != HASHITEM_NIL;
@@ -267,7 +267,7 @@ bool table_find(
 	if (table == NULL) {
 		return false;
 	}
-	const uint32_t hash = GET_HASH(key, table->seed);
+	const uint_least32_t hash = GET_HASH(key, table->seed);
 	const itemref_type bucket = hash % table->capacity;
 	for (itemref_type i = table->p[bucket].bucket; i != HASHITEM_NIL;
 	     i = table->p[i].next) {
@@ -290,7 +290,7 @@ struct hashtable *table_del(
 	if (table == NULL) {
 		return NULL;
 	}
-	const uint32_t hash = GET_HASH(key, table->seed);
+	const uint_least32_t hash = GET_HASH(key, table->seed);
 	itemref_type bucket = hash % table->capacity;
 	itemref_type *last_next = &(table->p[bucket].bucket);
 	for (itemref_type i = *last_next; i != HASHITEM_NIL; i = *last_next) {
@@ -328,7 +328,7 @@ struct hashtable *table_new(const int flags)
 	*table = (struct hashtable){
 		.size = 0,
 		.freelist = HASHITEM_NIL,
-		.seed = (uint32_t)rand64(),
+		.seed = (uint_least32_t)rand64n(UINT32_MAX),
 		.flags = flags,
 #ifndef NDEBUG
 		.version = 0,

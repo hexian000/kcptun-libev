@@ -85,7 +85,7 @@ char *http_parsehdr(char *buf, char **key, char **value);
  * @return Name of HTTP status code, or NULL when failed.
  * @see enum http_status_code
  */
-const char *http_status(uint16_t code);
+const char *http_status(uint_least16_t code);
 
 /**
  * @brief Generate a date string in IMF-fixdate format.
@@ -103,7 +103,7 @@ size_t http_date(char *buf, size_t buf_size);
  * @return snprintf result, or 0 if the code is unknown.
  * @see enum http_status_code
  */
-int http_error(char *buf, size_t buf_size, uint16_t code);
+int http_error(char *buf, size_t buf_size, uint_least16_t code);
 
 /** @} */
 

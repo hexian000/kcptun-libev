@@ -9,16 +9,16 @@
 #include <stdint.h>
 #include <string.h>
 
-static void hex(char *p, uint8_t c)
+static void hex(char *p, uint_fast8_t c)
 {
 	static const char hex[] = "0123456789ABCDEF";
 	p[1] = hex[c & UINT8_C(0xF)];
 	p[0] = hex[(c >> 4u) & UINT8_C(0xF)];
 }
 
-static int unhex(char c)
+static int unhex(const unsigned char c)
 {
-	if (isdigit((unsigned char)c)) {
+	if (isdigit(c)) {
 		return c - '0';
 	}
 	if ('A' <= c && c <= 'F') {
@@ -54,7 +54,7 @@ static int unhex(char c)
 	do {                                                                   \
 		if (buf_size >= 3) {                                           \
 			buf[0] = '%';                                          \
-			hex(buf + 1, (uint8_t)(ch));                           \
+			hex(buf + 1, (uint_fast8_t)(ch));                      \
 			buf += 3;                                              \
 			buf_size -= 3;                                         \
 		}                                                              \

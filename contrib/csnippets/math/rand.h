@@ -14,12 +14,12 @@
  */
 
 /**
- * @brief Generate uniformly distributed uint64_t.
+ * @brief Generate uniformly distributed integer.
  * @details Algorithm `xoshiro256**` from Blackman & Vigna,
  * "Scrambled linear pseudorandom number generators".
  * MT-Safe: The PRNG state is saved in thread-local storage.
  */
-uint64_t rand64(void);
+uint_fast64_t rand64(void);
 
 /**
  * @brief Seed PRNG rand64().
@@ -28,14 +28,14 @@ uint64_t rand64(void);
  * MT-Safe: srand64 should be called per thread.
  * @see rand64
  */
-void srand64(uint64_t seed);
+void srand64(uint_fast64_t seed);
 
 /**
- * @brief Generate uniformly distributed uint64_t in [0, n].
+ * @brief Generate uniformly distributed integer in [0, n].
  * @details Based on rand64.
  * @see rand64
  */
-uint64_t rand64n(uint64_t n);
+uint_fast64_t rand64n(uint_fast64_t n);
 
 /**
  * @brief Generate uniformly distributed float in [0.0f, 1.0f).

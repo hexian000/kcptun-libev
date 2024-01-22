@@ -10,37 +10,37 @@
 
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
 
-static inline uint64_t splitmix64(uint64_t *restrict state)
+static inline uint_fast64_t splitmix64(uint_fast64_t *restrict state)
 {
-	uint64_t result = (*state += UINT64_C(0x9E3779B97f4A7C15));
+	uint_fast64_t result = (*state += UINT64_C(0x9E3779B97f4A7C15));
 	result = (result ^ (result >> 30u)) * UINT64_C(0xBF58476D1CE4E5B9);
 	result = (result ^ (result >> 27u)) * UINT64_C(0x94D049BB133111EB);
 	return result ^ (result >> 31u);
 }
 
-static _Thread_local uint64_t xoshiro256ss[4] = {
+static _Thread_local uint_fast64_t xoshiro256ss[4] = {
 	UINT64_C(0x910A2DEC89025CC1),
 	UINT64_C(0xBEEB8DA1658EEC67),
 	UINT64_C(0xF893A2EEFB32555E),
 	UINT64_C(0x71C18690EE42C90B),
 };
 
-void srand64(uint64_t seed)
+void srand64(uint_fast64_t seed)
 {
-	uint64_t *restrict s = xoshiro256ss;
+	uint_fast64_t *restrict s = xoshiro256ss;
 	s[0] = splitmix64(&seed);
 	s[1] = splitmix64(&seed);
 	s[2] = splitmix64(&seed);
 	s[3] = splitmix64(&seed);
 }
 
-uint64_t rand64(void)
+uint_fast64_t rand64(void)
 {
-	uint64_t *restrict s = xoshiro256ss;
+	uint_fast64_t *restrict s = xoshiro256ss;
 
-	const uint64_t result =
+	const uint_fast64_t result =
 		ROTL(s[1] * UINT64_C(5), UINT64_C(7)) * UINT64_C(9);
-	const uint64_t t = s[1] << 17u;
+	const uint_fast64_t t = s[1] << 17u;
 
 	s[2] ^= s[0];
 	s[3] ^= s[1];
@@ -52,13 +52,13 @@ uint64_t rand64(void)
 	return result;
 }
 
-uint64_t rand64n(const uint64_t n)
+uint_fast64_t rand64n(const uint_fast64_t n)
 {
 	if ((n & (n + UINT64_C(1))) == UINT64_C(0)) {
 		return rand64() & n;
 	}
 
-	uint64_t mask = n;
+	uint_fast64_t mask = n;
 	mask |= (mask >> 1u);
 	mask |= (mask >> 2u);
 	mask |= (mask >> 4u);
@@ -67,7 +67,7 @@ uint64_t rand64n(const uint64_t n)
 	mask |= (mask >> 32u);
 
 	/* rejection sampling */
-	uint64_t x;
+	uint_fast64_t x;
 	for (x = rand64() & mask; x > n; x &= mask) {
 		x = rand64();
 	}
@@ -76,12 +76,13 @@ uint64_t rand64n(const uint64_t n)
 
 float frandf(void)
 {
-	return (float)(((uint32_t)rand64()) >> (32 - FLT_MANT_DIG)) *
-	       (0.5f / ((uint32_t)1 << (FLT_MANT_DIG - 1)));
+	return (float)(((uint_fast32_t)rand64n(UINT32_MAX)) >>
+		       (32 - FLT_MANT_DIG)) *
+	       (0.5f / ((uint_fast32_t)1 << (FLT_MANT_DIG - 1)));
 }
 
 double frand(void)
 {
 	return (double)(rand64() >> (64 - DBL_MANT_DIG)) *
-	       (0.5 / ((uint64_t)1 << (DBL_MANT_DIG - 1)));
+	       (0.5 / ((uint_fast64_t)1 << (DBL_MANT_DIG - 1)));
 }

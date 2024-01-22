@@ -12,7 +12,7 @@
 #include <time.h>
 
 static const struct {
-	const uint16_t code;
+	const uint_least16_t code;
 	const char *name;
 	const char *info;
 } http_resp[] = {
@@ -125,7 +125,7 @@ size_t http_date(char *buf, const size_t buf_size)
 	return strftime(buf, buf_size, fmt, gmt);
 }
 
-const char *http_status(const uint16_t code)
+const char *http_status(const uint_least16_t code)
 {
 	for (size_t i = 0; i < ARRAY_SIZE(http_resp); i++) {
 		if (http_resp[i].code == code) {
@@ -135,7 +135,7 @@ const char *http_status(const uint16_t code)
 	return NULL;
 }
 
-int http_error(char *buf, size_t buf_size, const uint16_t code)
+int http_error(char *buf, size_t buf_size, const uint_least16_t code)
 {
 	const char *name = NULL, *info = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(http_resp); i++) {

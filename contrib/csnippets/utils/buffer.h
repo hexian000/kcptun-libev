@@ -37,8 +37,11 @@ struct buffer {
 static inline size_t
 buf_append(struct buffer *restrict buf, const void *data, size_t n)
 {
-	unsigned char *b = buf->data + buf->len;
 	n = MIN(n, buf->cap - buf->len);
+	if (n == 0) {
+		return 0;
+	}
+	unsigned char *b = buf->data + buf->len;
 	(void)memcpy(b, data, n);
 	buf->len += n;
 	return n;

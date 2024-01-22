@@ -89,6 +89,10 @@ static void slog_write_file(
 	const int level, const char *path, const int line, const char *format,
 	va_list args)
 {
+	FILE *log_fp = slog_file;
+	if (log_fp == NULL || ferror(log_fp)) {
+		return;
+	}
 	const time_t log_now = time(NULL);
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
@@ -112,7 +116,7 @@ static void slog_write_file(
 
 	(void)fwrite(
 		slog_buffer.data, sizeof(slog_buffer.data[0]), slog_buffer.len,
-		slog_file);
+		log_fp);
 }
 
 #if HAVE_SYSLOG
