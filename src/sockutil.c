@@ -67,19 +67,16 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 	}
 }
 
-void socket_set_buffer(const int fd, const int send, const int recv)
+void socket_set_buffer(const int fd, int send, int recv)
 {
-	int val;
 	if (send > 0) {
-		val = send;
-		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val))) {
+		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send, sizeof(send))) {
 			const int err = errno;
 			LOGW_F("SO_SNDBUF: %s", strerror(err));
 		}
 	}
 	if (recv > 0) {
-		val = recv;
-		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val))) {
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &recv, sizeof(recv))) {
 			const int err = errno;
 			LOGW_F("SO_RCVBUF: %s", strerror(err));
 		}

@@ -80,6 +80,7 @@ void loadlibs(void)
 		}
 	}
 
+	LOGD_F("%s: %s", PROJECT_NAME, PROJECT_VER);
 	LOGD_F("libev: %d.%d", ev_version_major(), ev_version_minor());
 
 #if WITH_CRYPTO

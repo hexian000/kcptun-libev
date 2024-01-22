@@ -564,11 +564,13 @@ void server_stop(struct server *restrict s)
 {
 	struct ev_loop *loop = s->loop;
 	listener_stop(loop, &s->listener);
-	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
 	ev_timer_stop(loop, &s->w_kcp_update);
 	ev_timer_stop(loop, &s->w_keepalive);
 	ev_timer_stop(loop, &s->w_resolve);
 	ev_timer_stop(loop, &s->w_timeout);
+	const size_t num = table_size(s->sessions);
+	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
+	LOGI_F("%zu sessions closed", num);
 #if WITH_OBFS
 	if (s->pkt.queue->obfs != NULL) {
 		obfs_stop(s->pkt.queue->obfs, s);
