@@ -65,7 +65,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	/* Start listening on the socket */
 	if (listen(fd, SOMAXCONN)) {
 		const int err = errno;
-		LOGE_F("tcp listen: %s", strerror(err));
+		LOGE_F("listen: %s", strerror(err));
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -96,7 +96,7 @@ static bool listener_start(struct server *restrict s)
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			LOG_F(NOTICE, "listen at %s", addr_str);
+			LOG_F(NOTICE, "tcp listen: %s", addr_str);
 		}
 	}
 

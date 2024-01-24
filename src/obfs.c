@@ -422,7 +422,7 @@ static void obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	if (LOGLEVEL(NOTICE)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOG_F(NOTICE, "obfs: bind %s", addr_str);
+		LOG_F(NOTICE, "obfs bind: %s", addr_str);
 	}
 }
 
@@ -697,7 +697,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(sa, addr_str, sizeof(addr_str));
-		LOG_F(INFO, "obfs: tcp listen %s", addr_str);
+		LOG_F(INFO, "obfs tcp listen: %s", addr_str);
 	}
 	return true;
 }
