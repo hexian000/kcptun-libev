@@ -338,7 +338,7 @@ static bool conf_check(struct config *restrict conf)
 		RANGE_CHECK("time_wait", conf->time_wait, 5, 3600) &&
 		RANGE_CHECK(
 			"log_level", conf->log_level, LOG_LEVEL_SILENCE,
-			LOG_LEVEL_VERBOSE);
+			LOG_LEVEL_VERYVERBOSE);
 	if (!range_ok) {
 		return false;
 	}

@@ -141,7 +141,7 @@ size_t crypto_open(
 			dst, cipher, mac, plain_size, nonce, impl->key);
 		if (r != 0) {
 			LOG_BIN_F(
-				VERBOSE, cipher, cipher_size,
+				VERYVERBOSE, cipher, cipher_size,
 				"crypto_open: error %d", r);
 			return 0;
 		}
@@ -154,7 +154,7 @@ size_t crypto_open(
 		impl->key);
 	if (r != 0) {
 		LOG_BIN_F(
-			VERBOSE, cipher, cipher_size,
+			VERYVERBOSE, cipher, cipher_size,
 			"crypto_open: aead error %d", r);
 		return 0;
 	}

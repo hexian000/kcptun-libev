@@ -157,7 +157,7 @@ int main(int argc, char **argv)
 	}
 	slog_level =
 		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
-		      LOG_LEVEL_VERBOSE);
+		      LOG_LEVEL_VERYVERBOSE);
 	loadlibs();
 
 	struct ev_loop *loop = ev_default_loop(0);
