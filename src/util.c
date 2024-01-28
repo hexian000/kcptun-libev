@@ -133,27 +133,23 @@ void drop_privileges(const char *name)
 	char buf[len + 1];
 	memcpy(buf, name, len + 1);
 
-	const char *user, *group;
-	char *colon = strchr(buf, ':');
+	const char *user = NULL, *group = NULL;
+	char *const colon = strchr(buf, ':');
 	if (colon != NULL) {
 		if (colon != buf) {
 			user = buf;
-		} else {
-			user = NULL;
 		}
 		*colon = '\0';
 		if (colon[1] != '\0') {
 			group = &colon[1];
-		} else {
-			group = NULL;
 		}
 	} else {
 		user = buf;
 		group = NULL;
 	}
 
-	uid_t uid;
-	gid_t gid;
+	uid_t uid = (uid_t)-1;
+	gid_t gid = (gid_t)-1;
 	const struct passwd *pw = NULL;
 
 	if (user != NULL) {
@@ -190,7 +186,7 @@ void drop_privileges(const char *name)
 			       (intmax_t)gr->gr_gid);
 			gid = gr->gr_gid;
 		}
-	} else if (colon != NULL) {
+	} else if (user != NULL && colon != NULL) {
 		/* group is not specified, search from user database */
 		if (pw == NULL) {
 			pw = getpwuid(uid);
@@ -212,7 +208,7 @@ void drop_privileges(const char *name)
 		       strerror(err));
 	}
 #endif
-	if (group != NULL || colon != NULL) {
+	if (gid != (gid_t)-1) {
 		LOGD_F("setgid: %jd", (intmax_t)gid);
 		if (setgid(gid) != 0 || setegid(gid) != 0) {
 			const int err = errno;
@@ -220,7 +216,7 @@ void drop_privileges(const char *name)
 			       strerror(err));
 		}
 	}
-	if (user != NULL) {
+	if (uid != (uid_t)-1) {
 		LOGD_F("setuid: %jd", (intmax_t)uid);
 		if (setuid(uid) != 0 || seteuid(uid) != 0) {
 			const int err = errno;
