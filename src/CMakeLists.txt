@@ -85,7 +85,7 @@ if(WITH_CRYPTO AND TARGET_LINUX)
 endif()
 
 # find systemd
-if(NOT BUILD_STATIC)
+if(NOT FORCE_POSIX AND NOT BUILD_STATIC)
     find_path(SYSTEMD_INCLUDE_DIR NAMES systemd/sd-daemon.h)
     find_library(SYSTEMD_LIBRARY NAMES systemd)
     if((EXISTS ${SYSTEMD_INCLUDE_DIR}) AND (EXISTS ${SYSTEMD_LIBRARY}))
