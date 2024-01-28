@@ -222,7 +222,7 @@ main_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 		conf->user = jutil_get_string(value);
 		return conf->user != NULL;
 	}
-	LOGW_F("unknown config: \"%s\"", key);
+	LOGW_F("unknown config: `%s'", key);
 	return true;
 }
 

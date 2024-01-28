@@ -131,7 +131,7 @@ void drop_privileges(const char *user)
 	}
 	struct passwd *restrict pw = getpwnam(user);
 	if (pw == NULL) {
-		LOGW_F("su: user \"%s\" does not exist ", user);
+		LOGW_F("su: user `%s' does not exist ", user);
 		return;
 	}
 	if (pw->pw_uid == 0) {

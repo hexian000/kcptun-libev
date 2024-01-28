@@ -369,10 +369,10 @@ static void obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		ifindex = if_nametoindex(conf->netdev);
 		if (ifindex == 0) {
 			const int err = errno;
-			LOGW_F("obfs invalid netdev \"%s\": %s", conf->netdev,
+			LOGW_F("obfs invalid netdev `%s': %s", conf->netdev,
 			       strerror(err));
 		} else {
-			LOGD_F("obfs netdev \"%s\": index=%d", conf->netdev,
+			LOGD_F("obfs netdev `%s': index=%d", conf->netdev,
 			       ifindex);
 		}
 	}
@@ -845,7 +845,7 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 		return;
 	}
 	const int redial_count = ++obfs->redial_count;
-	LOGI_F("obfs: redial #%d to \"%s\"", redial_count, conf->kcp_connect);
+	LOGI_F("obfs: redial #%d to `%s'", redial_count, conf->kcp_connect);
 	union sockaddr_max addr;
 	if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_TCP)) {
 		return;
@@ -1805,7 +1805,7 @@ void obfs_server_read_cb(
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
 		OBFS_CTX_LOG_F(
-			DEBUG, ctx, "HTTP %d \"%s\"", HTTP_BAD_REQUEST,
+			DEBUG, ctx, "HTTP %d `%s'", HTTP_BAD_REQUEST,
 			msg->req.method);
 		obfs_ctx_write(ctx, loop);
 		return;
@@ -1817,7 +1817,7 @@ void obfs_server_read_cb(
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
 		OBFS_CTX_LOG_F(
-			DEBUG, ctx, "HTTP %d \"%s\"", HTTP_NOT_FOUND,
+			DEBUG, ctx, "HTTP %d `%s'", HTTP_NOT_FOUND,
 			msg->req.url);
 		obfs_ctx_write(ctx, loop);
 		return;

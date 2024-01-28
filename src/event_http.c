@@ -423,7 +423,7 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 {
 	const struct http_message *restrict hdr = &ctx->http_msg;
 	struct url uri;
-	LOGV_F("api: serve uri \"%s\"", hdr->req.url);
+	LOGV_F("api: serve uri `%s'", hdr->req.url);
 	if (!url_parse(hdr->req.url, &uri)) {
 		LOGW("api: failed parsing url");
 		http_resp_errpage(ctx, HTTP_BAD_REQUEST);

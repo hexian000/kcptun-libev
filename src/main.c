@@ -1,20 +1,24 @@
 /* kcptun-libev (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
+/* internal */
 #include "crypto.h"
 #include "conf.h"
 #include "server.h"
 #include "util.h"
 
+/* contrib */
 #include "utils/debug.h"
 #include "utils/slog.h"
 
+/* runtime */
 #include <ev.h>
-#include <signal.h>
 #if WITH_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
 
+/* std */
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -68,7 +72,7 @@ static void parse_args(int argc, char **argv)
 #define OPT_REQUIRE_ARG(argc, argv, i)                                         \
 	do {                                                                   \
 		if ((i) + 1 >= (argc)) {                                       \
-			LOGF_F("option \"%s\" requires an argument",           \
+			LOGF_F("option `%s' requires an argument",             \
 			       (argv)[(i)]);                                   \
 			exit(EXIT_FAILURE);                                    \
 		}                                                              \
@@ -121,7 +125,7 @@ static void parse_args(int argc, char **argv)
 		if (strcmp(argv[i], "--") == 0) {
 			break;
 		}
-		LOGF_F("unknown argument: \"%s\"", argv[i]);
+		LOGF_F("unknown argument: `%s'", argv[i]);
 		print_usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
