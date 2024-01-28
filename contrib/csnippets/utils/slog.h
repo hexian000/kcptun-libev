@@ -15,6 +15,7 @@ enum {
 	LOG_LEVEL_INFO,
 	LOG_LEVEL_DEBUG,
 	LOG_LEVEL_VERBOSE,
+	LOG_LEVEL_VERYVERBOSE,
 };
 extern int slog_level;
 extern FILE *slog_file;
@@ -67,7 +68,7 @@ void slog_write(int level, const char *path, int line, const char *format, ...);
 	} while (0)
 #define LOGW(message) LOGW_F("%s", message)
 
-/* Notice: Important status changes. */
+/* Notice: Important status changes. The prefix is 'I'. */
 #define LOGN_F(format, ...)                                                    \
 	do {                                                                   \
 		if (!LOGLEVEL(NOTICE)) {                                       \
@@ -106,5 +107,15 @@ void slog_write(int level, const char *path, int line, const char *format, ...);
 		LOG_F(VERBOSE, format, __VA_ARGS__);                           \
 	} while (0)
 #define LOGV(message) LOGV_F("%s", message)
+
+/* VeryVerbose: More details that may significantly impact performance. The prefix is 'V'. */
+#define LOGVV_F(format, ...)                                                   \
+	do {                                                                   \
+		if (!LOGLEVEL(VERYVERBOSE)) {                                  \
+			break;                                                 \
+		}                                                              \
+		LOG_F(VERYVERBOSE, format, __VA_ARGS__);                       \
+	} while (0)
+#define LOGVV(message) LOGVV_F("%s", message)
 
 #endif /* UTILS_SLOG_H */

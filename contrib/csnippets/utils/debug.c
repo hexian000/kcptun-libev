@@ -15,6 +15,7 @@
 #include <ctype.h>
 #include <inttypes.h>
 #include <stddef.h>
+#include <stdio.h>
 
 void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 {

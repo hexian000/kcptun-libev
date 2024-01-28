@@ -22,7 +22,7 @@ FILE *slog_file = NULL;
 static int slog_output_type = SLOG_OUTPUT_DISCARD;
 
 static const unsigned char slog_level_char[] = {
-	'-', 'F', 'E', 'W', 'N', 'I', 'D', 'V',
+	'-', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
 };
 
 static _Thread_local struct {
@@ -125,8 +125,8 @@ static void slog_write_syslog(
 	va_list args)
 {
 	static const int slog_level_map[] = {
-		LOG_ALERT,  LOG_CRIT, LOG_ERR,	 LOG_WARNING,
-		LOG_NOTICE, LOG_INFO, LOG_DEBUG, LOG_DEBUG,
+		LOG_ALERT, LOG_CRIT,  LOG_ERR,	 LOG_WARNING, LOG_NOTICE,
+		LOG_INFO,  LOG_DEBUG, LOG_DEBUG, LOG_DEBUG,
 	};
 
 	const char *log_filename = strrchr(path, PATH_SEPARATOR);
