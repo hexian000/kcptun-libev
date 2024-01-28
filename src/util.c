@@ -186,7 +186,7 @@ void drop_privileges(const char *name)
 			       (intmax_t)gr->gr_gid);
 			gid = gr->gr_gid;
 		} else {
-			gid = (uid_t)gidvalue;
+			gid = (gid_t)gidvalue;
 		}
 	} else if (user != NULL && colon != NULL) {
 		/* group is not specified, search from user database */
