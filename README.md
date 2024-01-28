@@ -318,7 +318,7 @@ Again, there is some kcptun-libev specific options:
   1. Normally, default value just works.
   2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
   3. All buffers should not be too small, otherwise you may experience performance degradation.
-- "user": if running as root, switch to this user to drop privileges, e.g. "nobody"
+- "user": switch to this user to drop privileges, e.g. `"user": "nobody:"` means the user named "nobody" and that user's login group
 
 ## Observability
 

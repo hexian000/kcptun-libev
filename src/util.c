@@ -14,13 +14,12 @@
 #include "ikcp.h"
 
 #include <ev.h>
+#include <grp.h>
 #include <pwd.h>
 #include <unistd.h>
-#if _BSD_SOURCE || _GNU_SOURCE
-#include <grp.h>
-#endif
 
 #include <assert.h>
+#include <inttypes.h>
 #include <locale.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -124,21 +123,88 @@ void genpsk(const char *method)
 }
 #endif
 
-void drop_privileges(const char *user)
+void drop_privileges(const char *name)
 {
-	if (getuid() != 0) {
+	const size_t len = strlen(name);
+	if (len >= 1024) {
+		LOGE_F("user name is too long: `%s'", name);
 		return;
 	}
-	struct passwd *restrict pw = getpwnam(user);
-	if (pw == NULL) {
-		LOGW_F("su: user `%s' does not exist ", user);
-		return;
+	char buf[len + 1];
+	memcpy(buf, name, len + 1);
+
+	const char *user, *group;
+	char *colon = strchr(buf, ':');
+	if (colon != NULL) {
+		if (colon != buf) {
+			user = buf;
+		} else {
+			user = NULL;
+		}
+		*colon = '\0';
+		if (colon[1] != '\0') {
+			group = &colon[1];
+		} else {
+			group = NULL;
+		}
+	} else {
+		user = buf;
+		group = NULL;
 	}
-	if (pw->pw_uid == 0) {
-		return;
+
+	uid_t uid;
+	gid_t gid;
+	const struct passwd *pw = NULL;
+
+	if (user != NULL) {
+		char *endptr;
+		const intmax_t uidvalue = strtoimax(user, &endptr, 10);
+		uid = (uid_t)uidvalue;
+		if (*endptr || uidvalue != (intmax_t)uid) {
+			/* search user database for user name */
+			pw = getpwnam(user);
+			if (pw == NULL) {
+				LOGE_F("passwd: name `%s' does not exist",
+				       user);
+				return;
+			}
+			LOGD_F("passwd: `%s' uid=%jd gid=%jd", user,
+			       (intmax_t)pw->pw_uid, (intmax_t)pw->pw_gid);
+			uid = pw->pw_uid;
+		}
 	}
-	LOGI_F("su: user=%s uid=%jd gid=%jd", user, (intmax_t)pw->pw_uid,
-	       (intmax_t)pw->pw_gid);
+
+	if (group != NULL) {
+		char *endptr;
+		const intmax_t gidvalue = strtoimax(group, &endptr, 10);
+		gid = (gid_t)gidvalue;
+		if (*endptr || gidvalue != (intmax_t)gid) {
+			/* search group database for group name */
+			const struct group *gr = getgrnam(group);
+			if (gr == NULL) {
+				LOGE_F("group: name `%s' does not exist",
+				       group);
+				return;
+			}
+			LOGD_F("group: `%s' gid=%jd", group,
+			       (intmax_t)gr->gr_gid);
+			gid = gr->gr_gid;
+		}
+	} else if (colon != NULL) {
+		/* group is not specified, search from user database */
+		if (pw == NULL) {
+			pw = getpwuid(uid);
+			if (pw == NULL) {
+				LOGE_F("passwd: user `%s' does not exist",
+				       user);
+				return;
+			}
+			LOGD_F("passwd: `%s' uid=%jd gid=%jd", user,
+			       (intmax_t)pw->pw_uid, (intmax_t)pw->pw_gid);
+		}
+		gid = pw->pw_gid;
+	}
+
 #if _BSD_SOURCE || _GNU_SOURCE
 	if (setgroups(0, NULL) != 0) {
 		const int err = errno;
@@ -146,13 +212,21 @@ void drop_privileges(const char *user)
 		       strerror(err));
 	}
 #endif
-	if (setgid(pw->pw_gid) != 0 || setegid(pw->pw_gid) != 0) {
-		const int err = errno;
-		LOGW_F("unable to drop group privileges: %s", strerror(err));
+	if (group != NULL || colon != NULL) {
+		LOGD_F("setgid: %jd", (intmax_t)gid);
+		if (setgid(gid) != 0 || setegid(gid) != 0) {
+			const int err = errno;
+			LOGW_F("unable to drop group privileges: %s",
+			       strerror(err));
+		}
 	}
-	if (setuid(pw->pw_uid) != 0 || seteuid(pw->pw_uid) != 0) {
-		const int err = errno;
-		LOGW_F("unable to drop user privileges: %s", strerror(err));
+	if (user != NULL) {
+		LOGD_F("setuid: %jd", (intmax_t)uid);
+		if (setuid(uid) != 0 || seteuid(uid) != 0) {
+			const int err = errno;
+			LOGW_F("unable to drop user privileges: %s",
+			       strerror(err));
+		}
 	}
 }
 
