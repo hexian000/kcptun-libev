@@ -46,7 +46,7 @@ message(STATUS "Project version: ${PROJECT_VERSION_STRING}")
 
 include(CTest)
 
-option(FORCE_POSIX "Use POSIX-compliant APIs only" OFF)
+option(FORCE_POSIX "Build the core features using POSIX-compliant APIs only" OFF)
 option(BUILD_STATIC "Build static executables, link everything statically" OFF)
 option(LINK_STATIC_LIBS "Link against static libraries" OFF)
 option(ENABLE_SANITIZERS "Build with sanitizers" OFF)
