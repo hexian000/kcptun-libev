@@ -21,6 +21,7 @@
 struct server;
 struct msgframe;
 
+/* type-length-value pattern */
 struct tlv_header {
 	uint16_t msg;
 	uint16_t len;
@@ -118,7 +119,7 @@ struct session *
 session_new(struct server *s, const union sockaddr_max *addr, uint32_t conv);
 void session_free(struct session *ss);
 
-void session_start(struct session *ss, int fd);
+void session_tcp_start(struct session *ss, int fd);
 void session_tcp_stop(struct session *ss);
 void session_kcp_stop(struct session *ss);
 

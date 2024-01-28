@@ -82,7 +82,7 @@ static void accept_one(
 		LOG_F(INFO, "session [%08" PRIX32 "] tcp: accepted %s", conv,
 		      addr_str);
 	}
-	session_start(ss, fd);
+	session_tcp_start(ss, fd);
 }
 
 void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)

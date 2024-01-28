@@ -109,7 +109,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 		LOG_F(INFO, "session [%08" PRIX32 "] tcp: connect %s", ss->conv,
 		      addr_str);
 	}
-	session_start(ss, fd);
+	session_tcp_start(ss, fd);
 	return true;
 }
 
@@ -249,6 +249,9 @@ void session_kcp_close(struct session *restrict ss)
 	}
 }
 
+/* kcp flush is only invoked when idle.
+ *   i.e. if the server is perfectly 100% loaded, flush will never work
+ */
 void session_kcp_flush(struct session *restrict ss)
 {
 	struct ev_idle *restrict w_flush = &ss->w_flush;
@@ -283,7 +286,7 @@ void session_kcp_stop(struct session *restrict ss)
 	ss->wbuf = VBUF_FREE(ss->wbuf);
 }
 
-void session_start(struct session *restrict ss, const int fd)
+void session_tcp_start(struct session *restrict ss, const int fd)
 {
 	LOGD_F("session [%08" PRIX32 "] tcp: start, fd=%d", ss->conv, fd);
 	/* Initialize and start watchers to transfer data */
@@ -291,10 +294,6 @@ void session_start(struct session *restrict ss, const int fd)
 	struct ev_io *restrict w_socket = &ss->w_socket;
 	ev_io_set(w_socket, fd, EV_READ | EV_WRITE);
 	ev_io_start(loop, w_socket);
-
-	const ev_tstamp now = ev_now(loop);
-	const uint32_t now_ms = TSTAMP2MS(now);
-	ikcp_update(ss->kcp, now_ms);
 }
 
 void session_free(struct session *restrict ss)
@@ -363,6 +362,7 @@ struct session *session_new(
 	ss->w_socket.data = ss;
 	ev_idle_init(&ss->w_flush, ss_flush_cb);
 	ss->w_flush.data = ss;
+	/* individually allocated buffers can be freed early */
 	ss->rbuf = VBUF_NEW(SESSION_BUF_SIZE);
 	if (ss->rbuf == NULL) {
 		session_free(ss);

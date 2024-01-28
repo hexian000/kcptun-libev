@@ -86,7 +86,7 @@ For your convenience, some statically-linked executables are also provided in th
 
 ### Encryption
 
-kcptun-libev can encrypt packets with a password/preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://github.com/jedisct1/libsodium).
+kcptun-libev can encrypt packets with a password or preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://github.com/jedisct1/libsodium).
 
 In config file:
 
@@ -94,7 +94,7 @@ In config file:
 "method": "// name here"
 ```
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, unexpected packets may cause undefined behavior because no authenticate tag was added either. We are not responsible for such vulnerabilities. Please only disable encryption when no unexpected packets could be recieved. For example: traffic is already protected by Wireguard.
+If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, no authentication tag is added to protect the server from well-crafted packets by an attacker. In this case, security relies on third-party libraries. We recommend that users only disable encryption when unexpected packets cannot be received. For example: the traffic is already protected by Wireguard etc.
 
 In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random preshared key instead of using a simple password.
 
