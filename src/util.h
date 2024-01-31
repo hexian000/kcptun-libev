@@ -52,11 +52,10 @@ extern struct mcache *msgpool;
 			const int err = errno;                                 \
 			LOGE_F("error event: [errno=%d] %s", err,              \
 			       strerror(err));                                 \
-			if (((revents) & (accept)) == 0) {                     \
-				return;                                        \
-			}                                                      \
-		} else {                                                       \
-			assert(((revents) & (accept)) == (revents));           \
+		}                                                              \
+		assert(((revents) & ((accept) | EV_ERROR)) == (revents));      \
+		if (((revents) & (accept)) == 0) {                             \
+			return;                                                \
 		}                                                              \
 	} while (0)
 
