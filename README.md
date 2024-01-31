@@ -123,7 +123,7 @@ With obfuscator enabled, kcptun-libev will directly send IP packets over raw soc
 
 ```sh
 # run as root and drop privileges after necessary setup
-sudo ./kcptun-libev -u nobody -c server.json
+sudo ./kcptun-libev -u nobody:nogroup -c server.json
 # or grant the capability and run as a normal user
 sudo setcap cap_net_raw+ep kcptun-libev
 ./kcptun-libev -c server.json
