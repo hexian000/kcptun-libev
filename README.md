@@ -86,7 +86,7 @@ For your convenience, some statically-linked executables are also provided in th
 
 ### Encryption
 
-kcptun-libev can encrypt packets with a password or preshared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://github.com/jedisct1/libsodium).
+kcptun-libev can encrypt packets with a password or pre-shared key. Security and privacy can only be guaranteed if encryption is enabled. We use the [authenticated encryption](https://en.wikipedia.org/wiki/Authenticated_encryption) methods provided by [libsodium](https://github.com/jedisct1/libsodium).
 
 In config file:
 
@@ -96,7 +96,7 @@ In config file:
 
 If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, no authentication tag is added to protect the server from well-crafted packets by an attacker. In this case, security relies on third-party libraries. We recommend that users only disable encryption when unexpected packets cannot be received. For example: the traffic is already protected by Wireguard etc.
 
-In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random preshared key instead of using a simple password.
+In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random pre-shared key instead of using a simple password.
 
 | Encryption Method      | Since | Form | Packet Overhead | Notes              |
 | ---------------------- | ----- | ---- | --------------- | ------------------ |
@@ -119,6 +119,8 @@ In config file:
 "obfs": "// name here"
 ```
 
+Currently only one obfuscator implemented: `dpi/tcp-wnd`. It behaves like a HTTP service and cannot be probed without knowing the pre-shared key.
+
 With obfuscator enabled, kcptun-libev will directly send IP packets over raw sockets. Therefore, Linux capability [CAP_NET_RAW](https://man7.org/linux/man-pages/man7/capabilities.7.html) is required. For example, the following command may works on some Linux distributions:
 
 ```sh
@@ -128,8 +130,6 @@ sudo ./kcptun-libev -u nobody:nogroup -c server.json
 sudo setcap cap_net_raw+ep kcptun-libev
 ./kcptun-libev -c server.json
 ```
-
-Currently only one obfuscator implemented: `dpi/tcp-wnd`
 
 ## Compatibility
 ### System
@@ -254,6 +254,8 @@ Let's explain some common fields in server.json/client.json:
 #### Rendezvous Mode
 
 Rendezvous mode may be useful for accessing servers behind NAT. The rendezvous server only helps establish the connection, the traffic goes directly between client and server.
+
+Rendezvous mode requires UDP in transport layer, i.e. is incompatible with non-UDP obfuscators.
 
 *The method is non-standard and may not work with all NAT implementations.*
 
