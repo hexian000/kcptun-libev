@@ -10,6 +10,7 @@
 #include "utils/intbound.h"
 #include "utils/mcache.h"
 #include "utils/minmax.h"
+#include "utils/posixtime.h"
 #include "utils/slog.h"
 
 #include "ikcp.h"
