@@ -10,7 +10,7 @@
 /**
  * @defgroup intbound
  * @brief Safely cast stdint types to unknown int types.
- * @details The complier implementation must support all types from int8_t to uint64_t.
+ * @details The compiler implementation must support all types from int8_t to uint64_t.
  * @{
  */
 
