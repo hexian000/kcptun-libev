@@ -400,7 +400,6 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 			conf->keepalive * 3.0 + ping_timeout, 60.0, 1800.0),
 		.ping_timeout = ping_timeout,
 		.time_wait = conf->time_wait,
-		.clock = (clock_t)(-1),
 		.last_clock = (clock_t)(-1),
 	};
 
@@ -735,17 +734,16 @@ static bool update_load(
 	struct server *restrict s, char *buf, const size_t bufsize,
 	const double dt)
 {
-	bool ok = false;
-	s->clock = clock();
-	if (s->clock != (clock_t)(-1) && s->last_clock != (clock_t)(-1) &&
-	    s->clock > s->last_clock) {
-		const double load = (double)(s->clock - s->last_clock) /
-				    (double)(CLOCKS_PER_SEC) / dt * 100.0;
-		(void)snprintf(buf, bufsize, "%.03f%%", load);
-		ok = true;
+	const clock_t last = s->last_clock;
+	const clock_t now = clock();
+	s->last_clock = now;
+	if (now == (clock_t)(-1) || last == (clock_t)(-1) || now < last) {
+		return false;
 	}
-	s->last_clock = s->clock;
-	return ok;
+	const double load =
+		(double)(now - last) / (double)(CLOCKS_PER_SEC) / dt * 100.0;
+	(void)snprintf(buf, bufsize, "%.03f%%", load);
+	return true;
 }
 
 struct vbuffer *
@@ -823,7 +821,6 @@ struct vbuffer *server_stats(
 #undef FORMAT_BYTES
 
 	/* rotate stats */
-	s->last_clock = s->clock;
 	s->last_stats = s->stats;
 	s->last_stats_time = now;
 	return buf;
