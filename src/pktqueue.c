@@ -203,7 +203,6 @@ size_t queue_dispatch(struct server *restrict s)
 	size_t nbrecv = 0;
 	for (size_t i = 0; i < q->mq_recv_len; i++) {
 		struct msgframe *restrict msg = q->mq_recv[i];
-		s->stats.pkt_rx += msg->len;
 #if WITH_OBFS
 		struct obfs_ctx *ctx = NULL;
 		if (q->obfs != NULL) {

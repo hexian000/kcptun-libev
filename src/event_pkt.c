@@ -71,7 +71,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		return 0;
 	}
 	const ev_tstamp now = ev_now(s->loop);
-	size_t nrecv = 0;
+	size_t nrecv = 0, nbrecv = 0;
 	size_t nbatch;
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
@@ -120,9 +120,11 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		const size_t n = (size_t)ret;
 		for (size_t i = 0; i < n; i++) {
 			struct msgframe *restrict msg = frames[i];
-			msg->len = (size_t)mmsgs[i].msg_len;
+			const size_t len = (size_t)mmsgs[i].msg_len;
+			msg->len = len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
+			nbrecv += len;
 			PKT_LOGV("pkt recv", msg);
 		}
 		/* collect unused frames */
@@ -132,6 +134,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		nrecv += n;
 		navail -= n;
 	} while (navail > 0);
+	s->stats.pkt_rx += nbrecv;
 	return nrecv;
 }
 
