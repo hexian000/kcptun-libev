@@ -476,8 +476,9 @@ size_t inetaddr_write(void *b, const size_t n, const struct sockaddr *sa)
 	return 0;
 }
 
-void ss0_reset(struct server *s, const struct sockaddr *sa, uint32_t conv)
+void ss0_reset(struct server *s, const struct sockaddr *sa, const uint32_t conv)
 {
+	LOGD_F("session0: reset conv [%08" PRIX32 "]", conv);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, conv);
 	ss0_send(s, sa, S0MSG_RESET, b, sizeof(b));

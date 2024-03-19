@@ -5,7 +5,6 @@
 #define CSNIPPETS_CONFIG_H
 
 #cmakedefine01 HAVE_CLOCK_GETTIME
-#cmakedefine01 HAVE_GETTIMEOFDAY
 #cmakedefine01 HAVE_SYSLOG
 #cmakedefine01 HAVE_LOCALTIME_R
 

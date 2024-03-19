@@ -10,7 +10,6 @@
 #include "utils/intbound.h"
 #include "utils/mcache.h"
 #include "utils/minmax.h"
-#include "utils/posixtime.h"
 #include "utils/slog.h"
 
 #include "ikcp.h"
@@ -88,7 +87,7 @@ void loadlibs(void)
 	crypto_init();
 	srand64(((uint64_t)crypto_rand32() << 32u) | crypto_rand32());
 #else
-	srand64((uint64_t)clock_monotonic());
+	srand64((uint64_t)time(NULL));
 #endif
 
 	const size_t size =

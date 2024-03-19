@@ -734,14 +734,13 @@ static bool update_load(
 	struct server *restrict s, char *buf, const size_t bufsize,
 	const double dt)
 {
-	const clock_t last = s->last_clock;
-	const clock_t now = clock();
+	const int64_t last = s->last_clock;
+	const int64_t now = clock_cputime();
 	s->last_clock = now;
-	if (now == (clock_t)(-1) || last == (clock_t)(-1) || now < last) {
+	if (now == -1 || last == -1 || now < last) {
 		return false;
 	}
-	const double load =
-		(double)(now - last) / (double)(CLOCKS_PER_SEC) / dt * 100.0;
+	const double load = (double)(now - last) / 1e+9 / dt * 100.0;
 	(void)snprintf(buf, bufsize, "%.03f%%", load);
 	return true;
 }
