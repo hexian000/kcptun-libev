@@ -338,12 +338,9 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 
 static void pkt_flush(struct server *restrict s)
 {
-	struct ev_io *restrict w_write = &s->pkt.w_write;
-	for (;;) {
-		const size_t ret = pkt_send(s, w_write->fd);
-		if (ret == 0) {
-			break;
-		}
+	const int fd = s->pkt.w_write.fd;
+	while (pkt_send(s, fd) > 0) {
+		;
 	}
 }
 
