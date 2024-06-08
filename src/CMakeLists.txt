@@ -55,8 +55,7 @@ endif()
 if((NOT ${LIBEV_VERSION} VERSION_GREATER_EQUAL "4.31") OR (NOT EXISTS ${LIBEV_LIBRARY}))
     message(FATAL_ERROR "libev (>= 4.31) not found")
 endif()
-message(STATUS "libev: ${LIBEV_VERSION}")
-message(STATUS "libev: ${LIBEV_LIBRARY}")
+message(STATUS "libev ${LIBEV_VERSION}: ${LIBEV_LIBRARY}")
 target_include_directories(kcptun-libev SYSTEM PRIVATE ${LIBEV_INCLUDE_DIR})
 target_link_libraries(kcptun-libev PRIVATE ${LIBEV_LIBRARY})
 
@@ -85,7 +84,7 @@ if(WITH_CRYPTO AND TARGET_LINUX)
 endif()
 
 # find systemd
-if(NOT FORCE_POSIX AND NOT BUILD_STATIC)
+if(ENABLE_SYSTEMD)
     find_path(SYSTEMD_INCLUDE_DIR NAMES systemd/sd-daemon.h)
     find_library(SYSTEMD_LIBRARY NAMES systemd)
     if((EXISTS ${SYSTEMD_INCLUDE_DIR}) AND (EXISTS ${SYSTEMD_LIBRARY}))

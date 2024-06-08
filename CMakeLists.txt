@@ -50,6 +50,7 @@ option(FORCE_POSIX "Build the core features using POSIX-compliant APIs only" OFF
 option(BUILD_STATIC "Build static executables, link everything statically" OFF)
 option(LINK_STATIC_LIBS "Link against static libraries" OFF)
 option(ENABLE_SANITIZERS "Build with sanitizers" OFF)
+option(ENABLE_SYSTEMD "Enable systemd integration" OFF)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
