@@ -177,11 +177,17 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	const char *user = args.user_name ? args.user_name : conf->user;
-	if (args.daemonize) {
-		daemonize(user, true, false);
-	} else if (user != NULL) {
-		drop_privileges(user);
+	const char *user_name = args.user_name ? args.user_name : conf->user;
+	if (user_name != NULL) {
+		struct user_ident ident;
+		if (!parse_user(&ident, user_name)) {
+			exit(EXIT_FAILURE);
+		}
+		if (args.daemonize) {
+			daemonize(&ident, true, false);
+		} else {
+			drop_privileges(&ident);
+		}
 	}
 
 	/* signal watchers */
