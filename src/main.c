@@ -177,16 +177,20 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	const char *user_name = args.user_name ? args.user_name : conf->user;
-	if (user_name != NULL) {
-		struct user_ident ident;
-		if (!parse_user(&ident, user_name)) {
-			exit(EXIT_FAILURE);
+	{
+		struct user_ident ident, *pident = NULL;
+		const char *user_name =
+			args.user_name ? args.user_name : conf->user;
+		if (user_name != NULL) {
+			if (!parse_user(&ident, user_name)) {
+				exit(EXIT_FAILURE);
+			}
+			pident = &ident;
 		}
 		if (args.daemonize) {
-			daemonize(&ident, true, false);
-		} else {
-			drop_privileges(&ident);
+			daemonize(pident, true, false);
+		} else if (pident != NULL) {
+			drop_privileges(pident);
 		}
 	}
 
