@@ -350,18 +350,17 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 
 #undef FILTER_GENCODE
 
-static void obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
+static void
+obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 {
 	if (sa != NULL) {
-		const socklen_t len = getsocklen(sa);
-		memmove(&obfs->bind_addr.sa, sa, len);
-	} else {
-		sa = &obfs->bind_addr.sa;
+		copy_sa(&obfs->bind_addr.sa, sa);
 	}
 
+	const struct sockaddr *restrict bind_sa = &obfs->bind_addr.sa;
 	uint32_t scope_id = 0;
-	if (sa->sa_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(sa)) {
-		scope_id = ((struct sockaddr_in6 *)sa)->sin6_scope_id;
+	if (bind_sa->sa_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(bind_sa)) {
+		scope_id = ((struct sockaddr_in6 *)bind_sa)->sin6_scope_id;
 	}
 	unsigned int ifindex = 0;
 	const struct config *restrict conf = obfs->server->conf;
@@ -409,7 +408,7 @@ static void obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 		.filter = filter,
 		.len = ARRAY_SIZE(filter),
 	};
-	if (!filter_compile(&fprog, sa)) {
+	if (!filter_compile(&fprog, bind_sa)) {
 		LOGW("obfs: cap filter failed");
 		return;
 	}
@@ -421,7 +420,7 @@ static void obfs_bind(struct obfs *restrict obfs, const struct sockaddr *sa)
 	}
 	if (LOGLEVEL(NOTICE)) {
 		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
+		format_sa(bind_sa, addr_str, sizeof(addr_str));
 		LOG_F(NOTICE, "obfs bind: %s", addr_str);
 	}
 }
@@ -725,8 +724,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	}
 
 	struct ev_loop *loop = s->loop;
-	const socklen_t socklen = getsocklen(sa);
-	if (connect(fd, sa, socklen)) {
+	if (connect(fd, sa, getsocklen(sa))) {
 		const int err = errno;
 		if (err != EINTR && err != EINPROGRESS) {
 			LOGE_F("obfs tcp connect: %s", strerror(err));
@@ -741,7 +739,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		obfs_ctx_free(loop, ctx);
 		return false;
 	}
-	memcpy(&ctx->raddr, sa, socklen);
+	copy_sa(&ctx->raddr.sa, sa);
 	OBFS_CTX_LOG(INFO, ctx, "connect");
 
 	obfs_bind(obfs, &ctx->laddr.sa);
@@ -853,7 +851,7 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	if (!obfs_ctx_dial(obfs, &addr.sa)) {
 		return;
 	}
-	memcpy(&s->pkt.kcp_connect, &addr, getsocklen(&addr.sa));
+	copy_sa(&s->pkt.kcp_connect.sa, &addr.sa);
 }
 
 static void
@@ -1071,7 +1069,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		if (!obfs_ctx_dial(obfs, &addr.sa)) {
 			return false;
 		}
-		memcpy(&s->pkt.kcp_connect, &addr, getsocklen(&addr.sa));
+		copy_sa(&s->pkt.kcp_connect.sa, &addr.sa);
 	}
 
 	{

@@ -34,6 +34,7 @@ void socket_bind_netdev(int fd, const char *netdev);
 int socket_get_error(int fd);
 
 socklen_t getsocklen(const struct sockaddr *sa);
+void copy_sa(struct sockaddr *dst, const struct sockaddr *src);
 bool sa_equals(const struct sockaddr *a, const struct sockaddr *b);
 bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest);
 int format_sa(const struct sockaddr *sa, char *buf, size_t buf_size);

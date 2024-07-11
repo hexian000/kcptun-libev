@@ -113,7 +113,7 @@ int socket_get_error(const int fd)
 	return value;
 }
 
-socklen_t getsocklen(const struct sockaddr *sa)
+socklen_t getsocklen(const struct sockaddr *restrict sa)
 {
 	switch (sa->sa_family) {
 	case AF_INET:
@@ -123,14 +123,39 @@ socklen_t getsocklen(const struct sockaddr *sa)
 	default:
 		break;
 	}
-	FAIL();
+	FAILMSGF("unexpected af: %jd", (intmax_t)sa->sa_family);
 }
 
-bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
+void copy_sa(struct sockaddr *restrict dst, const struct sockaddr *restrict src)
 {
-	const socklen_t na = getsocklen(a);
-	const socklen_t nb = getsocklen(b);
-	return na == nb && memcmp(a, b, na) == 0;
+	switch (src->sa_family) {
+	case AF_INET:
+		*(struct sockaddr_in *)dst = *(const struct sockaddr_in *)src;
+		return;
+	case AF_INET6:
+		*(struct sockaddr_in6 *)dst = *(const struct sockaddr_in6 *)src;
+		return;
+	default:
+		break;
+	}
+	FAILMSGF("unexpected af: %jd", (intmax_t)src->sa_family);
+}
+
+bool sa_equals(
+	const struct sockaddr *restrict a, const struct sockaddr *restrict b)
+{
+	if (a->sa_family != b->sa_family) {
+		return false;
+	}
+	switch (a->sa_family) {
+	case AF_INET:
+		return memcmp(a, b, sizeof(struct sockaddr_in)) == 0;
+	case AF_INET6:
+		return memcmp(a, b, sizeof(struct sockaddr_in6)) == 0;
+	default:
+		break;
+	}
+	FAILMSGF("unexpected af: %jd", (intmax_t)a->sa_family);
 }
 
 static bool sa_matches_inet(

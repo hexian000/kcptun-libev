@@ -223,19 +223,18 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_UDP)) {
 			return false;
 		}
-		const socklen_t socklen = getsocklen(&addr.sa);
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_init(udp, conf, addr.sa.sa_family)) {
 				return false;
 			}
 		}
-		if (connect(udp->fd, &addr.sa, socklen)) {
+		if (connect(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
 			const int err = errno;
 			LOGE_F("udp connect: %s", strerror(err));
 			return false;
 		}
-		memcpy(&udp->kcp_connect.sa, &addr.sa, socklen);
+		copy_sa(&udp->kcp_connect.sa, &addr.sa);
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			format_sa(&addr.sa, addr_str, sizeof(addr_str));

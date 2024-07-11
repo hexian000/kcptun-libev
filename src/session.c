@@ -493,7 +493,7 @@ bool ss0_send(
 		LOGOOM();
 		return false;
 	}
-	memcpy(&msg->addr.sa, sa, getsocklen(sa));
+	copy_sa(&msg->addr.sa, sa);
 	unsigned char *packet = msg->buf + msg->off;
 	ss0_header_write(
 		packet, (struct session0_header){
