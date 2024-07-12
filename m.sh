@@ -92,7 +92,6 @@ case "$1" in
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc" \
-        -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
     nice cmake --build "build"
     TARGET="$(cc -dumpmachine)"
@@ -112,6 +111,7 @@ case "$1" in
         -DCMAKE_ANDROID_ARCH_ABI="${ABI}" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
+        -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
     nice cmake --build "build"
     ls -lh "build/src/kcptun-libev"
@@ -154,7 +154,7 @@ case "$1" in
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
-    nice cmake --build "build"
+    nice cmake --build "build" --parallel
     ls -lh "build/src/kcptun-libev"
     ;;
 "c")
