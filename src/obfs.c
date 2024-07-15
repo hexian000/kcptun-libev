@@ -786,7 +786,7 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 		return;
 	}
 	static const double wait_schedule[] = {
-		0.2, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0,
+		0.2, 2.0, 2.0, 5.0, 5.0, 60.0, 120.0, 300.0,
 	};
 	const double wait_time = wait_schedule[CLAMP(
 		redial_count - 1, 0, (int)ARRAY_SIZE(wait_schedule) - 1)];
