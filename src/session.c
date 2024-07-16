@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "session.h"
+
 #include "conf.h"
 #include "event.h"
 #include "pktqueue.h"
@@ -10,6 +11,7 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "utils/arraysize.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
@@ -21,13 +23,14 @@
 #include <ev.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 const char session_state_char[STATE_MAX] = {

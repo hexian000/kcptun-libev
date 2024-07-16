@@ -8,10 +8,8 @@
 #include "util.h"
 
 #include "utils/mcache.h"
-#include "utils/slog.h"
 
 #include <ev.h>
-#include <sys/socket.h>
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -2,13 +2,15 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 /* internal */
-#include "crypto.h"
 #include "conf.h"
+#include "crypto.h"
 #include "server.h"
 #include "util.h"
 
 /* contrib */
+#include "utils/buffer.h"
 #include "utils/debug.h"
+#include "utils/minmax.h"
 #include "utils/slog.h"
 
 /* runtime */
@@ -23,6 +25,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static struct {
 	const char *conf_path;

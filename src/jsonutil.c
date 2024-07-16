@@ -7,6 +7,8 @@
 
 #include "cJSON.h"
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 
 struct jutil_value;

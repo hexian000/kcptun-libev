@@ -6,9 +6,7 @@
 
 #include "server.h"
 #include "sockutil.h"
-#include "util.h"
 
-#include "algo/hashtable.h"
 #include "utils/buffer.h"
 #include "utils/serialize.h"
 
@@ -18,6 +16,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct sockaddr;
 struct server;
 struct msgframe;
 

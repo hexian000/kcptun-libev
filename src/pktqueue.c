@@ -2,9 +2,11 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "pktqueue.h"
+
 #include "conf.h"
 #include "crypto.h"
 #include "event.h"
+#include "nonce.h"
 #include "obfs.h"
 #include "server.h"
 #include "session.h"
@@ -14,6 +16,7 @@
 #include "algo/hashtable.h"
 #include "math/rand.h"
 #include "utils/debug.h"
+#include "utils/minmax.h"
 #include "utils/slog.h"
 
 #include "ikcp.h"
@@ -26,6 +29,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MSG_LOGVV(what, msg)                                                   \

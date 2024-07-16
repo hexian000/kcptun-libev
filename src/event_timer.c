@@ -1,8 +1,8 @@
 /* kcptun-libev (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#include "event.h"
 #include "conf.h"
+#include "event.h"
 #include "nonce.h"
 #include "pktqueue.h"
 #include "server.h"
@@ -17,6 +17,8 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 static bool timeout_filt(
 	const struct hashtable *t, const struct hashkey key, void *element,

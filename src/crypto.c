@@ -2,6 +2,8 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "crypto.h"
+
+#include "nonce.h"
 #include "util.h"
 
 #include "utils/arraysize.h"

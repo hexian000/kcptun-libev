@@ -10,11 +10,10 @@
 #include "utils/buffer.h"
 
 #include <ev.h>
-#include <netinet/in.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <time.h>
 
 struct listener {
 	struct ev_io w_accept;
@@ -92,6 +91,8 @@ bool server_resolve(struct server *s);
 void udp_rendezvous(struct server *s, uint16_t what);
 void server_stop(struct server *s);
 void server_free(struct server *s);
+
+struct sockaddr;
 
 uint32_t conv_new(struct server *s, const struct sockaddr *sa);
 size_t udp_overhead(const struct pktconn *udp);

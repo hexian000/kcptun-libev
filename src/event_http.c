@@ -6,6 +6,7 @@
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
+#include "sockutil.h"
 #include "util.h"
 
 #include "net/http.h"
@@ -15,13 +16,18 @@
 #include "utils/slog.h"
 
 #include <ev.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
+#include <sys/socket.h>
+#include <sys/types.h>
+
+#include <errno.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static void
 http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);

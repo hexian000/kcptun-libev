@@ -3,14 +3,15 @@
 
 #include "nonce.h"
 
-#if WITH_SODIUM
-#include "crypto.h"
+#include "bloom.h"
 
+#if WITH_SODIUM
 #include "utils/buffer.h"
 #include "utils/debug.h"
 
 #include <sodium.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>

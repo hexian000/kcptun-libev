@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "server.h"
+
 #include "conf.h"
 #include "crypto.h"
 #include "event.h"
@@ -16,6 +17,7 @@
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
+#include "utils/serialize.h"
 #include "utils/slog.h"
 
 #include "ikcp.h"
@@ -23,7 +25,6 @@
 #include <ev.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 #include <assert.h>
 #include <inttypes.h>

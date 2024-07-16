@@ -5,7 +5,6 @@
 #define CONF_H
 
 #include <stdbool.h>
-#include <stddef.h>
 
 struct sockaddr;
 

@@ -2,15 +2,17 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "conf.h"
+
 #include "jsonutil.h"
 #include "util.h"
 
-#include "utils/debug.h"
 #include "utils/slog.h"
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MAX_CONF_SIZE 65536

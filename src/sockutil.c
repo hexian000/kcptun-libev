@@ -2,7 +2,6 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "sockutil.h"
-#include "util.h"
 
 #include "net/addr.h"
 #include "utils/debug.h"
@@ -16,11 +15,11 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -95,7 +94,7 @@ void socket_bind_netdev(const int fd, const char *netdev)
 		LOGW_F("SO_BINDTODEVICE: %s", strerror(err));
 	}
 #else
-	UNUSED(fd);
+	(void)fd;
 	if (netdev[0] != '\0') {
 		LOGW_F("SO_BINDTODEVICE: %s", "not supported in current build");
 	}

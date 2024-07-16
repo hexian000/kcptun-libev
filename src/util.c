@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "util.h"
+
 #include "crypto.h"
 #include "pktqueue.h"
 
@@ -15,13 +16,17 @@
 #include "ikcp.h"
 
 #include <ev.h>
+
 #include <grp.h>
 #include <pwd.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <locale.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>

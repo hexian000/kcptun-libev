@@ -8,7 +8,6 @@
 #if WITH_OBFS
 
 #include "conf.h"
-#include "crypto.h"
 #include "event.h"
 #include "pktqueue.h"
 #include "server.h"
@@ -35,13 +34,15 @@
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
-#include <unistd.h>
+#include <sys/types.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 

@@ -1,8 +1,8 @@
 /* kcptun-libev (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#include "event.h"
 #include "conf.h"
+#include "event.h"
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
@@ -14,16 +14,18 @@
 #include "utils/slog.h"
 
 #include <ev.h>
-#include <stdbool.h>
+
 #include <sys/socket.h>
-#include <unistd.h>
+#include <sys/types.h>
 
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 static void modify_io_events(
 	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)

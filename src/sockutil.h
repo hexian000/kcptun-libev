@@ -9,7 +9,6 @@
 
 #include <errno.h>
 #include <stdbool.h>
-#include <stdint.h>
 
 /* Check if the error is generally "transient":
  *   In accept()/send()/recv()/sendmsg()/recvmsg()/sendmmsg()/recvmmsg(),
