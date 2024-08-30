@@ -99,10 +99,10 @@ escape(char *buf, size_t buf_size, const char *str, const char *allowed_symbols,
 	return cap - buf_size;
 }
 
-static size_t escape_host(char *buf, size_t buf_size, const char *path)
+static size_t escape_host(char *buf, size_t buf_size, const char *host)
 {
 	/* RFC 1738, RFC 2732 */
-	return escape(buf, buf_size, path, "-_.~!$&'()*+,;=:[]<>\"", false);
+	return escape(buf, buf_size, host, "-_.~!$&'()*+,;=:[]<>\"", false);
 }
 
 static size_t escape_path(char *buf, size_t buf_size, const char *path)
@@ -110,24 +110,37 @@ static size_t escape_path(char *buf, size_t buf_size, const char *path)
 	return escape(buf, buf_size, path, "-_.~$&+,/:;=@", false);
 }
 
+static size_t escape_userinfo(char *buf, size_t buf_size, const char *userinfo)
+{
+	return escape(buf, buf_size, userinfo, "-_.~$&+,;=", false);
+}
+
+static size_t escape_fragment(char *buf, size_t buf_size, const char *fragment)
+{
+	return escape(buf, buf_size, fragment, "-_.~$&+,/:;=?@!()*", false);
+}
+
+size_t
+url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password)
+{
+	size_t n = escape_userinfo(buf, buf_size, username);
+	if (password == NULL) {
+		return n;
+	}
+	if (n < buf_size) {
+		buf[n++] = ':';
+	}
+	return n + escape_userinfo(buf, buf_size, password);
+}
+
 size_t url_escape_path(char *buf, size_t buf_size, const char *path)
 {
 	return escape(buf, buf_size, path, "-_.~$&+:=@", false);
 }
 
-static size_t escape_userinfo(char *buf, size_t buf_size, const char *path)
-{
-	return escape(buf, buf_size, path, "-_.~$&+,;=", false);
-}
-
 size_t url_escape_query(char *buf, size_t buf_size, const char *query)
 {
 	return escape(buf, buf_size, query, "-_.~", true);
-}
-
-static size_t escape_fragment(char *buf, size_t buf_size, const char *query)
-{
-	return escape(buf, buf_size, query, "-_.~$&+,/:;=?@!()*", false);
 }
 
 size_t url_build(char *buf, size_t buf_size, const struct url *url)
@@ -213,62 +226,6 @@ static bool unescape(char *str, const bool space)
 	}
 	*w = '\0';
 	return true;
-}
-
-bool url_path_segment(char **path, char **segment)
-{
-	char *s = *path;
-	while (*s == '/') {
-		s++;
-	}
-	char *next = strchr(s, '/');
-	if (next != NULL) {
-		*next = '\0';
-		next++;
-	}
-	if (!unescape(s, false)) {
-		return false;
-	}
-	*segment = s;
-	*path = next;
-	return true;
-}
-
-bool url_query_component(char **query, char **key, char **value)
-{
-	char *s = *query;
-	char *next = strchr(s, '&');
-	if (next != NULL) {
-		*next = '\0';
-		next++;
-	}
-	char *k = s;
-	char *v = strchr(s, '=');
-	if (v == NULL) {
-		return false;
-	}
-	*v = '\0';
-	v++;
-	if (!unescape(k, true)) {
-		return false;
-	}
-	if (!unescape(v, true)) {
-		return false;
-	}
-	*key = k;
-	*value = v;
-	*query = next;
-	return true;
-}
-
-bool url_unescape_path(char *str)
-{
-	return unescape(str, false);
-}
-
-bool url_unescape_query(char *str)
-{
-	return unescape(str, true);
 }
 
 static inline char *strlower(char *s)
@@ -371,4 +328,94 @@ bool url_parse(char *raw, struct url *restrict url)
 
 	url->path = raw;
 	return true;
+}
+
+bool url_path_segment(char **path, char **segment)
+{
+	char *s = *path;
+	while (*s == '/') {
+		s++;
+	}
+	char *next = strchr(s, '/');
+	if (next != NULL) {
+		*next = '\0';
+		next++;
+	}
+	if (!unescape(s, false)) {
+		return false;
+	}
+	*segment = s;
+	*path = next;
+	return true;
+}
+
+bool url_query_component(char **query, char **key, char **value)
+{
+	char *s = *query;
+	char *next = strchr(s, '&');
+	if (next != NULL) {
+		*next = '\0';
+		next++;
+	}
+	char *k = s;
+	char *v = strchr(s, '=');
+	if (v == NULL) {
+		return false;
+	}
+	*v = '\0';
+	v++;
+	if (!unescape(k, true)) {
+		return false;
+	}
+	if (!unescape(v, true)) {
+		return false;
+	}
+	*key = k;
+	*value = v;
+	*query = next;
+	return true;
+}
+
+bool url_unescape_userinfo(char *raw, char **username, char **password)
+{
+	const char valid_chars[] = "-._:~!$&\'()*+,;=%@'";
+	char *colon = NULL;
+	size_t n = 0;
+	for (char *p = raw; *p != '\0'; ++p) {
+		unsigned char c = (unsigned char)*p;
+		/* RFC 3986: Section 3.2.1 */
+		if (!islower(c) && !isupper(c) && !isdigit(c) &&
+		    strchr(valid_chars, c) == NULL) {
+			return false;
+		}
+		if (colon == NULL && c == ':') {
+			colon = p;
+		}
+		n++;
+	}
+	char *user = raw;
+	char *pass = NULL;
+	if (colon != NULL) {
+		*colon = '\0';
+		pass = colon + 1;
+	}
+	if (!unescape(user, false)) {
+		return false;
+	}
+	if (pass != NULL && !unescape(pass, false)) {
+		return false;
+	}
+	*username = user;
+	*password = pass;
+	return true;
+}
+
+bool url_unescape_path(char *str)
+{
+	return unescape(str, false);
+}
+
+bool url_unescape_query(char *str)
+{
+	return unescape(str, true);
 }

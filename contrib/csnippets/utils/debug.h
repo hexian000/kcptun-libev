@@ -80,7 +80,14 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 		}                                                              \
 	} while (0)
 #define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)
-#define CHECK(cond) CHECKMSG(cond, "runtime check failed")
+#define CHECK(cond) CHECKMSGF(cond, "runtime check failed: `%s'", #cond)
+
+/* ASSERT: an alternative to assert() */
+#ifdef NDEBUG
+#define ASSERT(cond) ((void)(0))
+#else
+#define ASSERT(cond) CHECKMSGF(cond, "assertion failed: `%s'", #cond)
+#endif
 
 /* check critical allocation failure */
 #define FAILOOM()                                                              \

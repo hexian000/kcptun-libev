@@ -39,9 +39,9 @@ struct duration make_duration(double seconds);
 
 /**
  * @brief Create a duration struct from nanoseconds.
- * @param nanos Nanoseconds. struct duration can represent any int64_t.
+ * @param nanos Nanoseconds. struct duration can represent any int_least64_t.
  */
-struct duration make_duration_nanos(int64_t nanos);
+struct duration make_duration_nanos(int_least64_t nanos);
 
 /**
  * @brief Format duration in seconds.

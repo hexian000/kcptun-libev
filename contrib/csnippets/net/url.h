@@ -15,13 +15,24 @@
 
 struct url {
 	char *scheme;
-	char *userinfo;
+	char *userinfo; /* escaped */
 	char *host;
 	char *path; /* escaped */
 	char *query; /* escaped */
 	char *fragment;
 	char *defacto;
 };
+
+/**
+ * @brief Escape username and password for URL.
+ * @param[out] buf Out buffer.
+ * @param buf_size Buffer size in bytes.
+ * @param username Username.
+ * @param password Password, can be NULL.
+ * @return Number of bytes written to buffer.
+ */
+size_t
+url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password);
 
 /**
  * @brief Escape a path segment for URL.
@@ -77,6 +88,15 @@ bool url_path_segment(char **path, char **segment);
  * @note Stop iterating if `*query == NULL` or previous call returned false.
  */
 bool url_query_component(char **query, char **key, char **value);
+
+/**
+ * @brief Unescape a userinfo string in-place.
+ * @details No allocations, the raw userinfo string is destructed.
+ * @param raw Raw userinfo string.
+ * @return true if successful.
+ * @see struct url
+ */
+bool url_unescape_userinfo(char *raw, char **username, char **password);
 
 /**
  * @brief Unescape a full URL path string in-place.

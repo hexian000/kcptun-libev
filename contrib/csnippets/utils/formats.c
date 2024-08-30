@@ -89,7 +89,7 @@ struct duration make_duration(double value)
 	return d;
 }
 
-struct duration make_duration_nanos(int64_t value)
+struct duration make_duration_nanos(int_least64_t value)
 {
 	struct duration d;
 	if (value < INT64_C(0)) {
