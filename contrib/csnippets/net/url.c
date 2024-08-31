@@ -380,7 +380,6 @@ bool url_unescape_userinfo(char *raw, char **username, char **password)
 {
 	const char valid_chars[] = "-._:~!$&\'()*+,;=%@'";
 	char *colon = NULL;
-	size_t n = 0;
 	for (char *p = raw; *p != '\0'; ++p) {
 		unsigned char c = (unsigned char)*p;
 		/* RFC 3986: Section 3.2.1 */
@@ -391,7 +390,6 @@ bool url_unescape_userinfo(char *raw, char **username, char **password)
 		if (colon == NULL && c == ':') {
 			colon = p;
 		}
-		n++;
 	}
 	char *user = raw;
 	char *pass = NULL;
