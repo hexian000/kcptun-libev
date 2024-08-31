@@ -132,7 +132,9 @@ case "$1" in
     ls -lh "build/src/kcptun-libev"
     ;;
 "d")
-    find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
+    if command -v clang-format >/dev/null; then
+        find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
+    fi
     # debug
     rm -rf "build" && mkdir -p "build"
     cmake -G "${GENERATOR}" \
