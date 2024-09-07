@@ -85,6 +85,17 @@ void slog_setoutput(const int type, ...)
 	} while (0)
 #endif
 
+static inline const char *get_filename(const char *path)
+{
+	const char *basename = strrchr(path, PATH_SEPARATOR);
+	if (basename && *basename) {
+		basename++;
+	} else {
+		basename = path;
+	}
+	return basename;
+}
+
 static void slog_write_file(
 	const int level, const char *path, const int line, const char *format,
 	va_list args)
@@ -98,18 +109,11 @@ static void slog_write_file(
 	slog_buffer.data[0] = slog_level_char[level];
 	slog_buffer.data[1] = ' ';
 	APPEND_TIMESTAMP(slog_buffer, &log_now);
-
-	const char *log_filename = strrchr(path, PATH_SEPARATOR);
-	if (log_filename && *log_filename) {
-		log_filename++;
-	} else {
-		log_filename = path;
-	}
-	BUF_APPENDF(slog_buffer, " %s:%d ", log_filename, line);
+	BUF_APPENDF(slog_buffer, " %s:%d ", get_filename(path), line);
 
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
 	if (ret < 0) {
-		BUF_APPENDCONST(slog_buffer, "<log format error>");
+		BUF_APPENDCONST(slog_buffer, "(log format error)");
 	}
 	/* overwritting the null terminator is not an issue */
 	BUF_APPENDCONST(slog_buffer, "\n");
@@ -129,21 +133,14 @@ static void slog_write_syslog(
 		LOG_INFO,  LOG_DEBUG, LOG_DEBUG, LOG_DEBUG,
 	};
 
-	const char *log_filename = strrchr(path, PATH_SEPARATOR);
-	if (log_filename && *log_filename) {
-		log_filename++;
-	} else {
-		log_filename = path;
-	}
-
 	BUF_INIT(slog_buffer, 0);
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
 	if (ret < 0) {
-		BUF_APPENDCONST(slog_buffer, "<log format error>");
+		BUF_APPENDCONST(slog_buffer, "(log format error)");
 	}
 
 	syslog(LOG_USER | slog_level_map[(level)], "%c %s:%d %.*s",
-	       slog_level_char[level], log_filename, (line),
+	       slog_level_char[level], get_filename(path), (line),
 	       (int)slog_buffer.len, slog_buffer.data);
 }
 #endif

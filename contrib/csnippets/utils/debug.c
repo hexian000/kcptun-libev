@@ -17,6 +17,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#define TAB_WIDTH 4
+
 void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 {
 	const unsigned char *restrict s = data;
@@ -39,9 +41,15 @@ void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 			wrap = 0;
 		}
 		if (!(isprint(ch) || isspace(ch))) {
-			ch = '?';
+			(void)fputc('?', f);
+		} else if (ch == '\t') {
+			const size_t n = TAB_WIDTH - wrap % TAB_WIDTH;
+			for (size_t i = 0; i < n; i++) {
+				(void)fputc(' ', f);
+			}
+		} else {
+			(void)fputc(ch, f);
 		}
-		(void)fputc(ch, f);
 		wrap++;
 	}
 	if (wrap > 0) {
