@@ -50,7 +50,7 @@ include(CTest)
 
 option(FORCE_POSIX "Build the core features using POSIX-compliant APIs only" OFF)
 option(BUILD_STATIC "Build a static executable" OFF)
-option(BUILD_PIE "Build a position independent executable" ON)
+option(BUILD_PIE "Build a position independent executable" OFF)
 option(LINK_STATIC_LIBS "Link against static libraries" OFF)
 option(ENABLE_SANITIZERS "Build with sanitizers" OFF)
 option(ENABLE_SYSTEMD "Enable systemd integration" OFF)
