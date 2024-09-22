@@ -2,9 +2,6 @@
 cd "$(dirname "$0")"
 GENERATOR="Unix Makefiles"
 NPROC="1"
-if command -v nproc >/dev/null 2>&1; then
-    NPROC="$(nproc --all)"
-fi
 set -ex
 
 case "$1" in
