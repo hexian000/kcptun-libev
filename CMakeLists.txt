@@ -11,33 +11,29 @@ function(get_git_version)
     execute_process(
         COMMAND ${GIT_EXECUTABLE} rev-parse --git-dir
         RESULT_VARIABLE RESULT
-        OUTPUT_VARIABLE GIT_REPO
+        OUTPUT_VARIABLE GIT_DIR
         OUTPUT_STRIP_TRAILING_WHITESPACE)
     if(RESULT)
         return()
     endif()
     execute_process(
         COMMAND ${GIT_EXECUTABLE} tag --points-at HEAD
-        OUTPUT_VARIABLE GIT_HEAD
+        OUTPUT_VARIABLE GIT_VERSION
         OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if("${GIT_HEAD}" STREQUAL "")
+    if("${GIT_VERSION}" STREQUAL "")
         execute_process(
             COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
             OUTPUT_VARIABLE GIT_HEAD
             OUTPUT_STRIP_TRAILING_WHITESPACE)
-        set(GIT_HEAD "git-${GIT_HEAD}")
+        set(GIT_VERSION "git-${GIT_HEAD}")
     endif()
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} update-index --refresh -q
-        OUTPUT_QUIET)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} diff-index --quiet HEAD --
+        COMMAND ${GIT_EXECUTABLE} diff --quiet HEAD --
         RESULT_VARIABLE RESULT)
     if(RESULT)
-        set(PROJECT_VERSION_STRING "${GIT_HEAD}+" PARENT_SCOPE)
-    else()
-        set(PROJECT_VERSION_STRING "${GIT_HEAD}" PARENT_SCOPE)
+        set(GIT_VERSION "${GIT_VERSION}+")
     endif()
+    set(PROJECT_VERSION_STRING "${GIT_VERSION}" PARENT_SCOPE)
 endfunction(get_git_version)
 
 if("${PROJECT_VERSION_STRING}" STREQUAL "")
