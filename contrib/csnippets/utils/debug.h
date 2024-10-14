@@ -22,7 +22,7 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 			break;                                                 \
 		}                                                              \
 		LOG_F(level, format, __VA_ARGS__);                             \
-		FILE *log_fp = slog_file;                                      \
+		FILE *log_fp = atomic_load(&slog_file_);                       \
 		if (log_fp != NULL) {                                          \
 			print_stacktrace(log_fp, "  ", (skip));                \
 		}                                                              \
@@ -35,7 +35,7 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 			break;                                                 \
 		}                                                              \
 		LOG_F(level, format, __VA_ARGS__);                             \
-		FILE *log_fp = slog_file;                                      \
+		FILE *log_fp = atomic_load(&slog_file_);                       \
 		if (log_fp != NULL) {                                          \
 			print_txt(log_fp, "  ", (txt), (txtsize));             \
 		}                                                              \
@@ -49,7 +49,7 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 			break;                                                 \
 		}                                                              \
 		LOG_F(level, format, __VA_ARGS__);                             \
-		FILE *log_fp = slog_file;                                      \
+		FILE *log_fp = atomic_load(&slog_file_);                       \
 		if (log_fp != NULL) {                                          \
 			print_bin(log_fp, "  ", (bin), (binsize));             \
 		}                                                              \

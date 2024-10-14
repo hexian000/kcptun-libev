@@ -42,7 +42,7 @@
 		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
 		LOG_F(VERYVERBOSE, what ": %" PRIu16 " bytes, addr=%s",        \
 		      (msg)->len, addr);                                       \
-		FILE *log_fp = slog_file;                                      \
+		FILE *log_fp = atomic_load(&slog_file_);                       \
 		if (log_fp != NULL) {                                          \
 			print_bin(log_fp, "  ", (msg)->buf, (msg)->len);       \
 		}                                                              \

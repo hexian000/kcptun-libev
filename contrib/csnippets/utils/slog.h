@@ -4,6 +4,7 @@
 #ifndef UTILS_SLOG_H
 #define UTILS_SLOG_H
 
+#include <stdatomic.h>
 #include <stdio.h>
 
 enum {
@@ -17,14 +18,15 @@ enum {
 	LOG_LEVEL_VERBOSE,
 	LOG_LEVEL_VERYVERBOSE,
 };
-extern int slog_level;
-extern FILE *slog_file;
+extern atomic_int slog_level_;
+void slog_setlevel(int level);
 
 enum {
 	SLOG_OUTPUT_DISCARD,
 	SLOG_OUTPUT_FILE,
 	SLOG_OUTPUT_SYSLOG,
 };
+extern _Atomic(FILE *) slog_file_;
 void slog_setoutput(int type, ...);
 
 void slog_write(int level, const char *path, int line, const char *format, ...);
@@ -36,7 +38,7 @@ void slog_write(int level, const char *path, int line, const char *format, ...);
 		__VA_ARGS__);
 #define LOG(level, message) LOG_F(level, "%s", message)
 
-#define LOGLEVEL(level) ((LOG_LEVEL_##level) <= slog_level)
+#define LOGLEVEL(level) ((LOG_LEVEL_##level) <= atomic_load(&slog_level_))
 
 /* Fatal: Serious problems that are likely to cause the program to exit. */
 #define LOGF_F(format, ...)                                                    \

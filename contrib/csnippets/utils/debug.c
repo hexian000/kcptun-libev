@@ -1,6 +1,9 @@
 /* csnippets (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
+/* for wcwidth() */
+#define _XOPEN_SOURCE 700
+
 #include "debug.h"
 
 #if WITH_LIBBACKTRACE
@@ -16,41 +19,52 @@
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <wchar.h>
+#include <wctype.h>
 
+#define HARD_WRAP 70
 #define TAB_WIDTH 4
 
 void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 {
-	const unsigned char *restrict s = data;
+	const char *s = data;
 	size_t line = 1, wrap = 0;
-	for (size_t i = 0; s[i] != '\0' && i < n; i++) {
+	while (*s != '\0') {
 		if (wrap == 0) {
 			(void)fprintf(f, "%s%4zu ", indent, line);
 		}
-		unsigned char ch = s[i];
-		if (ch == '\n') {
+		wchar_t wc;
+		int clen = mbtowc(&wc, s, n);
+		s += clen, n -= clen;
+		int width;
+		switch (wc) {
+		case L'\n':
 			/* soft wrap */
 			(void)fputc('\n', f);
 			line++;
 			wrap = 0;
 			continue;
+		case L'\t':
+			width = TAB_WIDTH - wrap % TAB_WIDTH;
+			break;
+		default:
+			if (!iswprint(wc)) {
+				wc = L'?';
+			}
+			width = wcwidth(wc);
 		}
-		if (wrap >= 70) {
+		if (wrap + width > HARD_WRAP) {
 			/* hard wrap */
 			(void)fprintf(f, " +\n%s     ", indent);
 			wrap = 0;
 		}
-		if (!(isprint(ch) || isspace(ch))) {
-			(void)fputc('?', f);
-		} else if (ch == '\t') {
-			const size_t n = TAB_WIDTH - wrap % TAB_WIDTH;
-			for (size_t i = 0; i < n; i++) {
-				(void)fputc(' ', f);
-			}
-		} else {
-			(void)fputc(ch, f);
+		if (wc == L'\t') {
+			(void)fprintf(f, "%*s", width, "");
+			wrap += width;
+			continue;
 		}
-		wrap++;
+		(void)fprintf(f, "%lc", wc);
+		wrap += width;
 	}
 	if (wrap > 0) {
 		(void)fputc('\n', f);
@@ -76,7 +90,7 @@ void print_bin(FILE *f, const char *indent, const void *data, size_t n)
 			unsigned char ch = ' ';
 			if ((i + j) < n) {
 				ch = b[i + j];
-				if (!isprint(ch)) {
+				if (!isascii(ch) || !isprint(ch)) {
 					ch = '.';
 				}
 			}

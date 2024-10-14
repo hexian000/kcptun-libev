@@ -55,9 +55,9 @@ void init(int argc, char **argv)
 {
 	UNUSED(argc);
 	UNUSED(argv);
-
 	(void)setlocale(LC_ALL, "");
 	slog_setoutput(SLOG_OUTPUT_FILE, stdout);
+	slog_setlevel(LOG_LEVEL_VERBOSE);
 
 	struct sigaction ignore = {
 		.sa_handler = SIG_IGN,

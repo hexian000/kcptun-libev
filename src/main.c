@@ -135,7 +135,7 @@ static void parse_args(int argc, char **argv)
 	}
 
 #undef OPT_REQUIRE_ARG
-	slog_level = LOG_LEVEL_NOTICE + args.verbosity;
+	slog_setlevel(LOG_LEVEL_NOTICE + args.verbosity);
 }
 
 int main(int argc, char **argv)
@@ -158,9 +158,7 @@ int main(int argc, char **argv)
 		LOGF("failed to read config");
 		return EXIT_FAILURE;
 	}
-	slog_level =
-		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
-		      LOG_LEVEL_VERYVERBOSE);
+	slog_setlevel(conf->log_level + args.verbosity);
 	loadlibs();
 
 	struct ev_loop *loop = ev_default_loop(0);
@@ -249,7 +247,7 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 			return;
 		}
 		conf_free((struct config *)s->conf);
-		slog_level = conf->log_level;
+		slog_setlevel(conf->log_level);
 		s->conf = conf;
 		LOGN("config successfully reloaded");
 		(void)server_resolve(s);

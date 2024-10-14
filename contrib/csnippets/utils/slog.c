@@ -11,15 +11,16 @@
 #include <assert.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-int slog_level = LOG_LEVEL_VERBOSE;
-FILE *slog_file = NULL;
-static int slog_output_type = SLOG_OUTPUT_DISCARD;
+atomic_int slog_level_ = LOG_LEVEL_VERBOSE;
+static atomic_int slog_output_type = SLOG_OUTPUT_DISCARD;
+_Atomic(FILE *) slog_file_ = NULL;
 
 static const unsigned char slog_level_char[] = {
 	'-', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
@@ -30,30 +31,35 @@ static _Thread_local struct {
 	unsigned char data[BUFSIZ];
 } slog_buffer;
 
+void slog_setlevel(const int level)
+{
+	atomic_store(&slog_level_, level);
+}
+
 void slog_setoutput(const int type, ...)
 {
 	va_list args;
 	va_start(args, type);
 	switch (type) {
 	case SLOG_OUTPUT_DISCARD: {
-		slog_file = NULL;
+		atomic_store(&slog_file_, NULL);
 	} break;
 	case SLOG_OUTPUT_FILE: {
 		FILE *stream = va_arg(args, FILE *);
 		assert(stream != NULL);
 		(void)setvbuf(stream, NULL, _IONBF, 0);
-		slog_file = stream;
+		atomic_store(&slog_file_, stream);
 	} break;
 	case SLOG_OUTPUT_SYSLOG: {
 #if HAVE_SYSLOG
 		const char *ident = va_arg(args, const char *);
 		openlog(ident, LOG_PID | LOG_NDELAY, LOG_USER);
 #endif
-		slog_file = NULL;
+		atomic_store(&slog_file_, NULL);
 	} break;
 	}
 	va_end(args);
-	slog_output_type = type;
+	atomic_store(&slog_output_type, type);
 }
 
 #if defined(_MSC_VER)
@@ -100,7 +106,7 @@ static void slog_write_file(
 	const int level, const char *path, const int line, const char *format,
 	va_list args)
 {
-	FILE *log_fp = slog_file;
+	FILE *log_fp = atomic_load(&slog_file_);
 	if (log_fp == NULL || ferror(log_fp)) {
 		return;
 	}
@@ -149,7 +155,7 @@ void slog_write(
 	const int level, const char *path, const int line, const char *format,
 	...)
 {
-	switch (slog_output_type) {
+	switch (atomic_load(&slog_output_type)) {
 	case SLOG_OUTPUT_DISCARD:
 		return;
 	case SLOG_OUTPUT_FILE: {
