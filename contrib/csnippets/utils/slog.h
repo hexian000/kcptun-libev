@@ -4,7 +4,9 @@
 #ifndef UTILS_SLOG_H
 #define UTILS_SLOG_H
 
+#if SLOG_MT_SAFE
 #include <stdatomic.h>
+#endif
 #include <stdio.h>
 
 enum {
@@ -18,7 +20,11 @@ enum {
 	LOG_LEVEL_VERBOSE,
 	LOG_LEVEL_VERYVERBOSE,
 };
+#if SLOG_MT_SAFE
 extern atomic_int slog_level_;
+#else
+extern int slog_level_;
+#endif
 void slog_setlevel(int level);
 
 enum {
@@ -26,19 +32,31 @@ enum {
 	SLOG_OUTPUT_FILE,
 	SLOG_OUTPUT_SYSLOG,
 };
-extern _Atomic(FILE *) slog_file_;
 void slog_setoutput(int type, ...);
 
-void slog_write(int level, const char *path, int line, const char *format, ...);
+void slog_setfileprefix(const char *prefix);
+const char *slog_filename(const char *file);
+
+struct slog_extra {
+	void (*func)(void *data, FILE *f);
+	void *data;
+};
+void slog_write(
+	int level, const char *file, int line, struct slog_extra *extra,
+	const char *format, ...);
 
 /* LOG: Log a message unconditionally. */
 #define LOG_F(level, format, ...)                                              \
 	slog_write(                                                            \
-		(LOG_LEVEL_##level), __FILE__, __LINE__, (format),             \
-		__VA_ARGS__);
+		(LOG_LEVEL_##level), __FILE__, __LINE__, NULL, (format),       \
+		__VA_ARGS__)
 #define LOG(level, message) LOG_F(level, "%s", message)
 
+#if SLOG_MT_SAFE
 #define LOGLEVEL(level) ((LOG_LEVEL_##level) <= atomic_load(&slog_level_))
+#else
+#define LOGLEVEL(level) ((LOG_LEVEL_##level) <= slog_level_)
+#endif
 
 /* Fatal: Serious problems that are likely to cause the program to exit. */
 #define LOGF_F(format, ...)                                                    \

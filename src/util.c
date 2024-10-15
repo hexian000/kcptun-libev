@@ -51,12 +51,26 @@ bool check_rate_limit(
 
 struct mcache *msgpool;
 
+#if defined(WIN32)
+#define PATH_SEPARATOR '\\'
+#else
+#define PATH_SEPARATOR '/'
+#endif
+
 void init(int argc, char **argv)
 {
 	UNUSED(argc);
 	UNUSED(argv);
 	(void)setlocale(LC_ALL, "");
 	slog_setoutput(SLOG_OUTPUT_FILE, stdout);
+	{
+		static char prefix[] = __FILE__;
+		char *s = strrchr(prefix, PATH_SEPARATOR);
+		if (s != NULL) {
+			s[1] = '\0';
+		}
+		slog_setfileprefix(prefix);
+	}
 	slog_setlevel(LOG_LEVEL_VERBOSE);
 
 	struct sigaction ignore = {

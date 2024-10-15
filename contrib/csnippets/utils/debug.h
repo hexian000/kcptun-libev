@@ -5,6 +5,7 @@
 #define UTILS_DEBUG_H
 
 #include "slog.h"
+#include "utils/buffer.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -12,33 +13,59 @@
 
 /* NOTICE: debugging utils may not be efficient */
 
-void print_txt(FILE *f, const char *indent, const void *data, size_t n);
-void print_bin(FILE *f, const char *indent, const void *data, size_t n);
-void print_stacktrace(FILE *f, const char *indent, int skip);
+struct slog_extra_txt {
+	const char *data;
+	size_t len;
+};
+void slog_extra_txt(void *data, FILE *f);
 
-#define LOG_STACK_F(level, skip, format, ...)                                  \
+struct slog_extra_bin {
+	const void *data;
+	size_t len;
+};
+void slog_extra_bin(void *data, FILE *f);
+
+void slog_traceback(struct buffer *buf, int skip);
+void slog_extra_buf(void *data, FILE *f);
+
+#define LOG_STACK_F(level, calldepth, format, ...)                             \
 	do {                                                                   \
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
 		}                                                              \
-		LOG_F(level, format, __VA_ARGS__);                             \
-		FILE *log_fp = atomic_load(&slog_file_);                       \
-		if (log_fp != NULL) {                                          \
-			print_stacktrace(log_fp, "  ", (skip));                \
-		}                                                              \
+		struct {                                                       \
+			BUFFER_HDR;                                            \
+			unsigned char data[BUFSIZ];                            \
+		} buf;                                                         \
+		BUF_INIT(buf, 0);                                              \
+		slog_traceback((struct buffer *)&buf, (calldepth));            \
+		struct slog_extra extra = {                                    \
+			.func = slog_extra_buf,                                \
+			.data = &buf,                                          \
+		};                                                             \
+		slog_write(                                                    \
+			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
+			(format), __VA_ARGS__);                                \
 	} while (0)
-#define LOG_STACK(level, skip, msg) LOG_STACK_F(level, skip, "%s", msg)
+#define LOG_STACK(level, calldepth, msg)                                       \
+	LOG_STACK_F(level, calldepth, "%s", msg)
 
 #define LOG_TXT_F(level, txt, txtsize, format, ...)                            \
 	do {                                                                   \
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
 		}                                                              \
-		LOG_F(level, format, __VA_ARGS__);                             \
-		FILE *log_fp = atomic_load(&slog_file_);                       \
-		if (log_fp != NULL) {                                          \
-			print_txt(log_fp, "  ", (txt), (txtsize));             \
-		}                                                              \
+		struct slog_extra_txt extradata = {                            \
+			.data = (txt),                                         \
+			.len = (txtsize),                                      \
+		};                                                             \
+		struct slog_extra extra = {                                    \
+			.func = slog_extra_txt,                                \
+			.data = &extradata,                                    \
+		};                                                             \
+		slog_write(                                                    \
+			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
+			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_TXT(level, txt, txtsize, msg)                                      \
 	LOG_TXT_F(level, txt, txtsize, "%s", msg)
@@ -48,11 +75,17 @@ void print_stacktrace(FILE *f, const char *indent, int skip);
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
 		}                                                              \
-		LOG_F(level, format, __VA_ARGS__);                             \
-		FILE *log_fp = atomic_load(&slog_file_);                       \
-		if (log_fp != NULL) {                                          \
-			print_bin(log_fp, "  ", (bin), (binsize));             \
-		}                                                              \
+		struct slog_extra_bin extradata = {                            \
+			.data = (bin),                                         \
+			.len = (binsize),                                      \
+		};                                                             \
+		struct slog_extra extra = {                                    \
+			.func = slog_extra_bin,                                \
+			.data = &extradata,                                    \
+		};                                                             \
+		slog_write(                                                    \
+			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
+			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_BIN(level, bin, binsize, msg)                                      \
 	LOG_BIN_F(level, bin, binsize, "%s", msg)

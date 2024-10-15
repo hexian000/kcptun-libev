@@ -5,6 +5,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "debug.h"
+#include "utils/buffer.h"
 
 #if WITH_LIBBACKTRACE
 #include <backtrace.h>
@@ -25,13 +26,22 @@
 #define HARD_WRAP 70
 #define TAB_WIDTH 4
 
-void print_txt(FILE *f, const char *indent, const void *data, size_t n)
+const char indent[] = "  ";
+
+void slog_extra_txt(void *data, FILE *f)
 {
-	const char *s = data;
+	const struct slog_extra_txt *restrict extradata = data;
+	size_t n = extradata->len;
+	const char *s = extradata->data;
+	struct {
+		BUFFER_HDR;
+		unsigned char data[256];
+	} buf;
+	BUF_INIT(buf, 0);
 	size_t line = 1, wrap = 0;
 	while (*s != '\0') {
 		if (wrap == 0) {
-			(void)fprintf(f, "%s%4zu ", indent, line);
+			BUF_APPENDF(buf, "%s%4zu ", indent, line);
 		}
 		wchar_t wc;
 		int clen = mbtowc(&wc, s, n);
@@ -40,7 +50,9 @@ void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 		switch (wc) {
 		case L'\n':
 			/* soft wrap */
-			(void)fputc('\n', f);
+			BUF_APPENDCONST(buf, "\n");
+			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+			buf.len = 0;
 			line++;
 			wrap = 0;
 			continue;
@@ -55,37 +67,46 @@ void print_txt(FILE *f, const char *indent, const void *data, size_t n)
 		}
 		if (wrap + width > HARD_WRAP) {
 			/* hard wrap */
-			(void)fprintf(f, " +\n%s     ", indent);
+			BUF_APPENDF(buf, " +\n%s     ", indent);
+			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+			buf.len = 0;
 			wrap = 0;
 		}
 		if (wc == L'\t') {
-			(void)fprintf(f, "%*s", width, "");
+			BUF_APPENDF(buf, "%*s", width, "");
 			wrap += width;
 			continue;
 		}
-		(void)fprintf(f, "%lc", wc);
+		BUF_APPENDF(buf, "%lc", wc);
 		wrap += width;
 	}
 	if (wrap > 0) {
-		(void)fputc('\n', f);
+		BUF_APPENDCONST(buf, "\n");
 	}
-	(void)fflush(f);
+	(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 }
 
-void print_bin(FILE *f, const char *indent, const void *data, size_t n)
+void slog_extra_bin(void *data, FILE *f)
 {
+	const struct slog_extra_bin *restrict extradata = data;
+	size_t n = extradata->len;
+	struct {
+		BUFFER_HDR;
+		unsigned char data[256];
+	} buf;
+	BUF_INIT(buf, 0);
 	const size_t wrap = 16;
-	const unsigned char *restrict b = data;
+	const unsigned char *restrict b = extradata->data;
 	for (size_t i = 0; i < n; i += wrap) {
-		(void)fprintf(f, "%s%p: ", indent, (void *)(b + i));
+		BUF_APPENDF(buf, "%s%p: ", indent, (void *)(b + i));
 		for (size_t j = 0; j < wrap; j++) {
 			if ((i + j) < n) {
-				(void)fprintf(f, "%02" PRIX8 " ", b[i + j]);
+				BUF_APPENDF(buf, "%02" PRIX8 " ", b[i + j]);
 			} else {
-				(void)fputs("   ", f);
+				BUF_APPENDCONST(buf, "   ");
 			}
 		}
-		(void)fputc(' ', f);
+		BUF_APPENDCONST(buf, " ");
 		for (size_t j = 0; j < wrap; j++) {
 			unsigned char ch = ' ';
 			if ((i + j) < n) {
@@ -94,11 +115,12 @@ void print_bin(FILE *f, const char *indent, const void *data, size_t n)
 					ch = '.';
 				}
 			}
-			(void)fputc(ch, f);
+			buf.data[buf.len++] = ch;
 		}
-		(void)fputc('\n', f);
+		BUF_APPENDCONST(buf, "\n");
+		(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+		buf.len = 0;
 	}
-	(void)fflush(f);
 }
 
 #if WITH_LIBBACKTRACE
@@ -123,7 +145,7 @@ struct bt_syminfo {
 
 struct bt_context {
 	struct backtrace_state *state;
-	FILE *f;
+	struct buffer *buf;
 	const char *indent;
 	int index;
 };
@@ -167,33 +189,32 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 	backtrace_syminfo(ctx->state, pc, syminfo_cb, error_cb, &syminfo);
 
 	if (syminfo.symname != NULL && pcinfo.filename != NULL) {
-		(void)fprintf(
-			ctx->f, "%s#%-3d 0x%jx: %s+0x%jx in %s (%s:%d)\n",
+		BUF_APPENDF(
+			*ctx->buf, "%s#%-3d 0x%jx: %s+0x%jx in %s (%s:%d)\n",
 			ctx->indent, ctx->index, (uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval),
 			pcinfo.function ? pcinfo.function : "???",
-			pcinfo.filename, pcinfo.lineno);
+			slog_filename(pcinfo.filename), pcinfo.lineno);
 	} else if (syminfo.symname != NULL) {
-		(void)fprintf(
-			ctx->f, "%s#%-3d 0x%jx: %s+0x%jx\n", ctx->indent,
+		BUF_APPENDF(
+			*ctx->buf, "%s#%-3d 0x%jx: %s+0x%jx\n", ctx->indent,
 			ctx->index, (uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval));
 	} else if (syminfo.err.msg != NULL) {
-		(void)fprintf(
-			ctx->f, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
+		BUF_APPENDF(
+			*ctx->buf, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
 			ctx->index, (uintmax_t)pc, syminfo.err.num,
 			syminfo.err.msg);
 	} else if (pcinfo.err.msg != NULL) {
-		(void)fprintf(
-			ctx->f, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
+		BUF_APPENDF(
+			*ctx->buf, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
 			ctx->index, (uintmax_t)pc, pcinfo.err.num,
 			pcinfo.err.msg);
 	} else {
-		(void)fprintf(
-			ctx->f, "%s#%-3d 0x%jx: <unknown>\n", ctx->indent,
+		BUF_APPENDF(
+			*ctx->buf, "%s#%-3d 0x%jx: <unknown>\n", ctx->indent,
 			ctx->index, (uintmax_t)pc);
 	}
-	(void)fflush(ctx->f);
 	ctx->index++;
 	return 0;
 }
@@ -201,21 +222,19 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 static void print_error_cb(void *data, const char *msg, int errnum)
 {
 	struct bt_context *restrict ctx = data;
-	(void)fprintf(
-		ctx->f, "%sbacktrace error: (%d) %s\n", ctx->indent, errnum,
+	BUF_APPENDF(
+		*ctx->buf, "%sbacktrace error: (%d) %s\n", ctx->indent, errnum,
 		msg);
-	(void)fflush(ctx->f);
 }
 #endif
 
-void print_stacktrace(FILE *f, const char *indent, int skip)
+void slog_traceback(struct buffer *buf, int skip)
 {
-	skip++;
 #if WITH_LIBBACKTRACE
 	static _Thread_local struct backtrace_state *state = NULL;
 	struct bt_context ctx = {
 		.state = state,
-		.f = f,
+		.buf = buf,
 		.indent = indent,
 		.index = 1,
 	};
@@ -229,6 +248,7 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 	}
 	backtrace_simple(ctx.state, skip, backtrace_cb, print_error_cb, &ctx);
 #elif WITH_LIBUNWIND
+	skip--;
 	unw_context_t uc;
 	if (unw_getcontext(&uc) != 0) {
 		return;
@@ -249,13 +269,13 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 		char sym[256];
 		unw_word_t offset;
 		if (unw_get_proc_name(&cursor, sym, sizeof(sym), &offset)) {
-			(void)fprintf(
-				f, "%s#%-3d 0x%jx: <unknown>\n", indent, index,
-				(uintmax_t)pc);
+			BUF_APPENDF(
+				*buf, "%s#%-3d 0x%jx: <unknown>\n", indent,
+				index, (uintmax_t)pc);
 		} else {
-			(void)fprintf(
-				f, "%s#%-3d 0x%jx: %s+0x%jx\n", indent, index,
-				(uintmax_t)pc, sym, (uintmax_t)offset);
+			BUF_APPENDF(
+				*buf, "%s#%-3d 0x%jx: %s+0x%jx\n", indent,
+				index, (uintmax_t)pc, sym, (uintmax_t)offset);
 		}
 		index++;
 	}
@@ -266,20 +286,25 @@ void print_stacktrace(FILE *f, const char *indent, int skip)
 	if (syms == NULL) {
 		int index = 1;
 		for (int i = skip; i < n; i++) {
-			(void)fprintf(f, "%s#%-3d %p\n", indent, index, bt[i]);
+			BUF_APPENDF(*buf, "%s#%-3d %p\n", indent, index, bt[i]);
 			index++;
 		}
 		return;
 	}
 	int index = 1;
 	for (int i = skip; i < n; i++) {
-		(void)fprintf(f, "%s#%-3d %s\n", indent, index, syms[i]);
+		BUF_APPENDF(*buf, "%s#%-3d %s\n", indent, index, syms[i]);
 		index++;
 	}
 	free(syms);
 #else
-	(void)indent;
+	(void)buf;
 	(void)skip;
 #endif
-	(void)fflush(f);
+}
+
+void slog_extra_buf(void *data, FILE *f)
+{
+	const struct buffer *restrict buf = data;
+	(void)fwrite(buf->data, sizeof(buf->data[0]), buf->len, f);
 }

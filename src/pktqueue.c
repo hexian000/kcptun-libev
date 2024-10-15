@@ -40,12 +40,10 @@
 		}                                                              \
 		char addr[64];                                                 \
 		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
-		LOG_F(VERYVERBOSE, what ": %" PRIu16 " bytes, addr=%s",        \
-		      (msg)->len, addr);                                       \
-		FILE *log_fp = atomic_load(&slog_file_);                       \
-		if (log_fp != NULL) {                                          \
-			print_bin(log_fp, "  ", (msg)->buf, (msg)->len);       \
-		}                                                              \
+		LOG_BIN_F(                                                     \
+			VERYVERBOSE, (msg)->buf, (msg)->len,                   \
+			what ": %" PRIu16 " bytes, addr=%s", (msg)->len,       \
+			addr);                                                 \
 	} while (0)
 
 #if WITH_CRYPTO
