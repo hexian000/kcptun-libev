@@ -50,7 +50,7 @@ void slog_extra_txt(void *data, FILE *f)
 		switch (wc) {
 		case L'\n':
 			/* soft wrap */
-			BUF_APPENDCONST(buf, "\n");
+			BUF_APPENDSTR(buf, "\n");
 			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 			buf.len = 0;
 			line++;
@@ -81,7 +81,7 @@ void slog_extra_txt(void *data, FILE *f)
 		wrap += width;
 	}
 	if (wrap > 0) {
-		BUF_APPENDCONST(buf, "\n");
+		BUF_APPENDSTR(buf, "\n");
 	}
 	(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 }
@@ -103,10 +103,10 @@ void slog_extra_bin(void *data, FILE *f)
 			if ((i + j) < n) {
 				BUF_APPENDF(buf, "%02" PRIX8 " ", b[i + j]);
 			} else {
-				BUF_APPENDCONST(buf, "   ");
+				BUF_APPENDSTR(buf, "   ");
 			}
 		}
-		BUF_APPENDCONST(buf, " ");
+		BUF_APPENDSTR(buf, " ");
 		for (size_t j = 0; j < wrap; j++) {
 			unsigned char ch = ' ';
 			if ((i + j) < n) {
@@ -117,7 +117,7 @@ void slog_extra_bin(void *data, FILE *f)
 			}
 			buf.data[buf.len++] = ch;
 		}
-		BUF_APPENDCONST(buf, "\n");
+		BUF_APPENDSTR(buf, "\n");
 		(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 		buf.len = 0;
 	}

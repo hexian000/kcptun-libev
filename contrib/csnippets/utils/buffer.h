@@ -146,24 +146,15 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...);
 	 buf_append((struct buffer *)&(buf), (data), (n)))
 
 /**
- * @brief Append constant null-terminated string array to buffer.
+ * @brief Append literal string to buffer.
  * @details The string will be truncated if there is not enough space.
- * usage: `size_t n = BUF_APPENDCONST(buf, "some string");`
- */
-#define BUF_APPENDCONST(buf, str)                                              \
-	(assert((buf).len <= (buf).cap),                                       \
-	 buf_append(                                                           \
-		 (struct buffer *)&(buf), (const void *)(str),                 \
-		 sizeof(str) - 1u))
-
-/**
- * @brief Append null-terminated string to buffer.
- * @details The string will be truncated if there is not enough space.
- * usage: `size_t n = BUF_APPENDSTR(buf, str);`
+ * usage: `size_t n = BUF_APPENDSTR(buf, "some string");`
  */
 #define BUF_APPENDSTR(buf, str)                                                \
 	(assert((buf).len <= (buf).cap),                                       \
-	 buf_append((struct buffer *)&(buf), (const void *)(str), strlen(str)))
+	 buf_append(                                                           \
+		 (struct buffer *)&(buf), (const void *)("" str),              \
+		 sizeof(str) - 1u))
 
 /**
  * @brief Append formatted string to buffer.
@@ -313,26 +304,15 @@ static inline void vbuf_assert_bound(const struct vbuffer *vbuf)
 	(VBUF_ASSERT_BOUND(vbuf), vbuf_append((vbuf), (data), (n)))
 
 /**
- * @brief Append constant null-terminated string array to vbuffer.
+ * @brief Append literal string to vbuffer.
  * @param vbuf If NULL, the minimum required size is allocated.
  * @return If the allocation fails, the data remains unchanged.
  * @details Allocation will be expanded if there is not enough space.
- * usage: `vbuf = VBUF_APPENDCONST(vbuf, "some string");`
- */
-#define VBUF_APPENDCONST(vbuf, str)                                            \
-	(VBUF_ASSERT_BOUND(vbuf),                                              \
-	 vbuf_append((vbuf), (const void *)(str), sizeof(str) - 1u))
-
-/**
- * @brief Append null-terminated string to vbuffer.
- * @param vbuf If NULL, the minimum required size is allocated.
- * @return If the allocation fails, the data remains unchanged.
- * @details Allocation will be expanded if there is not enough space.
- * usage: `vbuf = VBUF_APPENDSTR(vbuf, str);`
+ * usage: `vbuf = VBUF_APPENDSTR(vbuf, "some string");`
  */
 #define VBUF_APPENDSTR(vbuf, str)                                              \
 	(VBUF_ASSERT_BOUND(vbuf),                                              \
-	 vbuf_append((vbuf), (const void *)(str), strlen(str)))
+	 vbuf_append((vbuf), (const void *)("" str), sizeof(str) - 1u))
 
 /**
  * @brief Append formatted string to vbuffer.
