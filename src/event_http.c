@@ -372,7 +372,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	}
 
 	if (banner) {
-		buf = VBUF_APPENDCONST(
+		buf = VBUF_APPENDSTR(
 			buf, "" PROJECT_NAME " " PROJECT_VER "\n"
 			     "  " PROJECT_HOMEPAGE "\n\n");
 	}
@@ -395,7 +395,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
-		buf = VBUF_APPENDCONST(buf, "\n");
+		buf = VBUF_APPENDSTR(buf, "\n");
 		if (stateless) {
 			buf = obfs_stats_const(obfs, buf);
 		} else {
