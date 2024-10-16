@@ -278,12 +278,12 @@ void slog_traceback(struct buffer *buf, int skip)
 		unw_word_t offset;
 		if (unw_get_proc_name(&cursor, sym, sizeof(sym), &offset)) {
 			BUF_APPENDF(
-				*buf, "%s#%-3d 0x%jx: <unknown>\n", indent,
-				index, (uintmax_t)pc);
+				*buf, INDENT "#%-3d 0x%jx: <unknown>\n", index,
+				(uintmax_t)pc);
 		} else {
 			BUF_APPENDF(
-				*buf, "%s#%-3d 0x%jx: %s+0x%jx\n", indent,
-				index, (uintmax_t)pc, sym, (uintmax_t)offset);
+				*buf, INDENT "#%-3d 0x%jx: %s+0x%jx\n", index,
+				(uintmax_t)pc, sym, (uintmax_t)offset);
 		}
 		index++;
 	}
@@ -294,14 +294,14 @@ void slog_traceback(struct buffer *buf, int skip)
 	if (syms == NULL) {
 		int index = 1;
 		for (int i = skip; i < n; i++) {
-			BUF_APPENDF(*buf, "%s#%-3d %p\n", indent, index, bt[i]);
+			BUF_APPENDF(*buf, INDENT "#%-3d %p\n", index, bt[i]);
 			index++;
 		}
 		return;
 	}
 	int index = 1;
 	for (int i = skip; i < n; i++) {
-		BUF_APPENDF(*buf, "%s#%-3d %s\n", indent, index, syms[i]);
+		BUF_APPENDF(*buf, INDENT "#%-3d %s\n", index, syms[i]);
 		index++;
 	}
 	free(syms);
