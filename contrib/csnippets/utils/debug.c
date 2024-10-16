@@ -21,7 +21,7 @@
 #include <wchar.h>
 #include <wctype.h>
 
-#define HARD_WRAP 70
+#define HARD_WRAP 110
 #define TAB_SPACE "    "
 #define TAB_WIDTH (sizeof(TAB_SPACE) - 1)
 
