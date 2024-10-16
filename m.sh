@@ -58,7 +58,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    (cd "build/src" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
+    (cd "build/bin" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/bin/kcptun-libev"
     ;;
 "posix")
@@ -82,7 +82,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    (cd "build/src" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
+    (cd "build/bin" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/bin/kcptun-libev"
     ;;
 "msys2")
