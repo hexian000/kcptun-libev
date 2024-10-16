@@ -3,6 +3,10 @@ project(kcptun-libev
     LANGUAGES C
     HOMEPAGE_URL "https://github.com/hexian000/kcptun-libev")
 
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 function(get_git_version)
     find_package(Git)
     if(NOT GIT_FOUND)

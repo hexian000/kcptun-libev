@@ -730,6 +730,20 @@ static struct vbuffer *append_traffic_stats(
 		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 }
 
+static int64_t clock_cputime(void)
+{
+#if HAVE_CLOCK_GETTIME && defined(CLOCK_PROCESS_CPUTIME_ID)
+	struct timespec t;
+	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t)) {
+		return -1;
+	}
+	return (int64_t)(t.tv_sec) * INT64_C(1000000000) + (int64_t)(t.tv_nsec);
+#else
+	return (int64_t)clock() *
+	       (INT64_C(1000000000) / (int64_t)CLOCKS_PER_SEC);
+#endif
+}
+
 static bool update_load(
 	struct server *restrict s, char *buf, const size_t bufsize,
 	const double dt)

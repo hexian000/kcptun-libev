@@ -19,7 +19,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define UNUSED(x) (void)(x)
 
@@ -32,20 +31,6 @@
 			LOGW_F("close: %s", strerror(close_err));              \
 		}                                                              \
 	} while (0)
-
-static inline int64_t clock_cputime(void)
-{
-#if HAVE_CLOCK_GETTIME && defined(CLOCK_PROCESS_CPUTIME_ID)
-	struct timespec t;
-	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t)) {
-		return -1;
-	}
-	return (int64_t)(t.tv_sec) * INT64_C(1000000000) + (int64_t)(t.tv_nsec);
-#else
-	return (int64_t)clock() *
-	       (INT64_C(1000000000) / (int64_t)CLOCKS_PER_SEC);
-#endif
-}
 
 extern struct mcache *msgpool;
 

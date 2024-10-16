@@ -14,7 +14,7 @@ case "$1" in
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "xs")
     # cross compile statically linked executable
@@ -27,7 +27,7 @@ case "$1" in
         -DBUILD_STATIC=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "r")
     # rebuild release
@@ -37,7 +37,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "s")
     # rebuild statically linked executable
@@ -48,7 +48,7 @@ case "$1" in
         -DBUILD_STATIC=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "p")
     # rebuild for profiling
@@ -59,7 +59,7 @@ case "$1" in
         -S "." -B "build"
     nice cmake --build "build"
     (cd "build/src" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "posix")
     # force POSIX APIs
@@ -70,7 +70,7 @@ case "$1" in
         -DFORCE_POSIX=1 \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "clang")
     # rebuild with Linux clang/lld
@@ -83,7 +83,7 @@ case "$1" in
         -S "." -B "build"
     nice cmake --build "build"
     (cd "build/src" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "msys2")
     # set FIND_ROOT for finding dependencies
@@ -97,7 +97,7 @@ case "$1" in
     HOST="$(cc -dumpmachine)"
     zip -9j "build/kcptun-libev-win32.${HOST}.zip" \
         "/usr/bin/msys-2.0.dll" \
-        "build/src/kcptun-libev.exe"
+        "build/bin/kcptun-libev.exe"
     ls -lh "build/kcptun-libev-win32.${HOST}.zip"
     ;;
 "ndk")
@@ -114,7 +114,7 @@ case "$1" in
         -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
     nice cmake --build "build"
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "single")
     # rebuild as single file
@@ -128,8 +128,8 @@ case "$1" in
     done | gcc -pipe -O3 -s -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=c11 \
         -Icontrib/csnippets -Icontrib/json -Icontrib/kcp -Icontrib/libbloom -Isrc \
 	-include build/src/config.h \
-        -o "build/src/kcptun-libev" -xc - -lev -lsodium -lm
-    ls -lh "build/src/kcptun-libev"
+        -o "build/bin/kcptun-libev" -xc - -lev -lsodium -lm
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "d")
     if command -v clang-format >/dev/null; then
@@ -144,7 +144,7 @@ case "$1" in
         -S . -B "build"
     ln -sf build/compile_commands.json compile_commands.json
     nice cmake --build "build" --parallel
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "san")
     # rebuild with clang & sanitizers
@@ -157,7 +157,7 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
         -S "." -B "build"
     nice cmake --build "build" --parallel
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 "c")
     # clean artifacts
@@ -172,6 +172,6 @@ case "$1" in
         -S "." -B "build"
     ln -sf "build/compile_commands.json" "compile_commands.json"
     nice cmake --build "build" --parallel
-    ls -lh "build/src/kcptun-libev"
+    ls -lh "build/bin/kcptun-libev"
     ;;
 esac
