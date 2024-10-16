@@ -18,15 +18,17 @@
 
 #include <ctype.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <wctype.h>
 
 #define HARD_WRAP 70
-#define TAB_WIDTH 4
+#define TAB_SPACE "    "
+#define TAB_WIDTH (sizeof(TAB_SPACE) - 1)
 
-const char indent[] = "  ";
+#define INDENT "  "
 
 void slog_extra_txt(void *data, FILE *f)
 {
@@ -38,10 +40,12 @@ void slog_extra_txt(void *data, FILE *f)
 		unsigned char data[256];
 	} buf;
 	BUF_INIT(buf, 0);
-	size_t line = 1, wrap = 0;
+	bool lineno = true;
+	size_t line = 0, column = 0;
 	while (*s != '\0') {
-		if (wrap == 0) {
-			BUF_APPENDF(buf, "%s%4zu ", indent, line);
+		if (lineno) {
+			BUF_APPENDF(buf, INDENT "%4zu ", ++line);
+			lineno = false;
 		}
 		wchar_t wc;
 		int clen = mbtowc(&wc, s, n);
@@ -53,11 +57,11 @@ void slog_extra_txt(void *data, FILE *f)
 			BUF_APPENDSTR(buf, "\n");
 			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 			buf.len = 0;
-			line++;
-			wrap = 0;
+			column = 0;
+			lineno = true;
 			continue;
 		case L'\t':
-			width = TAB_WIDTH - wrap % TAB_WIDTH;
+			width = TAB_WIDTH - column % TAB_WIDTH;
 			break;
 		default:
 			if (!iswprint(wc)) {
@@ -65,22 +69,26 @@ void slog_extra_txt(void *data, FILE *f)
 			}
 			width = wcwidth(wc);
 		}
-		if (wrap + width > HARD_WRAP) {
+		if (column + width > HARD_WRAP) {
 			/* hard wrap */
-			BUF_APPENDF(buf, " +\n%s     ", indent);
+			BUF_APPENDSTR(buf, " +\n" INDENT "     ");
 			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 			buf.len = 0;
-			wrap = 0;
+			column = 0;
 		}
 		if (wc == L'\t') {
-			BUF_APPENDF(buf, "%*s", width, "");
-			wrap += width;
-			continue;
+			BUF_APPEND(buf, TAB_SPACE, width);
+			column += width;
+		} else {
+			BUF_APPENDF(buf, "%lc", wc);
+			column += width;
 		}
-		BUF_APPENDF(buf, "%lc", wc);
-		wrap += width;
+		if (buf.cap - buf.len < 16) {
+			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+			buf.len = 0;
+		}
 	}
-	if (wrap > 0) {
+	if (column > 0) {
 		BUF_APPENDSTR(buf, "\n");
 	}
 	(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
@@ -98,7 +106,7 @@ void slog_extra_bin(void *data, FILE *f)
 	const size_t wrap = 16;
 	const unsigned char *restrict b = extradata->data;
 	for (size_t i = 0; i < n; i += wrap) {
-		BUF_APPENDF(buf, "%s%p: ", indent, (void *)(b + i));
+		BUF_APPENDF(buf, INDENT "%p: ", (void *)(b + i));
 		for (size_t j = 0; j < wrap; j++) {
 			if ((i + j) < n) {
 				BUF_APPENDF(buf, "%02" PRIX8 " ", b[i + j]);
@@ -235,7 +243,7 @@ void slog_traceback(struct buffer *buf, int skip)
 	struct bt_context ctx = {
 		.state = state,
 		.buf = buf,
-		.indent = indent,
+		.indent = INDENT,
 		.index = 1,
 	};
 	if (ctx.state == NULL) {
