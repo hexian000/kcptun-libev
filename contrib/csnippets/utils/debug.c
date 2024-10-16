@@ -1,9 +1,6 @@
 /* csnippets (c) 2019-2024 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-/* for wcwidth() */
-#define _XOPEN_SOURCE 700
-
 #include "debug.h"
 #include "utils/buffer.h"
 
@@ -67,7 +64,11 @@ void slog_extra_txt(void *data, FILE *f)
 			if (!iswprint(wc)) {
 				wc = L'?';
 			}
+#if HAVE_WCWIDTH
 			width = wcwidth(wc);
+#else
+			width = 1;
+#endif
 		}
 		if (column + width > HARD_WRAP) {
 			/* hard wrap */
@@ -239,6 +240,7 @@ static void print_error_cb(void *data, const char *msg, int errnum)
 void slog_traceback(struct buffer *buf, int skip)
 {
 #if WITH_LIBBACKTRACE
+	skip++;
 	static _Thread_local struct backtrace_state *state = NULL;
 	struct bt_context ctx = {
 		.state = state,
@@ -256,7 +258,6 @@ void slog_traceback(struct buffer *buf, int skip)
 	}
 	backtrace_simple(ctx.state, skip, backtrace_cb, print_error_cb, &ctx);
 #elif WITH_LIBUNWIND
-	skip--;
 	unw_context_t uc;
 	if (unw_getcontext(&uc) != 0) {
 		return;
@@ -288,6 +289,7 @@ void slog_traceback(struct buffer *buf, int skip)
 		index++;
 	}
 #elif HAVE_BACKTRACE_SYMBOLS
+	skip += 2;
 	void *bt[256];
 	const int n = backtrace(bt, sizeof(bt));
 	char **syms = backtrace_symbols(bt, n);
