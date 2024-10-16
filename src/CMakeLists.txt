@@ -11,10 +11,10 @@ add_executable(kcptun-libev main.c
     obfs.c obfs.h
     event_tcp.c event_kcp.c event_pkt.c event_http.c event_timer.c event.h)
 
-if(TARGET_LINUX)
-    target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
-else()
+if(FORCE_POSIX)
     target_compile_definitions(kcptun-libev PRIVATE _POSIX_C_SOURCE=200809L)
+else()
+    target_compile_definitions(kcptun-libev PRIVATE _GNU_SOURCE)
 endif()
 
 include(CheckSymbolExists)
@@ -80,7 +80,7 @@ if(WITH_SODIUM)
     set(WITH_CRYPTO TRUE)
 endif()
 
-if(WITH_CRYPTO AND TARGET_LINUX)
+if(WITH_CRYPTO AND (CMAKE_HOST_SYSTEM STREQUAL "Linux") AND NOT FORCE_POSIX)
     set(WITH_OBFS TRUE)
 endif()
 

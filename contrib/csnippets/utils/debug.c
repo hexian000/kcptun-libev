@@ -120,7 +120,7 @@ void slog_extra_bin(void *data, FILE *f)
 			unsigned char ch = ' ';
 			if ((i + j) < n) {
 				ch = b[i + j];
-				if (!isascii(ch) || !isprint(ch)) {
+				if (((ch) & ~0x7f) || !isprint(ch)) {
 					ch = '.';
 				}
 			}
