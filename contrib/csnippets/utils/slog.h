@@ -4,10 +4,12 @@
 #ifndef UTILS_SLOG_H
 #define UTILS_SLOG_H
 
+#include <stdarg.h>
+#include <stdio.h>
+
 #if SLOG_MT_SAFE
 #include <stdatomic.h>
 #endif
-#include <stdio.h>
 
 enum {
 	LOG_LEVEL_SILENCE,
@@ -35,12 +37,14 @@ enum {
 void slog_setoutput(int type, ...);
 
 void slog_setfileprefix(const char *prefix);
-const char *slog_filename(const char *file);
 
 struct slog_extra {
 	void (*func)(void *data, FILE *f);
 	void *data;
 };
+void slog_vwrite(
+	int level, const char *file, int line, struct slog_extra *extra,
+	const char *format, va_list args);
 void slog_write(
 	int level, const char *file, int line, struct slog_extra *extra,
 	const char *format, ...);

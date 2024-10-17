@@ -17,42 +17,61 @@
 #include <string.h>
 #include <time.h>
 
+#if SLOG_MT_SAFE
+#include <stdatomic.h>
+#include <threads.h>
+#endif
+
 typedef void (*slog_writer_fn)(
 	const int level, const char *file, const int line,
 	struct slog_extra *extra, const char *format, va_list args);
 
-#if SLOG_MT_SAFE
+static const unsigned char slog_level_char[] = {
+	'-', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
+};
 
-#include <stdatomic.h>
-#include <threads.h>
+FILE *slog_output;
+
+#if SLOG_MT_SAFE
+mtx_t slog_output_mu;
 
 atomic_int slog_level_ = LOG_LEVEL_VERBOSE;
 static _Atomic(slog_writer_fn) slog_writer;
 static _Atomic(const char *) slog_fileprefix;
 
-#define MTX_LOCK(mu)                                                           \
+#define THRD_ASSERT(expr)                                                      \
 	do {                                                                   \
-		const int status = mtx_lock(mu);                               \
+		const int status = (expr);                                     \
 		(void)status;                                                  \
 		assert(status == thrd_success);                                \
 	} while (0)
 
-#define MTX_UNLOCK(mu)                                                         \
-	do {                                                                   \
-		const int status = mtx_unlock(mu);                             \
-		(void)status;                                                  \
-		assert(status == thrd_success);                                \
-	} while (0)
+#define MTX_LOCK(mu) THRD_ASSERT(mtx_lock(mu))
+#define MTX_UNLOCK(mu) THRD_ASSERT(mtx_unlock(mu))
 
 #define ATOMIC_STORE(object, desired)                                          \
 	atomic_store_explicit(object, desired, memory_order_relaxed)
 #define ATOMIC_LOAD(object) atomic_load_explicit(object, memory_order_relaxed)
 
-#else
+static _Thread_local struct {
+	BUFFER_HDR;
+	unsigned char data[BUFSIZ];
+} slog_buffer;
 
-int slog_level_ = LOG_LEVEL_VERBOSE;
-static slog_writer_fn slog_writer;
-static const char *slog_fileprefix;
+static once_flag slog_init_flag = ONCE_FLAG_INIT;
+static void slog_init(void)
+{
+	THRD_ASSERT(mtx_init(&slog_output_mu, mtx_plain));
+	atomic_init(&slog_level_, LOG_LEVEL_SILENCE);
+	atomic_init(&slog_writer, NULL);
+	atomic_init(&slog_fileprefix, NULL);
+}
+
+#define SLOG_INIT() call_once(&slog_init_flag, &slog_init)
+#else
+int slog_level_ = LOG_LEVEL_SILENCE;
+static slog_writer_fn slog_writer = NULL;
+static const char *slog_fileprefix = NULL;
 
 #define MTX_LOCK(mu) (void)(0)
 #define MTX_UNLOCK(mu) (void)(0)
@@ -60,11 +79,15 @@ static const char *slog_fileprefix;
 #define ATOMIC_STORE(object, desired) *(object) = (desired)
 #define ATOMIC_LOAD(object) (*(object))
 
-#endif
+static struct {
+	BUFFER_HDR;
+	unsigned char data[BUFSIZ];
+} slog_buffer;
 
-static const unsigned char slog_level_char[] = {
-	'-', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
-};
+#define SLOG_INIT() (void)(0)
+#endif /* SLOG_MT_SAFE */
+
+#define TIME_LAYOUT "2006-01-02T15:04:05-0700"
 
 #if HAVE_LOCALTIME_R
 #define APPEND_TIMESTAMP(buf, timer)                                           \
@@ -74,7 +97,7 @@ static const unsigned char slog_level_char[] = {
 			(char *)((buf).data + (buf).len),                      \
 			((buf).cap - (buf).len), "%FT%T%z",                    \
 			localtime_r((timer), &log_tm));                        \
-		assert(ret > 0);                                               \
+		assert(ret == sizeof(TIME_LAYOUT) - 1);                        \
 		(buf).len += ret;                                              \
 	} while (0)
 #else
@@ -84,12 +107,12 @@ static const unsigned char slog_level_char[] = {
 			(char *)((buf).data + (buf).len),                      \
 			((buf).cap - (buf).len), "%FT%T%z",                    \
 			localtime((timer)));                                   \
-		assert(ret > 0);                                               \
+		assert(ret == sizeof(TIME_LAYOUT) - 1);                        \
 		(buf).len += ret;                                              \
 	} while (0)
-#endif
+#endif /* HAVE_LOCALTIME_R */
 
-const char *slog_filename(const char *file)
+static const char *slog_filename(const char *file)
 {
 	const char *prefix = ATOMIC_LOAD(&slog_fileprefix);
 	if (prefix == NULL) {
@@ -105,23 +128,6 @@ const char *slog_filename(const char *file)
 	return s;
 }
 
-FILE *slog_output;
-#if SLOG_MT_SAFE
-mtx_t slog_output_mu;
-#endif
-
-#if SLOG_MT_SAFE
-static _Thread_local struct {
-	BUFFER_HDR;
-	unsigned char data[BUFSIZ];
-} slog_buffer;
-#else
-static struct {
-	BUFFER_HDR;
-	unsigned char data[BUFSIZ];
-} slog_buffer;
-#endif
-
 static void slog_write_file(
 	const int level, const char *file, const int line,
 	struct slog_extra *extra, const char *format, va_list args)
@@ -132,7 +138,6 @@ static void slog_write_file(
 	slog_buffer.data[1] = ' ';
 	APPEND_TIMESTAMP(slog_buffer, &log_now);
 	BUF_APPENDF(slog_buffer, " %s:%d ", slog_filename(file), line);
-
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
 	if (ret < 0) {
 		BUF_APPENDSTR(slog_buffer, "(log format error)");
@@ -178,11 +183,13 @@ static void slog_write_syslog(
 
 void slog_setlevel(const int level)
 {
+	SLOG_INIT();
 	ATOMIC_STORE(&slog_level_, level);
 }
 
 void slog_setoutput(const int type, ...)
 {
+	SLOG_INIT();
 	va_list args;
 	va_start(args, type);
 	switch (type) {
@@ -191,8 +198,9 @@ void slog_setoutput(const int type, ...)
 	} break;
 	case SLOG_OUTPUT_FILE: {
 		FILE *stream = va_arg(args, FILE *);
-		assert(stream != NULL);
-		(void)setvbuf(stream, NULL, _IONBF, 0);
+		const int status = setvbuf(stream, NULL, _IONBF, 0);
+		assert(status == 0);
+		(void)status;
 		MTX_LOCK(&slog_output_mu);
 		slog_output = stream;
 		MTX_UNLOCK(&slog_output_mu);
@@ -213,13 +221,27 @@ void slog_setoutput(const int type, ...)
 
 void slog_setfileprefix(const char *prefix)
 {
+	SLOG_INIT();
 	ATOMIC_STORE(&slog_fileprefix, prefix);
+}
+
+void slog_vwrite(
+	int level, const char *file, int line, struct slog_extra *extra,
+	const char *format, va_list args)
+{
+	SLOG_INIT();
+	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
+	if (write == NULL) {
+		return;
+	}
+	write(level, file, line, extra, format, args);
 }
 
 void slog_write(
 	const int level, const char *file, const int line,
 	struct slog_extra *extra, const char *format, ...)
 {
+	SLOG_INIT();
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
 	if (write == NULL) {
 		return;

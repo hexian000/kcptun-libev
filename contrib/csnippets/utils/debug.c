@@ -204,7 +204,7 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 			ctx->index, (uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval),
 			pcinfo.function ? pcinfo.function : "???",
-			slog_filename(pcinfo.filename), pcinfo.lineno);
+			pcinfo.filename, pcinfo.lineno);
 	} else if (syminfo.symname != NULL) {
 		BUF_APPENDF(
 			*ctx->buf, INDENT "#%-3d 0x%jx: %s+0x%jx\n", ctx->index,
