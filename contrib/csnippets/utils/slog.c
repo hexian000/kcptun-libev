@@ -44,8 +44,9 @@ static _Atomic(const char *) slog_fileprefix;
 		assert(status == thrd_success);                                \
 	} while (0)
 
-#define ATOMIC_STORE(object, desired) atomic_store(object, desired)
-#define ATOMIC_LOAD(object) atomic_load(object)
+#define ATOMIC_STORE(object, desired)                                          \
+	atomic_store_explicit(object, desired, memory_order_relaxed)
+#define ATOMIC_LOAD(object) atomic_load_explicit(object, memory_order_relaxed)
 
 #else
 

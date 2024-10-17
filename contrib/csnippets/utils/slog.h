@@ -53,7 +53,9 @@ void slog_write(
 #define LOG(level, message) LOG_F(level, "%s", message)
 
 #if SLOG_MT_SAFE
-#define LOGLEVEL(level) ((LOG_LEVEL_##level) <= atomic_load(&slog_level_))
+#define LOGLEVEL(level)                                                        \
+	((LOG_LEVEL_##level) <=                                                \
+	 atomic_load_explicit(&slog_level_, memory_order_relaxed))
 #else
 #define LOGLEVEL(level) ((LOG_LEVEL_##level) <= slog_level_)
 #endif

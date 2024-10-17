@@ -133,6 +133,7 @@ void slog_extra_bin(void *data, FILE *f)
 }
 
 #if WITH_LIBBACKTRACE
+
 struct bt_error {
 	const char *msg;
 	int num;
@@ -155,7 +156,6 @@ struct bt_syminfo {
 struct bt_context {
 	struct backtrace_state *state;
 	struct buffer *buf;
-	const char *indent;
 	int index;
 };
 
@@ -199,29 +199,28 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 
 	if (syminfo.symname != NULL && pcinfo.filename != NULL) {
 		BUF_APPENDF(
-			*ctx->buf, "%s#%-3d 0x%jx: %s+0x%jx in %s (%s:%d)\n",
-			ctx->indent, ctx->index, (uintmax_t)pc, syminfo.symname,
+			*ctx->buf,
+			INDENT "#%-3d 0x%jx: %s+0x%jx in %s (%s:%d)\n",
+			ctx->index, (uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval),
 			pcinfo.function ? pcinfo.function : "???",
 			slog_filename(pcinfo.filename), pcinfo.lineno);
 	} else if (syminfo.symname != NULL) {
 		BUF_APPENDF(
-			*ctx->buf, "%s#%-3d 0x%jx: %s+0x%jx\n", ctx->indent,
-			ctx->index, (uintmax_t)pc, syminfo.symname,
+			*ctx->buf, INDENT "#%-3d 0x%jx: %s+0x%jx\n", ctx->index,
+			(uintmax_t)pc, syminfo.symname,
 			(uintmax_t)(pc - syminfo.symval));
 	} else if (syminfo.err.msg != NULL) {
 		BUF_APPENDF(
-			*ctx->buf, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
-			ctx->index, (uintmax_t)pc, syminfo.err.num,
-			syminfo.err.msg);
+			*ctx->buf, INDENT "#%-3d 0x%jx: (%d) %s\n", ctx->index,
+			(uintmax_t)pc, syminfo.err.num, syminfo.err.msg);
 	} else if (pcinfo.err.msg != NULL) {
 		BUF_APPENDF(
-			*ctx->buf, "%s#%-3d 0x%jx: (%d) %s\n", ctx->indent,
-			ctx->index, (uintmax_t)pc, pcinfo.err.num,
-			pcinfo.err.msg);
+			*ctx->buf, INDENT "#%-3d 0x%jx: (%d) %s\n", ctx->index,
+			(uintmax_t)pc, pcinfo.err.num, pcinfo.err.msg);
 	} else {
 		BUF_APPENDF(
-			*ctx->buf, "%s#%-3d 0x%jx: <unknown>\n", ctx->indent,
+			*ctx->buf, INDENT "#%-3d 0x%jx: <unknown>\n",
 			ctx->index, (uintmax_t)pc);
 	}
 	ctx->index++;
@@ -232,8 +231,7 @@ static void print_error_cb(void *data, const char *msg, int errnum)
 {
 	struct bt_context *restrict ctx = data;
 	BUF_APPENDF(
-		*ctx->buf, "%sbacktrace error: (%d) %s\n", ctx->indent, errnum,
-		msg);
+		*ctx->buf, INDENT "backtrace error: (%d) %s\n", errnum, msg);
 }
 #endif
 
@@ -241,22 +239,23 @@ void slog_traceback(struct buffer *buf, int skip)
 {
 #if WITH_LIBBACKTRACE
 	skip++;
+#if SLOG_MT_SAFE
 	static _Thread_local struct backtrace_state *state = NULL;
+#else
+	static struct backtrace_state *state = NULL;
+#endif
+	if (state == NULL) {
+		state = backtrace_create_state(NULL, 0, print_error_cb, NULL);
+		if (state == NULL) {
+			return;
+		}
+	}
 	struct bt_context ctx = {
 		.state = state,
 		.buf = buf,
-		.indent = INDENT,
 		.index = 1,
 	};
-	if (ctx.state == NULL) {
-		ctx.state =
-			backtrace_create_state(NULL, 0, print_error_cb, &ctx);
-		if (ctx.state == NULL) {
-			return;
-		}
-		state = ctx.state;
-	}
-	backtrace_simple(ctx.state, skip, backtrace_cb, print_error_cb, &ctx);
+	backtrace_simple(state, skip, backtrace_cb, print_error_cb, &ctx);
 #elif WITH_LIBUNWIND
 	unw_context_t uc;
 	if (unw_getcontext(&uc) != 0) {

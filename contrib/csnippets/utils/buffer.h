@@ -208,17 +208,9 @@ vbuf_appendf(struct vbuffer *restrict vbuf, const char *format, ...);
  */
 #define VBUF_NEW(size) vbuf_alloc(NULL, (size))
 
-#ifndef NDEBUG
-static inline void vbuf_assert_bound(const struct vbuffer *vbuf)
-{
-	assert((vbuf) == NULL ||
-	       ((vbuf)->cap > 0 && (vbuf)->len <= (vbuf)->cap));
-}
-
-#define VBUF_ASSERT_BOUND(vbuf) vbuf_assert_bound((vbuf))
-#else
-#define VBUF_ASSERT_BOUND(vbuf) ((void)(vbuf))
-#endif
+#define VBUF_ASSERT_BOUND(vbuf)                                                \
+	assert((vbuf) == NULL ||                                               \
+	       ((vbuf)->cap > 0 && (vbuf)->len <= (vbuf)->cap))
 
 /**
  * @brief Free vbuffer object.
