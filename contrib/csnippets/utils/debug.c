@@ -244,17 +244,18 @@ void slog_traceback(struct buffer *buf, int skip)
 #else
 	static struct backtrace_state *state = NULL;
 #endif
-	if (state == NULL) {
-		state = backtrace_create_state(NULL, 0, print_error_cb, NULL);
-		if (state == NULL) {
-			return;
-		}
-	}
 	struct bt_context ctx = {
 		.state = state,
 		.buf = buf,
 		.index = 1,
 	};
+	if (ctx.state == NULL) {
+		state = backtrace_create_state(NULL, 0, print_error_cb, &ctx);
+		if (state == NULL) {
+			return;
+		}
+		ctx.state = state;
+	}
 	backtrace_simple(state, skip, backtrace_cb, print_error_cb, &ctx);
 #elif WITH_LIBUNWIND
 	unw_context_t uc;
