@@ -96,6 +96,12 @@ if(ENABLE_SYSTEMD)
     endif()
 endif()
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    if(NOT ENABLE_SANITIZERS)
+        set(WITH_CRASH_HANDLER TRUE)
+    endif()
+endif()
+
 include(CheckLibraryExists)
 check_library_exists(m fmod "" LIBM)
 if(LIBM)

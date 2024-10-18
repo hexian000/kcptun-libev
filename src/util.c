@@ -49,7 +49,36 @@ bool check_rate_limit(
 	return true;
 }
 
-struct mcache *msgpool;
+#if WITH_CRASH_HANDLER
+static void crash_handler(int signo)
+{
+	LOG_STACK_F(FATAL, 2, "FATAL ERROR: %s", strsignal(signo));
+	_Exit(EXIT_FAILURE);
+}
+
+static void crash_handler_init(void)
+{
+	struct sigaction crash = {
+		.sa_handler = crash_handler,
+	};
+#define SET_SIGACTION(sig, action)                                             \
+	if (sigaction((sig), (action), NULL) != 0) {                           \
+		const int err = errno;                                         \
+		FAILMSGF("sigaction: %s", strerror(err));                      \
+	}
+	SET_SIGACTION(SIGABRT, &crash);
+	SET_SIGACTION(SIGBUS, &crash);
+	SET_SIGACTION(SIGFPE, &crash);
+	SET_SIGACTION(SIGILL, &crash);
+	SET_SIGACTION(SIGQUIT, &crash);
+	SET_SIGACTION(SIGSEGV, &crash);
+	SET_SIGACTION(SIGSYS, &crash);
+	SET_SIGACTION(SIGTRAP, &crash);
+	SET_SIGACTION(SIGXCPU, &crash);
+	SET_SIGACTION(SIGXFSZ, &crash);
+#undef SET_SIGACTION
+}
+#endif /* WITH_CRASH_HANDLER */
 
 #if defined(WIN32)
 #define PATH_SEPARATOR '\\'
@@ -80,7 +109,12 @@ void init(int argc, char **argv)
 		const int err = errno;
 		FAILMSGF("sigaction: %s", strerror(err));
 	}
+#if WITH_CRASH_HANDLER
+	crash_handler_init();
+#endif
 }
+
+struct mcache *msgpool;
 
 static void unloadlibs(void);
 

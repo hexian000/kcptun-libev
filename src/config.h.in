@@ -15,5 +15,6 @@
 #cmakedefine01 WITH_CRYPTO
 #cmakedefine01 WITH_OBFS
 #cmakedefine01 WITH_SYSTEMD
+#cmakedefine01 WITH_CRASH_HANDLER
 
 #endif /* CONFIG_H */

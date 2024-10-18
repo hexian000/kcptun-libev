@@ -25,7 +25,7 @@ struct slog_extra_bin {
 };
 void slog_extra_bin(void *data, FILE *f);
 
-void slog_traceback(struct buffer *buf, int skip);
+void slog_stacktrace(struct buffer *buf, int skip);
 void slog_extra_buf(void *data, FILE *f);
 
 #define LOG_STACK_F(level, calldepth, format, ...)                             \
@@ -38,7 +38,7 @@ void slog_extra_buf(void *data, FILE *f);
 			unsigned char data[BUFSIZ];                            \
 		} buf;                                                         \
 		BUF_INIT(buf, 0);                                              \
-		slog_traceback((struct buffer *)&buf, (calldepth));            \
+		slog_stacktrace((struct buffer *)&buf, (calldepth));           \
 		struct slog_extra extra = {                                    \
 			.func = slog_extra_buf,                                \
 			.data = &buf,                                          \

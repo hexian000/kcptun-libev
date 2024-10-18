@@ -61,6 +61,16 @@ case "$1" in
     (cd "build/bin" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/bin/kcptun-libev"
     ;;
+"min")
+    # rebuild for minimized size
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="MinSizeRel" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -S "." -B "build"
+    nice cmake --build "build"
+    ls -lh "build/bin/kcptun-libev"
+    ;;
 "posix")
     # force POSIX APIs
     rm -rf "build" && mkdir "build"
@@ -124,8 +134,10 @@ case "$1" in
     find contrib src -name '*.c' | while read -r FILE; do
         echo "#include \"${FILE}\""
     done | gcc -pipe -O3 -s -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=c11 \
-        -Icontrib/csnippets -Icontrib/json -Icontrib/kcp -Icontrib/libbloom -Isrc \
+        -Icontrib/cjson -Icontrib/csnippets -Icontrib/kcp -Icontrib/libbloom -Isrc \
         -include build/src/config.h \
+        -flto=auto -ffat-lto-objects -flto-partition=none \
+        -fPIE -pie \
         -o "build/bin/kcptun-libev" -xc - -lev -lsodium -lm
     ls -lh "build/bin/kcptun-libev"
     ;;
@@ -161,13 +173,6 @@ case "$1" in
     rm -rf "build" "compile_commands.json"
     ;;
 *)
-    # default to debug builds
-    mkdir -p "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Debug" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -S "." -B "build"
-    ln -sf "build/compile_commands.json" "compile_commands.json"
     nice cmake --build "build" --parallel
     ls -lh "build/bin/kcptun-libev"
     ;;
