@@ -149,7 +149,6 @@ case "$1" in
     rm -rf "build" && mkdir -p "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Debug" \
-        -DENABLE_SANITIZERS=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -S . -B "build"
     ln -sf build/compile_commands.json compile_commands.json
