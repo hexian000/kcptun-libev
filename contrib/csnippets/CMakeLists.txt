@@ -18,6 +18,7 @@ add_subdirectory(utils)
 include(CheckSymbolExists)
 check_symbol_exists(syslog "syslog.h" HAVE_SYSLOG)
 check_symbol_exists(localtime_r "time.h" HAVE_LOCALTIME_R)
+check_symbol_exists(backtrace "execinfo.h" HAVE_BACKTRACE)
 check_symbol_exists(backtrace_symbols "execinfo.h" HAVE_BACKTRACE_SYMBOLS)
 check_symbol_exists(wcwidth "wchar.h" HAVE_WCWIDTH)
 

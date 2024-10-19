@@ -9,14 +9,17 @@
 #elif WITH_LIBUNWIND
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
-#elif HAVE_BACKTRACE_SYMBOLS
+#elif HAVE_BACKTRACE
 #include <execinfo.h>
 #endif
 
+#include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <wctype.h>
@@ -27,11 +30,11 @@
 
 #define INDENT "  "
 
-void slog_extra_txt(void *data, FILE *f)
+void slog_extra_txt(FILE *f, void *data)
 {
-	const struct slog_extra_txt *restrict extradata = data;
-	size_t n = extradata->len;
-	const char *s = extradata->data;
+	const struct slog_extra_txt *restrict extra = data;
+	size_t n = extra->len;
+	const char *s = extra->data;
 	struct {
 		BUFFER_HDR;
 		unsigned char data[256];
@@ -95,17 +98,17 @@ void slog_extra_txt(void *data, FILE *f)
 	(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 }
 
-void slog_extra_bin(void *data, FILE *f)
+void slog_extra_bin(FILE *f, void *data)
 {
-	const struct slog_extra_bin *restrict extradata = data;
-	size_t n = extradata->len;
+	const struct slog_extra_bin *restrict extra = data;
+	size_t n = extra->len;
 	struct {
 		BUFFER_HDR;
 		unsigned char data[256];
 	} buf;
 	BUF_INIT(buf, 0);
 	const size_t wrap = 16;
-	const unsigned char *restrict b = extradata->data;
+	const unsigned char *restrict b = extra->data;
 	for (size_t i = 0; i < n; i += wrap) {
 		BUF_APPENDF(buf, INDENT "%p: ", (void *)(b + i));
 		for (size_t j = 0; j < wrap; j++) {
@@ -134,20 +137,21 @@ void slog_extra_bin(void *data, FILE *f)
 
 #if WITH_LIBBACKTRACE
 
-struct bt_context {
+struct print_context {
+	struct slog_extra_stack *data;
 	struct backtrace_state *state;
-	struct buffer *buf;
-	int index;
+	FILE *f;
 	uintptr_t pc;
+	int index;
 };
 
 static void error_cb(void *data, const char *msg, const int errnum)
 {
-	struct bt_context *restrict ctx = data;
+	struct print_context *restrict ctx = data;
 	(void)msg;
 	(void)errnum;
-	BUF_APPENDF(
-		*ctx->buf, INDENT "#%-3d 0x%jx <unknown>\n", ctx->index,
+	(void)fprintf(
+		ctx->f, INDENT "#%-3d 0x%jx <unknown>\n", ctx->index,
 		(uintmax_t)ctx->pc);
 }
 
@@ -155,14 +159,14 @@ static void syminfo_cb(
 	void *data, const uintptr_t pc, const char *symname,
 	const uintptr_t symval, const uintptr_t symsize)
 {
-	struct bt_context *restrict ctx = data;
+	struct print_context *restrict ctx = data;
 	(void)symsize;
 	if (symname == NULL) {
 		error_cb(data, NULL, -1);
 		return;
 	}
-	BUF_APPENDF(
-		*ctx->buf, INDENT "#%-3d 0x%jx %s+0x%jx\n", ctx->index,
+	(void)fprintf(
+		ctx->f, INDENT "#%-3d 0x%jx %s+0x%jx\n", ctx->index,
 		(uintmax_t)pc, symname, (uintmax_t)(pc - symval));
 }
 
@@ -170,10 +174,10 @@ static int pcinfo_cb(
 	void *data, const uintptr_t pc, const char *filename, const int lineno,
 	const char *function)
 {
-	struct bt_context *restrict ctx = data;
+	struct print_context *restrict ctx = data;
 	if (function != NULL && filename != NULL) {
-		BUF_APPENDF(
-			*ctx->buf, INDENT "#%-3d 0x%jx in %s (%s:%d)\n",
+		(void)fprintf(
+			ctx->f, INDENT "#%-3d 0x%jx in %s (%s:%d)\n",
 			ctx->index, (uintmax_t)pc, function, filename, lineno);
 		return 0;
 	}
@@ -181,105 +185,146 @@ static int pcinfo_cb(
 	return 0;
 }
 
+struct bt_context {
+	struct backtrace_state *state;
+	void **frames;
+	size_t i, n;
+};
+
 static int backtrace_cb(void *data, const uintptr_t pc)
 {
-	struct bt_context *ctx = data;
-	ctx->pc = pc;
-	(void)backtrace_pcinfo(ctx->state, pc, pcinfo_cb, error_cb, data);
-	ctx->index++;
-	return 0;
-}
-
-static void print_error_cb(void *data, const char *msg, int errnum)
-{
 	struct bt_context *restrict ctx = data;
-	BUF_APPENDF(
-		*ctx->buf, INDENT "backtrace error: (%d) %s\n", errnum, msg);
+	if (ctx->i < ctx->n) {
+		ctx->frames[ctx->i++] = (void *)pc;
+		return 0;
+	}
+	return 1;
 }
-#endif
 
-#define STACK_MAXDEPTH 256
-
-void slog_stacktrace(struct buffer *buf, int skip)
+static struct backtrace_state *bt_state(void)
 {
-#if WITH_LIBBACKTRACE
-	skip++;
 #if SLOG_MT_SAFE
 	static _Thread_local struct backtrace_state *state = NULL;
 #else
 	static struct backtrace_state *state = NULL;
 #endif
+
+	if (state != NULL) {
+		return state;
+	}
+	state = backtrace_create_state(NULL, 0, NULL, NULL);
+	return state;
+}
+#endif
+
+int debug_backtrace(void **frames, int skip, const int len)
+{
+	assert(frames != NULL && len > 0);
+	skip++;
+#if WITH_LIBBACKTRACE
 	struct bt_context ctx = {
-		.state = state,
-		.buf = buf,
+		.state = bt_state(),
+		.frames = frames,
+		.i = 0,
+		.n = len,
+	};
+	if (ctx.state == NULL) {
+		return 0;
+	}
+	(void)backtrace_simple(ctx.state, skip, backtrace_cb, NULL, &ctx);
+	return ctx.i;
+#elif WITH_LIBUNWIND
+	int n = unw_backtrace(frames, len);
+	int w = 0;
+	for (int i = skip; i < n; i++) {
+		frames[w++] = frames[i];
+	}
+	return w;
+#elif HAVE_BACKTRACE
+	int n = backtrace(frames, len);
+	int w = 0;
+	for (int i = skip; i < n; i++) {
+		frames[w++] = frames[i];
+	}
+	return w;
+#else
+	(void)frames;
+	(void)skip;
+	(void)len;
+	return 0;
+#endif
+}
+
+static void
+slog_extra_stack_default(FILE *f, struct slog_extra_stack *restrict extra)
+{
+	int index = 1;
+	for (size_t i = 0; i < extra->len; i++) {
+		(void)fprintf(f, INDENT "#%-3d %p\n", index, extra->pc[i]);
+		index++;
+	}
+}
+
+void slog_extra_stack(FILE *f, void *data)
+{
+	struct slog_extra_stack *restrict extra = data;
+#if WITH_LIBBACKTRACE
+	struct print_context ctx = {
+		.data = extra,
+		.state = bt_state(),
+		.f = f,
 		.index = 1,
 	};
 	if (ctx.state == NULL) {
-		state = backtrace_create_state(NULL, 0, print_error_cb, &ctx);
-		if (state == NULL) {
-			return;
-		}
-		ctx.state = state;
+		slog_extra_stack_default(f, extra);
+		return;
 	}
-	backtrace_simple(state, skip, backtrace_cb, print_error_cb, &ctx);
+	for (size_t i = 0; i < extra->len; i++) {
+		ctx.pc = (uintptr_t)extra->pc[i];
+		(void)backtrace_pcinfo(
+			ctx.state, ctx.pc, pcinfo_cb, error_cb, &ctx);
+		ctx.index++;
+	}
 #elif WITH_LIBUNWIND
 	unw_context_t uc;
 	if (unw_getcontext(&uc) != 0) {
+		slog_extra_stack_default(f, extra);
 		return;
 	}
 	unw_cursor_t cursor;
 	if (unw_init_local(&cursor, &uc) != 0) {
+		slog_extra_stack_default(f, extra);
 		return;
 	}
 	int index = 1;
-	for (int i = 0; unw_step(&cursor) > 0; i++) {
-		if (i < skip) {
-			continue;
-		}
-		unw_word_t pc;
-		if (unw_get_reg(&cursor, UNW_REG_IP, &pc)) {
-			break;
-		}
-		char sym[STACK_MAXDEPTH];
+	for (size_t i = 0; i < extra->len; i++) {
+		void *pc = extra->pc[i];
+		unw_set_reg(&cursor, UNW_REG_IP, (unw_word_t)pc);
 		unw_word_t offset;
+		char sym[256];
 		if (unw_get_proc_name(&cursor, sym, sizeof(sym), &offset)) {
-			BUF_APPENDF(
-				*buf, INDENT "#%-3d 0x%jx <unknown>\n", index,
+			(void)fprintf(
+				f, INDENT "#%-3d 0x%jx <unknown>\n", index,
 				(uintmax_t)pc);
 		} else {
-			BUF_APPENDF(
-				*buf, INDENT "#%-3d 0x%jx %s+0x%jx\n", index,
+			(void)fprintf(
+				f, INDENT "#%-3d 0x%jx %s+0x%jx\n", index,
 				(uintmax_t)pc, sym, (uintmax_t)offset);
 		}
 		index++;
 	}
-#elif HAVE_BACKTRACE_SYMBOLS
-	skip += 2;
-	void *bt[STACK_MAXDEPTH];
-	const int n = backtrace(bt, sizeof(bt));
-	char **syms = backtrace_symbols(bt, n);
+#elif HAVE_BACKTRACE && HAVE_BACKTRACE_SYMBOLS
+	char **syms = backtrace_symbols(extra->pc, extra->len);
 	if (syms == NULL) {
-		int index = 1;
-		for (int i = skip; i < n; i++) {
-			BUF_APPENDF(*buf, INDENT "#%-3d %p\n", index, bt[i]);
-			index++;
-		}
+		slog_extra_stack_default(f, extra);
 		return;
 	}
 	int index = 1;
-	for (int i = skip; i < n; i++) {
-		BUF_APPENDF(*buf, INDENT "#%-3d %s\n", index, syms[i]);
-		index++;
+	for (size_t i = 0; i < extra->len; i++) {
+		(void)fprintf(f, INDENT "#%-3d %s\n", index++, syms[i]);
 	}
 	free(syms);
 #else
-	(void)buf;
-	(void)skip;
+	slog_extra_stack_default(f, extra);
 #endif
-}
-
-void slog_extra_buf(void *data, FILE *f)
-{
-	const struct buffer *restrict buf = data;
-	(void)fwrite(buf->data, sizeof(buf->data[0]), buf->len, f);
 }

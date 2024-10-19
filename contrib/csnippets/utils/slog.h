@@ -39,7 +39,7 @@ void slog_setoutput(int type, ...);
 void slog_setfileprefix(const char *prefix);
 
 struct slog_extra {
-	void (*func)(void *data, FILE *f);
+	void (*func)(FILE *f, void *data);
 	void *data;
 };
 void slog_vwrite(

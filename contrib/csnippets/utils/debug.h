@@ -17,16 +17,23 @@ struct slog_extra_txt {
 	const char *data;
 	size_t len;
 };
-void slog_extra_txt(void *data, FILE *f);
+void slog_extra_txt(FILE *f, void *data);
 
 struct slog_extra_bin {
 	const void *data;
 	size_t len;
 };
-void slog_extra_bin(void *data, FILE *f);
+void slog_extra_bin(FILE *f, void *data);
 
-void slog_stacktrace(struct buffer *buf, int skip);
-void slog_extra_buf(void *data, FILE *f);
+struct slog_extra_stack {
+	size_t len;
+	void *pc[];
+};
+void slog_extra_stack(FILE *f, void *data);
+
+int debug_backtrace(void **frames, int calldepth, int len);
+
+#define STACK_MAXDEPTH 256
 
 #define LOG_STACK_F(level, calldepth, format, ...)                             \
 	do {                                                                   \
@@ -34,14 +41,14 @@ void slog_extra_buf(void *data, FILE *f);
 			break;                                                 \
 		}                                                              \
 		struct {                                                       \
-			BUFFER_HDR;                                            \
-			unsigned char data[BUFSIZ];                            \
-		} buf;                                                         \
-		BUF_INIT(buf, 0);                                              \
-		slog_stacktrace((struct buffer *)&buf, (calldepth));           \
+			size_t len;                                            \
+			void *pc[STACK_MAXDEPTH];                              \
+		} frames;                                                      \
+		frames.len = debug_backtrace(                                  \
+			frames.pc, (calldepth), STACK_MAXDEPTH);               \
 		struct slog_extra extra = {                                    \
-			.func = slog_extra_buf,                                \
-			.data = &buf,                                          \
+			.func = slog_extra_stack,                              \
+			.data = &frames,                                       \
 		};                                                             \
 		slog_write(                                                    \
 			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
@@ -126,7 +133,7 @@ void slog_extra_buf(void *data, FILE *f);
 #define FAILOOM()                                                              \
 	do {                                                                   \
 		LOGF("out of memory");                                         \
-		exit(EXIT_FAILURE);                                            \
+		_Exit(EXIT_FAILURE); /* no core dump */                        \
 	} while (0)
 #define CHECKOOM(ptr)                                                          \
 	do {                                                                   \

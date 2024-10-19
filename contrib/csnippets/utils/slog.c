@@ -150,7 +150,7 @@ static void slog_write_file(
 		slog_buffer.data, sizeof(slog_buffer.data[0]), slog_buffer.len,
 		slog_output);
 	if (extra != NULL) {
-		extra->func(extra->data, slog_output);
+		extra->func(slog_output, extra->data);
 	}
 	MTX_UNLOCK(&slog_output_mu);
 }
