@@ -29,6 +29,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -400,7 +401,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 			conf->keepalive * 3.0 + ping_timeout, 60.0, 1800.0),
 		.ping_timeout = ping_timeout,
 		.time_wait = conf->time_wait,
-		.last_clock = (clock_t)(-1),
+		.last_clock = -1,
 	};
 
 	{
@@ -730,17 +731,20 @@ static struct vbuffer *append_traffic_stats(
 		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 }
 
-static int64_t clock_cputime(void)
+static double clock_cputime(void)
 {
-#if HAVE_CLOCK_GETTIME && defined(CLOCK_PROCESS_CPUTIME_ID)
+#if HAVE_CLOCK_GETTIME
 	struct timespec t;
 	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t)) {
-		return -1;
+		return NAN;
 	}
-	return (int64_t)(t.tv_sec) * INT64_C(1000000000) + (int64_t)(t.tv_nsec);
+	return t.tv_sec + t.tv_nsec * 1e-9;
 #else
-	return (int64_t)clock() *
-	       (INT64_C(1000000000) / (int64_t)CLOCKS_PER_SEC);
+	const clock_t clk = clock();
+	if (clk == (clock_t)-1) {
+		return NAN;
+	}
+	return (double)clk / CLOCKS_PER_SEC;
 #endif
 }
 
@@ -748,13 +752,13 @@ static bool update_load(
 	struct server *restrict s, char *buf, const size_t bufsize,
 	const double dt)
 {
-	const int64_t last = s->last_clock;
-	const int64_t now = clock_cputime();
+	const double last = s->last_clock;
+	const double now = clock_cputime();
 	s->last_clock = now;
-	if (now == -1 || last == -1 || now < last) {
+	if (!isfinite(now) || !isfinite(last) || now < last) {
 		return false;
 	}
-	const double load = (double)(now - last) / 1e+9 / dt * 100.0;
+	const double load = (now - last) / dt * 100.0;
 	(void)snprintf(buf, bufsize, "%.03f%%", load);
 	return true;
 }

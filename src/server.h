@@ -77,7 +77,7 @@ struct server {
 		ev_tstamp started;
 		ev_tstamp last_stats_time;
 		ev_tstamp last_resolve_time;
-		int64_t last_clock;
+		double last_clock;
 	};
 };
 
