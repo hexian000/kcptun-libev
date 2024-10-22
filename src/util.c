@@ -7,6 +7,7 @@
 #include "pktqueue.h"
 
 #include "math/rand.h"
+#include "utils/arraysize.h"
 #include "utils/debug.h"
 #include "utils/intbound.h"
 #include "utils/mcache.h"
@@ -50,36 +51,49 @@ bool check_rate_limit(
 }
 
 #if WITH_CRASH_HANDLER
-static void crash_handler(int signo)
+static struct {
+	int signo;
+	struct sigaction oact;
+} sighandlers[] = {
+	{ SIGQUIT, { .sa_handler = SIG_DFL } },
+	{ SIGILL, { .sa_handler = SIG_DFL } },
+	{ SIGTRAP, { .sa_handler = SIG_DFL } },
+	{ SIGABRT, { .sa_handler = SIG_DFL } },
+	{ SIGBUS, { .sa_handler = SIG_DFL } },
+	{ SIGFPE, { .sa_handler = SIG_DFL } },
+	{ SIGSEGV, { .sa_handler = SIG_DFL } },
+	{ SIGSYS, { .sa_handler = SIG_DFL } },
+};
+
+static void crash_handler(const int signo)
 {
 	LOG_STACK_F(FATAL, 2, "FATAL ERROR: %s", strsignal(signo));
-	struct sigaction act = {
-		.sa_handler = SIG_DFL,
-	};
-	if (sigaction(signo, &act, NULL) != 0 || raise(signo) != 0) {
+	struct sigaction *oact = NULL;
+	for (size_t i = 0; i < ARRAY_SIZE(sighandlers); i++) {
+		if (sighandlers[i].signo == signo) {
+			oact = &sighandlers[i].oact;
+			break;
+		}
+	}
+	if (oact == NULL || sigaction(signo, oact, NULL) != 0 ||
+	    raise(signo) != 0) {
 		_Exit(EXIT_FAILURE);
 	}
 }
 
-static void set_crash_handler(bool enabled)
+static void set_crash_handler(void)
 {
 	struct sigaction act = {
-		.sa_handler = enabled ? crash_handler : SIG_DFL,
+		.sa_handler = crash_handler,
 	};
-#define SET_SIGACTION(sig, action)                                             \
-	if (sigaction((sig), (action), NULL) != 0) {                           \
-		const int err = errno;                                         \
-		LOGE_F("sigaction: %s", strerror(err));                        \
+	for (size_t i = 0; i < ARRAY_SIZE(sighandlers); i++) {
+		const int signo = sighandlers[i].signo;
+		struct sigaction *oact = &sighandlers[i].oact;
+		if (sigaction(signo, &act, oact) != 0) {
+			const int err = errno;
+			LOGE_F("sigaction: %s", strerror(err));
+		}
 	}
-	SET_SIGACTION(SIGQUIT, &act);
-	SET_SIGACTION(SIGILL, &act);
-	SET_SIGACTION(SIGTRAP, &act);
-	SET_SIGACTION(SIGABRT, &act);
-	SET_SIGACTION(SIGBUS, &act);
-	SET_SIGACTION(SIGFPE, &act);
-	SET_SIGACTION(SIGSEGV, &act);
-	SET_SIGACTION(SIGSYS, &act);
-#undef SET_SIGACTION
 }
 #endif /* WITH_CRASH_HANDLER */
 
@@ -133,7 +147,7 @@ void loadlibs(void)
 		}
 	}
 #if WITH_CRASH_HANDLER
-	set_crash_handler(true);
+	set_crash_handler();
 #endif
 
 	LOGD_F("%s: %s", PROJECT_NAME, PROJECT_VER);
