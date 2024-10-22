@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define UNUSED(x) (void)(x)
+#define UNUSED(x) ((void)(x))
 
 #define TSTAMP_NIL (-1.0)
 

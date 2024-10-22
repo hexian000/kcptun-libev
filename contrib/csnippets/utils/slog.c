@@ -73,8 +73,8 @@ int slog_level_ = LOG_LEVEL_SILENCE;
 static slog_writer_fn slog_writer = NULL;
 static const char *slog_fileprefix = NULL;
 
-#define MTX_LOCK(mu) (void)(0)
-#define MTX_UNLOCK(mu) (void)(0)
+#define MTX_LOCK(mu) ((void)(0))
+#define MTX_UNLOCK(mu) ((void)(0))
 
 #define ATOMIC_STORE(object, desired) *(object) = (desired)
 #define ATOMIC_LOAD(object) (*(object))
@@ -84,7 +84,7 @@ static struct {
 	unsigned char data[BUFSIZ];
 } slog_buffer;
 
-#define SLOG_INIT() (void)(0)
+#define SLOG_INIT() ((void)(0))
 #endif /* SLOG_MT_SAFE */
 
 #define TIME_LAYOUT "2006-01-02T15:04:05-0700"
