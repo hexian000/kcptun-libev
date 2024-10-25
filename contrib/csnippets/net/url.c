@@ -85,8 +85,7 @@ escape(char *buf, size_t buf_size, const char *str, const char *allowed_symbols,
 	const size_t cap = buf_size;
 	for (const char *p = str; *p != '\0'; ++p) {
 		const unsigned char ch = *p;
-		if (islower(ch) || isupper(ch) || isdigit(ch) ||
-		    strchr(allowed_symbols, ch) != NULL) {
+		if (isalnum(ch) || strchr(allowed_symbols, ch) != NULL) {
 			APPENDCH(ch);
 			continue;
 		}
@@ -231,7 +230,8 @@ static bool unescape(char *str, const bool space)
 static inline char *strlower(char *s)
 {
 	for (char *p = s; *p != '\0'; ++p) {
-		*s = (unsigned char)tolower((unsigned char)*s);
+		const unsigned char ch = *p;
+		*p = tolower(ch);
 	}
 	return s;
 }
@@ -264,15 +264,15 @@ bool url_parse(char *raw, struct url *restrict url)
 
 	/* parse scheme */
 	for (char *p = raw; *p != '\0'; ++p) {
+		const unsigned char ch = *p;
 		/* RFC 2396: Section 3.1 */
-		if (isupper((unsigned char)*p) || islower((unsigned char)*p)) {
-		} else if (
-			isdigit((unsigned char)*p) || *p == '+' || *p == '-' ||
-			*p == '.') {
+		if (isalpha(ch)) {
+			/* skip */
+		} else if (isdigit(ch) || ch == '+' || ch == '-' || ch == '.') {
 			if (p == raw) {
 				break;
 			}
-		} else if (*p == ':') {
+		} else if (ch == ':') {
 			if (p == raw) {
 				return false;
 			}
@@ -383,8 +383,7 @@ bool url_unescape_userinfo(char *raw, char **username, char **password)
 	for (char *p = raw; *p != '\0'; ++p) {
 		unsigned char c = (unsigned char)*p;
 		/* RFC 3986: Section 3.2.1 */
-		if (!islower(c) && !isupper(c) && !isdigit(c) &&
-		    strchr(valid_chars, c) == NULL) {
+		if (!isalnum(c) && strchr(valid_chars, c) == NULL) {
 			return false;
 		}
 		if (colon == NULL && c == ':') {

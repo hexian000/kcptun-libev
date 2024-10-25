@@ -68,15 +68,15 @@ static struct {
 static void crash_handler(const int signo)
 {
 	LOG_STACK_F(FATAL, 2, "FATAL ERROR: %s", strsignal(signo));
-	struct sigaction *oact = NULL;
+	struct sigaction *act = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(sighandlers); i++) {
 		if (sighandlers[i].signo == signo) {
-			oact = &sighandlers[i].oact;
+			act = &sighandlers[i].oact;
 			break;
 		}
 	}
-	if (oact == NULL || sigaction(signo, oact, NULL) != 0 ||
-	    raise(signo) != 0) {
+	if (sigaction(signo, act, NULL) != 0) {
+		LOGE_F("sigaction: %s", strerror(errno));
 		_Exit(EXIT_FAILURE);
 	}
 }
@@ -90,8 +90,7 @@ static void set_crash_handler(void)
 		const int signo = sighandlers[i].signo;
 		struct sigaction *oact = &sighandlers[i].oact;
 		if (sigaction(signo, &act, oact) != 0) {
-			const int err = errno;
-			LOGE_F("sigaction: %s", strerror(err));
+			LOGE_F("sigaction: %s", strerror(errno));
 		}
 	}
 }
