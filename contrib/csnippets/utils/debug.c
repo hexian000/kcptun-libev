@@ -40,15 +40,19 @@ void slog_extra_txt(FILE *f, void *data)
 		unsigned char data[256];
 	} buf;
 	BUF_INIT(buf, 0);
+	mbstate_t state = { 0 };
 	bool lineno = true;
 	size_t line = 0, column = 0;
-	while (*s != '\0') {
+	while (n > 0) {
 		if (lineno) {
 			BUF_APPENDF(buf, INDENT "%4zu ", ++line);
 			lineno = false;
 		}
 		wchar_t wc;
-		int clen = mbtowc(&wc, s, n);
+		const int clen = mbrtowc(&wc, s, n, &state);
+		if (clen == 0) {
+			break;
+		}
 		s += clen, n -= clen;
 		int width;
 		switch (wc) {
