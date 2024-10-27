@@ -80,7 +80,7 @@ static void accept_one(
 	assert(elem == NULL);
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
-		format_sa(client_sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), client_sa);
 		LOG_F(INFO, "session [%08" PRIX32 "] tcp: accepted %s", conv,
 		      addr_str);
 	}

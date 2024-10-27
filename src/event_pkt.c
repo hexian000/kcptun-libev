@@ -29,7 +29,7 @@
 			break;                                                 \
 		}                                                              \
 		char addr[64];                                                 \
-		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
+		format_sa(addr, sizeof(addr), &(msg)->addr.sa);                \
 		LOG_F(VERBOSE, what ": %" PRIu16 " bytes, addr=%s",            \
 		      (msg)->len, addr);                                       \
 	} while (0)

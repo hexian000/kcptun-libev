@@ -208,44 +208,43 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 }
 
 static int
-format_sa_inet(const struct sockaddr_in *sa, char *buf, const size_t buf_size)
+format_sa_inet(char *s, const size_t maxlen, const struct sockaddr_in *sa)
 {
-	char s[INET_ADDRSTRLEN];
-	if (inet_ntop(AF_INET, &(sa->sin_addr), s, sizeof(s)) == NULL) {
+	char buf[INET_ADDRSTRLEN];
+	if (inet_ntop(AF_INET, &(sa->sin_addr), buf, sizeof(buf)) == NULL) {
 		return -1;
 	}
 	const uint16_t port = ntohs(sa->sin_port);
-	return snprintf(buf, buf_size, "%s:%" PRIu16, s, port);
+	return snprintf(s, maxlen, "%s:%" PRIu16, buf, port);
 }
 
 static int
-format_sa_inet6(const struct sockaddr_in6 *sa, char *buf, const size_t buf_size)
+format_sa_inet6(char *s, const size_t maxlen, const struct sockaddr_in6 *sa)
 {
-	char s[INET6_ADDRSTRLEN];
-	if (inet_ntop(AF_INET6, &(sa->sin6_addr), s, sizeof(s)) == NULL) {
+	char buf[INET6_ADDRSTRLEN];
+	if (inet_ntop(AF_INET6, &(sa->sin6_addr), buf, sizeof(buf)) == NULL) {
 		return -1;
 	}
 	const uint16_t port = ntohs(sa->sin6_port);
 	const uint32_t scope = sa->sin6_scope_id;
 	if (scope == 0) {
-		return snprintf(buf, buf_size, "[%s]:%" PRIu16, s, port);
+		return snprintf(s, maxlen, "[%s]:%" PRIu16, buf, port);
 	}
 	return snprintf(
-		buf, buf_size, "[%s%%%" PRIu32 "]:%" PRIu16, s, scope, port);
+		s, maxlen, "[%s%%%" PRIu32 "]:%" PRIu16, buf, scope, port);
 }
 
-int format_sa(const struct sockaddr *sa, char *buf, const size_t buf_size)
+int format_sa(char *s, const size_t maxlen, const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
 	case AF_INET:
-		return format_sa_inet((struct sockaddr_in *)sa, buf, buf_size);
+		return format_sa_inet(s, maxlen, (struct sockaddr_in *)sa);
 	case AF_INET6:
-		return format_sa_inet6(
-			(struct sockaddr_in6 *)sa, buf, buf_size);
+		return format_sa_inet6(s, maxlen, (struct sockaddr_in6 *)sa);
 	default:
 		break;
 	}
-	return snprintf(buf, buf_size, "<af:%jd>", (intmax_t)sa->sa_family);
+	return snprintf(s, maxlen, "<af:%jd>", (intmax_t)sa->sa_family);
 }
 
 static bool find_addrinfo(union sockaddr_max *sa, const struct addrinfo *it)

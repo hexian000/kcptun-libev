@@ -27,8 +27,7 @@
 #define CLOSE_FD(fd)                                                           \
 	do {                                                                   \
 		if (close(fd) != 0) {                                          \
-			const int close_err = errno;                           \
-			LOGW_F("close: %s", strerror(close_err));              \
+			LOGW_F("close: %s", strerror(errno));                  \
 		}                                                              \
 	} while (0)
 

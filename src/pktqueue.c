@@ -39,7 +39,7 @@
 			break;                                                 \
 		}                                                              \
 		char addr[64];                                                 \
-		format_sa(&(msg)->addr.sa, addr, sizeof(addr));                \
+		format_sa(addr, sizeof(addr), &(msg)->addr.sa);                \
 		LOG_BIN_F(                                                     \
 			VERYVERBOSE, (msg)->buf, (msg)->len,                   \
 			what ": %" PRIu16 " bytes, addr=%s", (msg)->len,       \
@@ -145,7 +145,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		assert(elem == NULL);
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), sa);
 			LOG_F(DEBUG, "session [%08" PRIX32 "] kcp: accepted %s",
 			      conv, addr_str);
 		}
@@ -157,9 +157,9 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		if (ss->last_reset == TSTAMP_NIL ||
 		    now - ss->last_reset > 1.0) {
 			char oaddr_str[64];
-			format_sa(&ss->raddr.sa, oaddr_str, sizeof(oaddr_str));
+			format_sa(oaddr_str, sizeof(oaddr_str), &ss->raddr.sa);
 			char addr_str[64];
-			format_sa(sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), sa);
 			LOGW_F("session [%08" PRIX32 "] conflict: "
 			       "existing %s, refusing %s",
 			       conv, oaddr_str, addr_str);

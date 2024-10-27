@@ -140,8 +140,8 @@ obfs_find_ctx(const struct obfs *restrict obfs, const struct sockaddr *sa)
 	do {                                                                   \
 		if (LOGLEVEL(level)) {                                         \
 			char laddr[64], raddr[64];                             \
-			format_sa(&(ctx)->laddr.sa, laddr, sizeof(laddr));     \
-			format_sa(&(ctx)->raddr.sa, raddr, sizeof(raddr));     \
+			format_sa(laddr, sizeof(laddr), &(ctx)->laddr.sa);     \
+			format_sa(raddr, sizeof(raddr), &(ctx)->raddr.sa);     \
 			LOG_F(level, "obfs %s<->%s: " format, laddr, raddr,    \
 			      __VA_ARGS__);                                    \
 		}                                                              \
@@ -421,7 +421,7 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 	if (LOGLEVEL(NOTICE)) {
 		char addr_str[64];
-		format_sa(bind_sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), bind_sa);
 		LOG_F(NOTICE, "obfs bind: %s", addr_str);
 	}
 }
@@ -660,8 +660,8 @@ static bool obfs_ctx_start(
 	ctx->last_seen = now;
 	if (LOGLEVEL(DEBUG)) {
 		char laddr[64], raddr[64];
-		format_sa(&ctx->laddr.sa, laddr, sizeof(laddr));
-		format_sa(&ctx->raddr.sa, raddr, sizeof(raddr));
+		format_sa(laddr, sizeof(laddr), &ctx->laddr.sa);
+		format_sa(raddr, sizeof(raddr), &ctx->raddr.sa);
 		LOG_F(DEBUG, "obfs: start %s <-> %s", laddr, raddr);
 	}
 	return true;
@@ -696,7 +696,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), sa);
 		LOG_F(INFO, "obfs tcp listen: %s", addr_str);
 	}
 	return true;
@@ -752,7 +752,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 	/* send the request */
 	char addr_str[64];
-	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+	format_sa(addr_str, sizeof(addr_str), &ctx->raddr.sa);
 	char *b = (char *)ctx->wbuf.data;
 	const int ret = snprintf(
 		b, ctx->wbuf.cap,
@@ -935,7 +935,7 @@ static bool print_ctx_iter(
 	(void)key, assert(key.data == ctx->key);
 	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
-	format_sa(&ctx->raddr.sa, addr_str, sizeof(addr_str));
+	format_sa(addr_str, sizeof(addr_str), &ctx->raddr.sa);
 	char state = '>';
 	if (ctx->captured) {
 		state = ctx->authenticated ? '-' : '?';
@@ -1284,7 +1284,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (ctx == NULL) {
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				DEBUG, now, 1.0,
@@ -1297,7 +1297,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	/* inbound */
 	if (LOGLEVEL(DEBUG) && tcp.rst) {
 		char addr_str[64];
-		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITED_F(
 			DEBUG, now, 1.0, "* obfs: rst from %s", addr_str);
@@ -1371,7 +1371,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (ctx == NULL) {
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				DEBUG, now, 1.0,
@@ -1384,7 +1384,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	/* inbound */
 	if (LOGLEVEL(DEBUG) && tcp.rst) {
 		char addr_str[64];
-		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITED_F(
 			DEBUG, now, 1.0, "* obfs: rst from %s", addr_str);
@@ -1540,7 +1540,7 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 	if (ctx == NULL) {
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				WARNING, now, 1.0,

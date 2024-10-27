@@ -108,7 +108,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
-		format_sa(sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), sa);
 		LOG_F(INFO, "session [%08" PRIX32 "] tcp: connect %s", ss->conv,
 		      addr_str);
 	}
@@ -540,7 +540,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 		s->pkt.connected = true;
 		if (LOGLEVEL(INFO)) {
 			char addr_str[64];
-			format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 			LOG_F(INFO, "rendezvoused at: %s", addr_str);
 		}
 	}
@@ -561,7 +561,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 
 	if (LOGLEVEL(DEBUG)) {
 		char addr_str[64];
-		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 		LOG_F(DEBUG,
 		      "roundtrip finished: %s, rtt: %" PRIu32 " ms, "
 		      "capacity rx: %s/s, tx: %s/s",
@@ -614,11 +614,11 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 	if (LOGLEVEL(DEBUG)) {
 		char addr1_str[64], addr2_str[64];
 		format_sa(
-			&s->pkt.server_addr[0].sa, addr1_str,
-			sizeof(addr1_str));
+			addr1_str, sizeof(addr1_str),
+			&s->pkt.server_addr[0].sa);
 		format_sa(
-			&s->pkt.server_addr[1].sa, addr2_str,
-			sizeof(addr2_str));
+			addr2_str, sizeof(addr2_str),
+			&s->pkt.server_addr[1].sa);
 		LOG_F(DEBUG, "rendezvous listen: (%s, %s)", addr1_str,
 		      addr2_str);
 	}
@@ -640,21 +640,21 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	if (!s->pkt.listened) {
 		char addr_str[64];
-		format_sa(&msg->addr.sa, addr_str, sizeof(addr_str));
+		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 		LOGE_F("failed connecting %s: no server available", addr_str);
 		return true;
 	}
 	if (LOGLEVEL(INFO)) {
 		char caddr1_str[64], caddr2_str[64];
-		format_sa(&addr.sa, caddr1_str, sizeof(caddr1_str));
-		format_sa(&msg->addr.sa, caddr2_str, sizeof(caddr2_str));
+		format_sa(caddr1_str, sizeof(caddr1_str), &addr.sa);
+		format_sa(caddr2_str, sizeof(caddr2_str), &msg->addr.sa);
 		char saddr1_str[64], saddr2_str[64];
 		format_sa(
-			&s->pkt.server_addr[0].sa, saddr1_str,
-			sizeof(saddr1_str));
+			saddr1_str, sizeof(saddr1_str),
+			&s->pkt.server_addr[0].sa);
 		format_sa(
-			&s->pkt.server_addr[1].sa, saddr2_str,
-			sizeof(saddr2_str));
+			saddr2_str, sizeof(saddr2_str),
+			&s->pkt.server_addr[1].sa);
 		LOG_F(INFO, "rendezvous connect: (%s, %s) -> (%s, %s)",
 		      caddr1_str, caddr2_str, saddr1_str, saddr2_str);
 	}
@@ -740,8 +740,8 @@ ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	if (LOGLEVEL(DEBUG)) {
 		char addr1_str[64], addr2_str[64];
-		format_sa(&addr[0].sa, addr1_str, sizeof(addr1_str));
-		format_sa(&addr[1].sa, addr2_str, sizeof(addr2_str));
+		format_sa(addr1_str, sizeof(addr1_str), &addr[0].sa);
+		format_sa(addr2_str, sizeof(addr2_str), &addr[1].sa);
 		LOG_F(DEBUG, "punch: (%s, %s)", addr1_str, addr2_str);
 	}
 	const ev_tstamp now = ev_now(s->loop);

@@ -97,7 +97,7 @@ static bool listener_start(struct server *restrict s)
 		l->fd = fd;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(&addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "tcp listen: %s", addr_str);
 		}
 	}
@@ -119,7 +119,7 @@ static bool listener_start(struct server *restrict s)
 		l->fd_http = fd;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(&addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "http listen at %s", addr_str);
 		}
 	}
@@ -216,7 +216,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		}
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(&addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "udp bind: %s", addr_str);
 		}
 	}
@@ -239,7 +239,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		copy_sa(&udp->kcp_connect.sa, &addr.sa);
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(&addr.sa, addr_str, sizeof(addr_str));
+			format_sa(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "udp connect: %s", addr_str);
 		}
 		udp->connected = true;
@@ -262,8 +262,8 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		udp->rendezvous_local = laddr;
 		if (LOGLEVEL(INFO)) {
 			char addr_str[64], laddr_str[64];
-			format_sa(&addr.sa, addr_str, sizeof(addr_str));
-			format_sa(&laddr.sa, laddr_str, sizeof(laddr_str));
+			format_sa(addr_str, sizeof(addr_str), &addr.sa);
+			format_sa(laddr_str, sizeof(laddr_str), &laddr.sa);
 			LOG_F(INFO, "rendezvous mode: %s -> %s", laddr_str,
 			      addr_str);
 		}
@@ -658,7 +658,7 @@ static bool print_session_iter(
 		return true;
 	}
 	char addr_str[64];
-	format_sa(&ss->raddr.sa, addr_str, sizeof(addr_str));
+	format_sa(addr_str, sizeof(addr_str), &ss->raddr.sa);
 	ev_tstamp last_seen = ss->created;
 	if (ss->last_send != TSTAMP_NIL && ss->last_send > last_seen) {
 		last_seen = ss->last_send;
