@@ -2,13 +2,13 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "hashtable.h"
+
 #include "algo/cityhash.h"
 #include "math/rand.h"
 #include "utils/arraysize.h"
 #include "utils/minmax.h"
 
 #include <assert.h>
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -154,13 +154,6 @@ table_realloc(struct hashtable *restrict table, const size_t new_capacity)
 	if (m == NULL) {
 		return table;
 	}
-#if HASHTABLE_LOG
-	if (table != m) {
-		(void)fprintf(
-			stderr, " * realloc moved memory from %p to %p\n",
-			(void *)table, (void *)m);
-	}
-#endif
 	set_capacity(m, new_capacity);
 
 	if (new_capacity > old_capacity) {

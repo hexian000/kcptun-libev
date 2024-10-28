@@ -15,7 +15,6 @@
 
 #include <ev.h>
 
-#include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -34,7 +33,7 @@ int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 		return -1;
 	}
 	msg->addr = ss->raddr;
-	assert(len > 0 && len + msg->off <= MAX_PACKET_SIZE);
+	ASSERT(len > 0 && len + msg->off <= MAX_PACKET_SIZE);
 	unsigned char *dst = msg->buf + msg->off;
 	memcpy(dst, buf, len);
 	msg->len = len;
@@ -58,7 +57,7 @@ bool kcp_canrecv(struct session *restrict ss)
 static bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
-	assert(len <= INT_MAX);
+	ASSERT(len <= INT_MAX);
 	const int r = ikcp_send(ss->kcp, (char *)buf, (int)len);
 	if (r < 0) {
 		return false;
@@ -81,7 +80,7 @@ bool kcp_sendmsg(struct session *restrict ss, const uint16_t msg)
 
 bool kcp_push(struct session *restrict ss)
 {
-	assert(ss->rbuf->len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
+	ASSERT(ss->rbuf->len <= SESSION_BUF_SIZE - TLV_HEADER_SIZE);
 	const size_t len = TLV_HEADER_SIZE + ss->rbuf->len;
 	struct tlv_header header = {
 		.msg = SMSG_PUSH,
@@ -127,7 +126,7 @@ static void kcp_update(struct session *restrict ss)
 	}
 	struct server *restrict s = ss->server;
 	const ev_tstamp now = ev_now(s->loop);
-	const uint32_t now_ms = TSTAMP2MS(now);
+	const uint32_t now_ms = tstamp2ms(now);
 	ikcp_update(ss->kcp, now_ms);
 	tcp_notify(ss);
 }
@@ -137,9 +136,10 @@ static bool kcp_update_iter(
 	void *user)
 {
 	UNUSED(t);
+	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	(void)key, assert(key.data == ss->key);
+	ASSERT(key.data == ss->key);
 	kcp_update(ss);
 	return true;
 }

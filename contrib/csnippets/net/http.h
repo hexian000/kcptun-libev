@@ -4,7 +4,6 @@
 #ifndef NET_HTTP_H
 #define NET_HTTP_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

@@ -26,7 +26,6 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-#include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
@@ -44,13 +43,11 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	/* Create server socket */
 	const int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
-		const int err = errno;
-		LOGE_F("socket: %s", strerror(err));
+		LOGE_F("socket: %s", strerror(errno));
 		return -1;
 	}
 	if (!socket_set_nonblock(fd)) {
-		const int err = errno;
-		LOGE_F("fcntl: %s", strerror(err));
+		LOGE_F("fcntl: %s", strerror(errno));
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -59,15 +56,13 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	/* Bind socket to address */
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
-		const int err = errno;
-		LOGE_F("tcp bind: %s", strerror(err));
+		LOGE_F("tcp bind: %s", strerror(errno));
 		CLOSE_FD(fd);
 		return -1;
 	}
 	/* Start listening on the socket */
 	if (listen(fd, SOMAXCONN)) {
-		const int err = errno;
-		LOGE_F("listen: %s", strerror(err));
+		LOGE_F("listen: %s", strerror(errno));
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -137,13 +132,11 @@ static bool udp_init(
 {
 	/* Setup a udp socket. */
 	if ((udp->fd = socket(udp_af, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-		const int err = errno;
-		LOGE_F("udp socket: %s", strerror(err));
+		LOGE_F("udp socket: %s", strerror(errno));
 		return false;
 	}
 	if (!socket_set_nonblock(udp->fd)) {
-		const int err = errno;
-		LOGE_F("fcntl: %s", strerror(err));
+		LOGE_F("fcntl: %s", strerror(errno));
 		return false;
 	}
 	socket_set_reuseport(udp->fd, conf->udp_reuseport);
@@ -174,19 +167,16 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 {
 	const int fd = socket(sa->sa_family, SOCK_DGRAM, IPPROTO_UDP);
 	if (fd < 0) {
-		const int err = errno;
-		LOGW_F("socket: %s", strerror(err));
+		LOGW_F("socket: %s", strerror(errno));
 		return false;
 	}
 	if (connect(fd, sa, getsocklen(sa))) {
-		const int err = errno;
-		LOGW_F("connect: %s", strerror(err));
+		LOGW_F("connect: %s", strerror(errno));
 		return false;
 	}
 	socklen_t len = sizeof(*addr);
 	if (getsockname(fd, &addr->sa, &len)) {
-		const int err = errno;
-		LOGW_F("getsockname: %s", strerror(err));
+		LOGW_F("getsockname: %s", strerror(errno));
 		return false;
 	}
 	CLOSE_FD(fd);
@@ -210,8 +200,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			}
 		}
 		if (bind(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
-			const int err = errno;
-			LOGE_F("udp bind: %s", strerror(err));
+			LOGE_F("udp bind: %s", strerror(errno));
 			return false;
 		}
 		if (LOGLEVEL(NOTICE)) {
@@ -232,8 +221,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			}
 		}
 		if (connect(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
-			const int err = errno;
-			LOGE_F("udp connect: %s", strerror(err));
+			LOGE_F("udp connect: %s", strerror(errno));
 			return false;
 		}
 		copy_sa(&udp->kcp_connect.sa, &addr.sa);
@@ -293,10 +281,8 @@ size_t udp_overhead(const struct pktconn *restrict udp)
 static size_t server_mss(const struct server *restrict s)
 {
 	size_t mss = (size_t)s->conf->kcp_mtu;
-	const struct pktqueue *restrict q = s->pkt.queue;
-	UNUSED(q);
 #if WITH_OBFS
-	const struct obfs *restrict obfs = q->obfs;
+	const struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
 		mss -= obfs_overhead(obfs);
 	} else {
@@ -306,7 +292,7 @@ static size_t server_mss(const struct server *restrict s)
 	mss -= udp_overhead(&s->pkt);
 #endif
 #if WITH_CRYPTO
-	const struct crypto *restrict crypto = q->crypto;
+	const struct crypto *restrict crypto = s->pkt.queue->crypto;
 	if (crypto != NULL) {
 		mss -= (crypto->overhead + crypto->nonce_size);
 	}
@@ -347,7 +333,7 @@ void udp_rendezvous(struct server *restrict s, const uint16_t what)
 	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
 	unsigned char b[INET6ADDR_LENGTH];
 	const size_t n = inetaddr_write(b, sizeof(b), sa_local);
-	assert(n > 0);
+	ASSERT(n > 0);
 	ss0_send(s, sa_server, what, b, n);
 }
 
@@ -500,7 +486,7 @@ void server_ping(struct server *restrict s)
 	}
 
 	const ev_tstamp now = ev_time();
-	const uint32_t tstamp = TSTAMP2MS(now);
+	const uint32_t tstamp = tstamp2ms(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	ss0_send(s, &s->pkt.kcp_connect.sa, S0MSG_PING, b, sizeof(b));
@@ -553,9 +539,10 @@ static bool shutdown_filt(
 	void *user)
 {
 	UNUSED(t);
+	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	(void)key, assert(key.data == ss->key);
+	ASSERT(key.data == ss->key);
 	session_free(ss);
 	return false;
 }
@@ -639,8 +626,9 @@ static bool print_session_iter(
 	void *user)
 {
 	UNUSED(t);
+	UNUSED(key);
 	struct session *restrict ss = element;
-	(void)key, assert(key.data == ss->key);
+	ASSERT(key.data == ss->key);
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;

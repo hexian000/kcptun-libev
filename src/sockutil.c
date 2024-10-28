@@ -16,7 +16,6 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -36,14 +35,12 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 {
 	int val = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val))) {
-		const int err = errno;
-		LOGW_F("SO_REUSEADDR: %s", strerror(err));
+		LOGW_F("SO_REUSEADDR: %s", strerror(errno));
 	}
 #ifdef SO_REUSEPORT
 	val = reuseport ? 1 : 0;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(val))) {
-		const int err = errno;
-		LOGW_F("SO_REUSEPORT: %s", strerror(err));
+		LOGW_F("SO_REUSEPORT: %s", strerror(errno));
 	}
 #else
 	if (reuseport) {
@@ -56,13 +53,11 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 {
 	int val = nodelay ? 1 : 0;
 	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val))) {
-		const int err = errno;
-		LOGW_F("TCP_NODELAY: %s", strerror(err));
+		LOGW_F("TCP_NODELAY: %s", strerror(errno));
 	}
 	val = keepalive ? 1 : 0;
 	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val))) {
-		const int err = errno;
-		LOGW_F("SO_KEEPALIVE: %s", strerror(err));
+		LOGW_F("SO_KEEPALIVE: %s", strerror(errno));
 	}
 }
 
@@ -70,14 +65,12 @@ void socket_set_buffer(const int fd, int send, int recv)
 {
 	if (send > 0) {
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send, sizeof(send))) {
-			const int err = errno;
-			LOGW_F("SO_SNDBUF: %s", strerror(err));
+			LOGW_F("SO_SNDBUF: %s", strerror(errno));
 		}
 	}
 	if (recv > 0) {
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &recv, sizeof(recv))) {
-			const int err = errno;
-			LOGW_F("SO_RCVBUF: %s", strerror(err));
+			LOGW_F("SO_RCVBUF: %s", strerror(errno));
 		}
 	}
 }
@@ -90,8 +83,7 @@ void socket_bind_netdev(const int fd, const char *netdev)
 	ifname[sizeof(ifname) - 1] = '\0';
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_BINDTODEVICE, ifname, sizeof(ifname))) {
-		const int err = errno;
-		LOGW_F("SO_BINDTODEVICE: %s", strerror(err));
+		LOGW_F("SO_BINDTODEVICE: %s", strerror(errno));
 	}
 #else
 	(void)fd;
@@ -106,8 +98,7 @@ int socket_get_error(const int fd)
 	int value = 0;
 	socklen_t len = sizeof(value);
 	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &len)) {
-		const int err = errno;
-		LOGW_F("SO_ERROR: %s", strerror(err));
+		LOGW_F("SO_ERROR: %s", strerror(errno));
 	}
 	return value;
 }
@@ -273,7 +264,7 @@ static bool find_addrinfo(union sockaddr_max *sa, const struct addrinfo *it)
 bool resolve_addr(union sockaddr_max *sa, const char *s, const int flags)
 {
 	const size_t addrlen = strlen(s);
-	assert(addrlen <= FQDN_MAX_LENGTH + 1 + 5);
+	ASSERT(addrlen <= FQDN_MAX_LENGTH + 1 + 5);
 	char buf[addrlen + 1];
 	if (addrlen >= sizeof(buf)) {
 		return false;

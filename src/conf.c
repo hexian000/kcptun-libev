@@ -21,20 +21,18 @@ static struct jutil_value *conf_parse(const char *filename)
 {
 	FILE *f = fopen(filename, "r");
 	if (f == NULL) {
-		const int err = errno;
-		LOGE_F("unable to open config file: %s", strerror(err));
+		LOGE_F("unable to open config file: %s", strerror(errno));
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_END)) {
-		const int err = errno;
-		LOGE_F("unable to seek config file: %s", strerror(err));
+		LOGE_F("unable to seek config file: %s", strerror(errno));
 		(void)fclose(f);
 		return NULL;
 	}
 	const long len = ftell(f);
 	if (len < 0) {
-		const int err = errno;
-		LOGE_F("unable to tell config file length: %s", strerror(err));
+		LOGE_F("unable to tell config file length: %s",
+		       strerror(errno));
 		(void)fclose(f);
 		return NULL;
 	}
@@ -44,8 +42,7 @@ static struct jutil_value *conf_parse(const char *filename)
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_SET)) {
-		const int err = errno;
-		LOGE_F("unable to seek config file: %s", strerror(err));
+		LOGE_F("unable to seek config file: %s", strerror(errno));
 		(void)fclose(f);
 		return NULL;
 	}

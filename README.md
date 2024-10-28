@@ -187,7 +187,7 @@ See [m.sh](m.sh) for more information about cross compiling support.
 ## Runtime
 ### Dependencies
 
-If you downloaded a *-static build in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section, you don't have to install the dependencies below.
+**Simple solution**: Download a `-static` build in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section so no dependencies need to be installed.
 
 ```sh
 # Debian & Ubuntu

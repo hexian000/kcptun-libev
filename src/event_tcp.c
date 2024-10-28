@@ -18,7 +18,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -31,7 +30,7 @@ static void modify_io_events(
 	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
 {
 	const int fd = watcher->fd;
-	assert(fd != -1);
+	ASSERT(fd != -1);
 	const int ioevents = events & (EV_READ | EV_WRITE);
 	if (ioevents == 0) {
 		if (ev_is_active(watcher)) {
@@ -77,7 +76,7 @@ static void accept_one(
 	}
 	void *elem = ss;
 	s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
-	assert(elem == NULL);
+	ASSERT(elem == NULL);
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), client_sa);
@@ -122,8 +121,7 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			return;
 		}
 		if (!socket_set_nonblock(fd)) {
-			const int err = errno;
-			LOGE_F("fcntl: %s", strerror(err));
+			LOGE_F("fcntl: %s", strerror(errno));
 			CLOSE_FD(fd);
 			return;
 		}
@@ -238,7 +236,7 @@ static void tcp_recv_all(struct session *restrict ss)
 /* returns: OK=0, wait=1, closed=-1 */
 static int tcp_send(struct session *restrict ss)
 {
-	assert(ss->wbuf_next >= ss->wbuf_flush);
+	ASSERT(ss->wbuf_next >= ss->wbuf_flush);
 	const size_t len = ss->wbuf_next - ss->wbuf_flush;
 	if (len == 0) {
 		return 1;
@@ -259,7 +257,7 @@ static int tcp_send(struct session *restrict ss)
 	if (ret == 0) {
 		return 1;
 	}
-	assert(ret <= INT_MAX);
+	ASSERT(ret <= INT_MAX);
 	ss->wbuf_flush += (size_t)ret;
 	ss->stats.tcp_tx += (uintmax_t)ret;
 	ss->server->stats.tcp_tx += (uintmax_t)ret;

@@ -10,12 +10,12 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "utils/debug.h"
 #include "utils/mcache.h"
 #include "utils/slog.h"
 
 #include <ev.h>
 
-#include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -25,10 +25,11 @@ static bool timeout_filt(
 	void *user)
 {
 	UNUSED(t);
+	UNUSED(key);
 	struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
 	struct session *restrict ss = element;
-	(void)key, assert(key.data == ss->key);
+	ASSERT(key.data == ss->key);
 	ev_tstamp not_seen = now - ss->created;
 	switch (ss->kcp_state) {
 	case STATE_INIT:

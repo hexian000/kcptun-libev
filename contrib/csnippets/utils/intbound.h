@@ -4,7 +4,6 @@
 #ifndef UTILS_INTBOUND_H
 #define UTILS_INTBOUND_H
 
-#include <stdbool.h>
 #include <stdint.h>
 
 /**

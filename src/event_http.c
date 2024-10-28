@@ -90,8 +90,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		return;
 	}
 	if (!socket_set_nonblock(fd)) {
-		const int err = errno;
-		LOGE_F("fcntl: %s", strerror(err));
+		LOGE_F("fcntl: %s", strerror(errno));
 		CLOSE_FD(fd);
 		return;
 	}

@@ -24,7 +24,6 @@
 #include <ev.h>
 #include <sys/socket.h>
 
-#include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -53,9 +52,9 @@ static bool crypto_open_inplace(
 	const size_t size)
 {
 	struct crypto *restrict crypto = q->crypto;
-	assert(crypto != NULL);
+	ASSERT(crypto != NULL);
 	const size_t src_len = *len;
-	assert(size >= src_len);
+	ASSERT(size >= src_len);
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
 	if (src_len <= nonce_size + overhead) {
@@ -85,7 +84,7 @@ static bool crypto_seal_inplace(
 	const size_t src_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
-	assert(size >= src_len + overhead + nonce_size);
+	ASSERT(size >= src_len + overhead + nonce_size);
 	if (!crypto_pad(data, src_len, pad)) {
 		LOGE("failed to pad packet");
 		return false;
@@ -142,7 +141,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		ss->is_accepted = true;
 		void *elem = ss;
 		s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
-		assert(elem == NULL);
+		ASSERT(elem == NULL);
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
 			format_sa(addr_str, sizeof(addr_str), sa);
@@ -225,7 +224,7 @@ size_t queue_dispatch(struct server *restrict s)
 				msgframe_delete(q, msg);
 				continue;
 			}
-			assert(len <= UINT16_MAX);
+			ASSERT(len <= UINT16_MAX);
 			msg->len = len;
 		}
 #endif
@@ -250,7 +249,7 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	if (q->crypto != NULL) {
 		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
 		size_t len = msg->len;
-		assert(len <= cap);
+		ASSERT(len <= cap);
 		const size_t pad = rand64n(MIN(q->mss - len, 15));
 		if (!crypto_seal_inplace(
 			    q, msg->buf + msg->off, &len, cap, pad)) {

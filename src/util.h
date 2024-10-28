@@ -4,6 +4,7 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "utils/debug.h"
 #include "utils/slog.h"
 
 #include <ev.h>
@@ -11,7 +12,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <assert.h>
 #include <errno.h>
 #include <math.h>
 #include <stdbool.h>
@@ -41,8 +41,11 @@ extern struct mcache *msgpool;
 		}                                                              \
 	} while (0)
 
-#define TSTAMP2MS(t)                                                           \
-	(assert(!signbit(t) && isnormal(t)), (uint32_t)fmod((t)*1e+3, 0x1p32))
+static inline uint32_t tstamp2ms(const ev_tstamp t)
+{
+	ASSERT(!signbit(t) && isnormal(t));
+	return (uint32_t)fmod(t * 1e+3, 0x1p32);
+}
 
 #define CHECK_REVENTS(revents, accept)                                         \
 	do {                                                                   \
@@ -51,7 +54,7 @@ extern struct mcache *msgpool;
 			LOGE_F("error event: [errno=%d] %s", err,              \
 			       strerror(err));                                 \
 		}                                                              \
-		assert(((revents) & ((accept) | EV_ERROR)) == (revents));      \
+		ASSERT(((revents) & ((accept) | EV_ERROR)) == (revents));      \
 		if (((revents) & (accept)) == 0) {                             \
 			return;                                                \
 		}                                                              \
@@ -68,7 +71,7 @@ bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 	} while (0)
 
 #define LOG_RATELIMITED_F(level, now, rate, format, ...)                       \
-	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__));
+	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__))
 
 #define LOG_RATELIMITED(level, now, rate, message)                             \
 	LOG_RATELIMITED_F(level, now, rate, "%s", message)

@@ -16,11 +16,10 @@
 #include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
-#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <wchar.h>
 #include <wctype.h>
 
@@ -49,7 +48,7 @@ void slog_extra_txt(FILE *f, void *data)
 			lineno = false;
 		}
 		wchar_t wc;
-		const int clen = mbrtowc(&wc, s, n, &state);
+		const size_t clen = mbrtowc(&wc, s, n, &state);
 		if (clen == 0) {
 			break;
 		}

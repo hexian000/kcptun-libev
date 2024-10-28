@@ -229,9 +229,8 @@ static bool unescape(char *str, const bool space)
 
 static inline char *strlower(char *s)
 {
-	for (char *p = s; *p != '\0'; ++p) {
-		const unsigned char ch = *p;
-		*p = tolower(ch);
+	for (unsigned char *restrict p = (unsigned char *)s; *p != '\0'; ++p) {
+		*p = tolower(*p);
 	}
 	return s;
 }

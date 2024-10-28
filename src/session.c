@@ -24,7 +24,6 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -78,13 +77,11 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	/* Create client socket */
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	if (fd < 0) {
-		const int err = errno;
-		LOGE_F("socket: %s", strerror(err));
+		LOGE_F("socket: %s", strerror(errno));
 		return false;
 	}
 	if (!socket_set_nonblock(fd)) {
-		const int err = errno;
-		LOGE_F("fcntl: %s", strerror(err));
+		LOGE_F("fcntl: %s", strerror(errno));
 		CLOSE_FD(fd);
 		return false;
 	}
@@ -549,7 +546,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	const uint32_t tstamp = read_uint32(msgbuf);
 	/* calculate RTT & estimated bandwidth */
-	const uint32_t now_ms = TSTAMP2MS(ev_now(s->loop));
+	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	const double rtt = (now_ms - tstamp) * 1e-3;
 	const struct config *restrict conf = s->conf;
 	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / rtt;
@@ -745,7 +742,7 @@ ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
 		LOG_F(DEBUG, "punch: (%s, %s)", addr1_str, addr2_str);
 	}
 	const ev_tstamp now = ev_now(s->loop);
-	const uint32_t tstamp = TSTAMP2MS(now);
+	const uint32_t tstamp = tstamp2ms(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
 	if (is_punch_addr(&addr[0].sa)) {
