@@ -54,14 +54,14 @@ int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 	if (i > 0) {
 		if (-10.0 < v && v < 10.0) {
 			return snprintf(
-				buf, bufsize, "%.2f %s", v, iec_units[i]);
+				buf, bufsize, "%.2f%s", v, iec_units[i]);
 		}
 		if (-100.0 < v && v < 100.0) {
 			return snprintf(
-				buf, bufsize, "%.1f %s", v, iec_units[i]);
+				buf, bufsize, "%.1f%s", v, iec_units[i]);
 		}
 	}
-	return snprintf(buf, bufsize, "%.0f %s", v, iec_units[i]);
+	return snprintf(buf, bufsize, "%.0f%s", v, iec_units[i]);
 }
 
 struct duration make_duration(double value)
