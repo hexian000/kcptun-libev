@@ -1,9 +1,15 @@
 #!/bin/sh
+# m.sh: in-tree build script for convenience
 cd "$(dirname "$0")"
 GENERATOR="Unix Makefiles"
+NPROC=1
 set -ex
 
 case "$1" in
+"c")
+    # clean artifacts
+    rm -rf "build" "compile_commands.json"
+    ;;
 "x")
     # cross compiling, environment vars need to be set
     rm -rf "build" && mkdir "build"
@@ -13,73 +19,18 @@ case "$1" in
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -S "." -B "build"
-    nice cmake --build "build"
-    ls -lh "build/bin/kcptun-libev"
-    ;;
-"xs")
-    # cross compile statically linked executable
-    rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_SYSTEM_NAME="Linux" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
-        -DBUILD_STATIC=ON \
-        -S "." -B "build"
-    nice cmake --build "build"
-    ls -lh "build/bin/kcptun-libev"
-    ;;
-"r")
-    # rebuild release
-    rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -S "." -B "build"
-    nice cmake --build "build"
-    ls -lh "build/bin/kcptun-libev"
-    ;;
-"s")
-    # rebuild statically linked executable
-    rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Release" \
-        -DBUILD_STATIC=ON \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -S "." -B "build"
-    nice cmake --build "build"
-    ls -lh "build/bin/kcptun-libev"
-    ;;
-"p")
-    # rebuild for profiling
-    rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -S "." -B "build"
-    nice cmake --build "build"
-    (cd "build/bin" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
-    ls -lh "build/bin/kcptun-libev"
-    ;;
-"min")
-    # rebuild for minimized size
-    rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="MinSizeRel" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -S "." -B "build"
-    nice cmake --build "build"
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "posix")
-    # force POSIX APIs
+    # rebuild for strict POSIX compliance
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DFORCE_POSIX=1 \
         -S "." -B "build"
-    nice cmake --build "build"
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "clang")
@@ -91,19 +42,19 @@ case "$1" in
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld --rtlib=compiler-rt" \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -S "." -B "build"
-    nice cmake --build "build"
+    nice cmake --build "build" --parallel "${NPROC}"
     (cd "build/bin" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/bin/kcptun-libev"
     ;;
 "msys2")
-    # set FIND_ROOT for finding dependencies
+    # rebuild with MSYS 2
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
         -DENABLE_LTO=OFF \
         -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc" \
         -S "." -B "build"
-    nice cmake --build "build"
+    nice cmake --build "build" --parallel "${NPROC}"
     HOST="$(cc -dumpmachine)"
     zip -9j "build/kcptun-libev-win32.${HOST}.zip" \
         "/usr/bin/msys-2.0.dll" \
@@ -111,22 +62,22 @@ case "$1" in
     ls -lh "build/kcptun-libev-win32.${HOST}.zip"
     ;;
 "ndk")
-    # cross compiling, environment vars need to be set
+    # rebuild with Android NDK
     rm -rf "build" && mkdir "build"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_ANDROID_NDK="${NDK}" \
+        -DCMAKE_ANDROID_NDK="${ANDROID_NDK_ROOT}" \
         -DCMAKE_SYSTEM_NAME="Android" \
-        -DCMAKE_SYSTEM_VERSION="${API}" \
-        -DCMAKE_ANDROID_ARCH_ABI="${ABI}" \
+        -DCMAKE_SYSTEM_VERSION="${ANDROID_API_LEVEL}" \
+        -DCMAKE_ANDROID_ARCH_ABI="${ABI_NAME}" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
-    nice cmake --build "build"
+    nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "single")
-    # rebuild as single file
+    # rebuild as a single file
     rm -rf "build" && mkdir -p "build/src"
     cmake -G "${GENERATOR}" \
         -DCMAKE_BUILD_TYPE="Release" \
@@ -141,20 +92,6 @@ case "$1" in
         -o "build/bin/kcptun-libev" -xc - -lev -lsodium -lm
     ls -lh "build/bin/kcptun-libev"
     ;;
-"d")
-    if command -v clang-format >/dev/null; then
-        find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
-    fi
-    # debug
-    rm -rf "build" && mkdir -p "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Debug" \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -S . -B "build"
-    ln -sf build/compile_commands.json compile_commands.json
-    nice cmake --build "build" --parallel
-    ls -lh "build/bin/kcptun-libev"
-    ;;
 "san")
     # rebuild with clang & sanitizers
     rm -rf "build" && mkdir "build"
@@ -167,9 +104,50 @@ case "$1" in
     nice cmake --build "build" --parallel
     ls -lh "build/bin/kcptun-libev"
     ;;
-"c")
-    # clean artifacts
-    rm -rf "build" "compile_commands.json"
+"min")
+    # rebuild for minimized size
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="MinSizeRel" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -S "." -B "build"
+    nice cmake --build "build" --parallel "${NPROC}"
+    ls -lh "build/bin/kcptun-libev"
+    ;;
+"p")
+    # rebuild for profiling
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -S "." -B "build"
+    nice cmake --build "build" --parallel "${NPROC}"
+    (cd "build/bin" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
+    ls -lh "build/bin/kcptun-libev"
+    ;;
+"r")
+    # rebuild for release
+    rm -rf "build" && mkdir "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -S "." -B "build"
+    nice cmake --build "build" --parallel "${NPROC}"
+    ls -lh "build/bin/kcptun-libev"
+    ;;
+"d")
+    # rebuild for debug
+    if command -v clang-format >/dev/null; then
+        find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
+    fi
+    rm -rf "build" && mkdir -p "build"
+    cmake -G "${GENERATOR}" \
+        -DCMAKE_BUILD_TYPE="Debug" \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -S . -B "build"
+    ln -sf build/compile_commands.json compile_commands.json
+    nice cmake --build "build" --parallel
+    ls -lh "build/bin/kcptun-libev"
     ;;
 *)
     nice cmake --build "build" --parallel
