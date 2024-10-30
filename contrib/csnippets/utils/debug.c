@@ -39,29 +39,36 @@ void slog_extra_txt(FILE *f, void *data)
 		unsigned char data[256];
 	} buf;
 	BUF_INIT(buf, 0);
-	mbstate_t state = { 0 };
-	bool lineno = true;
+	bool newline = true;
+	bool cr = false;
 	size_t line = 0, column = 0;
 	while (n > 0) {
-		if (lineno) {
-			BUF_APPENDF(buf, INDENT "%4zu ", ++line);
-			lineno = false;
-		}
 		wchar_t wc;
-		const size_t clen = mbrtowc(&wc, s, n, &state);
-		if (clen == 0) {
+		const size_t clen = mbrtowc(&wc, s, n, &(mbstate_t){ 0 });
+		if (clen == 0 || clen == (size_t)-1 || clen == (size_t)-2) {
 			break;
 		}
 		s += clen, n -= clen;
+		if (cr && wc == L'\n') {
+			/* skip CRLF */
+			cr = false;
+			continue;
+		}
+		cr = (wc == L'\r');
+		if (newline) {
+			BUF_APPENDF(buf, INDENT "%4zu ", ++line);
+			newline = false;
+		}
 		int width;
 		switch (wc) {
+		case L'\r':
 		case L'\n':
 			/* soft wrap */
 			BUF_APPENDSTR(buf, "\n");
 			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 			buf.len = 0;
 			column = 0;
-			lineno = true;
+			newline = true;
 			continue;
 		case L'\t':
 			width = TAB_WIDTH - column % TAB_WIDTH;
@@ -82,6 +89,10 @@ void slog_extra_txt(FILE *f, void *data)
 			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
 			buf.len = 0;
 			column = 0;
+			if (wc == L'\t') {
+				/* recalculate tab width */
+				width = TAB_WIDTH;
+			}
 		}
 		if (wc == L'\t') {
 			BUF_APPEND(buf, TAB_SPACE, width);
@@ -98,7 +109,13 @@ void slog_extra_txt(FILE *f, void *data)
 	if (column > 0) {
 		BUF_APPENDSTR(buf, "\n");
 	}
-	(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+	if (buf.len > 0) {
+		(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+		buf.len = 0;
+	}
+	if (n > 0) {
+		(void)fprintf(f, INDENT " ... (omitting %zu bytes)\n", n);
+	}
 }
 
 void slog_extra_bin(FILE *f, void *data)

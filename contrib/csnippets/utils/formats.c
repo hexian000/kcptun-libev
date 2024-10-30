@@ -25,18 +25,18 @@ int format_si_prefix(char *buf, const size_t bufsize, const double value)
 	}
 	const int e = (int)floor(log10(fabs(value)) / 3.0);
 	if (e == 0) {
-		return snprintf(buf, bufsize, "%.6g", value);
+		return snprintf(buf, bufsize, "%.4g", value);
 	}
 	if (e < 0) {
 		const size_t i = MIN((size_t)-e, ARRAY_SIZE(si_prefix_neg));
 		const double v = value / pow(10, -3.0 * (double)i);
 		const char *prefix = si_prefix_neg[i - 1];
-		return snprintf(buf, bufsize, "%.6g%s", v, prefix);
+		return snprintf(buf, bufsize, "%.4g%s", v, prefix);
 	}
 	const size_t i = MIN((size_t)e, ARRAY_SIZE(si_prefix_pos));
 	const double v = value / pow(10, 3.0 * (double)i);
 	const char *prefix = si_prefix_pos[i - 1];
-	return snprintf(buf, bufsize, "%.6g%s", v, prefix);
+	return snprintf(buf, bufsize, "%.4g%s", v, prefix);
 }
 
 static const char *iec_units[] = {

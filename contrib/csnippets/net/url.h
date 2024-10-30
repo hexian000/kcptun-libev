@@ -23,8 +23,12 @@ struct url {
 	char *defacto;
 };
 
+struct url_query_component {
+	const char *key, *value;
+};
+
 /**
- * @brief Escape username and password for URL.
+ * @brief Escape username and password to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @param username Username.
@@ -35,7 +39,7 @@ size_t
 url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password);
 
 /**
- * @brief Escape a path segment for URL.
+ * @brief Escape a full path to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @return Number of bytes written to buffer.
@@ -43,12 +47,32 @@ url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password);
 size_t url_escape_path(char *buf, size_t buf_size, const char *path);
 
 /**
- * @brief Escape a query component for URL.
+ * @brief Escape a path segment to be safely used in URL.
+ * @param[out] buf Out buffer.
+ * @param buf_size Buffer size in bytes.
+ * @return Number of bytes written to buffer.
+ */
+size_t url_escape_path_segment(char *buf, size_t buf_size, const char *path);
+
+/**
+ * @brief Escape a query component to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @return Number of bytes written to buffer.
  */
 size_t url_escape_query(char *buf, size_t buf_size, const char *query);
+
+/**
+ * @brief Build a URL query string from structured data.
+ * @param[out] buf Out buffer.
+ * @param buf_size Buffer size in bytes.
+ * @param components Query components.
+ * @param n Number of query components.
+ * @return Number of bytes written to buffer.
+ */
+size_t url_build_query(
+	char *buf, size_t buf_size,
+	const struct url_query_component *components, size_t n);
 
 /**
  * @brief Build a URL string from structured data.
@@ -82,12 +106,11 @@ bool url_path_segment(char **path, char **segment);
  * @brief Parse a URL query into components.
  * @details The escaped query string will be destructed.
  * @param[inout] query Pointer to URL query string, will be moved to next component.
- * @param[out] key Unescaped URL query key string.
- * @param[out] value Unescaped URL query value string.
+ * @param[out] comp Unescaped URL query component.
  * @return true if successful.
  * @note Stop iterating if `*query == NULL` or previous call returned false.
  */
-bool url_query_component(char **query, char **key, char **value);
+bool url_query_component(char **query, struct url_query_component *comp);
 
 /**
  * @brief Unescape a userinfo string in-place.

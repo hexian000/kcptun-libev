@@ -324,30 +324,30 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	bool banner = true;
 	int state_level = STATE_CONNECTED;
 	while (uri->query != NULL) {
-		char *key, *value;
-		if (!url_query_component(&uri->query, &key, &value)) {
+		struct url_query_component comp;
+		if (!url_query_component(&uri->query, &comp)) {
 			http_resp_errpage(ctx, HTTP_BAD_REQUEST);
 			return;
 		}
-		if (strcmp(key, "banner") == 0) {
-			if (strcmp(value, "no") == 0) {
+		if (strcmp(comp.key, "banner") == 0) {
+			if (strcmp(comp.value, "no") == 0) {
 				banner = false;
 			}
-		} else if (strcmp(key, "sessions") == 0) {
-			if (strcmp(value, "0") == 0 ||
-			    strcmp(value, "none") == 0) {
+		} else if (strcmp(comp.key, "sessions") == 0) {
+			if (strcmp(comp.value, "0") == 0 ||
+			    strcmp(comp.value, "none") == 0) {
 				state_level = -1;
 			} else if (
-				strcmp(value, "1") == 0 ||
-				strcmp(value, "connected") == 0) {
+				strcmp(comp.value, "1") == 0 ||
+				strcmp(comp.value, "connected") == 0) {
 				state_level = STATE_CONNECTED;
 			} else if (
-				strcmp(value, "2") == 0 ||
-				strcmp(value, "active") == 0) {
+				strcmp(comp.value, "2") == 0 ||
+				strcmp(comp.value, "active") == 0) {
 				state_level = STATE_LINGER;
 			} else if (
-				strcmp(value, "3") == 0 ||
-				strcmp(value, "all") == 0) {
+				strcmp(comp.value, "3") == 0 ||
+				strcmp(comp.value, "all") == 0) {
 				state_level = STATE_MAX;
 			}
 		}

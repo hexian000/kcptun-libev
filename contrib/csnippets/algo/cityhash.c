@@ -33,6 +33,7 @@
 #include "utils/likely.h"
 #include "utils/serialize.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 // Some primes between 2^63 and 2^64 for various uses.
