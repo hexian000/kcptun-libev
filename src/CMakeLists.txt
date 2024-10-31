@@ -93,6 +93,8 @@ if(ENABLE_SYSTEMD)
         set(WITH_SYSTEMD TRUE)
         target_include_directories(kcptun-libev SYSTEM PRIVATE ${SYSTEMD_INCLUDE_DIR})
         target_link_libraries(kcptun-libev PRIVATE ${SYSTEMD_LIBRARY})
+    else()
+        message(WARNING "systemd not found")
     endif()
 endif()
 

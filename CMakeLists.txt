@@ -13,7 +13,8 @@ function(get_git_version)
         return()
     endif()
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} rev-parse --git-dir
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --git-dir
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
         RESULT_VARIABLE RESULT
         OUTPUT_VARIABLE GIT_DIR
         OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -21,18 +22,21 @@ function(get_git_version)
         return()
     endif()
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} tag --points-at HEAD
+        COMMAND "${GIT_EXECUTABLE}" tag --points-at HEAD
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
         OUTPUT_VARIABLE GIT_VERSION
         OUTPUT_STRIP_TRAILING_WHITESPACE)
     if("${GIT_VERSION}" STREQUAL "")
         execute_process(
-            COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
             OUTPUT_VARIABLE GIT_HEAD
             OUTPUT_STRIP_TRAILING_WHITESPACE)
         set(GIT_VERSION "git-${GIT_HEAD}")
     endif()
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} diff --quiet HEAD --
+        COMMAND "${GIT_EXECUTABLE}" diff --quiet HEAD --
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
         RESULT_VARIABLE RESULT)
     if(RESULT)
         set(GIT_VERSION "${GIT_VERSION}+")
