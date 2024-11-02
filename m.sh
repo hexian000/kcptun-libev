@@ -19,6 +19,7 @@ case "$1" in
         -DCMAKE_SYSTEM_NAME="Linux" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+        -DCMAKE_SKIP_RPATH=ON \
         -S "." -B "build"
     nice cmake --build "build" --parallel "${NPROC}"
     ls -lh "build/bin/kcptun-libev"
