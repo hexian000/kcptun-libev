@@ -91,7 +91,8 @@ case "$1" in
     done | gcc -pipe -O3 -s -DNDEBUG -D_GNU_SOURCE -pedantic -Wall -Wextra -std=c11 \
         -Icontrib/cjson -Icontrib/csnippets -Icontrib/kcp -Icontrib/libbloom -Isrc \
         -include build/src/config.h \
-        -flto=auto -ffat-lto-objects -flto-partition=none \
+        -flto=auto -fno-fat-lto-objects -flto-partition=none \
+        -fuse-linker-plugin -fwhole-program \
         -fPIE -pie \
         -o "build/bin/kcptun-libev" -xc - -lev -lsodium -lm
     ls -lh "build/bin/kcptun-libev"
