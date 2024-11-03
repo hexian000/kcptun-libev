@@ -313,6 +313,13 @@ http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 	http_set_wbuf(ctx, buf);
 }
 
+static bool parse_bool(const char *s)
+{
+	return strcmp(s, "1") == 0 || strcmp(s, "y") == 0 ||
+	       strcmp(s, "yes") == 0 || strcmp(s, "on") == 0 ||
+	       strcmp(s, "t") == 0 || strcmp(s, "true") == 0;
+}
+
 static void
 http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 {
@@ -321,7 +328,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		return;
 	}
 	const struct http_message *restrict hdr = &ctx->http_msg;
-	bool banner = true;
+	bool nobanner = true;
 	int state_level = STATE_CONNECTED;
 	while (uri->query != NULL) {
 		struct url_query_component comp;
@@ -329,10 +336,8 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 			http_resp_errpage(ctx, HTTP_BAD_REQUEST);
 			return;
 		}
-		if (strcmp(comp.key, "banner") == 0) {
-			if (strcmp(comp.value, "no") == 0) {
-				banner = false;
-			}
+		if (strcmp(comp.key, "nobanner") == 0) {
+			nobanner = parse_bool(comp.value);
 		} else if (strcmp(comp.key, "sessions") == 0) {
 			if (strcmp(comp.value, "0") == 0 ||
 			    strcmp(comp.value, "none") == 0) {
@@ -370,7 +375,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		return;
 	}
 
-	if (banner) {
+	if (!nobanner) {
 		buf = VBUF_APPENDSTR(
 			buf, "" PROJECT_NAME " " PROJECT_VER "\n"
 			     "  " PROJECT_HOMEPAGE "\n\n");
