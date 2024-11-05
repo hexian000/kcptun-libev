@@ -155,7 +155,7 @@ int main(int argc, char **argv)
 	}
 	struct config *restrict conf = conf_read(args.conf_path);
 	if (conf == NULL) {
-		LOGF("failed to read config");
+		LOGF_F("failed to read config `%s'", args.conf_path);
 		return EXIT_FAILURE;
 	}
 	slog_setlevel(conf->log_level + args.verbosity);

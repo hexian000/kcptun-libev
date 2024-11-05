@@ -107,6 +107,7 @@ void init(int argc, char **argv)
 	UNUSED(argc);
 	UNUSED(argv);
 	(void)setlocale(LC_ALL, "");
+	(void)setvbuf(stdout, NULL, _IONBF, 0);
 	slog_setoutput(SLOG_OUTPUT_FILE, stdout);
 	{
 		static char prefix[] = __FILE__;

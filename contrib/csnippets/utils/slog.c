@@ -87,30 +87,25 @@ static struct {
 #define SLOG_INIT() ((void)(0))
 #endif /* SLOG_MT_SAFE */
 
-#define TIME_LAYOUT "2006-01-02T15:04:05-0700"
-
 #if HAVE_LOCALTIME_R
-#define APPEND_TIMESTAMP(buf, timer)                                           \
-	do {                                                                   \
-		struct tm log_tm;                                              \
-		const int ret = strftime(                                      \
-			(char *)((buf).data + (buf).len),                      \
-			((buf).cap - (buf).len), "%FT%T%z",                    \
-			localtime_r((timer), &log_tm));                        \
-		assert(ret == sizeof(TIME_LAYOUT) - 1);                        \
-		(buf).len += ret;                                              \
-	} while (0)
+#define LOCALTIME(timer) localtime_r((timer), &(struct tm){ 0 })
 #else
-#define APPEND_TIMESTAMP(buf, timer)                                           \
-	do {                                                                   \
-		const int ret = strftime(                                      \
-			(char *)((buf).data + (buf).len),                      \
-			((buf).cap - (buf).len), "%FT%T%z",                    \
-			localtime((timer)));                                   \
-		assert(ret == sizeof(TIME_LAYOUT) - 1);                        \
-		(buf).len += ret;                                              \
-	} while (0)
+#define LOCALTIME(timer) localtime((timer))
 #endif /* HAVE_LOCALTIME_R */
+
+/* "2006-01-02T15:04:05-07:00": a fixed-length layout conforming to RFC 3339 */
+static size_t
+slog_timestamp(char *restrict s, const size_t maxsize, const time_t *timer)
+{
+	const int ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
+	if (ret <= 0 || (size_t)ret >= maxsize) {
+		return 0;
+	}
+	s[ret] = s[ret - 1];
+	s[ret - 1] = s[ret - 2];
+	s[ret - 2] = ':';
+	return (size_t)ret + 1;
+}
 
 static const char *slog_filename(const char *file)
 {
@@ -132,11 +127,13 @@ static void slog_write_file(
 	const int level, const char *file, const int line,
 	struct slog_extra *extra, const char *format, va_list args)
 {
-	const time_t log_now = time(NULL);
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
 	slog_buffer.data[1] = ' ';
-	APPEND_TIMESTAMP(slog_buffer, &log_now);
+	const time_t now = time(NULL);
+	slog_buffer.len += slog_timestamp(
+		(char *)slog_buffer.data + slog_buffer.len,
+		slog_buffer.cap - slog_buffer.len, &now);
 	BUF_APPENDF(slog_buffer, " %s:%d ", slog_filename(file), line);
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
 	if (ret < 0) {
@@ -152,6 +149,7 @@ static void slog_write_file(
 	if (extra != NULL) {
 		extra->func(slog_output, extra->data);
 	}
+	(void)fflush(slog_output);
 	MTX_UNLOCK(&slog_output_mu);
 }
 
@@ -198,9 +196,6 @@ void slog_setoutput(const int type, ...)
 	} break;
 	case SLOG_OUTPUT_FILE: {
 		FILE *stream = va_arg(args, FILE *);
-		const int status = setvbuf(stream, NULL, _IONBF, 0);
-		assert(status == 0);
-		(void)status;
 		MTX_LOCK(&slog_output_mu);
 		slog_output = stream;
 		MTX_UNLOCK(&slog_output_mu);
