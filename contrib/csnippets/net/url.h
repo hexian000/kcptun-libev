@@ -24,7 +24,7 @@ struct url {
 };
 
 struct url_query_component {
-	const char *key, *value;
+	char *key, *value;
 };
 
 /**
@@ -39,40 +39,41 @@ size_t
 url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password);
 
 /**
- * @brief Escape a full path to be safely used in URL.
+ * @brief Escape a path string to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
+ * @param path The full path string like "/s1/s2/s3".
  * @return Number of bytes written to buffer.
  */
 size_t url_escape_path(char *buf, size_t buf_size, const char *path);
 
 /**
- * @brief Escape a path segment to be safely used in URL.
+ * @brief Escape a query string to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
- * @return Number of bytes written to buffer.
- */
-size_t url_escape_path_segment(char *buf, size_t buf_size, const char *path);
-
-/**
- * @brief Escape a query component to be safely used in URL.
- * @param[out] buf Out buffer.
- * @param buf_size Buffer size in bytes.
+ * @param query The full query string like "k1=v1&k2=v1".
  * @return Number of bytes written to buffer.
  */
 size_t url_escape_query(char *buf, size_t buf_size, const char *query);
 
 /**
- * @brief Build a URL query string from structured data.
+ * @brief Escape a path segment to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
- * @param components Query components.
- * @param n Number of query components.
+ * @param segment The path segment string like "s1".
  * @return Number of bytes written to buffer.
  */
-size_t url_build_query(
-	char *buf, size_t buf_size,
-	const struct url_query_component *components, size_t n);
+size_t url_escape_path_segment(char *buf, size_t buf_size, const char *segment);
+
+/**
+ * @brief Escape a query component to be safely used in URL.
+ * @param[out] buf Out buffer.
+ * @param buf_size Buffer size in bytes.
+ * @param segment The query component string like "k1".
+ * @return Number of bytes written to buffer.
+ */
+size_t
+url_escape_query_component(char *buf, size_t buf_size, const char *component);
 
 /**
  * @brief Build a URL string from structured data.
@@ -122,7 +123,7 @@ bool url_query_component(char **query, struct url_query_component *comp);
 bool url_unescape_userinfo(char *raw, char **username, char **password);
 
 /**
- * @brief Unescape a full URL path string in-place.
+ * @brief Unescape a URL path string in-place.
  * @details The escaped path string will be destructed.
  * This is an alternative to url_path_segment that does not split the path into segments.
  * @param[inout] path URL path string.
@@ -131,7 +132,7 @@ bool url_unescape_userinfo(char *raw, char **username, char **password);
 bool url_unescape_path(char *path);
 
 /**
- * @brief Unescape a full URL query string in-place.
+ * @brief Unescape a URL query string in-place.
  * @details The escaped query string will be destructed.
  * This is an alternative to url_query_component that does not split the query into components.
  * @param[inout] path URL query string.
