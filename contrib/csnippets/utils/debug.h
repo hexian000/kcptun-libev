@@ -120,7 +120,16 @@ int debug_backtrace(void **frames, int calldepth, int len);
 		}                                                              \
 	} while (0)
 #define CHECKMSG(cond, msg) CHECKMSGF(cond, "%s", msg)
+#ifdef NDEBUG
+#define CHECK(cond)                                                            \
+	do {                                                                   \
+		if (!(cond)) {                                                 \
+			FAIL();                                                \
+		}                                                              \
+	} while (0)
+#else
 #define CHECK(cond) CHECKMSGF(cond, "runtime check failed: `%s'", #cond)
+#endif
 
 /* ASSERT: an alternative to assert() */
 #ifdef NDEBUG
