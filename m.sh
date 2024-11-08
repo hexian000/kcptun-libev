@@ -1,8 +1,6 @@
 #!/bin/sh
 # m.sh: in-tree build script for convenience
 cd "$(dirname "$0")"
-GENERATOR="Unix Makefiles"
-NPROC=1
 set -ex
 
 case "$1" in
@@ -13,50 +11,50 @@ case "$1" in
 "x")
     # cross compiling, environment vars need to be set
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_SYSTEM_NAME="Linux" \
         -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -DCMAKE_SKIP_RPATH=ON \
         -S "." -B "build"
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "posix")
     # rebuild for strict POSIX compliance
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE="Release" \
         -DFORCE_POSIX=ON \
         -S "." -B "build"
     cp build/compile_commands.json compile_commands.json
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "clang")
     # rebuild with Linux clang/lld
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_C_COMPILER="clang" \
         -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld --rtlib=compiler-rt" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -S "." -B "build"
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     (cd "build/bin" && llvm-objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/bin/kcptun-libev"
     ;;
 "msys2")
     # rebuild with MSYS 2
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -S "." -B "build"
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     HOST="$(cc -dumpmachine)"
     zip -9j "build/kcptun-libev-win32.${HOST}.zip" \
         "/usr/bin/msys-2.0.dll" \
@@ -66,7 +64,7 @@ case "$1" in
 "ndk")
     # rebuild with Android NDK
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_ANDROID_NDK="${ANDROID_NDK_ROOT}" \
         -DCMAKE_SYSTEM_NAME="Android" \
@@ -76,13 +74,13 @@ case "$1" in
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "single")
     # rebuild as a single file
     rm -rf "build" && mkdir -p "build/src"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="Release" \
         -S "." -B "build"
     find contrib src -name '*.c' | while read -r FILE; do
@@ -99,46 +97,48 @@ case "$1" in
 "san")
     # rebuild with clang & sanitizers
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE="Debug" \
         -DCMAKE_C_COMPILER="clang" \
         -DENABLE_SANITIZERS=ON \
         -S "." -B "build"
     cp build/compile_commands.json compile_commands.json
-    cmake --build "build" --parallel
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "min")
     # rebuild for minimized size
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="MinSizeRel" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -S "." -B "build"
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "p")
     # rebuild for profiling
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+        -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     (cd "build/bin" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
     ls -lh "build/bin/kcptun-libev"
     ;;
 "r")
     # rebuild for release
     rm -rf "build" && mkdir "build"
-    cmake -G "${GENERATOR}" \
+    cmake \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE="Release" \
+        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -S "." -B "build"
     cp build/compile_commands.json compile_commands.json
-    cmake --build "build" --parallel "${NPROC}"
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 "d")
@@ -147,16 +147,16 @@ case "$1" in
         find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
     fi
     rm -rf "build" && mkdir -p "build"
-    cmake -G "${GENERATOR}" \
-        -DCMAKE_BUILD_TYPE="Debug" \
+    cmake \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCMAKE_BUILD_TYPE="Debug" \
         -S . -B "build"
     cp build/compile_commands.json compile_commands.json
-    cmake --build "build" --parallel
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 *)
-    cmake --build "build" --parallel
+    cmake --build "build"
     ls -lh "build/bin/kcptun-libev"
     ;;
 esac

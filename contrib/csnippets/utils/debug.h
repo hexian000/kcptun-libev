@@ -5,7 +5,6 @@
 #define UTILS_DEBUG_H
 
 #include "slog.h"
-#include "utils/buffer.h"
 
 #include <stddef.h>
 #include <stdio.h>
