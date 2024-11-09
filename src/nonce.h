@@ -28,6 +28,7 @@ enum noncegen_method {
 
 struct noncegen {
 	enum noncegen_method method;
+	const unsigned char *(*next_fn)(struct noncegen *g);
 	struct ppbloom ppbloom;
 	struct {
 		BUFFER_HDR;
@@ -36,10 +37,11 @@ struct noncegen {
 };
 
 struct noncegen *
-noncegen_create(enum noncegen_method method, size_t nonce_len, bool strict);
+noncegen_new(enum noncegen_method method, size_t nonce_len, bool strict);
 void noncegen_init(struct noncegen *g);
+void noncegen_free(struct noncegen *g);
+
 const unsigned char *noncegen_next(struct noncegen *g);
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce);
-void noncegen_free(struct noncegen *g);
 
 #endif /* NONCE_H */

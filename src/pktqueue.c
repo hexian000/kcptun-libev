@@ -310,7 +310,7 @@ static bool queue_new_crypto(
 			return false;
 		}
 	}
-	q->noncegen = noncegen_create(
+	q->noncegen = noncegen_new(
 		q->crypto->noncegen_method, q->crypto->nonce_size,
 		(conf->mode & MODE_SERVER) != 0);
 	if (q->noncegen == NULL) {

@@ -32,7 +32,7 @@ ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
 	return ret;
 }
 
-struct noncegen *noncegen_create(
+struct noncegen *noncegen_new(
 	const enum noncegen_method method, const size_t nonce_len,
 	const bool strict)
 {
@@ -65,28 +65,41 @@ struct noncegen *noncegen_create(
 	return g;
 }
 
+static const unsigned char *next_counter(struct noncegen *restrict g)
+{
+	sodium_increment(g->buf.data, g->buf.len);
+	return g->buf.data;
+}
+
+static const unsigned char *next_random(struct noncegen *restrict g)
+{
+	randombytes_buf(g->buf.data, g->buf.len);
+	return g->buf.data;
+}
+
 void noncegen_init(struct noncegen *restrict g)
 {
-	/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
 	if (g->method == noncegen_counter) {
 		randombytes_buf(g->buf.data, g->buf.len);
+	}
+	switch (g->method) {
+	case noncegen_counter:
+		/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */
+		randombytes_buf(g->buf.data, g->buf.len);
+		g->next_fn = next_counter;
+		break;
+	case noncegen_random:
+		g->next_fn = next_random;
+		break;
 	}
 }
 
 const unsigned char *noncegen_next(struct noncegen *restrict g)
 {
-	switch (g->method) {
-	case noncegen_counter:
-		sodium_increment(g->buf.data, g->buf.len);
-		break;
-	case noncegen_random:
-		randombytes_buf(g->buf.data, g->buf.len);
-		break;
-	}
-	return g->buf.data;
+	return g->next_fn(g);
 }
 
-bool noncegen_verify(struct noncegen *g, const unsigned char *nonce)
+bool noncegen_verify(struct noncegen *restrict g, const unsigned char *nonce)
 {
 	return !ppbloom_check_add(&g->ppbloom, nonce, g->buf.len);
 }
