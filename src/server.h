@@ -81,7 +81,8 @@ struct server {
 	};
 };
 
-struct server *server_new(struct ev_loop *loop, struct config *conf);
+struct server *server_new(struct ev_loop *loop, const struct config *conf);
+void server_loadconf(struct server *s, const struct config *conf);
 bool server_start(struct server *s);
 void server_ping(struct server *s);
 struct vbuffer *

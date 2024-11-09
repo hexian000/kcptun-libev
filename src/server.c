@@ -355,7 +355,8 @@ static bool udp_start(struct server *restrict s)
 	return true;
 }
 
-struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
+struct server *
+server_new(struct ev_loop *loop, const struct config *restrict conf)
 {
 	struct server *restrict s = malloc(sizeof(struct server));
 	if (s == NULL) {
@@ -438,6 +439,26 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		return false;
 	}
 	return s;
+}
+
+void server_loadconf(
+	struct server *restrict s, const struct config *restrict conf)
+{
+	const double ping_timeout = 4.0;
+	s->linger = conf->linger;
+	s->dial_timeout = 30.0;
+	s->session_timeout = conf->timeout;
+	s->session_keepalive = conf->timeout - ping_timeout;
+	s->keepalive = conf->keepalive;
+	s->timeout = CLAMP(conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0);
+	s->ping_timeout = ping_timeout;
+	s->time_wait = conf->time_wait;
+
+	const double interval = conf->kcp_interval * 1e-3;
+	s->w_kcp_update.repeat = interval;
+	ev_timer_again(s->loop, &s->w_kcp_update);
+
+	s->conf = conf;
 }
 
 bool server_start(struct server *s)

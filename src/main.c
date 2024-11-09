@@ -246,9 +246,16 @@ void signal_cb(struct ev_loop *loop, struct ev_signal *watcher, int revents)
 			LOGE_F("failed to read config: %s", args.conf_path);
 			return;
 		}
-		conf_free((struct config *)s->conf);
+		if (s->conf->mode != conf->mode) {
+			conf_modestr(conf);
+			LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
+			       conf_modestr(s->conf), s->conf->mode,
+			       conf_modestr(conf), conf->mode);
+			return;
+		}
 		slog_setlevel(conf->log_level);
-		s->conf = conf;
+		conf_free((struct config *)s->conf);
+		server_loadconf(s, conf);
 		LOGN("config successfully reloaded");
 		(void)server_resolve(s);
 #if WITH_SYSTEMD
