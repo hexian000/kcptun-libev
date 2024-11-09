@@ -384,7 +384,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.session_keepalive = conf->timeout - ping_timeout,
 		.keepalive = conf->keepalive,
 		.timeout = CLAMP(
-			conf->keepalive * 3.0 + ping_timeout, 60.0, 1800.0),
+			conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0),
 		.ping_timeout = ping_timeout,
 		.time_wait = conf->time_wait,
 		.last_clock = -1,
