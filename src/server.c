@@ -381,7 +381,7 @@ struct server *server_new(struct ev_loop *loop, struct config *restrict conf)
 		.linger = conf->linger,
 		.dial_timeout = 30.0,
 		.session_timeout = conf->timeout,
-		.session_keepalive = conf->timeout / 2.0,
+		.session_keepalive = conf->timeout - ping_timeout,
 		.keepalive = conf->keepalive,
 		.timeout = CLAMP(
 			conf->keepalive * 3.0 + ping_timeout, 60.0, 1800.0),
