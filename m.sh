@@ -13,8 +13,7 @@ case "$1" in
     rm -rf "build" && mkdir "build"
     cmake \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_SYSTEM_NAME="Linux" \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
+        -DCMAKE_SYSROOT="${SYSROOT}" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -DCMAKE_SKIP_RPATH=ON \
         -S "." -B "build"
@@ -66,11 +65,10 @@ case "$1" in
     rm -rf "build" && mkdir "build"
     cmake \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_ANDROID_NDK="${ANDROID_NDK_ROOT}" \
         -DCMAKE_SYSTEM_NAME="Android" \
         -DCMAKE_SYSTEM_VERSION="${ANDROID_API_LEVEL}" \
+        -DCMAKE_ANDROID_NDK="${ANDROID_NDK_ROOT}" \
         -DCMAKE_ANDROID_ARCH_ABI="${ABI_NAME}" \
-        -DCMAKE_FIND_ROOT_PATH="${SYSROOT};${LIBROOT}" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
