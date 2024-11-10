@@ -121,7 +121,6 @@ case "$1" in
     cmake \
         -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
-        -DLINK_STATIC_LIBS=ON \
         -S "." -B "build"
     cmake --build "build"
     (cd "build/bin" && objdump -drwS "kcptun-libev" >"kcptun-libev.S")
@@ -133,7 +132,6 @@ case "$1" in
     cmake \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE="Release" \
-        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
         -S "." -B "build"
     cp build/compile_commands.json compile_commands.json
     cmake --build "build"
