@@ -79,6 +79,9 @@ static void crash_handler(const int signo)
 		LOGE_F("sigaction: %s", strerror(errno));
 		_Exit(EXIT_FAILURE);
 	}
+	if (raise(signo)) {
+		_Exit(EXIT_FAILURE);
+	}
 }
 
 static void set_crash_handler(void)
