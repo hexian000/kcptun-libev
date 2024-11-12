@@ -93,18 +93,24 @@ static struct {
 #define LOCALTIME(timer) localtime((timer))
 #endif /* HAVE_LOCALTIME_R */
 
-/* "2006-01-02T15:04:05-07:00": a fixed-length layout conforming to RFC 3339 */
-static size_t
-slog_timestamp(char *restrict s, const size_t maxsize, const time_t *timer)
+/* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
+static size_t slog_timestamp(
+	char *restrict s, const size_t maxsize, const time_t *restrict timer)
 {
-	const int ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
-	if (ret <= 0 || (size_t)ret >= maxsize) {
+	const size_t len = sizeof("2006-01-02T15:04:05-07:00") - 1;
+	if (maxsize < len) {
 		return 0;
 	}
-	s[ret] = s[ret - 1];
-	s[ret - 1] = s[ret - 2];
-	s[ret - 2] = ':';
-	return (size_t)ret + 1;
+	const int ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
+	if (ret != (int)sizeof("2006-01-02T15:04:05-0700") - 1) {
+		return 0;
+	}
+	const char *restrict tz = s + ret;
+	char *restrict e = s + len;
+	*--e = *--tz;
+	*--e = *--tz;
+	*--e = ':';
+	return len;
 }
 
 static const char *slog_filename(const char *file)
@@ -130,7 +136,8 @@ static void slog_write_file(
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
 	slog_buffer.data[1] = ' ';
-	const time_t now = time(NULL);
+	time_t now;
+	(void)time(&now);
 	slog_buffer.len += slog_timestamp(
 		(char *)slog_buffer.data + slog_buffer.len,
 		slog_buffer.cap - slog_buffer.len, &now);
