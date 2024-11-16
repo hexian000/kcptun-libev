@@ -9,6 +9,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 struct jutil_value;
@@ -80,10 +81,23 @@ bool jutil_get_int(const struct jutil_value *value, int *i)
 
 char *jutil_get_string(const struct jutil_value *value)
 {
+	return jutil_get_lstring(value, NULL);
+}
+
+char *jutil_get_lstring(const struct jutil_value *value, size_t *len)
+{
 	const cJSON *restrict v = (const cJSON *)value;
-	if (!cJSON_IsString(v)) {
+	size_t n;
+	char *s = cJSON_GetStringValueWithLength(v, &n);
+	if (s == NULL) {
 		LOGE_F("unexpected json object type: %d", v->type);
 		return NULL;
 	}
-	return strdup(v->valuestring);
+	if (len != NULL) {
+		*len = n;
+	}
+	char *r = malloc(n + sizeof(""));
+	memcpy(r, s, n);
+	r[n] = '\0';
+	return r;
 }

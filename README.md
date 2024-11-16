@@ -346,6 +346,6 @@ Thanks to:
 - [kcp](https://github.com/skywind3000/kcp) (with modifications)
 - [libev](http://software.schmorp.de/pkg/libev.html)
 - [libsodium](https://github.com/jedisct1/libsodium)
-- [cJSON](https://github.com/DaveGamble/cJSON)
+- [cJSON](https://github.com/DaveGamble/cJSON) (with modifications)
 - [libbloom](https://github.com/jvirkki/libbloom) (with modifications)
 - [cityhash](https://github.com/google/cityhash) (with modifications)

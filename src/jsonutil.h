@@ -28,5 +28,6 @@ bool jutil_get_int(const struct jutil_value *value, int *i);
 
 /* the returned string needs to be freed */
 char *jutil_get_string(const struct jutil_value *value);
+char *jutil_get_lstring(const struct jutil_value *value, size_t *len);
 
 #endif /* JSONUTIL_H */
