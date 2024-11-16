@@ -611,12 +611,11 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 	msgbuf += n, msglen -= n;
 	struct hashkey key = { .data = msgbuf, .len = msglen };
 	if (LOGLEVEL(VERBOSE)) {
-		LOGV_F("ss0_on_listen: %zu", msglen);
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), &addr.sa);
 		LOG_BIN_F(
-			VERBOSE, key.data, key.len, "ss0_on_listen: %s",
-			addr_str);
+			VERBOSE, key.data, key.len, "ss0_on_listen: [%zu] %s",
+			key.len, addr_str);
 	}
 	struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
@@ -645,8 +644,10 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
 		format_sa(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
-		LOG_F(DEBUG, "rendezvous listen: `%.*s' (%s, %s)", svc->id,
-		      (int)svc->idlen, addr1_str, addr2_str);
+		LOG_BIN_F(
+			DEBUG, svc->id, svc->idlen,
+			"rendezvous listen: (%s, %s), idlen=%zu", addr1_str,
+			addr2_str, svc->idlen);
 	}
 	return true;
 }
@@ -669,8 +670,8 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), &addr.sa);
 		LOG_BIN_F(
-			VERBOSE, key.data, key.len, "ss0_on_connect: `%.*s' %s",
-			key.data, (int)key.len, addr_str);
+			VERBOSE, key.data, key.len, "ss0_on_connect: [%zu] %s",
+			key.len, addr_str);
 	}
 	const struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
@@ -690,9 +691,11 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		format_sa(
 			saddr2_str, sizeof(saddr2_str),
 			&svc->server_addr[1].sa);
-		LOG_F(INFO, "rendezvous connect: `%.*s' (%s, %s) -> (%s, %s)",
-		      svc->id, (int)svc->idlen, caddr1_str, caddr2_str,
-		      saddr1_str, saddr2_str);
+		LOG_BIN_F(
+			INFO, svc->id, svc->idlen,
+			"rendezvous connect: (%s, %s) -> (%s, %s), idlen=%zu",
+			caddr1_str, caddr2_str, saddr1_str, saddr2_str,
+			svc->idlen);
 	}
 
 	/* notify the server */
