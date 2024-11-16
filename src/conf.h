@@ -5,6 +5,7 @@
 #define CONF_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 struct sockaddr;
 
@@ -20,6 +21,8 @@ struct config {
 	char *kcp_bind;
 	char *kcp_connect;
 	char *rendezvous_server;
+	char *service_id;
+	size_t service_idlen;
 	char *http_listen;
 	char *netdev;
 

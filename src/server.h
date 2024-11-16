@@ -23,6 +23,14 @@ struct listener {
 	int fd_http;
 };
 
+/* plain data object */
+struct service {
+	ev_tstamp last_seen;
+	union sockaddr_max server_addr[2];
+	size_t idlen;
+	char id[];
+};
+
 struct pktconn {
 	struct ev_io w_read, w_write;
 	struct pktqueue *queue;
@@ -33,9 +41,8 @@ struct pktconn {
 	ev_tstamp last_recv_time;
 	ev_tstamp inflight_ping;
 
-	bool listened : 1;
 	bool connected : 1;
-	union sockaddr_max server_addr[2];
+	struct hashtable *services;
 	union sockaddr_max rendezvous_server;
 	union sockaddr_max rendezvous_local;
 };

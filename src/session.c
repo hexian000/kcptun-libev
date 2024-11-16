@@ -603,23 +603,42 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	msglen -= SESSION0_HEADER_SIZE;
-	size_t n = inetaddr_read(&s->pkt.server_addr[0], msgbuf, msglen);
+	union sockaddr_max addr;
+	size_t n = inetaddr_read(&addr, msgbuf, msglen);
 	if (n == 0) {
 		return false;
 	}
-	s->pkt.server_addr[1] = msg->addr;
+	msgbuf += n, msglen -= n;
+	struct hashkey key = { msglen, msgbuf };
+	struct service *restrict svc;
+	if (!table_find(s->pkt.services, key, (void **)&svc)) {
+		svc = malloc(sizeof(struct service) + msglen);
+		if (svc == NULL) {
+			LOGOOM();
+			return false;
+		}
+		svc->idlen = msglen;
+		memcpy(svc->id, msgbuf, msglen);
+		key = (struct hashkey){ svc->idlen, svc->id };
+		void *element = svc;
+		s->pkt.services = table_set(s->pkt.services, key, &element);
+		if (element != NULL) {
+			LOGOOM();
+			free(svc);
+			return false;
+		}
+	}
+	svc->server_addr[0] = addr;
+	svc->server_addr[1] = msg->addr;
 	if (LOGLEVEL(DEBUG)) {
 		char addr1_str[64], addr2_str[64];
 		format_sa(
-			addr1_str, sizeof(addr1_str),
-			&s->pkt.server_addr[0].sa);
+			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
 		format_sa(
-			addr2_str, sizeof(addr2_str),
-			&s->pkt.server_addr[1].sa);
+			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_F(DEBUG, "rendezvous listen: (%s, %s)", addr1_str,
 		      addr2_str);
 	}
-	s->pkt.listened = true;
 	return true;
 }
 
@@ -635,7 +654,10 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	if (n == 0) {
 		return false;
 	}
-	if (!s->pkt.listened) {
+	msgbuf += n, msglen -= n;
+	struct hashkey key = { msglen, msgbuf };
+	const struct service *restrict svc;
+	if (!table_find(s->pkt.services, key, (void **)&svc)) {
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
 		LOGE_F("failed connecting %s: no server available", addr_str);
@@ -648,10 +670,10 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		char saddr1_str[64], saddr2_str[64];
 		format_sa(
 			saddr1_str, sizeof(saddr1_str),
-			&s->pkt.server_addr[0].sa);
+			&svc->server_addr[0].sa);
 		format_sa(
 			saddr2_str, sizeof(saddr2_str),
-			&s->pkt.server_addr[1].sa);
+			&svc->server_addr[1].sa);
 		LOG_F(INFO, "rendezvous connect: (%s, %s) -> (%s, %s)",
 		      caddr1_str, caddr2_str, saddr1_str, saddr2_str);
 	}
@@ -671,17 +693,17 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	len -= n;
 	n = sizeof(b) - len;
-	ss0_send(s, &s->pkt.server_addr[1].sa, S0MSG_PUNCH, b, n);
+	ss0_send(s, &svc->server_addr[1].sa, S0MSG_PUNCH, b, n);
 
 	/* notify the client */
 	p = b;
 	len = sizeof(b);
-	n = inetaddr_write(p, len, &s->pkt.server_addr[0].sa);
+	n = inetaddr_write(p, len, &svc->server_addr[0].sa);
 	if (n == 0) {
 		return false;
 	}
 	p += n, len -= n;
-	n = inetaddr_write(p, len, &s->pkt.server_addr[1].sa);
+	n = inetaddr_write(p, len, &svc->server_addr[1].sa);
 	if (n == 0) {
 		return false;
 	}

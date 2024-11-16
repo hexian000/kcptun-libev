@@ -174,6 +174,11 @@ main_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 		conf->rendezvous_server = jutil_get_string(value);
 		return conf->rendezvous_server != NULL;
 	}
+	if (strcmp(key, "service_id") == 0) {
+		conf->service_id =
+			jutil_get_lstring(value, &conf->service_idlen);
+		return conf->service_id != NULL;
+	}
 	if (strcmp(key, "http_listen") == 0) {
 		conf->http_listen = jutil_get_string(value);
 		return conf->http_listen != NULL;
@@ -276,6 +281,12 @@ static bool range_check_int(
 
 static bool conf_check(struct config *restrict conf)
 {
+	/* 0. basic check */
+	if (conf->service_idlen > 256) {
+		LOGE("config: service_id too long");
+		return false;
+	}
+
 	/* 1. network address check */
 	int mode = 0;
 	if (conf->connect != NULL) {
@@ -386,6 +397,7 @@ void conf_free(struct config *conf)
 	UTIL_SAFE_FREE(conf->kcp_bind);
 	UTIL_SAFE_FREE(conf->kcp_connect);
 	UTIL_SAFE_FREE(conf->rendezvous_server);
+	UTIL_SAFE_FREE(conf->service_id);
 	UTIL_SAFE_FREE(conf->http_listen);
 	UTIL_SAFE_FREE(conf->netdev);
 	UTIL_SAFE_FREE(conf->user);

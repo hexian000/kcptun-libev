@@ -126,7 +126,7 @@ static bool listener_start(struct server *restrict s)
 	return true;
 }
 
-static bool udp_init(
+static bool udp_socket(
 	struct pktconn *restrict udp, const struct config *restrict conf,
 	const int udp_af)
 {
@@ -195,7 +195,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		}
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
-			if (!udp_init(udp, conf, addr.sa.sa_family)) {
+			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
 				return false;
 			}
 		}
@@ -216,7 +216,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		}
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
-			if (!udp_init(udp, conf, addr.sa.sa_family)) {
+			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
 				return false;
 			}
 		}
@@ -239,7 +239,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		}
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
-			if (!udp_init(udp, conf, addr.sa.sa_family)) {
+			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
 				return false;
 			}
 		}
@@ -329,11 +329,16 @@ bool server_resolve(struct server *restrict s)
 
 void udp_rendezvous(struct server *restrict s, const uint16_t what)
 {
+	const size_t idlen = s->conf->service_idlen;
 	const struct sockaddr *sa_server = &s->pkt.rendezvous_server.sa;
 	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
-	unsigned char b[INET6ADDR_LENGTH];
-	const size_t n = inetaddr_write(b, sizeof(b), sa_local);
+	unsigned char b[INET6ADDR_LENGTH + idlen];
+	size_t n = inetaddr_write(b, sizeof(b), sa_local);
 	ASSERT(n > 0);
+	if (idlen > 0) {
+		memcpy(b + n, s->conf->service_id, idlen);
+		n += idlen;
+	}
 	ss0_send(s, sa_server, what, b, n);
 }
 
@@ -372,9 +377,9 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		.pkt =
 			(struct pktconn){
 				.fd = -1,
-				.inflight_ping = TSTAMP_NIL,
 				.last_send_time = TSTAMP_NIL,
 				.last_recv_time = TSTAMP_NIL,
+				.inflight_ping = TSTAMP_NIL,
 			},
 		.started = TSTAMP_NIL,
 		.last_resolve_time = TSTAMP_NIL,
@@ -414,7 +419,7 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 	}
 
 	if ((conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) == 0) {
-		/* server only: disable keepalive and resolve */
+		/* server mode: disable keepalive and resolve */
 		s->keepalive = 0.0;
 	}
 	if ((conf->mode & MODE_SERVER) != 0) {
@@ -431,6 +436,12 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 			server_free(s);
 			return NULL;
 		}
+	}
+	s->pkt.services = table_new(TABLE_DEFAULT);
+	if (s->pkt.services == NULL) {
+		LOGOOM();
+		server_free(s);
+		return NULL;
 	}
 	s->pkt.queue = queue_new(s);
 	if (s->pkt.queue == NULL) {
@@ -461,7 +472,7 @@ void server_loadconf(
 	s->conf = conf;
 }
 
-bool server_start(struct server *s)
+bool server_start(struct server *restrict s)
 {
 	struct ev_loop *loop = s->loop;
 	const ev_tstamp now = ev_now(loop);
@@ -514,11 +525,25 @@ void server_ping(struct server *restrict s)
 	s->pkt.inflight_ping = now;
 }
 
+static bool svc_shutdown_filt(
+	const struct hashtable *t, const struct hashkey key, void *element,
+	void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	struct service *restrict svc = element;
+	ASSERT(key.data == svc->id);
+	free(svc);
+	return false;
+}
+
 static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 {
 	if (conn->fd == -1) {
 		return;
 	}
+	conn->services = table_filter(conn->services, svc_shutdown_filt, NULL);
 	ev_io_stop(loop, &conn->w_read);
 	ev_io_stop(loop, &conn->w_write);
 	CLOSE_FD(conn->fd);
@@ -533,6 +558,10 @@ static void udp_free(struct pktconn *restrict conn)
 	if (conn->queue != NULL) {
 		queue_free(conn->queue);
 		conn->queue = NULL;
+	}
+	if (conn->services != NULL) {
+		table_free(conn->services);
+		conn->services = NULL;
 	}
 }
 

@@ -19,69 +19,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
-
-static bool timeout_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
-{
-	UNUSED(t);
-	UNUSED(key);
-	struct server *restrict s = user;
-	const ev_tstamp now = ev_now(s->loop);
-	struct session *restrict ss = element;
-	ASSERT(key.data == ss->key);
-	ev_tstamp not_seen = now - ss->created;
-	switch (ss->kcp_state) {
-	case STATE_INIT:
-	case STATE_CONNECT:
-		if (not_seen > s->dial_timeout) {
-			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
-			       ss->conv);
-			session_tcp_stop(ss);
-			session_kcp_close(ss);
-			break;
-		}
-		break;
-	case STATE_CONNECTED:
-		if (ss->last_recv != TSTAMP_NIL) {
-			not_seen = now - ss->last_recv;
-		}
-		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] "
-			       "timeout: not seen in %.01fs",
-			       ss->conv, not_seen);
-			session_tcp_stop(ss);
-			session_kcp_stop(ss);
-			break;
-		}
-		if (!ss->is_accepted && not_seen > s->session_keepalive) {
-			LOGD_F("session [%08" PRIX32 "] kcp: send keepalive",
-			       ss->conv);
-			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
-		}
-		break;
-	case STATE_LINGER:
-		if (ss->last_send != TSTAMP_NIL) {
-			not_seen = now - ss->last_send;
-		}
-		if (not_seen > s->linger) {
-			LOGD_F("session [%08" PRIX32 "] timeout: linger",
-			       ss->conv);
-			session_kcp_stop(ss);
-		}
-		break;
-	case STATE_TIME_WAIT:
-		if (ss->last_reset != TSTAMP_NIL) {
-			not_seen = now - ss->last_reset;
-		}
-		if (not_seen > s->time_wait) {
-			session_free(ss);
-			return false;
-		}
-		break;
-	}
-	return true;
-}
+#include <stdlib.h>
 
 void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
@@ -186,6 +124,89 @@ void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	ev_timer_again(loop, watcher);
 }
 
+static bool timeout_filt(
+	const struct hashtable *t, const struct hashkey key, void *element,
+	void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	const struct server *restrict s = user;
+	const ev_tstamp now = ev_now(s->loop);
+	struct session *restrict ss = element;
+	ASSERT(key.data == ss->key);
+	ev_tstamp not_seen = now - ss->created;
+	switch (ss->kcp_state) {
+	case STATE_INIT:
+	case STATE_CONNECT:
+		if (not_seen > s->dial_timeout) {
+			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
+			       ss->conv);
+			session_tcp_stop(ss);
+			session_kcp_close(ss);
+			break;
+		}
+		break;
+	case STATE_CONNECTED:
+		if (ss->last_recv != TSTAMP_NIL) {
+			not_seen = now - ss->last_recv;
+		}
+		if (not_seen > s->session_timeout) {
+			LOGW_F("session [%08" PRIX32 "] "
+			       "timeout: not seen in %.01fs",
+			       ss->conv, not_seen);
+			session_tcp_stop(ss);
+			session_kcp_stop(ss);
+			break;
+		}
+		if (!ss->is_accepted && not_seen > s->session_keepalive) {
+			LOGD_F("session [%08" PRIX32 "] kcp: send keepalive",
+			       ss->conv);
+			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
+		}
+		break;
+	case STATE_LINGER:
+		if (ss->last_send != TSTAMP_NIL) {
+			not_seen = now - ss->last_send;
+		}
+		if (not_seen > s->linger) {
+			LOGD_F("session [%08" PRIX32 "] timeout: linger",
+			       ss->conv);
+			session_kcp_stop(ss);
+		}
+		break;
+	case STATE_TIME_WAIT:
+		if (ss->last_reset != TSTAMP_NIL) {
+			not_seen = now - ss->last_reset;
+		}
+		if (not_seen > s->time_wait) {
+			session_free(ss);
+			return false;
+		}
+		break;
+	}
+	return true;
+}
+
+static bool svc_timeout_filt(
+	const struct hashtable *t, const struct hashkey key, void *element,
+	void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	const struct server *restrict s = user;
+	const ev_tstamp now = ev_now(s->loop);
+	struct service *restrict svc = element;
+	ASSERT(key.data == svc->id);
+	ev_tstamp not_seen = now - svc->last_seen;
+	if (not_seen > s->session_timeout) {
+		LOG_BIN_F(
+			DEBUG, svc->id, svc->idlen, "service %p timeout", svc);
+		free(svc);
+		return false;
+	}
+	return true;
+}
+
 void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 {
 	UNUSED(loop);
@@ -194,6 +215,8 @@ void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 
 	/* session timeout */
 	s->sessions = table_filter(s->sessions, timeout_filt, s);
+	/* rendezvous server: services timeout */
+	s->pkt.services = table_filter(s->pkt.services, svc_timeout_filt, s);
 
 	/* mcache maintenance */
 	mcache_shrink(msgpool, 1);
