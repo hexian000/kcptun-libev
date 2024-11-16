@@ -78,18 +78,13 @@ static bool crypto_open_inplace(
 /* caller should ensure the buffer is large enough */
 static bool crypto_seal_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
-	const size_t size, const size_t pad)
+	const size_t size)
 {
 	struct crypto *restrict crypto = q->crypto;
-	const size_t src_len = *len;
+	const size_t plain_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
-	ASSERT(size >= src_len + overhead + nonce_size);
-	if (!crypto_pad(data, src_len, pad)) {
-		LOGE("failed to pad packet");
-		return false;
-	}
-	const size_t plain_len = src_len + pad;
+	ASSERT(size >= plain_len + overhead + nonce_size);
 	const unsigned char *nonce = noncegen_next(q->noncegen);
 	const size_t dst_size = size - nonce_size;
 	size_t dst_len =
@@ -250,9 +245,7 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
 		size_t len = msg->len;
 		ASSERT(len <= cap);
-		const size_t pad = rand64n(MIN(q->mss - len, 15));
-		if (!crypto_seal_inplace(
-			    q, msg->buf + msg->off, &len, cap, pad)) {
+		if (!crypto_seal_inplace(q, msg->buf + msg->off, &len, cap)) {
 			return false;
 		}
 		msg->len = len;

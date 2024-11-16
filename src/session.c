@@ -609,7 +609,15 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 	msgbuf += n, msglen -= n;
-	struct hashkey key = { msglen, msgbuf };
+	struct hashkey key = { .data = msgbuf, .len = msglen };
+	if (LOGLEVEL(VERBOSE)) {
+		LOGV_F("ss0_on_listen: %zu", msglen);
+		char addr_str[64];
+		format_sa(addr_str, sizeof(addr_str), &addr.sa);
+		LOG_BIN_F(
+			VERBOSE, key.data, key.len, "ss0_on_listen: %s",
+			addr_str);
+	}
 	struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
 		svc = malloc(sizeof(struct service) + msglen);
@@ -619,7 +627,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		svc->idlen = msglen;
 		memcpy(svc->id, msgbuf, msglen);
-		key = (struct hashkey){ svc->idlen, svc->id };
+		key = (struct hashkey){ .data = svc->id, .len = svc->idlen };
 		void *element = svc;
 		s->pkt.services = table_set(s->pkt.services, key, &element);
 		if (element != NULL) {
@@ -628,6 +636,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			return false;
 		}
 	}
+	svc->last_seen = ev_now(s->loop);
 	svc->server_addr[0] = addr;
 	svc->server_addr[1] = msg->addr;
 	if (LOGLEVEL(DEBUG)) {
@@ -636,8 +645,8 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
 		format_sa(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
-		LOG_F(DEBUG, "rendezvous listen: (%s, %s)", addr1_str,
-		      addr2_str);
+		LOG_F(DEBUG, "rendezvous listen: `%.*s' (%s, %s)", svc->id,
+		      (int)svc->idlen, addr1_str, addr2_str);
 	}
 	return true;
 }
@@ -655,7 +664,14 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 	msgbuf += n, msglen -= n;
-	struct hashkey key = { msglen, msgbuf };
+	struct hashkey key = { .data = msgbuf, .len = msglen };
+	if (LOGLEVEL(VERBOSE)) {
+		char addr_str[64];
+		format_sa(addr_str, sizeof(addr_str), &addr.sa);
+		LOG_BIN_F(
+			VERBOSE, key.data, key.len, "ss0_on_connect: `%.*s' %s",
+			key.data, (int)key.len, addr_str);
+	}
 	const struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
 		char addr_str[64];
@@ -674,8 +690,9 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		format_sa(
 			saddr2_str, sizeof(saddr2_str),
 			&svc->server_addr[1].sa);
-		LOG_F(INFO, "rendezvous connect: (%s, %s) -> (%s, %s)",
-		      caddr1_str, caddr2_str, saddr1_str, saddr2_str);
+		LOG_F(INFO, "rendezvous connect: `%.*s' (%s, %s) -> (%s, %s)",
+		      svc->id, (int)svc->idlen, caddr1_str, caddr2_str,
+		      saddr1_str, saddr2_str);
 	}
 
 	/* notify the server */
@@ -798,6 +815,8 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 			return;
 		}
 	}
-	LOGW_F("invalid session 0 message: %04" PRIX16 ", len=%04" PRIX16,
-	       header.what, msg->len - SESSION0_HEADER_SIZE);
+	LOG_BIN_F(
+		WARNING, msg->buf + msg->off, msg->len,
+		"invalid session 0 message: %04" PRIX16 ", len=%04" PRIX16,
+		header.what, msg->len - SESSION0_HEADER_SIZE);
 }
