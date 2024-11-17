@@ -332,13 +332,16 @@ void udp_rendezvous(struct server *restrict s, const uint16_t what)
 	const size_t idlen = s->conf->service_idlen;
 	const struct sockaddr *sa_server = &s->pkt.rendezvous_server.sa;
 	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
-	unsigned char b[INET6ADDR_LENGTH + idlen];
-	size_t n = inetaddr_write(b, sizeof(b), sa_local);
+	unsigned char b[INET6ADDR_LENGTH + sizeof(uint16_t) + idlen];
+	unsigned char *p = b;
+	size_t n = inetaddr_write(p, sizeof(b), sa_local);
 	ASSERT(n > 0);
-	if (idlen > 0) {
-		memcpy(b + n, s->conf->service_id, idlen);
-		n += idlen;
-	}
+	p += n;
+	ASSERT(idlen <= UINT16_MAX);
+	write_uint16(p, idlen);
+	p += sizeof(uint16_t), n += sizeof(uint16_t);
+	memcpy(p, s->conf->service_id, idlen);
+	n += idlen;
 	ss0_send(s, sa_server, what, b, n);
 }
 

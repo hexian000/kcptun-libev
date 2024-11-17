@@ -198,13 +198,22 @@ static bool svc_timeout_filt(
 	struct service *restrict svc = element;
 	ASSERT(key.data == svc->id);
 	ev_tstamp not_seen = now - svc->last_seen;
-	if (not_seen > s->session_timeout) {
-		LOG_BIN_F(
-			DEBUG, svc->id, svc->idlen, "service %p timeout", svc);
-		free(svc);
-		return false;
+	if (not_seen < s->session_timeout) {
+		return true;
 	}
-	return true;
+	if (LOGLEVEL(INFO)) {
+		char addr1_str[64], addr2_str[64];
+		format_sa(
+			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
+		format_sa(
+			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
+		LOG_BIN_F(
+			INFO, svc->id, svc->idlen,
+			"service timeout: (%s, %s), idlen=%zu", addr1_str,
+			addr2_str, svc->idlen);
+	}
+	free(svc);
+	return false;
 }
 
 void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)

@@ -609,7 +609,15 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 	msgbuf += n, msglen -= n;
-	struct hashkey key = { .data = msgbuf, .len = msglen };
+	struct hashkey key = { .data = NULL, .len = 0 };
+	if (msglen >= sizeof(uint16_t)) {
+		n = read_uint16(msgbuf);
+		msgbuf += sizeof(uint16_t), msglen -= sizeof(uint16_t);
+		if (msglen >= n) {
+			key.data = msgbuf;
+			key.len = n;
+		}
+	}
 	if (LOGLEVEL(VERBOSE)) {
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), &addr.sa);
@@ -617,15 +625,16 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			VERBOSE, key.data, key.len, "ss0_on_listen: [%zu] %s",
 			key.len, addr_str);
 	}
+	bool created = false;
 	struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
-		svc = malloc(sizeof(struct service) + msglen);
+		svc = malloc(sizeof(struct service) + key.len);
 		if (svc == NULL) {
 			LOGOOM();
 			return false;
 		}
-		svc->idlen = msglen;
-		memcpy(svc->id, msgbuf, msglen);
+		svc->idlen = key.len;
+		memcpy(svc->id, key.data, key.len);
 		key = (struct hashkey){ .data = svc->id, .len = svc->idlen };
 		void *element = svc;
 		s->pkt.services = table_set(s->pkt.services, key, &element);
@@ -634,18 +643,19 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			free(svc);
 			return false;
 		}
+		created = true;
 	}
 	svc->last_seen = ev_now(s->loop);
 	svc->server_addr[0] = addr;
 	svc->server_addr[1] = msg->addr;
-	if (LOGLEVEL(DEBUG)) {
+	if (created && LOGLEVEL(INFO)) {
 		char addr1_str[64], addr2_str[64];
 		format_sa(
 			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
 		format_sa(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
-			DEBUG, svc->id, svc->idlen,
+			INFO, svc->id, svc->idlen,
 			"rendezvous listen: (%s, %s), idlen=%zu", addr1_str,
 			addr2_str, svc->idlen);
 	}
@@ -665,7 +675,15 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 	msgbuf += n, msglen -= n;
-	struct hashkey key = { .data = msgbuf, .len = msglen };
+	struct hashkey key = { .data = NULL, .len = 0 };
+	if (msglen >= sizeof(uint16_t)) {
+		n = read_uint16(msgbuf);
+		msgbuf += sizeof(uint16_t), msglen -= sizeof(uint16_t);
+		if (msglen >= n) {
+			key.data = msgbuf;
+			key.len = n;
+		}
+	}
 	if (LOGLEVEL(VERBOSE)) {
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), &addr.sa);
