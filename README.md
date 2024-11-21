@@ -175,11 +175,10 @@ apk add libev-dev libsodium-dev
 
 ```sh
 git clone https://github.com/hexian000/kcptun-libev.git
-mkdir "kcptun-libev-build"
+mkdir -p kcptun-libev-build && cd kcptun-libev-build
 cmake -DCMAKE_BUILD_TYPE="Release" \
-    -S "kcptun-libev" \
-    -B "kcptun-libev-build"
-cmake --build "kcptun-libev-build" --parallel
+    ../kcptun-libev
+cmake --build . --parallel
 ```
 
 See [m.sh](m.sh) for more information about cross compiling support.
