@@ -51,7 +51,6 @@ case "$1" in
     cmake \
         -DCMAKE_BUILD_TYPE="Release" \
         -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc" \
-        -DENABLE_SANITIZERS=OFF \
         ..
     cmake --build .
     HOST="$(cc -dumpmachine)"
@@ -144,6 +143,7 @@ case "$1" in
     cmake \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE="Debug" \
+        -DENABLE_SANITIZERS=ON \
         ..
     cp compile_commands.json ../
     cmake --build .
