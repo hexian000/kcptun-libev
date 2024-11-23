@@ -425,22 +425,17 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		/* server mode: disable keepalive and resolve */
 		s->keepalive = 0.0;
 	}
+	int flags = 0;
 	if ((conf->mode & MODE_SERVER) != 0) {
-		s->sessions = table_new(TABLE_FAST);
-		if (s->sessions == NULL) {
-			LOGOOM();
-			server_free(s);
-			return NULL;
-		}
-	} else if ((conf->mode & MODE_CLIENT) != 0) {
-		s->sessions = table_new(TABLE_DEFAULT);
-		if (s->sessions == NULL) {
-			LOGOOM();
-			server_free(s);
-			return NULL;
-		}
+		flags |= TABLE_FAST;
 	}
-	s->pkt.services = table_new(TABLE_DEFAULT);
+	s->sessions = table_new(flags);
+	if (s->sessions == NULL) {
+		LOGOOM();
+		server_free(s);
+		return NULL;
+	}
+	s->pkt.services = table_new(flags);
 	if (s->pkt.services == NULL) {
 		LOGOOM();
 		server_free(s);

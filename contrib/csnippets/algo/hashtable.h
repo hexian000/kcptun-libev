@@ -26,7 +26,6 @@ typedef bool (*table_iterate_cb)(
 	void *data);
 
 enum table_flags {
-	TABLE_DEFAULT = 0,
 	/* set max load factor to 75%, trading space for speed */
 	TABLE_FAST = 1 << 0,
 };
