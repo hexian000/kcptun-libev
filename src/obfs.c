@@ -879,12 +879,11 @@ struct obfs *obfs_new(struct server *restrict s)
 			.fd = -1,
 			.last_stats_time = ev_now(s->loop),
 		};
+		int flags = 0;
 		if ((conf->mode & MODE_SERVER) != 0) {
-			obfs->contexts = table_new(TABLE_FAST);
-		} else {
-			ASSERT((conf->mode & MODE_CLIENT) != 0);
-			obfs->contexts = table_new(TABLE_DEFAULT);
+			flags |= TABLE_FAST;
 		}
+		obfs->contexts = table_new(flags);
 		if (obfs->contexts == NULL) {
 			LOGOOM();
 			free(obfs);
