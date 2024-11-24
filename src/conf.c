@@ -313,9 +313,9 @@ static bool conf_check(struct config *restrict conf)
 			       conf->keepalive);
 		}
 	}
-	if (((mode & (MODE_RENDEZVOUS | MODE_SERVER)) == MODE_SERVER &&
+	if (((mode & (MODE_SERVER | MODE_RENDEZVOUS)) == MODE_SERVER &&
 	     conf->kcp_bind == NULL) ||
-	    ((mode & (MODE_RENDEZVOUS | MODE_CLIENT)) == MODE_CLIENT &&
+	    ((mode & (MODE_CLIENT | MODE_RENDEZVOUS)) == MODE_CLIENT &&
 	     conf->kcp_connect == NULL) ||
 	    ((mode & (MODE_SERVER | MODE_CLIENT)) == 0 &&
 	     conf->kcp_bind == NULL)) {

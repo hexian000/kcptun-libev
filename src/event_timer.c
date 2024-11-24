@@ -209,7 +209,7 @@ static bool svc_timeout_filt(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen,
-			"service timeout: (%s, %s), idlen=%zu", addr1_str,
+			"service_id[%zu] timeout: (%s, %s)", addr1_str,
 			addr2_str, svc->idlen);
 	}
 	free(svc);

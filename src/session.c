@@ -530,8 +530,8 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 		return false;
 	}
 
-	if ((s->conf->mode & (MODE_RENDEZVOUS | MODE_CLIENT)) ==
-		    (MODE_RENDEZVOUS | MODE_CLIENT) &&
+	if ((s->conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) ==
+		    (MODE_CLIENT | MODE_RENDEZVOUS) &&
 	    !s->pkt.connected) {
 		s->pkt.kcp_connect = msg->addr;
 		s->pkt.connected = true;
@@ -618,20 +618,30 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			key.len = n;
 		}
 	}
-	if (LOGLEVEL(VERBOSE)) {
-		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &addr.sa);
-		LOG_BIN_F(
-			VERBOSE, key.data, key.len, "ss0_on_listen: [%zu] %s",
-			key.len, addr_str);
-	}
 	bool created = false;
 	struct service *restrict svc;
-	if (!table_find(s->pkt.services, key, (void **)&svc)) {
+	if (table_find(s->pkt.services, key, (void **)&svc)) {
+		if (!sa_equals(&msg->addr.sa, &svc->server_addr[1].sa)) {
+			if (LOGLEVEL(VERBOSE)) {
+				char saddr_str[64], maddr_str[64];
+				format_sa(
+					saddr_str, sizeof(saddr_str),
+					&svc->server_addr[1].sa);
+				format_sa(
+					maddr_str, sizeof(maddr_str),
+					&msg->addr.sa);
+				LOG_BIN_F(
+					VERBOSE, key.data, key.len,
+					"replacing service_id[%zu]: old=%s new=%s",
+					key.len, saddr_str, maddr_str);
+			}
+			return true;
+		}
+	} else {
 		svc = malloc(sizeof(struct service) + key.len);
 		if (svc == NULL) {
 			LOGOOM();
-			return false;
+			return true;
 		}
 		svc->idlen = key.len;
 		memcpy(svc->id, key.data, key.len);
@@ -641,7 +651,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		if (element != NULL) {
 			LOGOOM();
 			free(svc);
-			return false;
+			return true;
 		}
 		created = true;
 	}
@@ -656,7 +666,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen,
-			"rendezvous listen: (%s, %s), idlen=%zu", addr1_str,
+			"service_id[%zu] listen: (%s, %s)", addr1_str,
 			addr2_str, svc->idlen);
 	}
 	return true;
@@ -684,13 +694,6 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 			key.len = n;
 		}
 	}
-	if (LOGLEVEL(VERBOSE)) {
-		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &addr.sa);
-		LOG_BIN_F(
-			VERBOSE, key.data, key.len, "ss0_on_connect: [%zu] %s",
-			key.len, addr_str);
-	}
 	const struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
 		char addr_str[64];
@@ -711,7 +714,7 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 			&svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen,
-			"rendezvous connect: (%s, %s) -> (%s, %s), idlen=%zu",
+			"service_id[%zu] connect: (%s, %s) -> (%s, %s)",
 			caddr1_str, caddr2_str, saddr1_str, saddr2_str,
 			svc->idlen);
 	}

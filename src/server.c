@@ -340,8 +340,10 @@ void udp_rendezvous(struct server *restrict s, const uint16_t what)
 	ASSERT(idlen <= UINT16_MAX);
 	write_uint16(p, idlen);
 	p += sizeof(uint16_t), n += sizeof(uint16_t);
-	memcpy(p, s->conf->service_id, idlen);
-	n += idlen;
+	if (idlen > 0) {
+		memcpy(p, s->conf->service_id, idlen);
+		n += idlen;
+	}
 	ss0_send(s, sa_server, what, b, n);
 }
 
@@ -511,7 +513,10 @@ bool server_start(struct server *restrict s)
 
 void server_ping(struct server *restrict s)
 {
-	if ((s->conf->mode & MODE_CLIENT) == 0) {
+	const struct sockaddr *sa;
+	if ((s->conf->mode & MODE_CLIENT)) {
+		sa = &s->pkt.kcp_connect.sa;
+	} else {
 		return;
 	}
 
@@ -519,7 +524,7 @@ void server_ping(struct server *restrict s)
 	const uint32_t tstamp = tstamp2ms(now);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, tstamp);
-	ss0_send(s, &s->pkt.kcp_connect.sa, S0MSG_PING, b, sizeof(b));
+	ss0_send(s, sa, S0MSG_PING, b, sizeof(b));
 	s->pkt.inflight_ping = now;
 }
 

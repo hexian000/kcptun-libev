@@ -42,6 +42,7 @@ struct pktconn {
 	ev_tstamp inflight_ping;
 
 	bool connected : 1;
+	/* map: service_id -> struct service */
 	struct hashtable *services;
 	union sockaddr_max rendezvous_server;
 	union sockaddr_max rendezvous_local;
