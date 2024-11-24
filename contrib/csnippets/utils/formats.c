@@ -23,6 +23,9 @@ int format_si_prefix(char *buf, const size_t bufsize, const double value)
 	if (!isnormal(value)) {
 		return snprintf(buf, bufsize, "%.0f", value);
 	}
+	if (!(1e-30 < value && value < 1e+31)) {
+		return snprintf(buf, bufsize, "%.2e", value);
+	}
 	const int e = (int)floor(log10(fabs(value)) / 3.0);
 	if (e == 0) {
 		return snprintf(buf, bufsize, "%.3g", value);
