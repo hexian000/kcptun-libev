@@ -10,18 +10,41 @@
 #include <stdint.h>
 #include <stdio.h>
 
+static int format_abnormal(char *buf, const size_t bufsize, const double value)
+{
+	if (isnan(value)) {
+		if (signbit(value)) {
+			return snprintf(buf, bufsize, "%s", "-nan");
+		}
+		return snprintf(buf, bufsize, "%s", "nan");
+	}
+	if (!isfinite(value)) {
+		if (signbit(value)) {
+			return snprintf(buf, bufsize, "%s", "-inf");
+		}
+		return snprintf(buf, bufsize, "%s", "inf");
+	}
+	if (value == 0.0) {
+		if (signbit(value)) {
+			return snprintf(buf, bufsize, "%s", "-0");
+		}
+		return snprintf(buf, bufsize, "%s", "0");
+	}
+	return snprintf(buf, bufsize, "%e", value);
+}
+
 static char *si_prefix_pos[] = {
 	"k", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q",
 };
 
 static char *si_prefix_neg[] = {
-	"m", "μ", "n", "p", "f", "a", "z", "y", "r", "q",
+	"m", u8"μ", "n", "p", "f", "a", "z", "y", "r", "q",
 };
 
 int format_si_prefix(char *buf, const size_t bufsize, const double value)
 {
 	if (!isnormal(value)) {
-		return snprintf(buf, bufsize, "%.0f", value);
+		return format_abnormal(buf, bufsize, value);
 	}
 	if (!(1e-30 < value && value < 1e+31)) {
 		return snprintf(buf, bufsize, "%.2e", value);
@@ -49,7 +72,7 @@ static const char *iec_units[] = {
 int format_iec_bytes(char *buf, const size_t bufsize, const double value)
 {
 	if (!isnormal(value)) {
-		return snprintf(buf, bufsize, "%.0f", value);
+		return format_abnormal(buf, bufsize, value);
 	}
 	const int e = ((int)log2(fabs(value)) - 1) / 10;
 	const int i = CLAMP(e, 0, (int)ARRAY_SIZE(iec_units) - 1);
