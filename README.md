@@ -274,6 +274,7 @@ Rendezvous mode requires UDP in transport layer, i.e. is incompatible with non-U
 {
     "connect": "127.0.0.1:25565",
     "rendezvous_server": "203.0.113.1:12345",
+    "service_id": "myservice",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
 }
@@ -285,12 +286,13 @@ Rendezvous mode requires UDP in transport layer, i.e. is incompatible with non-U
 {
     "listen": "127.0.0.1:25565",
     "rendezvous_server": "203.0.113.1:12345",
+    "service_id": "myservice",
     "method": "xchacha20poly1305_ietf",
     "psk": "// your key here"
 }
 ```
 
-rendezvous_server : server : client = 1 : 1 : n
+rendezvous_server : server : client = 1 : m : m*n
 
 Peers should be all IPv4 or all IPv6.
 
