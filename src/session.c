@@ -666,8 +666,8 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen,
-			"service_id[%zu] listen: (%s, %s)", addr1_str,
-			addr2_str, svc->idlen);
+			"service_id[%zu] listen: (%s, %s)", svc->idlen,
+			addr1_str, addr2_str);
 	}
 	return true;
 }
@@ -715,8 +715,8 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen,
 			"service_id[%zu] connect: (%s, %s) -> (%s, %s)",
-			caddr1_str, caddr2_str, saddr1_str, saddr2_str,
-			svc->idlen);
+			svc->idlen, caddr1_str, caddr2_str, saddr1_str,
+			saddr2_str);
 	}
 
 	/* notify the server */
