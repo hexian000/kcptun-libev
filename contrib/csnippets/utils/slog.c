@@ -231,7 +231,6 @@ void slog_vwrite(
 	int level, const char *file, int line, struct slog_extra *extra,
 	const char *format, va_list args)
 {
-	SLOG_INIT();
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
 	if (write == NULL) {
 		return;
@@ -243,7 +242,6 @@ void slog_write(
 	const int level, const char *file, const int line,
 	struct slog_extra *extra, const char *format, ...)
 {
-	SLOG_INIT();
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
 	if (write == NULL) {
 		return;
