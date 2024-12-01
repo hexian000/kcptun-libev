@@ -232,20 +232,16 @@ int format_duration(char *b, size_t size, struct duration d)
 		return snprintf(b, size, SIGNED_STR(d.sign, "%.0fms"), millis);
 	}
 	if (d.milli) {
+		const double millis = d.milli + d.micro * 1e-3 + d.nano * 1e-6;
 		if (d.milli >= 100) {
-			const double millis =
-				d.milli + d.micro * 1e-3 + d.nano * 1e-6;
 			return snprintf(
 				b, size, SIGNED_STR(d.sign, "%.1fms"), millis);
 		}
 		if (d.milli >= 10) {
-			const double millis =
-				d.milli + d.micro * 1e-3 + d.nano * 1e-6;
 			return snprintf(
 				b, size, SIGNED_STR(d.sign, "%.2fms"), millis);
 		}
-		const double micros = d.milli * 1e+3 + d.micro + d.nano * 1e-3;
-		return snprintf(b, size, SIGNED_STR(d.sign, "%.0fµs"), micros);
+		return snprintf(b, size, SIGNED_STR(d.sign, "%.3fms"), millis);
 	}
 	if (d.micro) {
 		if (d.micro >= 100) {
