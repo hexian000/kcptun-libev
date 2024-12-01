@@ -635,7 +635,6 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 					"replacing service_id[%zu]: old=%s new=%s",
 					key.len, saddr_str, maddr_str);
 			}
-			return true;
 		}
 	} else {
 		svc = malloc(sizeof(struct service) + key.len);
