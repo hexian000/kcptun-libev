@@ -15,53 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_CONF_SIZE 65536
-
 static struct jutil_value *conf_parse(const char *filename)
 {
-	FILE *f = fopen(filename, "r");
-	if (f == NULL) {
-		LOGE_F("unable to open config file: %s", strerror(errno));
-		return NULL;
-	}
-	if (fseek(f, 0, SEEK_END)) {
-		LOGE_F("unable to seek config file: %s", strerror(errno));
-		(void)fclose(f);
-		return NULL;
-	}
-	const long len = ftell(f);
-	if (len < 0) {
-		LOGE_F("unable to tell config file length: %s",
-		       strerror(errno));
-		(void)fclose(f);
-		return NULL;
-	}
-	if (len >= MAX_CONF_SIZE) {
-		LOGE("config file is too large");
-		(void)fclose(f);
-		return NULL;
-	}
-	if (fseek(f, 0, SEEK_SET)) {
-		LOGE_F("unable to seek config file: %s", strerror(errno));
-		(void)fclose(f);
-		return NULL;
-	}
-	char *buf = malloc(len + 1); /* null terminator */
-	if (buf == NULL) {
-		LOGF("conf_parse: out of memory");
-		(void)fclose(f);
-		return NULL;
-	}
-	const size_t nread = fread(buf, sizeof(char), (size_t)len, f);
-	(void)fclose(f);
-	if (nread != (size_t)len) {
-		LOGE("unable to read the config file");
-		free(buf);
-		return NULL;
-	}
-	buf[nread] = '\0';
-	struct jutil_value *obj = jutil_parse(buf, nread);
-	free(buf);
+	struct jutil_value *obj = jutil_parsefile(filename);
 	if (obj == NULL) {
 		LOGF("conf_parse: failed parsing json");
 		return NULL;
@@ -155,55 +111,55 @@ main_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 		return jutil_walk_object(conf, value, tcp_scope_cb);
 	}
 	if (strcmp(key, "listen") == 0) {
-		conf->listen = jutil_get_string(value);
+		conf->listen = jutil_dup_string(value);
 		return conf->listen != NULL;
 	}
 	if (strcmp(key, "connect") == 0) {
-		conf->connect = jutil_get_string(value);
+		conf->connect = jutil_dup_string(value);
 		return conf->connect != NULL;
 	}
 	if (strcmp(key, "kcp_bind") == 0) {
-		conf->kcp_bind = jutil_get_string(value);
+		conf->kcp_bind = jutil_dup_string(value);
 		return conf->kcp_bind != NULL;
 	}
 	if (strcmp(key, "kcp_connect") == 0) {
-		conf->kcp_connect = jutil_get_string(value);
+		conf->kcp_connect = jutil_dup_string(value);
 		return conf->kcp_connect != NULL;
 	}
 	if (strcmp(key, "rendezvous_server") == 0) {
-		conf->rendezvous_server = jutil_get_string(value);
+		conf->rendezvous_server = jutil_dup_string(value);
 		return conf->rendezvous_server != NULL;
 	}
 	if (strcmp(key, "service_id") == 0) {
 		conf->service_id =
-			jutil_get_lstring(value, &conf->service_idlen);
+			jutil_dup_lstring(value, &conf->service_idlen);
 		return conf->service_id != NULL;
 	}
 	if (strcmp(key, "http_listen") == 0) {
-		conf->http_listen = jutil_get_string(value);
+		conf->http_listen = jutil_dup_string(value);
 		return conf->http_listen != NULL;
 	}
 	if (strcmp(key, "netdev") == 0) {
-		conf->netdev = jutil_get_string(value);
+		conf->netdev = jutil_dup_string(value);
 		return conf->netdev != NULL;
 	}
 #if WITH_CRYPTO
 	if (strcmp(key, "method") == 0) {
-		conf->method = jutil_get_string(value);
+		conf->method = jutil_dup_string(value);
 		return conf->method != NULL;
 	}
 	if (strcmp(key, "password") == 0) {
-		conf->password = jutil_get_string(value);
+		conf->password = jutil_dup_string(value);
 		return conf->password != NULL;
 	}
 	if (strcmp(key, "psk") == 0) {
-		conf->psk = jutil_get_string(value);
+		conf->psk = jutil_dup_string(value);
 		return conf->psk != NULL;
 	}
 #endif /* WITH_CRYPTO */
 #if WITH_OBFS
 	if (strcmp(key, "obfs") == 0) {
-		conf->obfs = jutil_get_string(value);
+		conf->obfs = jutil_dup_string(value);
 		return conf->obfs != NULL;
 	}
 #endif /* WITH_OBFS */
@@ -223,7 +179,7 @@ main_scope_cb(void *ud, const char *key, const struct jutil_value *value)
 		return jutil_get_int(value, &conf->log_level);
 	}
 	if (strcmp(key, "user") == 0) {
-		conf->user = jutil_get_string(value);
+		conf->user = jutil_dup_string(value);
 		return conf->user != NULL;
 	}
 	LOGW_F("unknown config: `%s'", key);

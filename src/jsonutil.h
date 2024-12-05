@@ -10,6 +10,7 @@
 struct jutil_value; /* opaque */
 
 struct jutil_value *jutil_parse(const char *json, size_t length);
+struct jutil_value *jutil_parsefile(const char *filename);
 
 void jutil_free(struct jutil_value *value);
 
@@ -26,8 +27,10 @@ bool jutil_get_bool(const struct jutil_value *value, bool *b);
 
 bool jutil_get_int(const struct jutil_value *value, int *i);
 
-/* the returned string needs to be freed */
-char *jutil_get_string(const struct jutil_value *value);
-char *jutil_get_lstring(const struct jutil_value *value, size_t *len);
+const char *jutil_get_lstring(const struct jutil_value *value, size_t *len);
+const char *jutil_get_string(const struct jutil_value *value);
+
+char *jutil_dup_lstring(const struct jutil_value *value, size_t *len);
+char *jutil_dup_string(const struct jutil_value *value);
 
 #endif /* JSONUTIL_H */
