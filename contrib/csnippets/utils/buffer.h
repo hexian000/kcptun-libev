@@ -239,6 +239,14 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 	(VBUF_ASSERT_BOUND(vbuf), (vbuf) != NULL ? (vbuf)->len : 0)
 
 /**
+ * @brief Get vbuffer available space.
+ * @return Space in bytes.
+ */
+#define VBUF_SPACE(vbuf)                                                       \
+	(VBUF_ASSERT_BOUND(vbuf),                                              \
+	 (vbuf) != NULL ? (vbuf)->cap - (vbuf)->len : 0)
+
+/**
  * @brief Get vbuffer data.
  * @return Length in bytes.
  */
@@ -275,19 +283,7 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
  * @details usage: `vbuf = VBUF_RESERVE(vbuf, 100);`
  */
 #define VBUF_RESERVE(vbuf, want)                                               \
-	(VBUF_ASSERT_BOUND(vbuf),                                              \
-	 (((want) > VBUF_CAP(vbuf)) ? vbuf_alloc((vbuf), (want)) : (vbuf)))
-
-/**
- * @brief Aggressively expand vbuffer allocation.
- * @param vbuf If NULL, new buffer may be allocated.
- * @param want Expected vbuffer overall size in bytes.
- * @param maxcap Size limit in bytes.
- * @return If failed, the allocation remains unchanged.
- * @details usage: `vbuf = VBUF_GROW(vbuf, 16384, SIZE_MAX);`
- */
-#define VBUF_GROW(vbuf, want, maxcap)                                          \
-	(VBUF_ASSERT_BOUND(vbuf), vbuf_grow((vbuf), (want), (maxcap)))
+	(VBUF_ASSERT_BOUND(vbuf), vbuf_grow((vbuf), (want), SIZE_MAX))
 
 /**
  * @brief Append fixed-length data to vbuffer.

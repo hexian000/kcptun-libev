@@ -76,12 +76,18 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *data, size_t n)
 	if (n == 0) {
 		return vbuf;
 	}
-	size_t want = n;
+	/* 1 extra byte is reserved for detecting allocation failures */
+	size_t want = n + 1;
 	if (vbuf != NULL) {
+		if (vbuf->cap == vbuf->len) {
+			/* allocation failure occurred, skip */
+			return vbuf;
+		}
 		want += vbuf->len;
 		vbuf = vbuf_grow(vbuf, want, SIZE_MAX);
-		if (vbuf->cap < want) {
-			return vbuf;
+		/* when failed, append as much as possible */
+		if (n >= vbuf->cap - vbuf->len) {
+			n = vbuf->cap - vbuf->len - 1;
 		}
 	} else {
 		vbuf = vbuf_alloc(NULL, want);
@@ -91,6 +97,7 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *data, size_t n)
 	}
 	(void)memcpy(vbuf->data + vbuf->len, data, n);
 	vbuf->len += n;
+	vbuf->data[vbuf->len] = '\0'; /* the reserved byte */
 	return vbuf;
 }
 
@@ -111,8 +118,12 @@ vbuf_vappendf(struct vbuffer *restrict vbuf, const char *format, va_list args)
 	if (ret <= 0) {
 		return vbuf;
 	}
-	size_t want = (size_t)ret + (size_t)1;
+	size_t want = (size_t)ret + sizeof("");
 	if (vbuf != NULL) {
+		if (vbuf->cap == vbuf->len) {
+			/* allocation failure occurred, skip */
+			return vbuf;
+		}
 		want += vbuf->len;
 		if (want <= vbuf->cap) {
 			/* first try success */
@@ -120,9 +131,7 @@ vbuf_vappendf(struct vbuffer *restrict vbuf, const char *format, va_list args)
 			return vbuf;
 		}
 		vbuf = vbuf_grow(vbuf, want, SIZE_MAX);
-		if (vbuf->cap < want) {
-			return vbuf;
-		}
+		/* when failed, append as much as possible */
 	} else {
 		vbuf = vbuf_alloc(NULL, want);
 		if (vbuf == NULL) {
@@ -133,7 +142,11 @@ vbuf_vappendf(struct vbuffer *restrict vbuf, const char *format, va_list args)
 	b = (char *)(vbuf->data + vbuf->len);
 	ret = vsnprintf(b, maxlen, format, args);
 	if (ret > 0) {
-		vbuf->len += (size_t)ret;
+		if ((size_t)ret < maxlen) {
+			vbuf->len += (size_t)ret;
+		} else {
+			vbuf->len += maxlen;
+		}
 	}
 	return vbuf;
 }
