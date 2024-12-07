@@ -239,10 +239,10 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 	(VBUF_ASSERT_BOUND(vbuf), (vbuf) != NULL ? (vbuf)->len : 0)
 
 /**
- * @brief Get vbuffer available space.
+ * @brief Get vbuffer remaining space.
  * @return Space in bytes.
  */
-#define VBUF_SPACE(vbuf)                                                       \
+#define VBUF_REMAINING(vbuf)                                                   \
 	(VBUF_ASSERT_BOUND(vbuf),                                              \
 	 (vbuf) != NULL ? (vbuf)->cap - (vbuf)->len : 0)
 
