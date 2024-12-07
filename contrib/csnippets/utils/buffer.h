@@ -287,9 +287,13 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 
 /**
  * @brief Append fixed-length data to vbuffer.
- * @param vbuf If NULL, the minimum required size is allocated.
- * @return If the allocation fails, the data remains unchanged.
- * @details Allocation will be expanded if there is not enough space.
+ * @param vbuf If NULL, new vbuffer is allocated.
+ * @return If the allocation fails, the data is truncated.
+ * @details vbuf will be expanded if there is not enough space. <br>
+ * If the input buffer is full, no operation is performed and the original
+ * buffer is returned. <br>
+ * When vbuf is expanded, 1 extra byte is always reserved. Therefore,
+ * a returned buffer full indicates an allocation failure. <br>
  * usage: `vbuf = VBUF_APPEND(vbuf, data, len);`
  */
 #define VBUF_APPEND(vbuf, data, n)                                             \
@@ -298,9 +302,9 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 /**
  * @brief Append literal string to vbuffer.
  * @param vbuf If NULL, the minimum required size is allocated.
- * @return If the allocation fails, the data remains unchanged.
- * @details Allocation will be expanded if there is not enough space.
- * usage: `vbuf = VBUF_APPENDSTR(vbuf, "some string");`
+ * @return If the allocation fails, the data is truncated.
+ * @see VBUF_APPEND
+ * @details usage: `vbuf = VBUF_APPENDSTR(vbuf, "some string");`
  */
 #define VBUF_APPENDSTR(vbuf, str)                                              \
 	(VBUF_ASSERT_BOUND(vbuf),                                              \
@@ -309,9 +313,9 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 /**
  * @brief Append formatted string to vbuffer.
  * @param vbuf If NULL, the minimum required size is allocated.
- * @return If the allocation fails, the data remains unchanged.
- * @details Allocation will be expanded if there is not enough space.
- * usage: vbuf = VBUF_APPENDF(vbuf, "%s: %s\r\n", "Content-Type", "text/plain");
+ * @return If the allocation fails, the data is truncated.
+ * @see VBUF_APPEND
+ * @details usage: vbuf = VBUF_APPENDF(vbuf, "%s: %s\r\n", "Content-Type", "text/plain");
  */
 #define VBUF_APPENDF(vbuf, format, ...)                                        \
 	(VBUF_ASSERT_BOUND(vbuf), vbuf_appendf((vbuf), (format), __VA_ARGS__))
