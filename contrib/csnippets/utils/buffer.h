@@ -267,18 +267,18 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 /**
  * @brief Adjust vbuffer allocation while preserving data.
  * @param vbuf If NULL, new buffer may be allocated.
- * @param want Expected vbuffer overall size in bytes.
+ * @param want Expected vbuffer overall capacity in bytes.
  * @return If failed, the allocation remains unchanged.
  * @details usage: `vbuf = VBUF_RESIZE(vbuf, 0); // shrink the buffer to fit`
  */
 #define VBUF_RESIZE(vbuf, want)                                                \
 	(VBUF_ASSERT_BOUND(vbuf),                                              \
-	 vbuf_alloc((vbuf), MAX(VBUF_LEN(vbuf), (want))))
+	 vbuf_alloc((vbuf), MAX((vbuf) != NULL ? (vbuf)->len : 0, (want))))
 
 /**
  * @brief Expand vbuffer allocation.
  * @param vbuf If NULL, new buffer may be allocated.
- * @param want Expected vbuffer overall size in bytes.
+ * @param want Expected minimum vbuffer overall capacity in bytes.
  * @return If failed, the allocation remains unchanged.
  * @details usage: `vbuf = VBUF_RESERVE(vbuf, 100);`
  */
@@ -301,7 +301,7 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 
 /**
  * @brief Append literal string to vbuffer.
- * @param vbuf If NULL, the minimum required size is allocated.
+ * @param vbuf If NULL, new buffer is allocated.
  * @return If the allocation fails, the data is truncated.
  * @see VBUF_APPEND
  * @details usage: `vbuf = VBUF_APPENDSTR(vbuf, "some string");`
@@ -312,7 +312,7 @@ static inline bool vbuf_boundcheck(struct vbuffer *vbuf)
 
 /**
  * @brief Append formatted string to vbuffer.
- * @param vbuf If NULL, the minimum required size is allocated.
+ * @param vbuf If NULL, new buffer is allocated.
  * @return If the allocation fails, the data is truncated.
  * @see VBUF_APPEND
  * @details usage: vbuf = VBUF_APPENDF(vbuf, "%s: %s\r\n", "Content-Type", "text/plain");

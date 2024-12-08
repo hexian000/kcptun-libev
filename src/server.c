@@ -398,7 +398,8 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 			conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0),
 		.ping_timeout = ping_timeout,
 		.time_wait = conf->time_wait,
-		.last_clock = -1,
+		.last_cputime = TSTAMP_NIL,
+		.last_monotime = TSTAMP_NIL,
 	};
 
 	{
@@ -772,36 +773,31 @@ static struct vbuffer *append_traffic_stats(
 		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 }
 
-static double clock_cputime(void)
-{
-#if HAVE_CLOCK_GETTIME
-	struct timespec t;
-	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t)) {
-		return NAN;
-	}
-	return t.tv_sec + t.tv_nsec * 1e-9;
-#else
-	const clock_t clk = clock();
-	if (clk == (clock_t)-1) {
-		return NAN;
-	}
-	return (double)clk / CLOCKS_PER_SEC;
-#endif
-}
-
-static bool update_load(
+static const char *format_load(
 	struct server *restrict s, char *buf, const size_t bufsize,
-	const double dt)
+	const char *fail)
 {
-	const double last = s->last_clock;
-	const double now = clock_cputime();
-	s->last_clock = now;
-	if (!isfinite(now) || !isfinite(last) || now < last) {
-		return false;
+	const char *load_str = fail;
+	double monotime, cputime;
+	struct timespec t;
+	if (clock_gettime(CLOCK_MONOTONIC, &t)) {
+		return load_str;
 	}
-	const double load = (now - last) / dt * 100.0;
-	(void)snprintf(buf, bufsize, "%.03f%%", load);
-	return true;
+	monotime = t.tv_sec + t.tv_nsec * 1e-9;
+	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t)) {
+		return load_str;
+	}
+	cputime = t.tv_sec + t.tv_nsec * 1e-9;
+	if (s->last_cputime != TSTAMP_NIL && s->last_monotime != TSTAMP_NIL) {
+		const double busy = cputime - s->last_cputime;
+		const double total = monotime - s->last_monotime;
+		const double load = busy / total * 100.0;
+		(void)snprintf(buf, bufsize, "%.03f%%", load);
+		load_str = buf;
+	}
+	s->last_cputime = cputime;
+	s->last_monotime = monotime;
+	return load_str;
 }
 
 struct vbuffer *
@@ -864,18 +860,13 @@ struct vbuffer *server_stats(
 
 	buf = append_traffic_stats(buf, &s->stats);
 
-	{
-		char load_buf[16];
-		const char *load_str = "(unknown)";
-		if (update_load(s, load_buf, sizeof(load_buf), dt)) {
-			load_str = load_buf;
-		}
-		FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
-		FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
-		buf = VBUF_APPENDF(
-			buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n",
-			load_str, dpkt_rx, dpkt_tx, uptime_str);
-	}
+	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
+	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
+	char load_buf[16];
+	buf = VBUF_APPENDF(
+		buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n",
+		format_load(s, load_buf, sizeof(load_buf), "(unknown)"),
+		dpkt_rx, dpkt_tx, uptime_str);
 #undef FORMAT_BYTES
 
 	/* rotate stats */
