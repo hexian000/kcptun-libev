@@ -94,7 +94,8 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *data, size_t n)
 	}
 	(void)memcpy(vbuf->data + vbuf->len, data, n);
 	vbuf->len += n;
-	vbuf->data[vbuf->len] = '\0'; /* the reserved byte */
+	/* null-byte is reserved by vbuf_alloc() */
+	vbuf->data[vbuf->len] = '\0';
 	return vbuf;
 }
 
@@ -110,6 +111,7 @@ vbuf_vappendf(struct vbuffer *restrict vbuf, const char *format, va_list args)
 
 	va_list args0;
 	va_copy(args0, args);
+	/* null-byte is reserved by vbuf_alloc() */
 	int ret = vsnprintf(b, maxlen + 1, format, args0);
 	va_end(args0);
 	if (ret <= 0) {

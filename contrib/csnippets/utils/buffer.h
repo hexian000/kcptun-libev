@@ -68,7 +68,7 @@ vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
 		return NULL;
 	}
 	const size_t len = (vbuf != NULL) ? vbuf->len : 0;
-	/* with a null-byte */
+	/* reserve 1 byte for null terminator */
 	struct vbuffer *restrict newbuf =
 		realloc(vbuf, sizeof(struct vbuffer) + cap + 1);
 	if (newbuf == NULL) {
