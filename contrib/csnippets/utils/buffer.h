@@ -221,51 +221,50 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
  * @brief Get vbuffer capacity.
  * @return Capacity in bytes.
  */
-#define VBUF_CAP(vbuf) (VBUF_ASSERT_BOUND(vbuf), (vbuf)->cap)
+#define VBUF_CAP(vbuf) ((vbuf) != NULL ? (vbuf)->cap : 0)
 
 /**
  * @brief Get vbuffer length.
  * @return Length in bytes.
  */
-#define VBUF_LEN(vbuf) (VBUF_ASSERT_BOUND(vbuf), (vbuf)->len)
+#define VBUF_LEN(vbuf) ((vbuf) != NULL ? (vbuf)->len : 0)
 
 /**
  * @brief Get vbuffer remaining space.
  * @return Space in bytes.
  */
-#define VBUF_REMAINING(vbuf)                                                   \
-	(VBUF_ASSERT_BOUND(vbuf), (vbuf)->cap - (vbuf)->len)
+#define VBUF_REMAINING(vbuf) ((vbuf) != NULL ? (vbuf)->cap - (vbuf)->len : 0)
 
 /**
- * @brief Get vbuffer data.
+ * @brief Get raw pointer to the buffered data.
  * @return Length in bytes.
  */
-#define VBUF_DATA(vbuf) (VBUF_ASSERT_BOUND(vbuf), (void *)(vbuf)->data)
+#define VBUF_DATA(vbuf) ((vbuf) != NULL ? (void *)(vbuf)->data : (void *)"")
 
 /**
- * @brief Clear vbuffer object, do not change the allocation.
+ * @brief Clear the vbuffer without changing the allocation.
  * @return Passthrough.
  * @details usage: `vbuf = VBUF_RESET(vbuf);`
  */
-#define VBUF_RESET(vbuf) (VBUF_ASSERT_BOUND(vbuf), ((vbuf)->len = 0, (vbuf)))
+#define VBUF_RESET(vbuf) ((vbuf) != NULL ? ((vbuf)->len = 0, (vbuf)) : NULL)
 
 /**
- * @brief Adjust vbuffer allocation.
+ * @brief Clear and resize the vbuffer for specified number of bytes.
  * @param vbuf If NULL, new buffer is allocated.
  * @param want Expected vbuffer overall capacity in bytes.
  * @return If failed, the allocation remains unchanged.
  * @details usage: `vbuf = VBUF_RESIZE(vbuf, 1024);`
  */
-#define VBUF_RESIZE(vbuf, want) (vbuf_alloc((vbuf), (want)))
+#define VBUF_RESIZE(vbuf, want) (vbuf_alloc(VBUF_RESET(vbuf), (want) + 1))
 
 /**
- * @brief Adjust vbuffer allocation while preserving data.
+ * @brief Prepare the vbuffer for specified number of bytes.
  * @param want Expected vbuffer overall capacity in bytes.
  * @return If failed, the allocation remains unchanged.
  * @details usage: `vbuf = VBUF_RESERVE(vbuf, 0); // shrink the buffer to fit`
  */
 #define VBUF_RESERVE(vbuf, want)                                               \
-	(VBUF_ASSERT_BOUND(vbuf), vbuf_alloc((vbuf), MAX((vbuf)->len, (want))))
+	(vbuf_alloc((vbuf), MAX(VBUF_LEN(vbuf), (want)) + 1))
 
 /**
  * @brief Append fixed-length data to vbuffer.
