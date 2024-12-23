@@ -91,4 +91,6 @@ bool parse_user(struct user_ident *ident, const char *s);
 void drop_privileges(const struct user_ident *ident);
 void daemonize(const struct user_ident *ident, bool nochdir, bool noclose);
 
+double thread_load(void);
+
 #endif /* UTIL_H */

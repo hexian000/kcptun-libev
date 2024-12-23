@@ -391,3 +391,33 @@ void daemonize(
 	/* Set logging output to syslog. */
 	slog_setoutput(SLOG_OUTPUT_SYSLOG, "kcptun-libev");
 }
+
+double thread_load(void)
+{
+	static _Thread_local struct {
+		struct timespec monotime, cputime;
+		bool set;
+	} last = { .set = false };
+	double load = -1;
+	struct timespec monotime, cputime;
+	if (clock_gettime(CLOCK_MONOTONIC, &monotime)) {
+		return load;
+	}
+	if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cputime)) {
+		return load;
+	}
+	if (last.set) {
+		const double total =
+			(monotime.tv_sec - last.monotime.tv_sec) +
+			(monotime.tv_nsec - last.monotime.tv_nsec) * 1e-9;
+		const double busy =
+			(cputime.tv_sec - last.cputime.tv_sec) +
+			(cputime.tv_nsec - last.cputime.tv_nsec) * 1e-9;
+		load = busy / total;
+		return load;
+	}
+	last.monotime = monotime;
+	last.cputime = cputime;
+	last.set = true;
+	return load;
+}

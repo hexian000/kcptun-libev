@@ -35,7 +35,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 static int
 tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
@@ -398,8 +397,6 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 			conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0),
 		.ping_timeout = ping_timeout,
 		.time_wait = conf->time_wait,
-		.last_cputime = TSTAMP_NIL,
-		.last_monotime = TSTAMP_NIL,
 	};
 
 	{
@@ -773,33 +770,6 @@ static struct vbuffer *append_traffic_stats(
 		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
 }
 
-static const char *format_load(
-	struct server *restrict s, char *buf, const size_t bufsize,
-	const char *fail)
-{
-	const char *load_str = fail;
-	double monotime, cputime;
-	struct timespec t;
-	if (clock_gettime(CLOCK_MONOTONIC, &t)) {
-		return load_str;
-	}
-	monotime = t.tv_sec + t.tv_nsec * 1e-9;
-	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t)) {
-		return load_str;
-	}
-	cputime = t.tv_sec + t.tv_nsec * 1e-9;
-	if (s->last_cputime != TSTAMP_NIL && s->last_monotime != TSTAMP_NIL) {
-		const double busy = cputime - s->last_cputime;
-		const double total = monotime - s->last_monotime;
-		const double load = busy / total * 100.0;
-		(void)snprintf(buf, bufsize, "%.03f%%", load);
-		load_str = buf;
-	}
-	s->last_cputime = cputime;
-	s->last_monotime = monotime;
-	return load_str;
-}
-
 struct vbuffer *
 server_stats_const(const struct server *s, struct vbuffer *buf, int level)
 {
@@ -860,12 +830,16 @@ struct vbuffer *server_stats(
 
 	buf = append_traffic_stats(buf, &s->stats);
 
+	char load_str[16] = "(unknown)";
+	const double load = thread_load();
+	if (load >= 0) {
+		(void)snprintf(
+			load_str, sizeof(load_str), "%.01f%%", load * 100);
+	}
 	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
 	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
-	char load_buf[16];
 	buf = VBUF_APPENDF(
-		buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n",
-		format_load(s, load_buf, sizeof(load_buf), "(unknown)"),
+		buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n", load_str,
 		dpkt_rx, dpkt_tx, uptime_str);
 #undef FORMAT_BYTES
 

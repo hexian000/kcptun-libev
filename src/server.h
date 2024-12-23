@@ -85,7 +85,6 @@ struct server {
 		ev_tstamp started;
 		ev_tstamp last_stats_time;
 		ev_tstamp last_resolve_time;
-		double last_cputime, last_monotime;
 	};
 };
 
