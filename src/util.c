@@ -414,7 +414,6 @@ double thread_load(void)
 			(cputime.tv_sec - last.cputime.tv_sec) +
 			(cputime.tv_nsec - last.cputime.tv_nsec) * 1e-9;
 		load = busy / total;
-		return load;
 	}
 	last.monotime = monotime;
 	last.cputime = cputime;

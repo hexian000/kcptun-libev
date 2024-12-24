@@ -833,7 +833,7 @@ struct vbuffer *server_stats(
 	const double load = thread_load();
 	if (load >= 0) {
 		(void)snprintf(
-			load_str, sizeof(load_str), "%.01f%%", load * 100);
+			load_str, sizeof(load_str), "%.03f%%", load * 100);
 	}
 	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
 	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
