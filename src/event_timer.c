@@ -7,6 +7,7 @@
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
+#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"

@@ -4,7 +4,6 @@
 #include "jsonutil.h"
 
 #include "utils/debug.h"
-#include "utils/slog.h"
 
 #include <json-c/json.h>
 
@@ -54,9 +53,9 @@ bool jutil_walk_object(
 	for (struct json_object_iterator it = json_object_iter_begin(obj);
 	     !json_object_iter_equal(&it, &it_end);
 	     json_object_iter_next(&it)) {
-		const char *name = json_object_iter_peek_name(&it);
-		struct json_object *value = json_object_iter_peek_value(&it);
-		if (!cb(ud, name, (struct jutil_value *)value)) {
+		const char *k = json_object_iter_peek_name(&it);
+		struct json_object *v = json_object_iter_peek_value(&it);
+		if (!cb(ud, k, (struct jutil_value *)v)) {
 			return false;
 		}
 	}
@@ -72,8 +71,8 @@ bool jutil_walk_array(
 	}
 	const size_t n = json_object_array_length(obj);
 	for (size_t i = 0; i < n; i++) {
-		struct json_object *value = json_object_array_get_idx(obj, i);
-		if (!cb(ud, (struct jutil_value *)value)) {
+		struct json_object *v = json_object_array_get_idx(obj, i);
+		if (!cb(ud, (struct jutil_value *)v)) {
 			return false;
 		}
 	}

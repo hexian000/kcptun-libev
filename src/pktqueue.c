@@ -14,7 +14,6 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
-#include "math/rand.h"
 #include "utils/debug.h"
 #include "utils/minmax.h"
 #include "utils/slog.h"
@@ -28,7 +27,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
