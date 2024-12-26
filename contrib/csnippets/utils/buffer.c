@@ -3,9 +3,12 @@
 
 #include "buffer.h"
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 int buf_vappendf(struct buffer *restrict buf, const char *format, va_list args)
 {
@@ -62,7 +65,7 @@ vbuf_grow(struct vbuffer *restrict vbuf, const size_t want, const size_t maxcap)
 
 	struct vbuffer *restrict newbuf =
 		realloc(vbuf, sizeof(struct vbuffer) + cap);
-	if (newbuf == NULL && want < cap) {
+	if (newbuf == NULL) {
 		/* retry with minimal required capacity */
 		cap = want;
 		newbuf = realloc(vbuf, sizeof(struct vbuffer) + cap);

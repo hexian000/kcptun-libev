@@ -19,7 +19,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdint.h>
 #include <wchar.h>
 #include <wctype.h>
 

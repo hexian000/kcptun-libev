@@ -4,9 +4,7 @@
 #include "rand.h"
 
 #include <float.h>
-#include <stdbool.h>
 #include <stdint.h>
-#include <time.h>
 
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
 
