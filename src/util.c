@@ -128,30 +128,15 @@ void init(int argc, char **argv)
 	if (sigaction(SIGPIPE, &ignore, NULL) != 0) {
 		FAILMSGF("sigaction: %s", strerror(errno));
 	}
+#if WITH_CRASH_HANDLER
+	set_crash_handler();
+#endif
 }
 
 struct mcache *msgpool;
 
-static void unloadlibs(void);
-
 void loadlibs(void)
 {
-	{
-		static bool loaded = false;
-		if (loaded) {
-			return;
-		}
-		loaded = true;
-
-		const int ret = atexit(unloadlibs);
-		if (ret != 0) {
-			FAILMSGF("atexit: %d", ret);
-		}
-	}
-#if WITH_CRASH_HANDLER
-	set_crash_handler();
-#endif
-
 	LOGD_F("%s: %s", PROJECT_NAME, PROJECT_VER);
 	LOGD_F("libev: %d.%d", ev_version_major(), ev_version_minor());
 

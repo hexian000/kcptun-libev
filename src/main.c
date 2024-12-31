@@ -225,6 +225,7 @@ int main(int argc, char **argv)
 	LOGN_F("%s shutdown gracefully", conf_modestr(conf));
 	ev_loop_destroy(loop);
 	conf_free(conf);
+	unloadlibs();
 
 	LOGD("program terminated normally");
 	return EXIT_SUCCESS;

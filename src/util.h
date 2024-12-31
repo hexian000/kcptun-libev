@@ -78,6 +78,7 @@ bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 
 void init(int argc, char **argv);
 void loadlibs(void);
+void unloadlibs(void);
 
 #if WITH_CRYPTO
 void genpsk(const char *method);
