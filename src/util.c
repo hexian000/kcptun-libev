@@ -126,7 +126,8 @@ void init(int argc, char **argv)
 		.sa_handler = SIG_IGN,
 	};
 	if (sigaction(SIGPIPE, &ignore, NULL) != 0) {
-		FAILMSGF("sigaction: %s", strerror(errno));
+		const int err = errno;
+		FAILMSGF("sigaction: %s", strerror(err));
 	}
 #if WITH_CRASH_HANDLER
 	set_crash_handler();
@@ -298,13 +299,15 @@ void daemonize(
 	/* Create an anonymous pipe for communicating with daemon process. */
 	int fd[2];
 	if (pipe(fd) == -1) {
-		FAILMSGF("pipe: %s", strerror(errno));
+		const int err = errno;
+		FAILMSGF("pipe: %s", strerror(err));
 	}
 	/* First fork(). */
 	{
 		const pid_t pid = fork();
 		if (pid < 0) {
-			FAILMSGF("fork: %s", strerror(errno));
+			const int err = errno;
+			FAILMSGF("fork: %s", strerror(err));
 		} else if (pid > 0) {
 			CLOSE_FD(fd[1]);
 			char buf[256];
@@ -326,7 +329,8 @@ void daemonize(
 	{
 		const pid_t pid = fork();
 		if (pid < 0) {
-			FAILMSGF("fork: %s", strerror(errno));
+			const int err = errno;
+			FAILMSGF("fork: %s", strerror(err));
 		} else if (pid > 0) {
 			/* Call exit() in the first child. */
 			exit(EXIT_SUCCESS);
