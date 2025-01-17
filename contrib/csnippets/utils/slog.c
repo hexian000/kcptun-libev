@@ -27,7 +27,7 @@ typedef void (*slog_writer_fn)(
 	struct slog_extra *extra, const char *format, va_list args);
 
 static const unsigned char slog_level_char[] = {
-	'-', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
+	'T', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
 };
 
 FILE *slog_output;
