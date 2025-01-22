@@ -341,8 +341,10 @@ void daemonize(
 		FILE *f;
 		f = freopen("/dev/null", "r", stdin);
 		ASSERT(f == stdin);
+		UNUSED(f);
 		f = freopen("/dev/null", "w", stdout);
 		ASSERT(f == stdout);
+		UNUSED(f);
 		f = freopen("/dev/null", "w", stderr);
 		ASSERT(f == stderr);
 		UNUSED(f);

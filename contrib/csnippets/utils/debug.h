@@ -132,7 +132,7 @@ int debug_backtrace(void **frames, int calldepth, int len);
 
 /* ASSERT: an alternative to assert() */
 #ifdef NDEBUG
-#define ASSERT(cond) ((void)(cond))
+#define ASSERT(cond) ((void)(0))
 #else
 #define ASSERT(cond) CHECKMSGF(cond, "assertion failed: `%s'", #cond)
 #endif
