@@ -26,6 +26,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>

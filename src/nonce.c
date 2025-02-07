@@ -3,9 +3,9 @@
 
 #include "nonce.h"
 
+#if WITH_SODIUM
 #include "bloom.h"
 
-#if WITH_SODIUM
 #include "utils/buffer.h"
 #include "utils/debug.h"
 
