@@ -1,19 +1,19 @@
 /* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef UTILS_INTBOUND_H
-#define UTILS_INTBOUND_H
+#ifndef UTILS_INTCAST_H
+#define UTILS_INTCAST_H
 
 #include <stdint.h>
 
 /**
- * @defgroup intbound
+ * @defgroup intcast
  * @brief Safely cast stdint types to unknown int types.
  * @details The compiler implementation must support all types from int8_t to uint64_t.
  * @{
  */
 
-#define BOUNDCHECK_INT(dst, src)                                               \
+#define INTCAST_CHECK(dst, src)                                                \
 	(_Generic((dst), int8_t                                                \
 		  : ((INT8_MIN) <= (src) && (src) <= (INT8_MAX)), int16_t      \
 		  : ((INT16_MIN) <= (src) && (src) <= (INT16_MAX)), int32_t    \
@@ -31,7 +31,7 @@
 		  : (0 <= (src) && (sizeof(intmax_t) <= sizeof(uint64_t) ||    \
 				    (src) <= (intmax_t)UINT64_MAX))))
 
-#define BOUNDCHECK_UINT(dst, src)                                              \
+#define UINTCAST_CHECK(dst, src)                                               \
 	(_Generic((dst), uint8_t                                               \
 		  : ((src) <= UINT8_MAX), uint16_t                             \
 		  : ((src) <= UINT16_MAX), uint32_t                            \
@@ -51,4 +51,4 @@
 
 /** @} */
 
-#endif /* UTILS_INTBOUND_H */
+#endif /* UTILS_INTCAST_H */

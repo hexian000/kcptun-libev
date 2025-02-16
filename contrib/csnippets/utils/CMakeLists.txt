@@ -9,7 +9,7 @@ target_sources(csnippets
     "${CMAKE_CURRENT_SOURCE_DIR}/buffer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/debug.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/formats.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/intbound.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/intcast.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/likely.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcache.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/minmax.h"
