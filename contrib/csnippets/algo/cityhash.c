@@ -85,7 +85,7 @@ static inline uint64_t shift_mix(const uint64_t v)
 
 // Hash 128 input bits down to 64 bits of output.
 // This is intended to be a reasonably good hash function.
-static inline uint64_t Hash128to64(const uint64_t x[2])
+static inline uint64_t Hash128to64(const uint64_t x[restrict 2])
 {
 	// Murmur-inspired hashing.
 	const uint64_t kMul = 0x9ddfea08eb382d69ULL;
@@ -113,7 +113,7 @@ static inline uint64_t HashLen16mul(uint64_t u, uint64_t v, uint64_t mul)
 	return b;
 }
 
-static uint64_t HashLen0to16(const unsigned char *s, size_t len)
+static uint64_t HashLen0to16(const unsigned char *restrict s, size_t len)
 {
 	if (len >= 8) {
 		uint64_t mul = k2 + len * 2;
@@ -142,7 +142,8 @@ static uint64_t HashLen0to16(const unsigned char *s, size_t len)
 
 // This probably works well for 16-byte strings as well, but it may be overkill
 // in that case.
-static inline uint64_t HashLen17to32(const unsigned char *s, size_t len)
+static inline uint64_t
+HashLen17to32(const unsigned char *restrict s, size_t len)
 {
 	uint64_t mul = k2 + len * 2;
 	uint64_t a = read_uint64(s) * k1;
@@ -181,7 +182,8 @@ static inline void WeakHashLen32WithSeedsStr(
 }
 
 // Return an 8-byte hash for 33 to 64 bytes.
-static inline uint64_t HashLen33to64(const unsigned char *s, size_t len)
+static inline uint64_t
+HashLen33to64(const unsigned char *restrict s, size_t len)
 {
 	uint64_t mul = k2 + len * 2;
 	uint64_t a = read_uint64(s) * k2;
@@ -203,7 +205,7 @@ static inline uint64_t HashLen33to64(const unsigned char *s, size_t len)
 	return b + x;
 }
 
-static uint64_t CityHash64(const void *ptr, size_t len)
+static uint64_t CityHash64(const void *restrict ptr, size_t len)
 {
 	const unsigned char *s = ptr;
 	if (len <= 32) {
@@ -248,13 +250,14 @@ static uint64_t CityHash64(const void *ptr, size_t len)
 		HashLen16(v[1], w[1]) + x);
 }
 
-static uint64_t
-CityHash64WithSeeds(const void *ptr, size_t len, uint64_t seed0, uint64_t seed1)
+static uint64_t CityHash64WithSeeds(
+	const void *restrict ptr, size_t len, uint64_t seed0, uint64_t seed1)
 {
 	return HashLen16(CityHash64(ptr, len) - seed0, seed1);
 }
 
-static uint64_t CityHash64WithSeed(const void *ptr, size_t len, uint64_t seed)
+static uint64_t
+CityHash64WithSeed(const void *restrict ptr, size_t len, uint64_t seed)
 {
 	return CityHash64WithSeeds(ptr, len, k2, seed);
 }
@@ -297,8 +300,8 @@ static void CityMurmur(
 }
 
 static void CityHash128WithSeed(
-	unsigned char hash[16], const void *ptr, size_t len,
-	const unsigned char seed[16])
+	unsigned char hash[restrict 16], const void *restrict ptr, size_t len,
+	const unsigned char seed[restrict 16])
 {
 	const unsigned char *s = ptr;
 	if (len < 128) {
@@ -385,20 +388,21 @@ static void CityHash128(unsigned char hash[16], const void *ptr, size_t len)
 }
 */
 
-uint64_t cityhash64_64(const void *ptr, const size_t len, const uint64_t seed)
+uint64_t
+cityhash64_64(const void *restrict ptr, const size_t len, const uint64_t seed)
 {
 	return CityHash64WithSeed(ptr, len, seed);
 }
 
-uint32_t
-cityhash64low_32(const void *ptr, const size_t len, const uint32_t seed)
+uint32_t cityhash64low_32(
+	const void *restrict ptr, const size_t len, const uint32_t seed)
 {
 	return (uint32_t)CityHash64WithSeed(ptr, len, seed);
 }
 
 void cityhash128_128(
-	unsigned char hash[16], const void *ptr, const size_t len,
-	const unsigned char seed[16])
+	unsigned char hash[restrict 16], const void *restrict ptr,
+	const size_t len, const unsigned char seed[restrict 16])
 {
 	CityHash128WithSeed(hash, ptr, len, seed);
 }

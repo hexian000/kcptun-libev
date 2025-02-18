@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <string.h>
 
-bool splithostport(char *str, char **host, char **port)
+bool splithostport(char *str, char **restrict host, char **restrict port)
 {
 	char *service = strrchr(str, ':');
 	if (service == NULL) {

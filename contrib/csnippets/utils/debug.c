@@ -29,7 +29,7 @@
 
 #define INDENT "  "
 
-void slog_extra_txt(FILE *f, void *data)
+void slog_extra_txt(FILE *restrict f, void *data)
 {
 	const struct slog_extra_txt *restrict extra = data;
 	size_t n = extra->len;
@@ -118,7 +118,7 @@ void slog_extra_txt(FILE *f, void *data)
 	}
 }
 
-void slog_extra_bin(FILE *f, void *data)
+void slog_extra_bin(FILE *restrict f, void *data)
 {
 	const struct slog_extra_bin *restrict extra = data;
 	size_t n = extra->len;
@@ -237,7 +237,7 @@ static struct backtrace_state *bt_state(void)
 }
 #endif
 
-int debug_backtrace(void **frames, int skip, const int len)
+int debug_backtrace(void **restrict frames, int skip, const int len)
 {
 	assert(frames != NULL && len > 0);
 	skip++;
@@ -275,8 +275,8 @@ int debug_backtrace(void **frames, int skip, const int len)
 #endif
 }
 
-static void
-slog_extra_stack_default(FILE *f, struct slog_extra_stack *restrict extra)
+static void slog_extra_stack_default(
+	FILE *restrict f, struct slog_extra_stack *restrict extra)
 {
 	int index = 1;
 	for (size_t i = 0; i < extra->len; i++) {
@@ -285,7 +285,7 @@ slog_extra_stack_default(FILE *f, struct slog_extra_stack *restrict extra)
 	}
 }
 
-void slog_extra_stack(FILE *f, void *data)
+void slog_extra_stack(FILE *restrict f, void *data)
 {
 	struct slog_extra_stack *restrict extra = data;
 #if WITH_LIBBACKTRACE

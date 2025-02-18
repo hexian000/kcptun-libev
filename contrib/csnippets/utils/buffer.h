@@ -35,14 +35,14 @@ struct buffer {
 
 /** @internal */
 static inline size_t
-buf_append(struct buffer *restrict buf, const void *data, size_t n)
+buf_append(struct buffer *restrict buf, const void *restrict data, size_t n)
 {
 	n = MIN(n, buf->cap - buf->len);
 	if (n == 0) {
 		return 0;
 	}
-	unsigned char *b = buf->data + buf->len;
-	(void)memcpy(b, data, n);
+	void *restrict dest = buf->data + buf->len;
+	(void)memcpy(dest, data, n);
 	buf->len += n;
 	return n;
 }
@@ -60,8 +60,7 @@ struct vbuffer {
 };
 
 /** @internal */
-static inline struct vbuffer *
-vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
+static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 {
 	if (cap == 0) {
 		free(vbuf);
@@ -69,7 +68,7 @@ vbuf_alloc(struct vbuffer *restrict vbuf, const size_t cap)
 	}
 	const size_t len = (vbuf != NULL) ? vbuf->len : 0;
 	/* reserve 1 byte for null terminator */
-	struct vbuffer *restrict newbuf =
+	struct vbuffer *newbuf =
 		realloc(vbuf, sizeof(struct vbuffer) + cap + 1);
 	if (newbuf == NULL) {
 		return vbuf;

@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static void hex(char *p, uint_fast8_t c)
+static void hex(char *restrict p, const uint_fast8_t c)
 {
 	static const char hex[] = "0123456789ABCDEF";
 	p[1] = hex[c & UINT8_C(0xF)];
@@ -150,15 +150,15 @@ size_t url_escape_path(char *buf, size_t buf_size, const char *path)
 	return escape(buf, buf_size, path, SIZE_MAX, "-_.~$&+,/:;=@", false);
 }
 
-size_t url_escape_query(char *buf, size_t buf_size, const char *restrict query)
+size_t url_escape_query(char *buf, size_t buf_size, const char *query)
 {
 	const size_t cap = buf_size;
 	for (;;) {
-		const char *restrict next = strchr(query, '&');
+		const char *next = strchr(query, '&');
 		if (next == NULL) {
 			next = query + strlen(query);
 		}
-		const char *restrict eq = memchr(query, '=', next - query);
+		const char *eq = memchr(query, '=', next - query);
 		if (eq == NULL) {
 			return 0;
 		}
@@ -270,9 +270,9 @@ static bool unescape(char *str, const bool space)
 	return true;
 }
 
-static inline char *strlower(char *s)
+static inline char *strlower(char *restrict s)
 {
-	for (unsigned char *restrict p = (unsigned char *)s; *p != '\0'; ++p) {
+	for (unsigned char *p = (unsigned char *)s; *p != '\0'; ++p) {
 		*p = tolower(*p);
 	}
 	return s;
@@ -372,7 +372,7 @@ bool url_parse(char *raw, struct url *restrict url)
 	return true;
 }
 
-bool url_path_segment(char **path, char **segment)
+bool url_path_segment(char **restrict path, char **restrict segment)
 {
 	char *s = *path;
 	while (*s == '/') {
@@ -391,7 +391,8 @@ bool url_path_segment(char **path, char **segment)
 	return true;
 }
 
-bool url_query_component(char **query, struct url_query_component *comp)
+bool url_query_component(
+	char **restrict query, struct url_query_component *restrict comp)
 {
 	char *s = *query;
 	char *next = strchr(s, '&');
@@ -420,7 +421,8 @@ bool url_query_component(char **query, struct url_query_component *comp)
 	return true;
 }
 
-bool url_unescape_userinfo(char *raw, char **username, char **password)
+bool url_unescape_userinfo(
+	char *raw, char **restrict username, char **restrict password)
 {
 	const char valid_chars[] = "-._:~!$&\'()*+,;=%@'";
 	char *colon = NULL;

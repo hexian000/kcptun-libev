@@ -113,9 +113,9 @@ static size_t slog_timestamp(
 	return len;
 }
 
-static const char *slog_filename(const char *file)
+static const char *slog_filename(const char *restrict file)
 {
-	const char *prefix = ATOMIC_LOAD(&slog_fileprefix);
+	const char *restrict prefix = ATOMIC_LOAD(&slog_fileprefix);
 	if (prefix == NULL) {
 		return file;
 	}
@@ -130,8 +130,9 @@ static const char *slog_filename(const char *file)
 }
 
 static void slog_write_file(
-	const int level, const char *file, const int line,
-	struct slog_extra *extra, const char *format, va_list args)
+	const int level, const char *restrict file, const int line,
+	struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
 {
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
@@ -162,8 +163,9 @@ static void slog_write_file(
 
 #if HAVE_SYSLOG
 static void slog_write_syslog(
-	const int level, const char *file, const int line,
-	struct slog_extra *extra, const char *format, va_list args)
+	const int level, const char *restrict file, const int line,
+	struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
 {
 	static const int slog_level_map[] = {
 		LOG_ALERT, LOG_CRIT,  LOG_ERR,	 LOG_WARNING, LOG_NOTICE,
@@ -228,8 +230,9 @@ void slog_setfileprefix(const char *prefix)
 }
 
 void slog_vwrite(
-	int level, const char *file, int line, struct slog_extra *extra,
-	const char *format, va_list args)
+	int level, const char *restrict file, int line,
+	struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
 {
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
 	if (write == NULL) {
@@ -239,8 +242,8 @@ void slog_vwrite(
 }
 
 void slog_write(
-	const int level, const char *file, const int line,
-	struct slog_extra *extra, const char *format, ...)
+	const int level, const char *restrict file, const int line,
+	struct slog_extra *restrict extra, const char *restrict format, ...)
 {
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
 	if (write == NULL) {

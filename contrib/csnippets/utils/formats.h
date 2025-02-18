@@ -11,13 +11,13 @@
  * @brief Format the value with human-readable SI metric prefix.
  * @return Same as snprintf.
  */
-int format_si_prefix(char *buf, size_t bufsize, double value);
+int format_si_prefix(char *s, size_t maxlen, double value);
 
 /**
  * @brief Format byte count as a human-readable string in IEC unit.
  * @return Same as snprintf.
  */
-int format_iec_bytes(char *buf, size_t bufsize, double value);
+int format_iec_bytes(char *s, size_t maxlen, double value);
 
 struct duration {
 	signed int sign; /* +1 or -1, 0 is null, otherwise undefined */
@@ -48,27 +48,27 @@ struct duration make_duration_nanos(int_least64_t nanos);
  * @details The duration value is truncated.
  * @return Same as snprintf.
  */
-int format_duration_seconds(char *b, size_t size, struct duration d);
+int format_duration_seconds(char *s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format duration in milliseconds.
  * @details The duration value is truncated.
  * @return Same as snprintf.
  */
-int format_duration_millis(char *b, size_t size, struct duration d);
+int format_duration_millis(char *s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format duration in nanoseconds.
  * @details The duration value remains accurate.
  * @return Same as snprintf.
  */
-int format_duration_nanos(char *b, size_t size, struct duration d);
+int format_duration_nanos(char *s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format duration into a human-readable format.
  * @details The duration value is rounded.
  * @return Same as snprintf.
  */
-int format_duration(char *b, size_t size, struct duration d);
+int format_duration(char *s, size_t maxlen, struct duration d);
 
 #endif /* UTILS_FORMATS_H */

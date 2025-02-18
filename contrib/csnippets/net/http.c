@@ -60,7 +60,7 @@ static const struct {
 	  "The gateway did not receive a timely response from the upstream server or application." },
 };
 
-static char *skip_whitespace(char *s)
+static char *skip_whitespace(char *restrict s)
 {
 	while (*s == ' ' || *s == '\t') {
 		++s;
@@ -124,12 +124,12 @@ char *http_parsehdr(char *buf, char **key, char **value)
 	return next;
 }
 
-size_t http_date(char *buf, const size_t buf_size)
+size_t http_date(char *restrict buf, const size_t buf_size)
 {
 	/* RFC 7231: Section 7.1.1.1 */
 	static const char fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
 	const time_t now = time(NULL);
-	const struct tm *gmt = gmtime(&now);
+	const struct tm *restrict gmt = gmtime(&now);
 	return strftime(buf, buf_size, fmt, gmt);
 }
 
@@ -143,7 +143,7 @@ const char *http_status(const uint_least16_t code)
 	return NULL;
 }
 
-int http_error(char *buf, size_t buf_size, const uint_least16_t code)
+int http_error(char *restrict buf, size_t buf_size, const uint_least16_t code)
 {
 	const char *name = NULL, *info = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(http_resp); i++) {
