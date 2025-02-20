@@ -29,11 +29,11 @@
 
 #define INDENT "  "
 
-void slog_extra_txt(FILE *restrict f, void *data)
+void slog_extra_txt(FILE *restrict f, void *restrict data)
 {
-	const struct slog_extra_txt *restrict extra = data;
+	const struct slog_extra_txt *extra = data;
 	size_t n = extra->len;
-	const char *s = extra->data;
+	const char *restrict s = extra->data;
 	struct {
 		BUFFER_HDR;
 		unsigned char data[256];
@@ -118,9 +118,9 @@ void slog_extra_txt(FILE *restrict f, void *data)
 	}
 }
 
-void slog_extra_bin(FILE *restrict f, void *data)
+void slog_extra_bin(FILE *restrict f, void *restrict data)
 {
-	const struct slog_extra_bin *restrict extra = data;
+	const struct slog_extra_bin *extra = data;
 	size_t n = extra->len;
 	struct {
 		BUFFER_HDR;

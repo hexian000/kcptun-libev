@@ -1569,7 +1569,7 @@ void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
 
 static void obfs_accept_one(
 	struct obfs *restrict obfs, struct ev_loop *loop, const int fd,
-	struct sockaddr *sa, socklen_t len)
+	struct sockaddr *restrict sa, socklen_t len)
 {
 	struct obfs_ctx *restrict ctx = obfs_ctx_new(obfs);
 	if (ctx == NULL) {
@@ -1614,7 +1614,8 @@ static bool is_startup_limited(struct obfs *restrict obfs)
 	return false;
 }
 
-void obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_accept_cb(
+	struct ev_loop *loop, struct ev_io *restrict watcher, int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 

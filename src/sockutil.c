@@ -177,7 +177,9 @@ static bool sa_matches_inet6(
 	return true;
 }
 
-bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
+bool sa_matches(
+	const struct sockaddr *restrict bind,
+	const struct sockaddr *restrict dest)
 {
 	const int domain = bind->sa_family;
 	if (domain != dest->sa_family) {
@@ -198,8 +200,9 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 	FAIL();
 }
 
-static int
-format_sa_inet(char *s, const size_t maxlen, const struct sockaddr_in *sa)
+static int format_sa_inet(
+	char *restrict s, const size_t maxlen,
+	const struct sockaddr_in *restrict sa)
 {
 	char buf[INET_ADDRSTRLEN];
 	if (inet_ntop(AF_INET, &(sa->sin_addr), buf, sizeof(buf)) == NULL) {
@@ -209,8 +212,9 @@ format_sa_inet(char *s, const size_t maxlen, const struct sockaddr_in *sa)
 	return snprintf(s, maxlen, "%s:%" PRIu16, buf, port);
 }
 
-static int
-format_sa_inet6(char *s, const size_t maxlen, const struct sockaddr_in6 *sa)
+static int format_sa_inet6(
+	char *restrict s, const size_t maxlen,
+	const struct sockaddr_in6 *restrict sa)
 {
 	char buf[INET6_ADDRSTRLEN];
 	if (inet_ntop(AF_INET6, &(sa->sin6_addr), buf, sizeof(buf)) == NULL) {
@@ -225,7 +229,9 @@ format_sa_inet6(char *s, const size_t maxlen, const struct sockaddr_in6 *sa)
 		s, maxlen, "[%s%%%" PRIu32 "]:%" PRIu16, buf, scope, port);
 }
 
-int format_sa(char *s, const size_t maxlen, const struct sockaddr *sa)
+int format_sa(
+	char *restrict s, const size_t maxlen,
+	const struct sockaddr *restrict sa)
 {
 	switch (sa->sa_family) {
 	case AF_INET:
@@ -238,7 +244,8 @@ int format_sa(char *s, const size_t maxlen, const struct sockaddr *sa)
 	return snprintf(s, maxlen, "<af:%jd>", (intmax_t)sa->sa_family);
 }
 
-static bool find_addrinfo(union sockaddr_max *sa, const struct addrinfo *it)
+static bool find_addrinfo(
+	union sockaddr_max *restrict sa, const struct addrinfo *restrict it)
 {
 	for (; it != NULL; it = it->ai_next) {
 		switch (it->ai_family) {
@@ -261,7 +268,9 @@ static bool find_addrinfo(union sockaddr_max *sa, const struct addrinfo *it)
 /* RFC 1035: Section 2.3.4 */
 #define FQDN_MAX_LENGTH ((size_t)(255))
 
-bool resolve_addr(union sockaddr_max *sa, const char *s, const int flags)
+bool resolve_addr(
+	union sockaddr_max *restrict sa, const char *restrict s,
+	const int flags)
 {
 	const size_t addrlen = strlen(s);
 	ASSERT(addrlen <= FQDN_MAX_LENGTH + 1 + 5);

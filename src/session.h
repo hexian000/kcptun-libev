@@ -104,7 +104,7 @@ struct session {
 
 #define SESSION_MAKEKEY(key, sa, conv)                                         \
 	do {                                                                   \
-		unsigned char *p = (key);                                      \
+		unsigned char *restrict p = (key);                             \
 		size_t size = SESSION_KEY_SIZE;                                \
 		const size_t n = getsocklen(sa);                               \
 		write_uint32(p, conv);                                         \
