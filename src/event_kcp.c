@@ -22,10 +22,10 @@
 #include <stdint.h>
 #include <string.h>
 
-int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
+int kcp_output(const char *buf, const int len, ikcpcb *kcp, void *user)
 {
 	UNUSED(kcp);
-	struct session *restrict ss = (struct session *)user;
+	struct session *restrict ss = user;
 	struct server *restrict s = ss->server;
 	struct msgframe *restrict msg = msgframe_new(s->pkt.queue);
 	if (msg == NULL) {
@@ -42,13 +42,13 @@ int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 	return queue_send(s, msg) ? len : -1;
 }
 
-bool kcp_cansend(struct session *restrict ss)
+bool kcp_cansend(const struct session *restrict ss)
 {
 	struct IKCPCB *restrict kcp = ss->kcp;
 	return kcp != NULL && ikcp_waitsnd(kcp) < kcp->snd_wnd;
 }
 
-bool kcp_canrecv(struct session *restrict ss)
+bool kcp_canrecv(const struct session *restrict ss)
 {
 	struct IKCPCB *restrict kcp = ss->kcp;
 	return kcp != NULL && ikcp_peeksize(kcp) > 0;
@@ -97,7 +97,7 @@ void kcp_recv(struct session *restrict ss)
 	size_t cap = SESSION_BUF_SIZE - ss->wbuf->len;
 	size_t nrecv = 0;
 	while (cap > 0) {
-		int r = ikcp_recv(ss->kcp, (char *)start, (int)cap);
+		const int r = ikcp_recv(ss->kcp, (char *)start, (int)cap);
 		if (r <= 0) {
 			break;
 		}
@@ -144,7 +144,7 @@ static bool kcp_update_iter(
 	return true;
 }
 
-void kcp_update_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void kcp_update_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);

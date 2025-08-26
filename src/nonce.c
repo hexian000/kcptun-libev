@@ -16,8 +16,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-static bool
-ppbloom_check_add(struct ppbloom *restrict b, const void *buffer, size_t len)
+static bool ppbloom_check_add(
+	struct ppbloom *restrict b, const void *buffer, const size_t len)
 {
 	const uint8_t i = b->current & UINT8_C(1);
 	const uint8_t j = i ^ UINT8_C(1);

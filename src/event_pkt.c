@@ -30,7 +30,7 @@
 		}                                                              \
 		char addr[64];                                                 \
 		format_sa(addr, sizeof(addr), &(msg)->addr.sa);                \
-		LOG_F(VERBOSE, what ": %" PRIu16 " bytes, addr=%s",            \
+		LOG_F(VERYVERBOSE, what ": %" PRIu16 " bytes, addr=%s",        \
 		      (msg)->len, addr);                                       \
 	} while (0)
 
@@ -190,7 +190,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 
 #endif /* HAVE_RECVMMSG */
 
-void pkt_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void pkt_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_READ);
@@ -349,7 +349,7 @@ static void pkt_flush(struct server *restrict s)
 	}
 }
 
-void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void pkt_write_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_WRITE);
 	struct server *restrict s = watcher->data;
@@ -363,9 +363,9 @@ void pkt_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 void pkt_notify_send(struct server *restrict s)
 {
-	struct pktqueue *restrict q = s->pkt.queue;
+	const struct pktqueue *restrict q = s->pkt.queue;
 	pkt_flush(s);
-	struct ev_io *restrict w_write = &s->pkt.w_write;
+	ev_io *restrict w_write = &s->pkt.w_write;
 	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {
 		LOGD_F("pkt send fd=%d start", w_write->fd);
 		ev_io_start(s->loop, w_write);

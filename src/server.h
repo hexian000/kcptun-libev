@@ -16,9 +16,9 @@
 #include <stdint.h>
 
 struct listener {
-	struct ev_io w_accept;
-	struct ev_io w_accept_http;
-	struct ev_timer w_timer;
+	ev_io w_accept;
+	ev_io w_accept_http;
+	ev_timer w_timer;
 	int fd;
 	int fd_http;
 };
@@ -32,7 +32,7 @@ struct service {
 };
 
 struct pktconn {
-	struct ev_io w_read, w_write;
+	ev_io w_read, w_write;
 	struct pktqueue *queue;
 	int fd;
 	int domain;
@@ -75,10 +75,10 @@ struct server {
 		double ping_timeout;
 	};
 	struct {
-		struct ev_timer w_kcp_update;
-		struct ev_timer w_keepalive;
-		struct ev_timer w_resolve;
-		struct ev_timer w_timeout;
+		ev_timer w_kcp_update;
+		ev_timer w_keepalive;
+		ev_timer w_resolve;
+		ev_timer w_timeout;
 	};
 	struct {
 		struct link_stats stats, last_stats;

@@ -27,7 +27,7 @@
 #include <string.h>
 
 static void modify_io_events(
-	struct ev_loop *loop, struct ev_io *restrict watcher, const int events)
+	struct ev_loop *loop, ev_io *restrict watcher, const int events)
 {
 	const int fd = watcher->fd;
 	ASSERT(fd != -1);
@@ -58,9 +58,8 @@ static void accept_one(
 	const struct sockaddr *client_sa)
 {
 	/* Initialize and start watcher to read client requests */
-	struct session *restrict ss;
-	uint32_t conv = conv_new(s, &s->pkt.kcp_connect.sa);
-	ss = session_new(s, &s->pkt.kcp_connect, conv);
+	const uint32_t conv = conv_new(s, &s->pkt.kcp_connect.sa);
+	struct session *restrict ss = session_new(s, &s->pkt.kcp_connect, conv);
 	if (ss == NULL) {
 		LOGOOM();
 		CLOSE_FD(fd);
@@ -86,7 +85,7 @@ static void accept_one(
 	session_tcp_start(ss, fd);
 }
 
-void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 
@@ -106,8 +105,7 @@ void tcp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 			LOGE_F("accept: %s", strerror(err));
 			/* sleep for a while, see listener_cb */
 			ev_io_stop(loop, watcher);
-			struct ev_timer *restrict w_timer =
-				&s->listener.w_timer;
+			ev_timer *restrict w_timer = &s->listener.w_timer;
 			if (!ev_is_active(w_timer)) {
 				ev_timer_start(loop, w_timer);
 			}
@@ -304,7 +302,7 @@ void tcp_flush(struct session *restrict ss)
 	}
 }
 
-void tcp_socket_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void tcp_socket_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_READ | EV_WRITE);

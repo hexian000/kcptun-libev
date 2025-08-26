@@ -400,11 +400,12 @@ double thread_load(void)
 	}
 	if (last.set) {
 		const double total =
-			(monotime.tv_sec - last.monotime.tv_sec) +
-			(monotime.tv_nsec - last.monotime.tv_nsec) * 1e-9;
+			(double)(monotime.tv_sec - last.monotime.tv_sec) +
+			(double)(monotime.tv_nsec - last.monotime.tv_nsec) *
+				1e-9;
 		const double busy =
-			(cputime.tv_sec - last.cputime.tv_sec) +
-			(cputime.tv_nsec - last.cputime.tv_nsec) * 1e-9;
+			(double)(cputime.tv_sec - last.cputime.tv_sec) +
+			(double)(cputime.tv_nsec - last.cputime.tv_nsec) * 1e-9;
 		load = busy / total;
 	}
 	last.monotime = monotime;

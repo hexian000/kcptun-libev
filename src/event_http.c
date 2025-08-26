@@ -29,12 +29,10 @@
 #include <string.h>
 #include <time.h>
 
+static void http_read_cb(struct ev_loop *loop, ev_io *watcher, int revents);
+static void http_write_cb(struct ev_loop *loop, ev_io *watcher, int revents);
 static void
-http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-static void
-http_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-static void
-http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents);
+http_timeout_cb(struct ev_loop *loop, ev_timer *watcher, int revents);
 
 #define HTTP_MAX_REQUEST 4096
 
@@ -44,8 +42,8 @@ struct http_ctx {
 	int fd;
 	struct http_message http_msg;
 	char *http_nxt;
-	struct ev_io w_read, w_write;
-	struct ev_timer w_timeout;
+	ev_io w_read, w_write;
+	ev_timer w_timeout;
 	struct vbuffer *wbuf;
 	struct {
 		BUFFER_HDR;
@@ -56,18 +54,18 @@ struct http_ctx {
 static void http_ctx_free(struct http_ctx *restrict ctx)
 {
 	struct ev_loop *loop = ctx->loop;
-	struct ev_io *restrict w_read = &ctx->w_read;
+	ev_io *restrict w_read = &ctx->w_read;
 	ev_io_stop(loop, w_read);
-	struct ev_io *restrict w_write = &ctx->w_write;
+	ev_io *restrict w_write = &ctx->w_write;
 	ev_io_stop(loop, w_write);
 	CLOSE_FD(ctx->fd);
-	struct ev_timer *restrict w_timeout = &ctx->w_timeout;
+	ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_stop(loop, w_timeout);
 	UTIL_SAFE_FREE(ctx->wbuf);
 	free(ctx);
 }
 
-void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 
@@ -83,7 +81,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 		LOGE_F("accept: %s", strerror(err));
 		/* sleep for a while, see listener_cb */
 		ev_io_stop(loop, watcher);
-		struct ev_timer *restrict w_timer = &s->listener.w_timer;
+		ev_timer *restrict w_timer = &s->listener.w_timer;
 		if (!ev_is_active(w_timer)) {
 			ev_timer_start(loop, w_timer);
 		}
@@ -108,14 +106,14 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 	BUF_INIT(ctx->rbuf, 0);
 	ctx->wbuf = NULL;
 
-	struct ev_io *restrict w_read = &ctx->w_read;
+	ev_io *restrict w_read = &ctx->w_read;
 	ev_io_init(w_read, http_read_cb, fd, EV_READ);
 	w_read->data = ctx;
 	ev_io_start(loop, w_read);
-	struct ev_io *restrict w_write = &ctx->w_write;
+	ev_io *restrict w_write = &ctx->w_write;
 	ev_io_init(w_write, http_write_cb, fd, EV_WRITE);
 	w_write->data = ctx;
-	struct ev_timer *restrict w_timeout = &ctx->w_timeout;
+	ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_init(w_timeout, http_timeout_cb, 15.0, 0.0);
 	w_timeout->data = ctx;
 	ev_timer_start(loop, w_timeout);
@@ -128,7 +126,7 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
 static void http_serve(struct http_ctx *ctx);
 
-void http_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 
@@ -232,7 +230,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 	wbuf->len -= nbsend;
 	if (len > 0) {
 		VBUF_CONSUME(wbuf, nbsend);
-		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io *restrict w_write = &ctx->w_write;
 		if (!ev_is_active(w_write)) {
 			ev_io_start(ctx->loop, w_write);
 		}
@@ -241,14 +239,14 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 	http_ctx_free(ctx);
 }
 
-void http_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void http_write_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_WRITE);
 	http_ctx_write(watcher->data);
 }
 
-void http_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void http_timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);

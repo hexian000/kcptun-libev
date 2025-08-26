@@ -60,10 +60,10 @@ struct obfs {
 	union sockaddr_max bind_addr;
 	size_t num_authenticated;
 	struct {
-		struct ev_io w_accept;
-		struct ev_timer w_listener;
-		struct ev_timer w_timeout;
-		struct ev_timer w_redial;
+		ev_io w_accept;
+		ev_timer w_listener;
+		ev_timer w_timeout;
+		ev_timer w_redial;
 	};
 	struct obfs_ctx *client; /* for reference only, no ownership */
 	int redial_count;
@@ -84,7 +84,7 @@ struct obfs {
 struct obfs_ctx {
 	unsigned char key[OBFS_CTX_KEY_SIZE];
 	struct obfs *obfs;
-	struct ev_io w_read, w_write;
+	ev_io w_read, w_write;
 	union sockaddr_max laddr, raddr;
 	ev_tstamp created;
 	ev_tstamp last_seen;
@@ -171,14 +171,12 @@ struct pseudo_ip6hdr {
 #define ECN_ECT0 (0x2u)
 #define ECN_CE (0x3u)
 
+static void obfs_accept_cb(struct ev_loop *loop, ev_io *watcher, int revents);
 static void
-obfs_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, int revents);
 static void
-obfs_server_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-static void
-obfs_client_read_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
-static void
-obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
+obfs_client_read_cb(struct ev_loop *loop, ev_io *watcher, int revents);
+static void obfs_write_cb(struct ev_loop *loop, ev_io *watcher, int revents);
 
 static void obfs_sched_redial(struct obfs *restrict obfs);
 
@@ -325,6 +323,8 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 			return false;
 		}
 		break;
+	default:
+		FAIL();
 	}
 	const struct sock_filter ret[] = {
 		BPF_STMT(BPF_RET | BPF_K, -1),
@@ -485,9 +485,9 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		return;
 	}
 	if (ctx->fd != -1) {
-		struct ev_io *restrict w_read = &ctx->w_read;
+		ev_io *restrict w_read = &ctx->w_read;
 		ev_io_stop(loop, w_read);
-		struct ev_io *restrict w_write = &ctx->w_write;
+		ev_io *restrict w_write = &ctx->w_write;
 		ev_io_stop(loop, w_write);
 		CLOSE_FD(ctx->fd);
 		ctx->fd = -1;
@@ -582,8 +582,7 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 		len -= nsend;
 		nbsend += nsend;
 	}
-	ctx->wbuf.len += nbsend;
-	struct ev_io *restrict w_write = &ctx->w_write;
+	ev_io *restrict w_write = &ctx->w_write;
 	if (len > 0) {
 		BUF_CONSUME(ctx->wbuf, nbsend);
 		if (!ev_is_active(w_write)) {
@@ -633,14 +632,14 @@ static bool obfs_ctx_start(
 
 	ctx->fd = fd;
 	void (*const obfs_read_cb)(
-		struct ev_loop * loop, struct ev_io * watcher, int revents) =
+		struct ev_loop *loop, ev_io *watcher, const int revents) =
 		(s->conf->mode & MODE_CLIENT) ? obfs_client_read_cb :
 						obfs_server_read_cb;
-	struct ev_io *restrict w_read = &ctx->w_read;
+	ev_io *restrict w_read = &ctx->w_read;
 	ev_io_init(w_read, obfs_read_cb, fd, EV_READ);
 	w_read->data = ctx;
 	ev_io_start(s->loop, w_read);
-	struct ev_io *restrict w_write = &ctx->w_write;
+	ev_io *restrict w_write = &ctx->w_write;
 	ev_io_init(w_write, obfs_write_cb, fd, EV_WRITE);
 	w_write->data = ctx;
 
@@ -757,7 +756,7 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 	if (!(conf->mode & MODE_CLIENT)) {
 		return;
 	}
-	struct ev_timer *restrict w_redial = &obfs->w_redial;
+	ev_timer *restrict w_redial = &obfs->w_redial;
 	if (ev_is_active(w_redial) || ev_is_pending(w_redial)) {
 		return;
 	}
@@ -817,7 +816,7 @@ static bool obfs_ctx_timeout_filt(
 }
 
 static void
-obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+obfs_redial_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);
@@ -840,19 +839,19 @@ obfs_redial_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 }
 
 static void
-obfs_listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+obfs_listener_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
 	struct obfs *restrict obfs = watcher->data;
 	/* check & restart accept watcher */
-	struct ev_io *restrict w_accept = &obfs->w_accept;
+	ev_io *restrict w_accept = &obfs->w_accept;
 	if (obfs->fd != -1 && !ev_is_active(w_accept)) {
 		ev_io_start(loop, w_accept);
 	}
 }
 
 static void
-obfs_timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+obfs_timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);
@@ -1058,37 +1057,37 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	}
 
 	{
-		struct ev_io *restrict w_read = &pkt->w_read;
+		ev_io *restrict w_read = &pkt->w_read;
 		ev_io_init(w_read, &pkt_read_cb, obfs->cap_fd, EV_READ);
 		w_read->data = s;
 		ev_io_start(s->loop, w_read);
 
-		struct ev_io *restrict w_write = &pkt->w_write;
+		ev_io *restrict w_write = &pkt->w_write;
 		ev_io_init(w_write, &pkt_write_cb, obfs->raw_fd, EV_WRITE);
 		w_write->data = s;
 		ev_io_start(s->loop, w_write);
 	}
 
 	if (obfs->fd != -1) {
-		struct ev_io *restrict w_accept = &obfs->w_accept;
+		ev_io *restrict w_accept = &obfs->w_accept;
 		ev_io_init(w_accept, obfs_accept_cb, obfs->fd, EV_READ);
 		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = obfs;
 		ev_io_start(s->loop, w_accept);
 	}
 	{
-		struct ev_timer *restrict w_listener = &obfs->w_listener;
+		ev_timer *restrict w_listener = &obfs->w_listener;
 		ev_timer_init(w_listener, obfs_listener_cb, 0.5, 0.0);
 		ev_set_priority(w_listener, EV_MINPRI);
 		w_listener->data = obfs;
 
-		struct ev_timer *restrict w_timeout = &obfs->w_timeout;
+		ev_timer *restrict w_timeout = &obfs->w_timeout;
 		ev_timer_init(w_timeout, obfs_timeout_cb, 10.0, 10.0);
 		ev_set_priority(w_timeout, EV_MINPRI);
 		w_timeout->data = obfs;
 		ev_timer_start(s->loop, w_timeout);
 
-		struct ev_timer *restrict w_redial = &obfs->w_redial;
+		ev_timer *restrict w_redial = &obfs->w_redial;
 		ev_timer_init(w_redial, obfs_redial_cb, 5.0, 0.0);
 		ev_set_priority(w_redial, EV_MINPRI);
 		w_redial->data = obfs;
@@ -1585,7 +1584,7 @@ static void obfs_accept_one(
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
-	struct ev_io *restrict w_read = &ctx->w_read;
+	ev_io *restrict w_read = &ctx->w_read;
 	ev_io_init(w_read, obfs_server_read_cb, fd, EV_READ);
 	w_read->data = ctx;
 	OBFS_CTX_LOG(DEBUG, ctx, "accepted");
@@ -1615,16 +1614,16 @@ static bool is_startup_limited(struct obfs *restrict obfs)
 }
 
 void obfs_accept_cb(
-	struct ev_loop *loop, struct ev_io *restrict watcher, int revents)
+	struct ev_loop *loop, ev_io *restrict watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 
 	struct obfs *restrict obfs = watcher->data;
 	union sockaddr_max m_sa;
-	socklen_t len = sizeof(m_sa);
 
 	for (;;) {
-		const int fd = accept(watcher->fd, &m_sa.sa, &len);
+		socklen_t addrlen = sizeof(m_sa);
+		const int fd = accept(watcher->fd, &m_sa.sa, &addrlen);
 		if (fd < 0) {
 			const int err = errno;
 			if (IS_TRANSIENT_ERROR(err)) {
@@ -1649,7 +1648,7 @@ void obfs_accept_cb(
 			return;
 		}
 
-		obfs_accept_one(obfs, loop, fd, &m_sa.sa, len);
+		obfs_accept_one(obfs, loop, fd, &m_sa.sa, addrlen);
 	}
 }
 
@@ -1693,7 +1692,7 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 	return 0;
 }
 
-void obfs_fail_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_fail_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 	struct obfs_ctx *restrict ctx = watcher->data;
@@ -1718,8 +1717,7 @@ static void obfs_on_ready(struct obfs_ctx *restrict ctx)
 	server_ping(s);
 }
 
-void obfs_server_read_cb(
-	struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 
@@ -1825,8 +1823,7 @@ void obfs_server_read_cb(
 	obfs_ctx_write(ctx, loop);
 }
 
-void obfs_client_read_cb(
-	struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_client_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 	struct obfs_ctx *restrict ctx = watcher->data;
@@ -1890,7 +1887,7 @@ void obfs_client_read_cb(
 	obfs_on_ready(ctx);
 }
 
-void obfs_write_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
+void obfs_write_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_WRITE);
 	struct obfs_ctx *restrict ctx = watcher->data;

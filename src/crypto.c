@@ -89,7 +89,7 @@ struct crypto_impl {
 };
 
 size_t crypto_seal(
-	struct crypto *restrict crypto, unsigned char *dst,
+	const struct crypto *restrict crypto, unsigned char *dst,
 	const size_t dst_size, const unsigned char *nonce,
 	const unsigned char *plain, const size_t plain_size)
 {
@@ -98,7 +98,7 @@ size_t crypto_seal(
 		       dst_size, plain_size + crypto->overhead);
 		return 0;
 	}
-	struct crypto_impl *restrict impl = crypto->impl;
+	const struct crypto_impl *restrict impl = crypto->impl;
 	if (impl->seal != NULL) {
 		unsigned char *mac = dst + plain_size;
 		const int r = impl->seal(
@@ -122,7 +122,7 @@ size_t crypto_seal(
 }
 
 size_t crypto_open(
-	struct crypto *restrict crypto, unsigned char *dst,
+	const struct crypto *restrict crypto, unsigned char *dst,
 	const size_t dst_size, const unsigned char *nonce,
 	const unsigned char *cipher, const size_t cipher_size)
 {
@@ -130,7 +130,7 @@ size_t crypto_open(
 		LOGW("crypto_seal: insufficient crypto buffer");
 		return 0;
 	}
-	struct crypto_impl *restrict impl = crypto->impl;
+	const struct crypto_impl *restrict impl = crypto->impl;
 	if (impl->open != NULL) {
 		if (cipher_size < crypto->overhead) {
 			LOGV_F("crypto_open: short cipher %zu, overhead %zu",
@@ -150,7 +150,7 @@ size_t crypto_open(
 		return plain_size;
 	}
 	unsigned long long r_len = dst_size;
-	int r = impl->aead_open(
+	const int r = impl->aead_open(
 		dst, &r_len, NULL, cipher, cipher_size,
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, nonce,
 		impl->key);
@@ -323,7 +323,7 @@ bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
 }
 
 bool crypto_keygen(
-	struct crypto *restrict crypto, char *b64, const size_t b64_len)
+	const struct crypto *restrict crypto, char *b64, const size_t b64_len)
 {
 	unsigned char *key = crypto->impl->key;
 	const size_t key_size = crypto->key_size;

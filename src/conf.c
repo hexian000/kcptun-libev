@@ -9,7 +9,6 @@
 #include "utils/slog.h"
 
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -318,14 +317,14 @@ static bool conf_check(struct config *restrict conf)
 	return true;
 }
 
-struct config *conf_read(const char *filename)
+struct config *conf_read(const char *path)
 {
 	struct config *conf = malloc(sizeof(struct config));
 	if (conf == NULL) {
 		return NULL;
 	}
 	*conf = conf_default();
-	struct jutil_value *root = conf_parse(filename);
+	struct jutil_value *root = conf_parse(path);
 	if (root == NULL) {
 		conf_free(conf);
 		return NULL;

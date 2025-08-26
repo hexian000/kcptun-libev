@@ -5,7 +5,6 @@
 
 #include "net/addr.h"
 #include "utils/debug.h"
-#include "utils/minmax.h"
 #include "utils/slog.h"
 
 #include <arpa/inet.h>
@@ -28,7 +27,7 @@
 bool socket_set_nonblock(const int fd)
 {
 	const int flags = fcntl(fd, F_GETFL, 0);
-	return fcntl(fd, F_SETFL, flags | O_CLOEXEC | O_NONBLOCK) != -1;
+	return fcntl(fd, F_SETFL, flags | FD_CLOEXEC | O_NONBLOCK) != -1;
 }
 
 void socket_set_reuseport(const int fd, const bool reuseport)

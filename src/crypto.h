@@ -29,14 +29,14 @@ bool crypto_b64psk(struct crypto *, char *b64);
 void crypto_free(struct crypto *);
 
 uint32_t crypto_rand32(void);
-bool crypto_keygen(struct crypto *, char *b64, size_t b64_len);
+bool crypto_keygen(const struct crypto *, char *b64, size_t b64_len);
 
 size_t crypto_seal(
-	struct crypto *, unsigned char *dst, size_t dst_size,
+	const struct crypto *, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *plain,
 	size_t plain_size);
 size_t crypto_open(
-	struct crypto *, unsigned char *dst, size_t dst_size,
+	const struct crypto *, unsigned char *dst, size_t dst_size,
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size);
 

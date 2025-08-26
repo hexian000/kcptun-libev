@@ -22,22 +22,22 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-void listener_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void listener_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
 	struct listener *restrict l = watcher->data;
 	/* check & restart accept watchers */
-	struct ev_io *restrict w_accept = &l->w_accept;
+	ev_io *restrict w_accept = &l->w_accept;
 	if (l->fd != -1 && !ev_is_active(w_accept)) {
 		ev_io_start(loop, w_accept);
 	}
-	struct ev_io *restrict w_accept_http = &l->w_accept_http;
+	ev_io *restrict w_accept_http = &l->w_accept_http;
 	if (l->fd_http != -1 && !ev_is_active(w_accept_http)) {
 		ev_io_start(loop, w_accept_http);
 	}
 }
 
-void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void keepalive_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
@@ -83,7 +83,7 @@ void keepalive_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
 	ev_timer_again(loop, watcher);
 }
 
-void resolve_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void resolve_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
 	struct server *restrict s = watcher->data;
@@ -184,6 +184,7 @@ static bool timeout_filt(
 			return false;
 		}
 		break;
+	default:;
 	}
 	return true;
 }
@@ -198,7 +199,7 @@ static bool svc_timeout_filt(
 	const ev_tstamp now = ev_now(s->loop);
 	struct service *restrict svc = element;
 	ASSERT(key.data == svc->id);
-	ev_tstamp not_seen = now - svc->last_seen;
+	const ev_tstamp not_seen = now - svc->last_seen;
 	if (not_seen < s->session_timeout) {
 		return true;
 	}
@@ -217,7 +218,7 @@ static bool svc_timeout_filt(
 	return false;
 }
 
-void timeout_cb(struct ev_loop *loop, struct ev_timer *watcher, int revents)
+void timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);

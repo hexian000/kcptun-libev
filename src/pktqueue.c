@@ -49,7 +49,7 @@ static bool crypto_open_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
 	const size_t size)
 {
-	struct crypto *restrict crypto = q->crypto;
+	const struct crypto *restrict crypto = q->crypto;
 	ASSERT(crypto != NULL);
 	const size_t src_len = *len;
 	ASSERT(size >= src_len);
@@ -78,7 +78,7 @@ static bool crypto_seal_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
 	const size_t size)
 {
-	struct crypto *restrict crypto = q->crypto;
+	const struct crypto *restrict crypto = q->crypto;
 	const size_t plain_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
@@ -171,6 +171,8 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			ss->last_reset = now;
 		}
 		return;
+	default:
+		FAIL();
 	}
 
 	const int r =
@@ -210,7 +212,7 @@ size_t queue_dispatch(struct server *restrict s)
 #endif
 #if WITH_CRYPTO
 		if (q->crypto != NULL) {
-			size_t cap = MAX_PACKET_SIZE - msg->off;
+			const size_t cap = MAX_PACKET_SIZE - msg->off;
 			size_t len = msg->len;
 			if (!crypto_open_inplace(
 				    q, msg->buf + msg->off, &len, cap)) {

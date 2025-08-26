@@ -46,7 +46,7 @@ static void kcp_log(const char *log, struct IKCPCB *kcp, void *user)
 
 static ikcpcb *
 kcp_new(struct session *restrict ss, const struct config *restrict conf,
-	uint32_t conv)
+	const uint32_t conv)
 {
 	ikcpcb *restrict kcp = ikcp_create(conv, ss);
 	if (kcp == NULL) {
@@ -161,6 +161,7 @@ static bool session_on_msg(
 		}
 		return true;
 	}
+	default:;
 	}
 	LOGE_F("session [%08" PRIX32 "] msg: error "
 	       "msg=%04" PRIX16 ", len=%04" PRIX16,
@@ -185,7 +186,7 @@ static int ss_process(struct session *restrict ss)
 		return 1;
 	}
 	const struct tlv_header hdr = tlv_header_read(ss->wbuf->data);
-	if (hdr.len < TLV_HEADER_SIZE && hdr.len > TLV_MAX_LENGTH) {
+	if (hdr.len < TLV_HEADER_SIZE || hdr.len > TLV_MAX_LENGTH) {
 		LOGE_F("unexpected message length: %" PRIu16, hdr.len);
 		return -1;
 	}
@@ -254,7 +255,7 @@ void session_kcp_close(struct session *restrict ss)
  */
 void session_kcp_flush(struct session *restrict ss)
 {
-	struct ev_idle *restrict w_flush = &ss->w_flush;
+	ev_idle *restrict w_flush = &ss->w_flush;
 	if (ev_is_active(w_flush)) {
 		return;
 	}
@@ -264,7 +265,7 @@ void session_kcp_flush(struct session *restrict ss)
 void session_tcp_stop(struct session *restrict ss)
 {
 	ss->tcp_state = STATE_TIME_WAIT;
-	struct ev_io *restrict w_socket = &ss->w_socket;
+	ev_io *restrict w_socket = &ss->w_socket;
 	if (w_socket->fd == -1) {
 		return;
 	}
@@ -291,7 +292,7 @@ void session_tcp_start(struct session *restrict ss, const int fd)
 	LOGD_F("session [%08" PRIX32 "] tcp: start, fd=%d", ss->conv, fd);
 	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
-	struct ev_io *restrict w_socket = &ss->w_socket;
+	ev_io *restrict w_socket = &ss->w_socket;
 	ev_io_set(w_socket, fd, EV_READ | EV_WRITE);
 	ev_io_start(loop, w_socket);
 }
@@ -320,7 +321,7 @@ void session_read_cb(struct session *restrict ss)
 }
 
 static void
-ss_flush_cb(struct ev_loop *loop, struct ev_idle *watcher, int revents)
+ss_flush_cb(struct ev_loop *loop, ev_idle *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_IDLE);
 	ev_idle_stop(loop, watcher);
@@ -397,7 +398,7 @@ static inline struct session0_header ss0_header_read(const unsigned char *d)
 }
 
 static inline void
-ss0_header_write(unsigned char *d, struct session0_header header)
+ss0_header_write(unsigned char *d, const struct session0_header header)
 {
 	write_uint32(d, header.zero);
 	write_uint16(d + sizeof(uint32_t), header.what);
@@ -831,7 +832,7 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	const unsigned char *packet = msg->buf + msg->off;
-	struct session0_header header = ss0_header_read(packet);
+	const struct session0_header header = ss0_header_read(packet);
 	if (header.what < ARRAY_SIZE(ss0_handler)) {
 		const ss0_handler_type handler = ss0_handler[header.what];
 		if (handler == NULL || handler(s, msg)) {

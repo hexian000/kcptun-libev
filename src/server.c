@@ -83,7 +83,7 @@ static bool listener_start(struct server *restrict s)
 			return false;
 		}
 		/* Initialize and start a watcher to accepts client requests */
-		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_init(w_accept, tcp_accept_cb, fd, EV_READ);
 		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = s;
@@ -105,7 +105,7 @@ static bool listener_start(struct server *restrict s)
 		if (fd == -1) {
 			return false;
 		}
-		struct ev_io *restrict w_accept = &l->w_accept_http;
+		ev_io *restrict w_accept = &l->w_accept_http;
 		ev_io_init(w_accept, http_accept_cb, fd, EV_READ);
 		ev_set_priority(w_accept, EV_MINPRI);
 		w_accept->data = s;
@@ -118,7 +118,7 @@ static bool listener_start(struct server *restrict s)
 		}
 	}
 
-	struct ev_timer *restrict w_listener = &s->listener.w_timer;
+	ev_timer *restrict w_listener = &s->listener.w_timer;
 	ev_timer_init(w_listener, listener_cb, 0.5, 0.0);
 	ev_set_priority(w_listener, EV_MINPRI);
 	w_listener->data = l;
@@ -353,12 +353,12 @@ static bool udp_start(struct server *restrict s)
 		return false;
 	}
 
-	struct ev_io *restrict w_read = &udp->w_read;
+	ev_io *restrict w_read = &udp->w_read;
 	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
 	w_read->data = s;
 	ev_io_start(s->loop, w_read);
 
-	struct ev_io *restrict w_write = &udp->w_write;
+	ev_io *restrict w_write = &udp->w_write;
 	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
 	w_write->data = s;
 	return true;
@@ -401,21 +401,21 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 
 	{
 		const double interval = conf->kcp_interval * 1e-3;
-		struct ev_timer *restrict w_kcp_update = &s->w_kcp_update;
+		ev_timer *restrict w_kcp_update = &s->w_kcp_update;
 		ev_timer_init(w_kcp_update, kcp_update_cb, interval, interval);
 		w_kcp_update->data = s;
 
-		struct ev_timer *restrict w_keepalive = &s->w_keepalive;
+		ev_timer *restrict w_keepalive = &s->w_keepalive;
 		ev_timer_init(w_keepalive, keepalive_cb, 0.0, s->keepalive);
 		ev_set_priority(w_keepalive, EV_MINPRI);
 		w_keepalive->data = s;
 
-		struct ev_timer *restrict w_resolve = &s->w_resolve;
+		ev_timer *restrict w_resolve = &s->w_resolve;
 		ev_timer_init(w_resolve, resolve_cb, s->timeout, s->timeout);
 		ev_set_priority(w_resolve, EV_MINPRI);
 		w_resolve->data = s;
 
-		struct ev_timer *restrict w_timeout = &s->w_timeout;
+		ev_timer *restrict w_timeout = &s->w_timeout;
 		ev_timer_init(w_timeout, timeout_cb, 10.0, 10.0);
 		ev_set_priority(w_timeout, EV_MINPRI);
 		w_timeout->data = s;
@@ -570,14 +570,14 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 {
 	if (l->fd != -1) {
 		LOGD_F("listener close: fd=%d", l->fd);
-		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
 		CLOSE_FD(l->fd);
 		l->fd = -1;
 	}
 	if (l->fd_http != -1) {
 		LOGD_F("http listener close: fd=%d", l->fd_http);
-		struct ev_io *restrict w_accept = &l->w_accept;
+		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
 		CLOSE_FD(l->fd_http);
 		l->fd_http = -1;
@@ -771,7 +771,7 @@ static struct vbuffer *append_traffic_stats(
 }
 
 struct vbuffer *
-server_stats_const(const struct server *s, struct vbuffer *buf, int level)
+server_stats_const(const struct server *s, struct vbuffer *buf, const int level)
 {
 	buf = print_session_table(s, buf, level);
 

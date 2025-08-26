@@ -79,8 +79,8 @@ struct session {
 	uint32_t conv;
 	union sockaddr_max raddr;
 	struct {
-		struct ev_io w_socket;
-		struct ev_idle w_flush;
+		ev_io w_socket;
+		ev_idle w_flush;
 	};
 	struct {
 		ev_tstamp created;
