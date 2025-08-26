@@ -43,10 +43,10 @@ struct slog_extra {
 	void *data;
 };
 void slog_vwrite(
-	int level, const char *file, int line, struct slog_extra *extra,
+	int level, const char *file, int line, const struct slog_extra *extra,
 	const char *format, va_list args);
 void slog_write(
-	int level, const char *file, int line, struct slog_extra *extra,
+	int level, const char *file, int line, const struct slog_extra *extra,
 	const char *format, ...);
 
 /* LOG: Log a message unconditionally. */
@@ -59,7 +59,7 @@ void slog_write(
 #if SLOG_MT_SAFE
 #define LOGLEVEL(level)                                                        \
 	((LOG_LEVEL_##level) <=                                                \
-	 atomic_load_explicit(&slog_level_, memory_order_relaxed))
+	 atomic_load_explicit(&slog_level_, memory_order_acquire))
 #else
 #define LOGLEVEL(level) ((LOG_LEVEL_##level) <= slog_level_)
 #endif

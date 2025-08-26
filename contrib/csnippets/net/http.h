@@ -66,7 +66,7 @@ struct http_message {
 /**
  * @brief Parse a HTTP request/response line.
  * @details No allocations, the raw message until next position is destructed.
- * @param buf Raw message buffer.
+ * @param[inout] buf Raw message buffer.
  * @param[out] msg Parsed header fields.
  * @return The start position of next parsing, or NULL when parsing failed.
  * If the position is not moved, wait for more data.
@@ -76,7 +76,7 @@ char *http_parse(char *buf, struct http_message *msg);
 /**
  * @brief Parse a HTTP header line.
  * @details No allocations, the raw message until next position is destructed.
- * @param buf HTTP header line start, usually the return value of http_parse.
+ * @param[inout] buf HTTP header line start, usually the return value of http_parse.
  * @param[out] key Header key, or NULL when HTTP header ends.
  * @param[out] value Header value, or NULL when HTTP header ends.
  * @return The start position of next parsing, or NULL when parsing failed.

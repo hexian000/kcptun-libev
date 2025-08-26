@@ -83,15 +83,12 @@ static int unhex(const unsigned char c)
 	} while (0)
 
 static size_t
-escape(char *buf, size_t buf_size, const char *str, const size_t maxlen,
+escape(char *buf, size_t buf_size, const char *str, const size_t len,
        const char *allowed_symbols, const bool space)
 {
 	const size_t cap = buf_size;
-	for (size_t i = 0; i < maxlen; i++) {
+	for (size_t i = 0; i < len; i++) {
 		const unsigned char ch = str[i];
-		if (ch == '\0') {
-			break;
-		}
 		if (isalnum(ch) || strchr(allowed_symbols, ch) != NULL) {
 			APPENDCH(ch);
 			continue;
@@ -105,49 +102,52 @@ escape(char *buf, size_t buf_size, const char *str, const size_t maxlen,
 	return cap - buf_size;
 }
 
-static size_t
-escape_host(char *buf, size_t buf_size, const char *host, const size_t maxlen)
+static size_t escape_host(
+	char *buf, const size_t buf_size, const char *host, const size_t len)
 {
 	/* RFC 1738, RFC 2732 */
 	return escape(
-		buf, buf_size, host, maxlen, "-_.~!$&'()*+,;=:[]<>\"", false);
+		buf, buf_size, host, len, "-_.~!$&'()*+,;=:[]<>\"", false);
 }
 
 static size_t escape_userinfo(
-	char *buf, size_t buf_size, const char *userinfo, const size_t maxlen)
+	char *buf, const size_t buf_size, const char *userinfo,
+	const size_t len)
 {
-	return escape(buf, buf_size, userinfo, maxlen, "-_.~$&+,;=", false);
+	return escape(buf, buf_size, userinfo, len, "-_.~$&+,;=", false);
 }
 
-static size_t
-escape_query(char *buf, size_t buf_size, const char *query, const size_t maxlen)
+static size_t escape_query(
+	char *buf, const size_t buf_size, const char *query, const size_t len)
 {
-	return escape(buf, buf_size, query, maxlen, "-_.~", true);
+	return escape(buf, buf_size, query, len, "-_.~", true);
 }
 
 static size_t escape_fragment(
-	char *buf, size_t buf_size, const char *fragment, const size_t maxlen)
+	char *buf, const size_t buf_size, const char *fragment,
+	const size_t len)
 {
 	return escape(
-		buf, buf_size, fragment, maxlen, "-_.~$&+,/:;=?@!()*", false);
+		buf, buf_size, fragment, len, "-_.~$&+,/:;=?@!()*", false);
 }
 
 size_t
 url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password)
 {
 	const size_t cap = buf_size;
-	APPENDN(escape_userinfo(buf, buf_size, username, SIZE_MAX));
+	APPENDN(escape_userinfo(buf, buf_size, username, strlen(username)));
 	if (password == NULL) {
 		return cap - buf_size;
 	}
 	APPENDCH(':');
-	APPENDN(escape_userinfo(buf, buf_size, password, SIZE_MAX));
+	APPENDN(escape_userinfo(buf, buf_size, password, strlen(password)));
 	return cap - buf_size;
 }
 
-size_t url_escape_path(char *buf, size_t buf_size, const char *path)
+size_t url_escape_path(char *buf, const size_t buf_size, const char *path)
 {
-	return escape(buf, buf_size, path, SIZE_MAX, "-_.~$&+,/:;=@", false);
+	return escape(
+		buf, buf_size, path, strlen(path), "-_.~$&+,/:;=@", false);
 }
 
 size_t url_escape_query(char *buf, size_t buf_size, const char *query)
@@ -175,15 +175,17 @@ size_t url_escape_query(char *buf, size_t buf_size, const char *query)
 	return cap - buf_size;
 }
 
-size_t url_escape_path_segment(char *buf, size_t buf_size, const char *path)
+size_t
+url_escape_path_segment(char *buf, const size_t buf_size, const char *segment)
 {
-	return escape(buf, buf_size, path, SIZE_MAX, "-_.~$&+:=@", false);
+	return escape(
+		buf, buf_size, segment, strlen(segment), "-_.~$&+:=@", false);
 }
 
-size_t
-url_escape_query_component(char *buf, size_t buf_size, const char *component)
+size_t url_escape_query_component(
+	char *buf, const size_t buf_size, const char *component)
 {
-	return escape_query(buf, buf_size, component, SIZE_MAX);
+	return escape_query(buf, buf_size, component, strlen(component));
 }
 
 size_t url_build(char *buf, size_t buf_size, const struct url *url)
@@ -206,7 +208,8 @@ size_t url_build(char *buf, size_t buf_size, const struct url *url)
 				APPEND(url->userinfo);
 				APPENDCH('@');
 			}
-			APPENDN(escape_host(buf, buf_size, url->host, SIZE_MAX));
+			APPENDN(escape_host(
+				buf, buf_size, url->host, strlen(url->host)));
 		}
 		if (url->path != NULL) {
 			if (url->path[0] != '/') {
@@ -222,7 +225,8 @@ size_t url_build(char *buf, size_t buf_size, const struct url *url)
 	}
 	if (url->fragment != NULL) {
 		APPENDCH('#');
-		APPENDN(escape_fragment(buf, buf_size, url->fragment, SIZE_MAX));
+		APPENDN(escape_fragment(
+			buf, buf_size, url->fragment, strlen(url->fragment)));
 	}
 
 	return cap - buf_size;
@@ -231,7 +235,7 @@ size_t url_build(char *buf, size_t buf_size, const struct url *url)
 static bool unescape(char *str, const bool space)
 {
 	unsigned char *w = (unsigned char *)str;
-	for (char *r = str; *r != '\0'; r++) {
+	for (const char *r = str; *r != '\0'; r++) {
 		unsigned char ch = *r;
 		switch (ch) {
 		case '%':
@@ -427,7 +431,7 @@ bool url_unescape_userinfo(
 	const char valid_chars[] = "-._:~!$&\'()*+,;=%@'";
 	char *colon = NULL;
 	for (char *p = raw; *p != '\0'; ++p) {
-		unsigned char c = (unsigned char)*p;
+		const unsigned char c = (unsigned char)*p;
 		/* RFC 3986: Section 3.2.1 */
 		if (!isalnum(c) && strchr(valid_chars, c) == NULL) {
 			return false;
@@ -453,12 +457,12 @@ bool url_unescape_userinfo(
 	return true;
 }
 
-bool url_unescape_path(char *str)
+bool url_unescape_path(char *path)
 {
-	return unescape(str, false);
+	return unescape(path, false);
 }
 
-bool url_unescape_query(char *str)
+bool url_unescape_query(char *query)
 {
-	return unescape(str, true);
+	return unescape(query, true);
 }

@@ -4,7 +4,6 @@
 #include "addr.h"
 
 #include <stdbool.h>
-#include <stddef.h>
 #include <string.h>
 
 bool splithostport(char *str, char **restrict host, char **restrict port)

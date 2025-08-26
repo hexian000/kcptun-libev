@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -66,6 +67,9 @@ static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 		free(vbuf);
 		return NULL;
 	}
+	if (cap > SIZE_MAX - sizeof(struct vbuffer) - 1) {
+		return vbuf;
+	}
 	const size_t len = (vbuf != NULL) ? vbuf->len : 0;
 	/* reserve 1 byte for null terminator */
 	struct vbuffer *newbuf =
@@ -80,7 +84,7 @@ static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 }
 
 /** @internal */
-struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want, size_t maxcap);
+struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want);
 
 /** @internal */
 struct vbuffer *vbuf_append(struct vbuffer *vbuf, const void *data, size_t n);

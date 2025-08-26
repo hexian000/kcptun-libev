@@ -6,7 +6,6 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 
 /**
  * @defgroup hashtable
@@ -16,7 +15,7 @@
 
 struct hashkey {
 	size_t len;
-	const void *data;
+	const void *data; /* the pointer should be contained in the element */
 };
 
 struct hashtable;

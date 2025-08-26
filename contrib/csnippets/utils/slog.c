@@ -9,12 +9,10 @@
 #endif
 
 #include <assert.h>
-#include <ctype.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 #include <time.h>
 
 #if SLOG_MT_SAFE
@@ -23,11 +21,11 @@
 #endif
 
 typedef void (*slog_writer_fn)(
-	const int level, const char *file, const int line,
-	struct slog_extra *extra, const char *format, va_list args);
+	int level, const char *file, int line, const struct slog_extra *extra,
+	const char *format, va_list args);
 
 static const unsigned char slog_level_char[] = {
-	'T', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
+	'-', 'F', 'E', 'W', 'I', 'I', 'D', 'V', 'V',
 };
 
 FILE *slog_output;
@@ -50,8 +48,8 @@ static _Atomic(const char *) slog_fileprefix;
 #define MTX_UNLOCK(mu) THRD_ASSERT(mtx_unlock(mu))
 
 #define ATOMIC_STORE(object, desired)                                          \
-	atomic_store_explicit(object, desired, memory_order_relaxed)
-#define ATOMIC_LOAD(object) atomic_load_explicit(object, memory_order_relaxed)
+	atomic_store_explicit(object, desired, memory_order_release)
+#define ATOMIC_LOAD(object) atomic_load_explicit(object, memory_order_acquire)
 
 static _Thread_local struct {
 	BUFFER_HDR;
@@ -101,8 +99,8 @@ static size_t slog_timestamp(
 	if (maxsize < len) {
 		return 0;
 	}
-	const int ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
-	if (ret != (int)sizeof("2006-01-02T15:04:05-0700") - 1) {
+	const size_t ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
+	if (ret != sizeof("2006-01-02T15:04:05-0700") - 1) {
 		return 0;
 	}
 	const char *restrict tz = s + ret;
@@ -131,7 +129,7 @@ static const char *slog_filename(const char *restrict file)
 
 static void slog_write_file(
 	const int level, const char *restrict file, const int line,
-	struct slog_extra *restrict extra, const char *restrict format,
+	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
 	BUF_INIT(slog_buffer, 2);
@@ -164,7 +162,7 @@ static void slog_write_file(
 #if HAVE_SYSLOG
 static void slog_write_syslog(
 	const int level, const char *restrict file, const int line,
-	struct slog_extra *restrict extra, const char *restrict format,
+	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
 	static const int slog_level_map[] = {
@@ -182,7 +180,7 @@ static void slog_write_syslog(
 	MTX_LOCK(&slog_output_mu);
 	syslog(LOG_USER | slog_level_map[level], "%c %s:%d %.*s",
 	       slog_level_char[level], file, line, (int)slog_buffer.len,
-	       slog_buffer.data);
+	       (const char *)slog_buffer.data);
 	(void)extra;
 	MTX_UNLOCK(&slog_output_mu);
 }
@@ -219,6 +217,7 @@ void slog_setoutput(const int type, ...)
 		ATOMIC_STORE(&slog_writer, NULL);
 #endif
 	} break;
+	default:;
 	}
 	va_end(args);
 }
@@ -230,8 +229,8 @@ void slog_setfileprefix(const char *prefix)
 }
 
 void slog_vwrite(
-	int level, const char *restrict file, int line,
-	struct slog_extra *restrict extra, const char *restrict format,
+	const int level, const char *restrict file, const int line,
+	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
@@ -243,7 +242,8 @@ void slog_vwrite(
 
 void slog_write(
 	const int level, const char *restrict file, const int line,
-	struct slog_extra *restrict extra, const char *restrict format, ...)
+	const struct slog_extra *restrict extra, const char *restrict format,
+	...)
 {
 	const slog_writer_fn write = ATOMIC_LOAD(&slog_writer);
 	if (write == NULL) {

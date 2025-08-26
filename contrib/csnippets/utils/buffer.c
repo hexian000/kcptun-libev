@@ -34,9 +34,9 @@ int buf_appendf(struct buffer *restrict buf, const char *restrict format, ...)
 	return ret;
 }
 
-struct vbuffer *
-vbuf_grow(struct vbuffer *vbuf, const size_t want, const size_t maxcap)
+struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 {
+	const size_t maxcap = SIZE_MAX - sizeof(struct vbuffer) - 1;
 	size_t cap = 0, len = 0;
 	if (vbuf != NULL) {
 		cap = vbuf->cap;
@@ -64,11 +64,13 @@ vbuf_grow(struct vbuffer *vbuf, const size_t want, const size_t maxcap)
 		cap += grow;
 	} while (cap < want);
 
-	struct vbuffer *newbuf = realloc(vbuf, sizeof(struct vbuffer) + cap);
+	/* reserve 1 extra byte for null terminator */
+	struct vbuffer *newbuf =
+		realloc(vbuf, sizeof(struct vbuffer) + cap + 1);
 	if (newbuf == NULL) {
 		/* retry with minimal required capacity */
 		cap = want;
-		newbuf = realloc(vbuf, sizeof(struct vbuffer) + cap);
+		newbuf = realloc(vbuf, sizeof(struct vbuffer) + cap + 1);
 		if (newbuf == NULL) {
 			return vbuf;
 		}
@@ -90,7 +92,7 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 	}
 	/* 1 extra byte is reserved for detecting allocation failures */
 	const size_t want = vbuf->len + n + 1;
-	vbuf = vbuf_grow(vbuf, want, SIZE_MAX);
+	vbuf = vbuf_grow(vbuf, want);
 	/* when failed, append as much as possible */
 	if (n > vbuf->cap - vbuf->len) {
 		n = vbuf->cap - vbuf->len;
@@ -132,7 +134,7 @@ struct vbuffer *vbuf_vappendf(
 		vbuf->len += (size_t)ret;
 		return vbuf;
 	}
-	vbuf = vbuf_grow(vbuf, want, SIZE_MAX);
+	vbuf = vbuf_grow(vbuf, want);
 	/* when failed, append as much as possible */
 	char *restrict s = (char *)(vbuf->data + vbuf->len);
 	const size_t maxlen = vbuf->cap - vbuf->len;

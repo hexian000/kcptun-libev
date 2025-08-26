@@ -90,8 +90,9 @@ int format_iec_bytes(char *restrict s, const size_t maxlen, const double value)
 	return snprintf(s, maxlen, "%.0f%s", v, iec_units[i]);
 }
 
-struct duration make_duration(double value)
+struct duration make_duration(const double seconds)
 {
+	double value = seconds;
 	struct duration d;
 	if (value < 0.0) {
 		d.sign = -1;
@@ -112,8 +113,9 @@ struct duration make_duration(double value)
 	return d;
 }
 
-struct duration make_duration_nanos(int_least64_t value)
+struct duration make_duration_nanos(const int_least64_t nanos)
 {
+	int_fast64_t value = nanos;
 	struct duration d;
 	if (value < INT64_C(0)) {
 		d.sign = -1;
