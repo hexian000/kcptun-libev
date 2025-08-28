@@ -383,7 +383,7 @@ void daemonize(
 	CLOSE_FD(fd[1]);
 
 	/* Set logging output to syslog. */
-	slog_setoutput(SLOG_OUTPUT_SYSLOG, "neosocksd");
+	slog_setoutput(SLOG_OUTPUT_SYSLOG, "kcptun-libev");
 }
 
 /** Read a timespec as signed 64-bit nanoseconds. */
