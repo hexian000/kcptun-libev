@@ -230,7 +230,7 @@ static bool range_check_int(
 }
 
 #define RANGE_CHECK(key, value, lbound, ubound)                                \
-	_Generic(value, int : range_check_int)(key, value, lbound, ubound)
+	_Generic(value, int: range_check_int)(key, value, lbound, ubound)
 
 static bool conf_check(struct config *restrict conf)
 {

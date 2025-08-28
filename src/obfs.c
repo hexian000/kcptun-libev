@@ -632,7 +632,7 @@ static bool obfs_ctx_start(
 
 	ctx->fd = fd;
 	void (*const obfs_read_cb)(
-		struct ev_loop * loop, ev_io * watcher, const int revents) =
+		struct ev_loop *loop, ev_io *watcher, const int revents) =
 		(s->conf->mode & MODE_CLIENT) ? obfs_client_read_cb :
 						obfs_server_read_cb;
 	ev_io *restrict w_read = &ctx->w_read;

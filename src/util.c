@@ -65,6 +65,7 @@ static struct {
 	{ SIGSYS, { .sa_handler = SIG_DFL } },
 };
 
+/** Minimal crash handler to log stack then re-raise the signal. */
 static void crash_handler(const int signo)
 {
 	LOG_STACK_F(FATAL, 2, "FATAL ERROR: %s", strsignal(signo));
@@ -84,6 +85,7 @@ static void crash_handler(const int signo)
 	}
 }
 
+/** Install crash handlers for fatal signals when enabled. */
 static void set_crash_handler(void)
 {
 	struct sigaction act = {
@@ -381,9 +383,10 @@ void daemonize(
 	CLOSE_FD(fd[1]);
 
 	/* Set logging output to syslog. */
-	slog_setoutput(SLOG_OUTPUT_SYSLOG, "kcptun-libev");
+	slog_setoutput(SLOG_OUTPUT_SYSLOG, "neosocksd");
 }
 
+/** Read a timespec as signed 64-bit nanoseconds. */
 #define READ_TIMESPEC(ts)                                                      \
 	((int_fast64_t)(ts).tv_sec * INT64_C(1000000000) +                     \
 	 (int_fast64_t)(ts).tv_nsec)
