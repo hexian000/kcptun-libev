@@ -2,8 +2,8 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "url.h"
+#include "utils/ascii.h"
 
-#include <ctype.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -102,33 +102,39 @@ escape(char *buf, size_t buf_size, const char *str, const size_t len,
 	return cap - buf_size;
 }
 
-static size_t escape_host(
+#define S_UNRESERVED "-_.~"
+#define S_SUB_DELIMS "!$&'()*+,;="
+#define S_PCHAR S_UNRESERVED S_SUB_DELIMS ":@"
+
+static size_t escape_hostport(
 	char *buf, const size_t buf_size, const char *host, const size_t len)
 {
 	/* RFC 1738, RFC 2732 */
 	return escape(
-		buf, buf_size, host, len, "-_.~!$&'()*+,;=:[]<>\"", false);
+		buf, buf_size, host, len, S_UNRESERVED S_SUB_DELIMS ":[]",
+		false);
 }
 
 static size_t escape_userinfo(
 	char *buf, const size_t buf_size, const char *userinfo,
 	const size_t len)
 {
-	return escape(buf, buf_size, userinfo, len, "-_.~$&+,;=", false);
+	return escape(
+		buf, buf_size, userinfo, len, S_UNRESERVED S_SUB_DELIMS ":",
+		false);
 }
 
 static size_t escape_query(
 	char *buf, const size_t buf_size, const char *query, const size_t len)
 {
-	return escape(buf, buf_size, query, len, "-_.~", true);
+	return escape(buf, buf_size, query, len, S_PCHAR "/?", true);
 }
 
 static size_t escape_fragment(
 	char *buf, const size_t buf_size, const char *fragment,
 	const size_t len)
 {
-	return escape(
-		buf, buf_size, fragment, len, "-_.~$&+,/:;=?@!()*", false);
+	return escape(buf, buf_size, fragment, len, S_PCHAR "/?", false);
 }
 
 size_t
@@ -208,7 +214,7 @@ size_t url_build(char *buf, size_t buf_size, const struct url *url)
 				APPEND(url->userinfo);
 				APPENDCH('@');
 			}
-			APPENDN(escape_host(
+			APPENDN(escape_hostport(
 				buf, buf_size, url->host, strlen(url->host)));
 		}
 		if (url->path != NULL) {
@@ -272,14 +278,6 @@ static bool unescape(char *str, const bool space)
 	}
 	*w = '\0';
 	return true;
-}
-
-static inline char *strlower(char *restrict s)
-{
-	for (unsigned char *p = (unsigned char *)s; *p != '\0'; ++p) {
-		*p = tolower(*p);
-	}
-	return s;
 }
 
 bool url_parse(char *raw, struct url *restrict url)

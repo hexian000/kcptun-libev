@@ -10,6 +10,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * Append formatted text into a fixed buffer using a va_list.
+ *
+ * Behavior:
+ * - Writes at most the remaining capacity.
+ * - Ensures there is a trailing NUL in the buffer storage.
+ * - Advances len by up to (cap - len - 1).
+ *
+ * Returns the number of characters that would have been written (excluding
+ * the terminating NUL), as per vsnprintf semantics. Non-positive values
+ * indicate an encoding/formatting error or zero available space.
+ */
 int buf_vappendf(
 	struct buffer *restrict buf, const char *restrict format, va_list args)
 {
@@ -34,6 +46,17 @@ int buf_appendf(struct buffer *restrict buf, const char *restrict format, ...)
 	return ret;
 }
 
+/**
+ * Ensure a growable buffer has capacity of at least `want` bytes.
+ *
+ * Growth strategy:
+ * - Below 256 bytes: jump to 256.
+ * - Below 4096 bytes: double the current capacity.
+ * - 4096 and above: grow by cap/4 + 3*4096/4 to moderate fragmentation.
+ *
+ * Always reserves one extra byte for NUL-termination. On allocation failure,
+ * returns the original pointer unchanged.
+ */
 struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 {
 	const size_t maxcap = SIZE_MAX - sizeof(struct vbuffer) - 1;
@@ -80,6 +103,12 @@ struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 	return newbuf;
 }
 
+/**
+ * Append up to n bytes to a growable buffer.
+ * - Attempts to grow to fit; if growth fails, appends what fits.
+ * - Maintains a trailing NUL in the reserved byte (does not change len).
+ * - If len == cap (previous alloc failure), the append is skipped.
+ */
 struct vbuffer *
 vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 {
@@ -105,6 +134,11 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 	return vbuf;
 }
 
+/**
+ * Append formatted text to a growable buffer using a va_list.
+ * Performs a two-pass attempt: try in-place then grow and retry.
+ * Keeps a trailing NUL in the reserved byte. On failure, truncates to fit.
+ */
 struct vbuffer *vbuf_vappendf(
 	struct vbuffer *restrict vbuf, const char *restrict format,
 	va_list args)

@@ -17,24 +17,56 @@
 /**
  * @defgroup buffer
  * @brief Generic buffer utilities.
- * @{
+ *
+ * This header provides two buffer abstractions: fixed-size buffers that never
+ * allocate and heap-allocated growable buffers that can expand as needed.
+ *
+ * Design:
+ * - All buffers share a common header `BUFFER_HDR` storing `cap` and `len`.
+ * - Growable buffers internally reserve one extra byte to simplify placing a
+ *   trailing '\0' for textual data; this byte is not counted in `cap` and `len`.
+ * - Append helpers for raw bytes do not add a null terminator. Formatting
+ *   helpers use the reserved slot to keep data NUL-terminated without
+ *   affecting `len`.
+ * - None of the APIs are thread-safe; add external synchronization if shared.
+ *
+ * Error handling:
+ * - Fixed buffers truncate to available space and report bytes transferred.
+ * - Growable buffers attempt to expand; on failure, they append what fits.
+ *   When a growable buffer becomes full (`len == cap`), it indicates a prior
+ *   allocation failure and further appends are skipped.
+ * @{ 
  */
 
+/**
+ * @brief Common header for both fixed and growable buffers.
+ * - cap: total capacity in bytes of the data region
+ * - len: number of valid payload bytes (0 <= len <= cap)
+ */
 #define BUFFER_HDR                                                             \
 	struct {                                                               \
 		size_t cap;                                                    \
 		size_t len;                                                    \
 	}
 
-/* fixed buffer */
+/**
+ * @brief Opaque helper type used internally for fixed-size buffers.
+ * Do not instantiate directly; embed BUFFER_HDR and a concrete data[N] in your own struct.
+ */
 struct buffer {
 	BUFFER_HDR;
 	unsigned char data[];
 };
 
-/* These internal functions should NOT be called directly, use macros */
+/* These internal functions should NOT be called directly, use macros instead */
 
-/** @internal */
+/**
+ * @internal
+ * Append up to n bytes into a fixed buffer.
+ * Copies min(n, cap - len) bytes from data into buf->data + buf->len.
+ * Does not add a trailing NUL.
+ * Returns: number of bytes actually appended (may be 0 if no space).
+ */
 static inline size_t
 buf_append(struct buffer *restrict buf, const void *restrict data, size_t n)
 {
@@ -48,19 +80,39 @@ buf_append(struct buffer *restrict buf, const void *restrict data, size_t n)
 	return n;
 }
 
-/** @internal */
+/**
+ * @internal
+ * Append formatted text into a fixed buffer using a va_list.
+ * Writes at most remaining capacity; output is NUL-terminated in place.
+ * len is advanced by up to maxlen - 1.
+ * Returns: vsnprintf-style count of chars that would have been written (excluding NUL).
+ */
 int buf_vappendf(struct buffer *buf, const char *format, va_list args);
 
-/** @internal */
+/**
+ * @internal
+ * Convenience wrapper over buf_vappendf with variadic arguments.
+ */
 int buf_appendf(struct buffer *buf, const char *format, ...);
 
 /* heap allocated buffer */
+/**
+ * @brief Header + flexible array used for growable heap buffers.
+ */
 struct vbuffer {
 	BUFFER_HDR;
 	unsigned char data[];
 };
 
-/** @internal */
+/**
+ * @internal
+ * Allocate or resize a growable buffer to exactly `cap` bytes.
+ * - When vbuf == NULL, behaves like malloc for a new object.
+ * - When cap == 0, frees and returns NULL.
+ * - On allocation failure, returns the original vbuf unchanged.
+ * - One extra byte is always reserved (cap + 1 total) for internal NUL.
+ * - Preserves len up to the new cap if shrinking.
+ */
 static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 {
 	if (cap == 0) {
@@ -83,17 +135,36 @@ static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 	return vbuf;
 }
 
-/** @internal */
+/**
+ * @internal
+ * Ensure capacity is at least `want` bytes (not counting reserved NUL).
+ * Uses a growth strategy tuned for small and large buffers, with overflow
+ * checks. On failure, returns the original pointer unchanged.
+ */
 struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want);
 
-/** @internal */
+/**
+ * @internal
+ * Append up to n bytes to a growable buffer.
+ * Attempts to grow to fit; if growth fails, appends as much as possible.
+ * Writes a trailing NUL in the reserved byte without affecting len.
+ * Precondition: vbuf != NULL. If len == cap, append is skipped.
+ */
 struct vbuffer *vbuf_append(struct vbuffer *vbuf, const void *data, size_t n);
 
-/** @internal */
+/**
+ * @internal
+ * Append formatted text using a va_list. Two-pass attempt: write into
+ * remaining capacity first, then grow and retry if needed. Keeps a trailing
+ * NUL in the reserved byte. On failure, may truncate to what fits.
+ */
 struct vbuffer *
 vbuf_vappendf(struct vbuffer *vbuf, const char *format, va_list args);
 
-/** @internal */
+/**
+ * @internal
+ * Convenience wrapper over vbuf_vappendf with variadic arguments.
+ */
 struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 
 /**
@@ -123,6 +194,10 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 		(buf).len = (n);                                               \
 	} while (0)
 
+/**
+ * @brief Bind a buffer handle to a literal string without copying.
+ * @details The lifetime of `buf` is limited to the current scope.
+ */
 #define BUF_CONST(buf, str)                                                    \
 	do {                                                                   \
 		static struct {                                                \
@@ -139,7 +214,8 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 /**
  * @brief Append fixed-length data to buffer.
  * @return Number of bytes transferred.
- * @details Data will be truncated if there is not enough space.
+ * @details Data will be truncated if there is not enough space. No
+ * NUL-terminator is added.
  * usage: `size_t n = BUF_APPEND(buf, data, len);`
  */
 #define BUF_APPEND(buf, data, n)                                               \
@@ -148,7 +224,8 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 
 /**
  * @brief Append literal string to buffer.
- * @details The string will be truncated if there is not enough space.
+ * @details The string will be truncated if there is not enough space. No
+ * NUL-terminator is added.
  * usage: `size_t n = BUF_APPENDSTR(buf, "some string");`
  */
 #define BUF_APPENDSTR(buf, str)                                                \
@@ -159,7 +236,8 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
 
 /**
  * @brief Append formatted string to buffer.
- * @details The string will be truncated if there is not enough space.
+ * @details The string will be truncated if there is not enough space. A
+ * trailing NUL is written in-place but not counted by `len`.
  * usage: `int ret = BUF_APPENDF(buf, "%s: %s\r\n", "Content-Type", "text/plain");`
  */
 #define BUF_APPENDF(buf, format, ...)                                          \
@@ -197,14 +275,14 @@ struct vbuffer *vbuf_appendf(struct vbuffer *vbuf, const char *format, ...);
  * @ingroup buffer
  * @brief Variable length buffer.
  * @details VBUF_* macros may change the buffer allocation, and therefore
- * require the buffer is a heap object (not inlined)
+ * require the buffer be a heap object (not inlined)
  * @{
  */
 
 /**
  * @brief Allocate a new vbuffer object.
- * @param size If 0, returns NULL.
- * @return NULL if the allocation fails.
+ * @param size Requested capacity in bytes (excludes reserved NUL).
+ * @return NULL if `size == 0` or the allocation fails.
  * @details struct vbuffer *vbuf = VBUF_NEW(256);
  */
 #define VBUF_NEW(size) vbuf_alloc(NULL, (size))
