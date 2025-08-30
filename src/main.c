@@ -93,7 +93,7 @@ static void print_usage(char *argv0)
  * @brief Parse command line arguments and populate global args structure
  * @param argc Number of command line arguments
  * @param argv Array of command line argument strings
- * 
+ *
  * Parses all supported command line options and stores the configuration
  * in the global args structure. Exits the program on invalid arguments
  * or when help is requested.

@@ -35,7 +35,7 @@
  * - Growable buffers attempt to expand; on failure, they append what fits.
  *   When a growable buffer becomes full (`len == cap`), it indicates a prior
  *   allocation failure and further appends are skipped.
- * @{ 
+ * @{
  */
 
 /**
