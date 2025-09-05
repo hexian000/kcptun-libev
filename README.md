@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/github/downloads/hexian000/kcptun-libev/total.svg)](https://github.com/hexian000/kcptun-libev/releases)
 [![Release](https://img.shields.io/github/release/hexian000/kcptun-libev.svg?style=flat)](https://github.com/hexian000/kcptun-libev/releases)
 
-A powerful and extremely lightweight encrypted port forwarder based on reliable UDP protocol.
+A powerful, extremely lightweight, encrypted port forwarder built on a reliable UDP transport.
 
 Status: **Stable**
 
@@ -21,7 +21,7 @@ Status: **Stable**
   - [Version Compatibility](#version-compatibility)
 - [Build](#build)
   - [Dependencies](#dependencies)
-  - [Build on Unix-like systems](#build-on-unix-like-systems)
+  - [Build on Unix-like Systems](#build-on-unix-like-systems)
 - [Runtime](#runtime)
   - [Dependencies](#dependencies-1)
   - [Configurations](#configurations)
@@ -33,24 +33,24 @@ Status: **Stable**
 
 ## Introduction
 
-kcptun-libev is a TCP port forwarder which converts the actual transferring protocol into a UDP based one, called [KCP](https://github.com/skywind3000/kcp).
-KCP is more configurable and usually has a much better performance in a lossy but not really congested network. This project can help you to get better bandwidth in such situation.
+kcptun-libev is a TCP port forwarder that converts the transport to a UDP‑based protocol called [KCP](https://github.com/skywind3000/kcp).
+KCP is more configurable and typically performs much better on lossy, lightly congested networks. This project can help you achieve higher throughput in such situations.
 
-For example, wrap your server to use KCP instead of TCP:
+Example: wrap your service to use KCP instead of TCP:
 ```
 client -> kcptun-libev client ->
     lossy network (carried by KCP)
 -> kcptun-libev server -> server
 ```
 
-Or typically, the people who using a lossy network may setup kcptun-libev with a proxy server. To get the internet access speeded up.
+A common setup is to pair kcptun-libev with a proxy to speed up Internet access over lossy links:
 ```
 network access -> proxy client -> kcptun-libev client ->
     lossy network (carried by KCP)
 -> kcptun-libev server -> proxy server -> stable network
 ```
 
-Reliable UDP can also help users connect to TCP services behind NAT, see [rendezvous mode](#rendezvous-mode).
+Reliable UDP can also help connect to TCP services behind NAT; see [Rendezvous Mode](#rendezvous-mode).
 ```
 client -> NAT1 -> rendezvous server
 server -> NAT2 -> rendezvous server
@@ -58,27 +58,27 @@ server -> NAT2 -> rendezvous server
 client -> NAT1 -> NAT2 -> server
 ```
 
-Since KCP retransmits packets more aggressively. It is recommended to enable proper QoS at the NIC level when running on a public network.
+Because KCP retransmits packets aggressively, we recommend enabling proper QoS at the NIC level when running on public networks.
 
 Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.md)
 
 ## Features
 
-- Secure: For proper integration with the cryptography methods.
-- Responsive: No muxer, one TCP connection to one KCP connection with 0 RTT connection open.
-- Proper: KCP will be flushed on demand, no mechanistic lag introduced.
-- Simple: Do one thing well. kcptun-libev only acts as a layer 4 forwarder.
-- Morden: Full IPv6 support.
-- DDNS aware: Dynamic IP addresses can be automatically resolved.
-- NAT traversal: Server behind certain types of NAT can be connected directly with the help of a well-known rendezvous server.
-- Configurable: If you plan to use with another encryption implementation (such as udp2raw, wireguard, etc.), encryption can be completely disabled or even excluded from build.
-- Portable: Compliant with ISO C standard. Support both GNU/Linux and POSIX APIs.
+- Secure: Proper integration with modern authenticated encryption.
+- Responsive: No multiplexer; one TCP connection maps to one KCP connection with 0‑RTT opening.
+- Precise: KCP flushes on demand; no artificial latency introduced.
+- Simple: Does one thing well — acts as a Layer 4 forwarder.
+- Modern: Full IPv6 support.
+- Dynamic DNS aware: Dynamic IP addresses can be resolved automatically.
+- NAT traversal: Servers behind certain types of NAT can connect directly via a well‑known rendezvous server.
+- Configurable: When used with other encryption (e.g., udp2raw, WireGuard), built‑in encryption can be disabled or omitted at build time.
+- Portable: Compliant with ISO C; supports both GNU/Linux and POSIX APIs.
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
 
-Compared to that, kcptun-libev should be much more lightweight. The main executable is around 100~200KiB on most platforms\* and it also have a much lower cpu/mem footprint.
+Compared to it, kcptun-libev is much more lightweight. The main executable is 100~200 KiB on most platforms\* and it also has much lower CPU usage and memory footprint.
 
-*\* Some required libraries are dynamically linked, see runtime dependencies below. Statically linked executable can be larger due to these libraries.*
+*\* Some required libraries are dynamically linked; see runtime dependencies below. Statically linked executables can be larger due to these libraries.*
 
 For your convenience, some statically-linked executables are also provided in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section.
 
@@ -94,24 +94,24 @@ In config file:
 "method": "// name here"
 ```
 
-If the encryption is not enabled or not even compiled, no packet overhead is consumed. However, no authentication tag is added to protect the server from well-crafted packets by an attacker. In this case, security relies on third-party components. We recommend that users only disable encryption when unexpected packets cannot be received. For example: the traffic is already protected by Wireguard etc.
+If encryption is disabled or not compiled in, there is no packet overhead. However, no authentication tag is added to protect the server from crafted packets. In this case, security relies on third‑party components. We recommend disabling encryption only when unsolicited packets cannot reach the service, or when the traffic is already protected (e.g., WireGuard).
 
-In practice, we suggest user to use `--genpsk` command-line argument to generate a strong random pre-shared key instead of using a simple password.
+In practice, we suggest using the `--genpsk` command‑line argument to generate a strong random pre‑shared key instead of a simple password.
 
-| Encryption Method      | Since | Form | Packet Overhead | Notes              |
-| ---------------------- | ----- | ---- | --------------- | ------------------ |
-| xchacha20poly1305_ietf | v1.0  | AEAD | 40 bytes        | recommended        |
-| xsalsa20poly1305       | v2.2  | AE   | 40 bytes        |                    |
-| chacha20poly1305_ietf  | v2.0  | AEAD | 28 bytes        |                    |
-| aes256gcm              | v2.0  | AEAD | 28 bytes        | limited hardware\* |
+| Encryption Method      | Since | Form | Packet Overhead | Notes                        |
+| ---------------------- | ----- | ---- | --------------- | ---------------------------- |
+| xchacha20poly1305_ietf | v1.0  | AEAD | 40 bytes        | recommended                  |
+| xsalsa20poly1305       | v2.2  | AE   | 40 bytes        |                              |
+| chacha20poly1305_ietf  | v2.0  | AEAD | 28 bytes        |                              |
+| aes256gcm              | v2.0  | AEAD | 28 bytes        | requires specific hardware\* |
 
-*\* Specifically: x86 CPU with SSSE3, aesni and pclmul.*
+*\* Specifically: x86 CPU with SSSE3, AES‑NI, and PCLMUL.*
 
 kcptun-libev ships with additional encryption methods to ensure that users have alternatives for specific reasons. Although the strength of each method is discussed, in most cases the recommended one just works.
 
 ### Obfuscation
 
-The obfuscator is an optional tool to fool eavesdroppers. This feature is only available on Linux.
+Obfuscation is optional and helps evade inspection. This feature is available on Linux only.
 
 In config file:
 
@@ -119,9 +119,9 @@ In config file:
 "obfs": "// name here"
 ```
 
-Currently only one obfuscator implemented: `dpi/tcp-wnd`. It behaves like a HTTP service and cannot be probed without knowing the pre-shared key.
+Currently one obfuscator is implemented: `dpi/tcp-wnd`. It behaves like a HTTP service and cannot be probed without the pre‑shared key.
 
-With obfuscator enabled, kcptun-libev will directly send IP packets over raw sockets. Therefore, Linux capability [CAP_NET_RAW](https://man7.org/linux/man-pages/man7/capabilities.7.html) is required. For example, the following command may works on some Linux distributions:
+With obfuscation enabled, kcptun-libev sends IP packets over raw sockets. Therefore, Linux capability [CAP_NET_RAW](https://man7.org/linux/man-pages/man7/capabilities.7.html) is required. For example, the following commands may work on some Linux distributions:
 
 ```sh
 # run as root and drop privileges after necessary setup
@@ -134,19 +134,19 @@ sudo setcap cap_net_raw+ep kcptun-libev
 ## Compatibility
 ### System
 
-Theoretically all systems that support ISO C11 and POSIX.1-2008.
+All systems that support ISO C11 and POSIX.1‑2008.
 
 | System                | Tier      | Notes              |
 | --------------------- | --------- | ------------------ |
 | Ubuntu                | developed |                    |
-| OpenWRT               | tested    |                    |
+| OpenWrt               | tested    |                    |
 | Other Linux / Android | supported |                    |
 | macOS                 | supported | without obfuscator |
 | Windows (MSYS2)       | supported | without obfuscator |
 
 ### Version Compatibility
 
-For security reasons, kcptun-libev does NOT provide compatibility to any other KCP implementations.
+For security reasons, kcptun-libev does NOT provide compatibility with any other KCP implementation.
 
 We use [semantic versioning](https://semver.org/).
 
@@ -172,7 +172,7 @@ sudo apt install libjson-c-dev libev-dev libsodium-dev
 apk add json-c-dev libev-dev libsodium-dev
 ```
 
-### Build on Unix-like systems
+### Build on Unix-like Systems
 
 ```sh
 git clone https://github.com/hexian000/kcptun-libev.git
@@ -182,12 +182,12 @@ cmake -DCMAKE_BUILD_TYPE="Release" \
 cmake --build . --parallel
 ```
 
-See [m.sh](m.sh) for more information about cross compiling support.
+See [m.sh](m.sh) for cross‑compiling support.
 
 ## Runtime
 ### Dependencies
 
-**Simple solution**: Download a `-static` build in the [Releases](https://github.com/hexian000/kcptun-libev/releases) section so no dependencies need to be installed.
+**Easiest option**: Download a `-static` build from the [Releases](https://github.com/hexian000/kcptun-libev/releases) section — no additional runtime dependencies are needed.
 
 ```sh
 # Debian / Ubuntu
@@ -241,21 +241,21 @@ Start the client:
 ./kcptun-libev -c client.json
 ```
 
-Now 127.0.0.1:1080 on client is forwarded to server by kcptun-libev.
+127.0.0.1:1080 on the client is now forwarded to the server via kcptun-libev.
 
-See [server.json](server.json)/[client.json](client.json) in the source repo for more tunables.
+See [server.json](server.json) and [client.json](client.json) in the repository for more tunables.
 
-Let's explain some common fields in server.json/client.json:
-- The client side "listen" TCP ports and send data to "kcp_connect".
-- The server side receive data from "kcp_bind" and forward the connections to "connect".
-- Set a "password" or "psk" is strongly suggested when using in public networks.
-- "loglevel": 0-7 are Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose respectively. The default is 4 (Notice). High log levels can affect performance.
+Common fields in `server.json`/`client.json`:
+- Client: `listen` defines the local TCP address; traffic is sent to `kcp_connect`.
+- Server: receives on `kcp_bind` and forwards connections to `connect`.
+- Setting `password` or `psk` is strongly recommended on public networks.
+- `loglevel`: 0–7 map to Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose. The default is 4 (Notice). Higher levels can affect performance.
 
 #### Rendezvous Mode
 
-Rendezvous mode may be useful for accessing servers behind NAT. The rendezvous server only helps establish the connection, the traffic goes directly between client and server.
+Rendezvous mode helps access servers behind NAT. The rendezvous server only bootstraps the connection; traffic flows directly between client and server.
 
-Rendezvous mode requires UDP in transport layer, i.e. is incompatible with non-UDP obfuscators.
+Rendezvous mode requires UDP at the transport layer; it is incompatible with non‑UDP obfuscators.
 
 *The method is non-standard and may not work with all NAT implementations.*
 
@@ -295,38 +295,38 @@ Rendezvous mode requires UDP in transport layer, i.e. is incompatible with non-U
 
 rendezvous_server : server : client = 1 : m : m*n
 
-Peers should be all IPv4 or all IPv6.
+All peers must be either all IPv4 or all IPv6.
 
 ## Tunables
 
 *kcptun-libev works out of the box. In most cases, the default options are recommended.*
 
-Some tunables are the same as [KCP](https://github.com/skywind3000/kcp), read their docs for full explaination. Here are some hints:
+Some tunables are the same as [KCP](https://github.com/skywind3000/kcp); read their docs for a full explanation. Hints:
 
-- "kcp.sndwnd", "kcp.rcvwnd":
-  1. Should be tuned according to RTT.
-  2. For enthusiasts, you can start an idle client with loglevel >= 5 and wait 1 minute to check the theoretical bandwidth of current window values.
-  3. On systems with very little memory, you may need to reduce it to save memory.
-- "kcp.nodelay": Enabled by default. Note that this is not an equivalent to `TCP_NODELAY`.
-- "kcp.interval":
-  1. Since we run KCP differently, the recommended value is longer than the previous implementation. This will save some CPU power.
-  2. This option is not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). For Linux, check out [sqm-scripts](https://github.com/tohojo/sqm-scripts) for it. Read more about [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
-- "kcp.resend": Disabled by default.
-- "kcp.nc": Enabled by default.
-- "kcp.mtu": Specifies the final IP packet size, including all overhead.
+- `kcp.sndwnd`, `kcp.rcvwnd`:
+  1. Tune according to RTT.
+  2. To estimate theoretical bandwidth, start an idle client with `loglevel >= 5` and wait ~1 minute.
+  3. On memory‑constrained systems, reduce these values to save memory.
+- `kcp.nodelay`: Enabled by default. Note: not equivalent to `TCP_NODELAY`.
+- `kcp.interval`:
+  1. Because KCP runs differently here, the recommended value is higher than in previous implementations and saves CPU.
+  2. Not intended for [traffic shaping](https://en.wikipedia.org/wiki/Traffic_shaping). On Linux, see [sqm-scripts](https://github.com/tohojo/sqm-scripts) and [CAKE](https://man7.org/linux/man-pages/man8/CAKE.8.html).
+- `kcp.resend`: Disabled by default.
+- `kcp.nc`: Enabled by default.
+- `kcp.mtu`: Specifies the final IP packet size, including all overhead.
 
-Again, there is some kcptun-libev specific options:
+kcptun-libev–specific options:
 
-- "kcp.flush": 0 - periodic only, 1 - flush after sending, 2 - also flush acks (for benchmarking)
-- "tcp.sndbuf", "tcp.rcvbuf", "udp.sndbuf", "udp.rcvbuf": Socket options, see your OS manual for further information.
-  1. Normally, default value just works.
-  2. Usually setting the udp buffers relatively large (e.g. 1048576) gives performance benefits. But since kcptun-libev handles packets efficiently, a receive buffer that is too large doesn't make sense.
-  3. All buffers should not be too small, otherwise you may experience performance degradation.
-- "user": switch to this user to drop privileges, e.g. `"user": "nobody:"` means the user named "nobody" and that user's login group
+- `kcp.flush`: 0 = periodic only; 1 = flush after sending; 2 = also flush ACKs (for benchmarking).
+- `tcp.sndbuf`, `tcp.rcvbuf`, `udp.sndbuf`, `udp.rcvbuf`: Socket buffer sizes; see your OS manual.
+  1. Defaults usually work.
+  2. Larger UDP buffers (e.g., 1048576) can help; however, overly large receive buffers may be counterproductive here.
+  3. Avoid too‑small buffers to prevent performance degradation.
+- `user`: switch to this user to drop privileges, e.g., `"user": "nobody:"` means the user named "nobody" and that user's login group
 
 ## Observability
 
-There is a builtin HTTP server for monitoring service status.
+There is a built‑in HTTP server for monitoring service status.
 
 Add this line to your config file:
 
@@ -340,7 +340,7 @@ Then run the commands below from shell:
 watch curl -sX POST http://127.0.1.1:8081/stats
 ```
 
-The URI "/healthy" always responds with HTTP 200, feel free to use it for healthy checks.
+The URI "/healthy" always responds with HTTP 200; use it for health checks.
 
 ## Credits
 

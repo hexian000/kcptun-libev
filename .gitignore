@@ -1,7 +1,10 @@
-/.vscode
 /.cache
 /.clangd
+
+/.cursor
 /.idea
+/.vscode
+
 /build
 /xbuild
 /cmake-build-*
