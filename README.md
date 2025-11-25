@@ -73,6 +73,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - NAT traversal: Servers behind certain types of NAT can connect directly via a well‑known rendezvous server.
 - Configurable: When used with other encryption (e.g., udp2raw, WireGuard), built‑in encryption can be disabled or omitted at build time.
 - Portable: Compliant with ISO C; supports both GNU/Linux and POSIX APIs.
+- Long-Term Supported: Follow the latest releases of the dependent projects. Even if we don't make any changes, the binary release will be rebuilt at least once a year.
 
 There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
 
@@ -187,7 +188,9 @@ See [m.sh](m.sh) for cross‑compiling support.
 ## Runtime
 ### Dependencies
 
-**Easiest option**: Download a `-static` build from the [Releases](https://github.com/hexian000/kcptun-libev/releases) section — no additional runtime dependencies are needed.
+**Statically-linked setup**: Download a `-static` build from the [Releases](https://github.com/hexian000/kcptun-libev/releases) section — no additional runtime dependencies are needed.
+
+**Dynamically-linked setup**: 
 
 ```sh
 # Debian / Ubuntu
