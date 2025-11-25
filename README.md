@@ -190,7 +190,7 @@ See [m.sh](m.sh) for cross‑compiling support.
 
 **Statically-linked setup**: Download a `-static` build from the [Releases](https://github.com/hexian000/kcptun-libev/releases) section — no additional runtime dependencies are needed.
 
-**Dynamically-linked setup**: 
+**Dynamically-linked setup**: The following dependencies should be installed.
 
 ```sh
 # Debian / Ubuntu
