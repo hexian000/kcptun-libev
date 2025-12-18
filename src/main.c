@@ -66,9 +66,8 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents);
 static void print_usage(char *argv0)
 {
 	(void)fprintf(
-		stderr, "%s",
-		PROJECT_NAME " " PROJECT_VER "\n"
-			     "  " PROJECT_HOMEPAGE "\n\n");
+		stderr, "%s %s\n  %s\n\n", PROJECT_NAME, PROJECT_VER,
+		PROJECT_HOMEPAGE);
 	(void)fprintf(stderr, "usage: %s <option>... \n", argv0);
 	(void)fprintf(
 		stderr, "%s",

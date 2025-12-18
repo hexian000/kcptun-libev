@@ -374,9 +374,9 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	}
 
 	if (!nobanner) {
-		buf = VBUF_APPENDSTR(
-			buf, "" PROJECT_NAME " " PROJECT_VER "\n"
-			     "  " PROJECT_HOMEPAGE "\n\n");
+		buf = VBUF_APPENDF(
+			buf, "%s %s\n  %s\n\n", PROJECT_NAME, PROJECT_VER,
+			PROJECT_HOMEPAGE);
 	}
 	{
 		const time_t server_time = time(NULL);

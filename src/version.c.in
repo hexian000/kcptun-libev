@@ -1,0 +1,5 @@
+
+const char *kcptun_libev_version(void)
+{
+	return "@PROJECT_VERSION_STRING@";
+}

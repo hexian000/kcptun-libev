@@ -4,8 +4,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+const char *kcptun_libev_version(void);
+
 #define PROJECT_NAME "@PROJECT_NAME@"
-#define PROJECT_VER "@PROJECT_VERSION_STRING@"
+#define PROJECT_VER (kcptun_libev_version())
 #define PROJECT_HOMEPAGE "@PROJECT_HOMEPAGE_URL@"
 
 #cmakedefine01 HAVE_SENDMMSG

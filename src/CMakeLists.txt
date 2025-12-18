@@ -124,3 +124,10 @@ endif()
 install(TARGETS kcptun-libev DESTINATION bin)
 
 configure_file(config.h.in config.h ESCAPE_QUOTES)
+configure_file(version.c.in version.c ESCAPE_QUOTES)
+
+target_sources(kcptun-libev
+    PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/config.h"
+    "${CMAKE_CURRENT_BINARY_DIR}/version.c"
+)
