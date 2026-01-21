@@ -163,7 +163,12 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	switch (ss->kcp_state) {
 	case STATE_CONNECT:
 		ss->kcp_state = STATE_CONNECTED;
+		/* fallthrough */
+	case STATE_CONNECTED:
 		break;
+	case STATE_LINGER:
+		/* drop incoming packets in linger state */
+		return;
 	case STATE_TIME_WAIT:
 		if (ss->last_reset == TSTAMP_NIL ||
 		    now - ss->last_reset > 1.0) {
