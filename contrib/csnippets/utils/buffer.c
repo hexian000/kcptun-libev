@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "buffer.h"
@@ -120,8 +120,10 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 		return vbuf;
 	}
 	/* 1 extra byte is reserved for detecting allocation failures */
-	const size_t want = vbuf->len + n + 1;
-	vbuf = vbuf_grow(vbuf, want);
+	if (n < SIZE_MAX - vbuf->len - 1) {
+		const size_t want = vbuf->len + n + 1;
+		vbuf = vbuf_grow(vbuf, want);
+	}
 	/* when failed, append as much as possible */
 	if (n > vbuf->cap - vbuf->len) {
 		n = vbuf->cap - vbuf->len;

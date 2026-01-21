@@ -1,4 +1,4 @@
-/* kcptun-libev (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "pktqueue.h"
@@ -38,7 +38,7 @@
 		char addr[64];                                                 \
 		format_sa(addr, sizeof(addr), &(msg)->addr.sa);                \
 		LOG_BIN_F(                                                     \
-			VERYVERBOSE, (msg)->buf, (msg)->len,                   \
+			VERYVERBOSE, (msg)->buf, (msg)->len, 0,                \
 			what ": %" PRIu16 " bytes, addr=%s", (msg)->len,       \
 			addr);                                                 \
 	} while (0)

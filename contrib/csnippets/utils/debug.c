@@ -1,7 +1,8 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "debug.h"
+#include "utils/ascii.h"
 #include "utils/buffer.h"
 
 #if WITH_LIBBACKTRACE
@@ -14,7 +15,6 @@
 #endif
 
 #include <assert.h>
-#include <ctype.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,7 +23,6 @@
 #include <wchar.h>
 #include <wctype.h>
 
-#define HARD_WRAP 80
 #define TAB_SPACE "    "
 #define TAB_WIDTH (sizeof(TAB_SPACE) - 1)
 
@@ -33,6 +32,7 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 {
 	const struct slog_extra_txt *extra = data;
 	size_t n = extra->len;
+	const size_t hardwrap = extra->hardwrap < 4 ? 80 : extra->hardwrap;
 	const char *restrict s = extra->data;
 	struct {
 		BUFFER_HDR;
@@ -83,7 +83,7 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 			width = 1;
 #endif
 		}
-		if (column + width > HARD_WRAP) {
+		if (column + width > hardwrap) {
 			/* hard wrap */
 			BUF_APPENDSTR(buf, " +\n" INDENT "     ");
 			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
@@ -114,6 +114,7 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 		buf.len = 0;
 	}
 	if (n > 0) {
+		/* omit bytes after the null terminator or undecodable code point */
 		(void)fprintf(f, INDENT " ... (omitting %zu bytes)\n", n);
 	}
 }
@@ -127,11 +128,11 @@ void slog_extra_bin(FILE *restrict f, void *restrict data)
 		unsigned char data[256];
 	} buf;
 	BUF_INIT(buf, 0);
-	const size_t wrap = 16;
+	const size_t binwrap = extra->binwrap < 1 ? 16 : extra->binwrap;
 	const unsigned char *restrict b = extra->data;
-	for (size_t i = 0; i < n; i += wrap) {
+	for (size_t i = 0; i < n; i += binwrap) {
 		BUF_APPENDF(buf, INDENT "%p: ", (void *)(b + i));
-		for (size_t j = 0; j < wrap; j++) {
+		for (size_t j = 0; j < binwrap; j++) {
 			if ((i + j) < n) {
 				BUF_APPENDF(buf, "%02" PRIX8 " ", b[i + j]);
 			} else {
@@ -139,11 +140,11 @@ void slog_extra_bin(FILE *restrict f, void *restrict data)
 			}
 		}
 		BUF_APPENDSTR(buf, " ");
-		for (size_t j = 0; j < wrap; j++) {
+		for (size_t j = 0; j < binwrap; j++) {
 			unsigned char ch = ' ';
 			if ((i + j) < n) {
 				ch = b[i + j];
-				if (((ch) & ~0x7f) || !isprint(ch)) {
+				if (!isascii(ch) || !isprint(ch)) {
 					ch = '.';
 				}
 			}
@@ -275,7 +276,7 @@ int debug_backtrace(void **restrict frames, int skip, const int len)
 #endif
 }
 
-static void slog_extra_stack_default(
+static void slog_extra_stack_nosym(
 	FILE *restrict f, struct slog_extra_stack *restrict extra)
 {
 	int index = 1;
@@ -296,10 +297,14 @@ void slog_extra_stack(FILE *restrict f, void *data)
 		.index = 1,
 	};
 	if (ctx.state == NULL) {
-		slog_extra_stack_default(f, extra);
+		slog_extra_stack_nosym(f, extra);
 		return;
 	}
 	for (size_t i = 0; i < extra->len; i++) {
+		if (i + 1 == extra->len &&
+		    (uintptr_t)extra->pc[i] == UINTPTR_MAX) {
+			break;
+		}
 		ctx.pc = (uintptr_t)extra->pc[i];
 		(void)backtrace_pcinfo(
 			ctx.state, ctx.pc, pcinfo_cb, error_cb, &ctx);
@@ -308,12 +313,12 @@ void slog_extra_stack(FILE *restrict f, void *data)
 #elif WITH_LIBUNWIND
 	unw_context_t uc;
 	if (unw_getcontext(&uc) != 0) {
-		slog_extra_stack_default(f, extra);
+		slog_extra_stack_nosym(f, extra);
 		return;
 	}
 	unw_cursor_t cursor;
 	if (unw_init_local(&cursor, &uc) != 0) {
-		slog_extra_stack_default(f, extra);
+		slog_extra_stack_nosym(f, extra);
 		return;
 	}
 	int index = 1;
@@ -336,7 +341,7 @@ void slog_extra_stack(FILE *restrict f, void *data)
 #elif HAVE_BACKTRACE && HAVE_BACKTRACE_SYMBOLS
 	char **syms = backtrace_symbols(extra->pc, extra->len);
 	if (syms == NULL) {
-		slog_extra_stack_default(f, extra);
+		slog_extra_stack_nosym(f, extra);
 		return;
 	}
 	int index = 1;
@@ -345,6 +350,6 @@ void slog_extra_stack(FILE *restrict f, void *data)
 	}
 	free(syms);
 #else
-	slog_extra_stack_default(f, extra);
+	slog_extra_stack_nosym(f, extra);
 #endif
 }

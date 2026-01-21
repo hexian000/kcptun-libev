@@ -1,4 +1,4 @@
-/* kcptun-libev (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #ifndef NONCE_H

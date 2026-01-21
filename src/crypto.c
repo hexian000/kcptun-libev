@@ -1,4 +1,4 @@
-/* kcptun-libev (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "crypto.h"
@@ -143,7 +143,7 @@ size_t crypto_open(
 			dst, cipher, mac, plain_size, nonce, impl->key);
 		if (r != 0) {
 			LOG_BIN_F(
-				VERYVERBOSE, cipher, cipher_size,
+				VERYVERBOSE, cipher, cipher_size, 0,
 				"crypto_open: error %d", r);
 			return 0;
 		}
@@ -156,7 +156,7 @@ size_t crypto_open(
 		impl->key);
 	if (r != 0) {
 		LOG_BIN_F(
-			VERYVERBOSE, cipher, cipher_size,
+			VERYVERBOSE, cipher, cipher_size, 0,
 			"crypto_open: aead error %d", r);
 		return 0;
 	}

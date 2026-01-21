@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #ifndef NET_URL_H
@@ -33,57 +33,57 @@ struct url_query_component {
  * @param buf_size Buffer size in bytes.
  * @param[in] username Username.
  * @param[in] password Password, can be NULL.
- * @return Number of bytes written to buffer.
+ * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-size_t
-url_escape_userinfo(char *buf, size_t buf_size, char *username, char *password);
+int url_escape_userinfo(
+	char *buf, size_t buf_size, char *username, char *password);
 
 /**
  * @brief Escape a path string to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @param[in] path The full path string like "/s1/s2/s3".
- * @return Number of bytes written to buffer.
+ * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-size_t url_escape_path(char *buf, size_t buf_size, const char *path);
+int url_escape_path(char *buf, size_t buf_size, const char *path);
 
 /**
  * @brief Escape a query string to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @param[in] query The full query string like "k1=v1&k2=v1".
- * @return Number of bytes written to buffer.
+ * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-size_t url_escape_query(char *buf, size_t buf_size, const char *query);
+int url_escape_query(char *buf, size_t buf_size, const char *query);
 
 /**
  * @brief Escape a path segment to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @param[in] segment The path segment.
- * @return Number of bytes written to buffer.
+ * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-size_t url_escape_path_segment(char *buf, size_t buf_size, const char *segment);
+int url_escape_path_segment(char *buf, size_t buf_size, const char *segment);
 
 /**
  * @brief Escape a query component to be safely used in URL.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @param[in] component The query component key or value.
- * @return Number of bytes written to buffer.
+ * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-size_t
-url_escape_query_component(char *buf, size_t buf_size, const char *component);
+int url_escape_query_component(
+	char *buf, size_t buf_size, const char *component);
 
 /**
  * @brief Build a URL string from structured data.
  * @param[out] buf Out buffer.
  * @param buf_size Buffer size in bytes.
  * @param[in] url URL struct.
- * @return Number of bytes written to buffer.
+ * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  * @see struct url
  */
-size_t url_build(char *buf, size_t buf_size, const struct url *url);
+int url_build(char *buf, size_t buf_size, const struct url *url);
 
 /**
  * @brief Parse a URL string into structured data.

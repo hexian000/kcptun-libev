@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #ifndef UTILS_DEBUG_H
@@ -10,17 +10,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* NOTICE: debugging utils may not be efficient */
-
 struct slog_extra_txt {
 	const char *data;
 	size_t len;
+	size_t hardwrap;
 };
 void slog_extra_txt(FILE *f, void *data);
 
 struct slog_extra_bin {
 	const void *data;
 	size_t len;
+	size_t binwrap;
 };
 void slog_extra_bin(FILE *f, void *data);
 
@@ -49,14 +49,14 @@ int debug_backtrace(void **frames, int calldepth, int len);
 			.func = slog_extra_stack,                              \
 			.data = &frames,                                       \
 		};                                                             \
-		slog_write(                                                    \
+		slog_printf(                                                   \
 			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
 			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_STACK(level, calldepth, msg)                                       \
 	LOG_STACK_F(level, calldepth, "%s", msg)
 
-#define LOG_TXT_F(level, txt, txtsize, format, ...)                            \
+#define LOG_TXT_F(level, txt, txtsize, wrap, format, ...)                      \
 	do {                                                                   \
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
@@ -64,19 +64,20 @@ int debug_backtrace(void **frames, int calldepth, int len);
 		struct slog_extra_txt extradata = {                            \
 			.data = (txt),                                         \
 			.len = (txtsize),                                      \
+			.hardwrap = (wrap),                                    \
 		};                                                             \
 		struct slog_extra extra = {                                    \
 			.func = slog_extra_txt,                                \
 			.data = &extradata,                                    \
 		};                                                             \
-		slog_write(                                                    \
+		slog_printf(                                                   \
 			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
 			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_TXT(level, txt, txtsize, msg)                                      \
-	LOG_TXT_F(level, txt, txtsize, "%s", msg)
+	LOG_TXT_F(level, txt, txtsize, 0, "%s", msg)
 
-#define LOG_BIN_F(level, bin, binsize, format, ...)                            \
+#define LOG_BIN_F(level, bin, binsize, wrap, format, ...)                      \
 	do {                                                                   \
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
@@ -84,17 +85,18 @@ int debug_backtrace(void **frames, int calldepth, int len);
 		struct slog_extra_bin extradata = {                            \
 			.data = (bin),                                         \
 			.len = (binsize),                                      \
+			.binwrap = (wrap),                                     \
 		};                                                             \
 		struct slog_extra extra = {                                    \
 			.func = slog_extra_bin,                                \
 			.data = &extradata,                                    \
 		};                                                             \
-		slog_write(                                                    \
+		slog_printf(                                                   \
 			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
 			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_BIN(level, bin, binsize, msg)                                      \
-	LOG_BIN_F(level, bin, binsize, "%s", msg)
+	LOG_BIN_F(level, bin, binsize, 0, "%s", msg)
 
 /* FAIL*: log a fatal message and abort the program */
 #define FAILMSGF(format, ...)                                                  \

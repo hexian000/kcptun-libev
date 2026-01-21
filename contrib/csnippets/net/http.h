@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #ifndef NET_HTTP_H
@@ -20,6 +20,7 @@ enum http_status_code {
 	HTTP_CREATED = 201,
 	HTTP_ACCEPTED = 202,
 	HTTP_NO_CONTENT = 204,
+	HTTP_PARTIAL_CONTENT = 206,
 
 	HTTP_MOVED_PERMANENTLY = 301,
 	HTTP_FOUND = 302,
@@ -36,10 +37,12 @@ enum http_status_code {
 	HTTP_ENTITY_TOO_LARGE = 413,
 	HTTP_UNSUPPORTED_MEDIA_TYPE = 415,
 	HTTP_EXPECTATION_FAILED = 417,
+	HTTP_TOO_MANY_REQUESTS = 429,
 
 	HTTP_INTERNAL_SERVER_ERROR = 500,
 	HTTP_NOT_IMPLEMENTED = 501,
 	HTTP_BAD_GATEWAY = 502,
+	HTTP_SERVICE_UNAVAILABLE = 503,
 	HTTP_GATEWAY_TIMEOUT = 504,
 };
 

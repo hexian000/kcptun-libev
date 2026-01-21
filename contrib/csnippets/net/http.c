@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "http.h"
@@ -8,20 +8,25 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-static const struct {
-	const uint_least16_t code;
+/* sorted by code for binary search, keep this order */
+struct http_status_info {
+	uint_least16_t code;
 	const char *name;
-	const char *info;
-} http_resp[] = {
+	const char *desc;
+};
+
+static const struct http_status_info http_resp[] = {
 	{ HTTP_CONTINUE, "Continue", NULL },
 
 	{ HTTP_OK, "OK", NULL },
 	{ HTTP_CREATED, "Created", NULL },
 	{ HTTP_ACCEPTED, "Accepted", NULL },
 	{ HTTP_NO_CONTENT, "No Content", NULL },
+	{ HTTP_PARTIAL_CONTENT, "Partial Content", NULL },
 
 	{ HTTP_MOVED_PERMANENTLY, "Moved Permanently", NULL },
 	{ HTTP_FOUND, "Found", NULL },
@@ -49,6 +54,8 @@ static const struct {
 	  "The server does not support the media type transmitted in the request." },
 	{ HTTP_EXPECTATION_FAILED, "Expectation Failed",
 	  "The expectation given in the Expect request-header field could not be met by this server." },
+	{ HTTP_TOO_MANY_REQUESTS, "Too Many Requests",
+	  "You have sent too many requests in a given amount of time." },
 
 	{ HTTP_INTERNAL_SERVER_ERROR, "Internal Server Error",
 	  "The server encountered an internal error." },
@@ -56,6 +63,8 @@ static const struct {
 	  "The requested method is not supported for current URL." },
 	{ HTTP_BAD_GATEWAY, "Bad Gateway",
 	  "The proxy server received an invalid response from an upstream server." },
+	{ HTTP_SERVICE_UNAVAILABLE, "Service Unavailable",
+	  "The server is temporarily unable to service your request." },
 	{ HTTP_GATEWAY_TIMEOUT, "Gateway Timeout",
 	  "The gateway did not receive a timely response from the upstream server or application." },
 };
@@ -108,7 +117,7 @@ char *http_parsehdr(char *buf, char **key, char **value)
 	next[0] = next[1] = '\0';
 	next += 2; /* skip crlf */
 
-	if (buf + 2 == next) {
+	if (buf[0] == '\0') {
 		/* EOF */
 		*key = *value = NULL;
 		return next;
@@ -124,21 +133,35 @@ char *http_parsehdr(char *buf, char **key, char **value)
 	return next;
 }
 
+#if HAVE_GMTIME_R
+#define GMTIME(timer) gmtime_r((timer), &(struct tm){ 0 })
+#else
+#define GMTIME(timer) gmtime((timer))
+#endif /* HAVE_GMTIME_R */
+
 size_t http_date(char *restrict buf, const size_t buf_size)
 {
 	/* RFC 7231: Section 7.1.1.1 */
 	static const char fmt[] = "%a, %d %b %Y %H:%M:%S GMT";
 	const time_t now = time(NULL);
-	const struct tm *restrict gmt = gmtime(&now);
+	const struct tm *restrict gmt = GMTIME(&now);
 	return strftime(buf, buf_size, fmt, gmt);
+}
+
+static int http_resp_comp(const void *key, const void *elem)
+{
+	const uint_least16_t code = *(const uint_least16_t *)key;
+	const struct http_status_info *info = elem;
+	return (code > info->code) - (code < info->code);
 }
 
 const char *http_status(const uint_least16_t code)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(http_resp); i++) {
-		if (http_resp[i].code == code) {
-			return http_resp[i].name;
-		}
+	const struct http_status_info *info =
+		bsearch(&code, http_resp, ARRAY_SIZE(http_resp),
+			sizeof(http_resp[0]), http_resp_comp);
+	if (info != NULL) {
+		return info->name;
 	}
 	return NULL;
 }
@@ -146,20 +169,16 @@ const char *http_status(const uint_least16_t code)
 int http_error(
 	char *restrict buf, const size_t buf_size, const uint_least16_t code)
 {
-	const char *name = NULL, *info = NULL;
-	for (size_t i = 0; i < ARRAY_SIZE(http_resp); i++) {
-		if (http_resp[i].code != code) {
-			continue;
-		}
-		name = http_resp[i].name;
-		info = http_resp[i].info;
-		if (info == NULL) {
-			info = name;
-		}
-		break;
-	}
-	if (name == NULL) {
+	const struct http_status_info *info =
+		bsearch(&code, http_resp, ARRAY_SIZE(http_resp),
+			sizeof(http_resp[0]), http_resp_comp);
+	if (info == NULL) {
 		return 0;
+	}
+	const char *name = info->name;
+	const char *desc = info->desc;
+	if (desc == NULL) {
+		desc = name;
 	}
 	char date_str[32];
 	const size_t date_len = http_date(date_str, sizeof(date_str));
@@ -174,5 +193,5 @@ int http_error(
 		"%s\n"
 		"</BODY></HTML>\n",
 		code, name, (int)date_len, date_str, code, name, code, name,
-		info);
+		desc);
 }

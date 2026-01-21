@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "hashtable.h"
@@ -392,7 +392,7 @@ struct hashtable *table_filter(
 #endif
 	const size_t capacity = table->capacity;
 	for (elemid_type bucket = 0; bucket < capacity; bucket++) {
-		size_t *last_next = &table->p[bucket].bucket;
+		elemid_type *last_next = &table->p[bucket].bucket;
 		for (size_t i = *last_next; i != ID_NIL; i = *last_next) {
 #ifndef NDEBUG
 			assert(version == table->version);
@@ -445,4 +445,19 @@ size_t table_size(const struct hashtable *restrict table)
 		return 0;
 	}
 	return table->size;
+}
+
+struct hashtable *table_clear(struct hashtable *restrict table)
+{
+	if (table == NULL) {
+		return NULL;
+	}
+	/* reset all buckets and elements */
+	init_elements(table, 0);
+	table->size = 0;
+	table->freelist = ID_NIL;
+#ifndef NDEBUG
+	table->version++;
+#endif
+	return table;
 }

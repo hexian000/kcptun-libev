@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "formats.h"
@@ -34,11 +34,11 @@ format_abnormal(char *restrict s, const size_t maxlen, const double value)
 	return snprintf(s, maxlen, "%e", value);
 }
 
-static char *si_prefix_pos[] = {
+static const char *const si_prefix_pos[] = {
 	"k", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q",
 };
 
-static char *si_prefix_neg[] = {
+static const char *const si_prefix_neg[] = {
 	"m", u8"μ", "n", "p", "f", "a", "z", "y", "r", "q",
 };
 
@@ -48,7 +48,7 @@ int format_si_prefix(char *restrict s, const size_t maxlen, const double value)
 		return format_abnormal(s, maxlen, value);
 	}
 	const double absvalue = fabs(value);
-	if (!(1e-30 < absvalue && absvalue < 1e+31)) {
+	if (!(1e-30 <= absvalue && absvalue < 1e+31)) {
 		return snprintf(s, maxlen, "%.2e", value);
 	}
 	const int e = (int)floor(log10(absvalue) / 3.0);
@@ -76,8 +76,9 @@ int format_iec_bytes(char *restrict s, const size_t maxlen, const double value)
 	if (!isnormal(value)) {
 		return format_abnormal(s, maxlen, value);
 	}
-	const int e = ((int)log2(fabs(value)) - 1) / 10;
-	const int i = CLAMP(e, 0, (int)ARRAY_SIZE(iec_units) - 1);
+	const double absvalue = fabs(value);
+	const int e = absvalue > 1.0 ? ((int)log2(absvalue) - 1) / 10 : 0.0;
+	const int i = MIN(e, (int)ARRAY_SIZE(iec_units) - 1);
 	const double v = ldexp(value, i * -10);
 	if (i > 0) {
 		if (-10.0 < v && v < 10.0) {
@@ -115,16 +116,17 @@ struct duration make_duration(const double seconds)
 
 struct duration make_duration_nanos(const int_least64_t nanos)
 {
-	int_fast64_t value = nanos;
+	uint_fast64_t value;
 	struct duration d;
-	if (value < INT64_C(0)) {
+	if (nanos < INT64_C(0)) {
 		d.sign = -1;
+		value = -(uint_fast64_t)nanos;
 	} else {
 		d.sign = 1;
+		value = (uint_fast64_t)nanos;
 	}
-	d.nano = (unsigned int)(value % 1000 * d.sign);
+	d.nano = (unsigned int)(value % 1000);
 	value /= 1000;
-	value *= d.sign;
 	d.micro = (unsigned int)(value % 1000);
 	value /= 1000;
 	d.milli = (unsigned int)(value % 1000);

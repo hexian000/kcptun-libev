@@ -1,4 +1,4 @@
-/* csnippets (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #ifndef ALGO_HASHTABLE_H
@@ -55,10 +55,13 @@ struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
 /**
  * @brief Insert or assign to an element in the table.
  * @param table Pointer to the table is invalidated after call.
- * @param key The key of the new element.
+ * @param key The key of the new element. The key data pointer should be
+ * contained within the element for proper lifetime management.
  * @param[inout] element The new element in, the replaced element out.
- * If allocation failed or the table size will exceed INT_MAX, no operation
- * is performed and the new element is returned.
+ * If insertion succeeds and no previous element exists, returns NULL.
+ * If the key already exists, returns the previous element.
+ * If allocation failed, no operation is performed and the new element
+ * is returned unchanged.
  * @return Pointer to the modified table.
  */
 struct hashtable *
@@ -79,8 +82,9 @@ bool table_find(
  * @brief Delete an element by key.
  * @param table Pointer to the table is invalidated after call.
  * @param key The key to find and delete.
- * @param[out] element The existing element or NULL.
- * @return Pointer to the modified table.
+ * @param[out] element If found, returns the deleted element when not NULL.
+ * If the key is not found, returns NULL when element is not NULL.
+ * @return Pointer to the modified table, or NULL if table was NULL.
  */
 struct hashtable *
 table_del(struct hashtable *table, struct hashkey key, void **element);
@@ -106,10 +110,19 @@ void table_iterate(
 
 /**
  * @brief Get the number of elements in a table.
- * @param table Pointer to a table.
- * @return The number of elements in the table.
+ * @param table Pointer to a table, can be NULL.
+ * @return The number of elements in the table, or 0 if table is NULL.
  */
 size_t table_size(const struct hashtable *table);
+
+/**
+ * @brief Remove all elements from a table.
+ * @param table Pointer to the table.
+ * @details This clears the table but preserves the allocated capacity.
+ * Does not free the stored elements - caller is responsible for that.
+ * @return Pointer to the cleared table, or NULL if table was NULL.
+ */
+struct hashtable *table_clear(struct hashtable *table);
 
 /** @} */
 

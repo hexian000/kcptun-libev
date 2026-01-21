@@ -1,4 +1,4 @@
-/* kcptun-libev (c) 2019-2025 He Xian <hexian000@outlook.com>
+/* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "session.h"
@@ -632,7 +632,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 					maddr_str, sizeof(maddr_str),
 					&msg->addr.sa);
 				LOG_BIN_F(
-					VERBOSE, key.data, key.len,
+					VERBOSE, key.data, key.len, 0,
 					"replacing service_id[%zu]: old=%s new=%s",
 					key.len, saddr_str, maddr_str);
 			}
@@ -665,7 +665,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		format_sa(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
-			INFO, svc->id, svc->idlen,
+			INFO, svc->id, svc->idlen, 0,
 			"service_id[%zu] listen: (%s, %s)", svc->idlen,
 			addr1_str, addr2_str);
 	}
@@ -713,7 +713,7 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 			saddr2_str, sizeof(saddr2_str),
 			&svc->server_addr[1].sa);
 		LOG_BIN_F(
-			INFO, svc->id, svc->idlen,
+			INFO, svc->id, svc->idlen, 0,
 			"service_id[%zu] connect: (%s, %s) -> (%s, %s)",
 			svc->idlen, caddr1_str, caddr2_str, saddr1_str,
 			saddr2_str);
@@ -840,7 +840,7 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 		}
 	}
 	LOG_BIN_F(
-		WARNING, msg->buf + msg->off, msg->len,
+		WARNING, msg->buf + msg->off, msg->len, 0,
 		"invalid session 0 message: %04" PRIX16 ", len=%04" PRIX16,
 		header.what, msg->len - SESSION0_HEADER_SIZE);
 }
