@@ -73,6 +73,7 @@ static void print_usage(char *argv0)
 		stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
 		"  -c, --config <file>        specify json config\n"
+		"  -C, --color                colorized log output using ANSI escape sequences\n"
 		"  -d, --daemonize            run in background and write logs to syslog\n"
 		"  -u, --user [user][:[group]]\n"
 		"                             run as the specified identity, e.g. `nobody:nogroup'\n"
@@ -118,6 +119,11 @@ static void parse_args(int argc, char **argv)
 		    strcmp(argv[i], "--config") == 0) {
 			OPT_REQUIRE_ARG(argc, argv, i);
 			args.conf_path = argv[++i];
+			continue;
+		}
+		if (strcmp(argv[i], "-C") == 0 ||
+		    strcmp(argv[i], "--color") == 0) {
+			slog_setoutput(SLOG_OUTPUT_TERMINAL, stdout);
 			continue;
 		}
 		if (strcmp(argv[i], "-u") == 0 ||

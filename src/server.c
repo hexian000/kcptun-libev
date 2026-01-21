@@ -803,6 +803,10 @@ struct vbuffer *server_stats(
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
+#define FORMAT_DURATION(name, value)                                           \
+	char name[16];                                                         \
+	(void)format_duration(name, sizeof(name), (value))
+
 	const struct link_stats *restrict last_stats = &s->last_stats;
 	const struct link_stats dstats = {
 		.tcp_rx = stats->tcp_rx - last_stats->tcp_rx,
@@ -836,12 +840,15 @@ struct vbuffer *server_stats(
 		(void)snprintf(
 			load_str, sizeof(load_str), "%.03f%%", load * 100);
 	}
+	FORMAT_DURATION(dt_str, make_duration(dt));
 	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
 	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
 	buf = VBUF_APPENDF(
-		buf, "  = load: %s; pkt: %s/s, %s/s; uptime: %s\n", load_str,
-		dpkt_rx, dpkt_tx, uptime_str);
+		buf, "  = load: %s (last %s); pkt: %s/s, %s/s; uptime: %s\n",
+		load_str, dt_str, dpkt_rx, dpkt_tx, uptime_str);
+
 #undef FORMAT_BYTES
+#undef FORMAT_DURATION
 
 	/* rotate stats */
 	s->last_stats = s->stats;
