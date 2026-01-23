@@ -23,9 +23,9 @@
 #include <stddef.h>
 #include <string.h>
 
-#define PKT_LOGV(what, msg)                                                    \
+#define PKT_LOGVV(what, msg)                                                   \
 	do {                                                                   \
-		if (!LOGLEVEL(VERBOSE)) {                                      \
+		if (!LOGLEVEL(VERYVERBOSE)) {                                  \
 			break;                                                 \
 		}                                                              \
 		char addr[64];                                                 \
@@ -130,7 +130,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
 			nbrecv += len;
-			PKT_LOGV("pkt recv", msg);
+			PKT_LOGVV("pkt recv", msg);
 		}
 		/* collect unused frames */
 		for (size_t i = n; i < nbatch; i++) {
@@ -180,7 +180,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		msg->len = (size_t)nbrecv;
 		msg->ts = now;
 		q->mq_recv[q->mq_recv_len++] = msg;
-		PKT_LOGV("pkt recv", msg);
+		PKT_LOGVV("pkt recv", msg);
 		s->stats.pkt_rx += nbrecv;
 		nrecv++;
 		navail--;
@@ -270,7 +270,7 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 		for (size_t i = 0; i < n; i++) {
 			struct msgframe *restrict msg = q->mq_send[nsend + i];
 			nbsend += msg->len;
-			PKT_LOGV("pkt send", msg);
+			PKT_LOGVV("pkt send", msg);
 			msgframe_delete(q, msg);
 		}
 		nsend += n;
@@ -323,7 +323,7 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 	}
 	for (size_t i = 0; i < nsend; i++) {
 		struct msgframe *restrict msg = q->mq_send[i];
-		PKT_LOGV("pkt send", msg);
+		PKT_LOGVV("pkt send", msg);
 		msgframe_delete(q, msg);
 	}
 	const size_t remain = count - nsend;
