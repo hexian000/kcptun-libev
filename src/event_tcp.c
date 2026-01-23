@@ -48,7 +48,7 @@ static void modify_io_events(
 #endif
 	}
 	if (!ev_is_active(watcher)) {
-		LOGV_F("io: fd=%d events=0x%x", fd, ioevents);
+		LOGV_F("io: fd=%d modified events=0x%x", fd, ioevents);
 		ev_io_start(loop, watcher);
 	}
 }
@@ -65,8 +65,8 @@ static void accept_one(
 		CLOSE_FD(fd);
 		return;
 	}
-	ss->kcp_state = STATE_CONNECT;
-	ss->tcp_state = STATE_CONNECTED;
+	ss->kcp_state = KCP_STATE_CONNECT;
+	ss->tcp_state = TCP_STATE_ESTABLISHED;
 	if (!kcp_sendmsg(ss, SMSG_DIAL)) {
 		LOGOOM();
 		CLOSE_FD(fd);
@@ -138,25 +138,45 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 void tcp_notify(struct session *restrict ss)
 {
 	switch (ss->tcp_state) {
-	case STATE_CONNECTED:
-	case STATE_LINGER:
+	case TCP_STATE_ESTABLISHED:
+	case TCP_STATE_LINGER:
 		break;
 	default:
 		return;
 	}
-	const bool is_linger = (ss->tcp_state == STATE_LINGER);
 	const bool has_data = (ss->wbuf_flush < ss->wbuf_next);
-	if (is_linger && !has_data) {
-		/* finish this connection gracefully */
-		session_tcp_stop(ss);
-		LOGD_F("session [%08" PRIX32 "] tcp: close", ss->conv);
-		return;
+	if ((ss->tcp_state == TCP_STATE_LINGER) && !has_data) {
+		/* TCP write direction finished */
+		if (ss->kcp_eof_sent) {
+			/* both directions closed, stop TCP */
+			session_tcp_stop(ss);
+			LOGD_F("session [%08" PRIX32 "] tcp: close", ss->conv);
+			return;
+		}
+		/* half-close: shutdown TCP write, but keep reading from TCP */
+		if (!ss->tcp_eof_sent) {
+			LOGD_F("session [%08" PRIX32 "] tcp: shutdown write",
+			       ss->conv);
+			const int fd = ss->w_socket.fd;
+			if (fd != -1) {
+				if (shutdown(fd, SHUT_WR) != 0) {
+					LOGW_F("shutdown: fd=%d %s", fd,
+					       strerror(errno));
+				}
+			}
+			ss->tcp_eof_sent = true;
+		}
 	}
 	int events = 0;
-	if (kcp_cansend(ss)) {
+	/* keep reading from TCP if:
+	 * 1. TCP is ESTABLISHED (not LINGER - in LINGER we only flush wbuf)
+	 * 2. we haven't sent EOF to KCP yet
+	 * 3. KCP can accept more data */
+	if (ss->tcp_state == TCP_STATE_ESTABLISHED && !ss->kcp_eof_sent &&
+	    kcp_cansend(ss)) {
 		events |= EV_READ;
 	}
-	if (is_linger || has_data) {
+	if (has_data) {
 		events |= EV_WRITE;
 	}
 	modify_io_events(ss->server->loop, &ss->w_socket, events);
@@ -211,9 +231,16 @@ static int tcp_recv(struct session *restrict ss)
 static void tcp_recv_all(struct session *restrict ss)
 {
 	switch (ss->tcp_state) {
-	case STATE_CONNECTED:
+	case TCP_STATE_ESTABLISHED:
 		break;
 	default:
+		return;
+	}
+	if (ss->kcp_eof_sent) {
+		/* already sent EOF to KCP, stop reading from TCP */
+		modify_io_events(
+			ss->server->loop, &ss->w_socket,
+			(ss->wbuf_flush < ss->wbuf_next) ? EV_WRITE : 0);
 		return;
 	}
 	int ret;
@@ -226,8 +253,15 @@ static void tcp_recv_all(struct session *restrict ss)
 		}
 	} while (ret == 0);
 	if (ret < 0) {
-		session_tcp_stop(ss);
+		/* TCP peer closed or error: send EOF to KCP (half-close) */
 		session_kcp_close(ss);
+		/* mark as sent even if kcp_close didn't send (e.g. KCP already closed)
+		 * to prevent busy-loop on readable socket after peer close */
+		ss->kcp_eof_sent = true;
+		/* check if we should close TCP too */
+		if (ss->kcp_eof_recv) {
+			session_tcp_stop(ss);
+		}
 	}
 }
 
@@ -279,15 +313,15 @@ static void connected_cb(struct session *restrict ss)
 		return;
 	}
 
-	ss->tcp_state = STATE_CONNECTED;
+	ss->tcp_state = TCP_STATE_ESTABLISHED;
 	LOGD_F("session [%08" PRIX32 "] tcp fd=%d: connected", ss->conv, fd);
 }
 
 void tcp_flush(struct session *restrict ss)
 {
 	switch (ss->tcp_state) {
-	case STATE_CONNECTED:
-	case STATE_LINGER:
+	case TCP_STATE_ESTABLISHED:
+	case TCP_STATE_LINGER:
 		break;
 	default:
 		return;
@@ -307,9 +341,9 @@ void tcp_socket_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_READ | EV_WRITE);
 
-	LOGV_F("io: fd=%d revents=0x%x", watcher->fd, revents);
+	LOGVV_F("io: fd=%d revents=0x%x", watcher->fd, revents);
 	struct session *restrict ss = watcher->data;
-	if (ss->tcp_state == STATE_CONNECT) {
+	if (ss->tcp_state == TCP_STATE_CONNECTING) {
 		connected_cb(ss);
 	}
 
@@ -319,7 +353,7 @@ void tcp_socket_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 
 	if (revents & EV_WRITE) {
 		tcp_flush(ss);
-		if (ss->tcp_state == STATE_CONNECTED &&
+		if (ss->tcp_state == TCP_STATE_ESTABLISHED &&
 		    ss->wbuf_flush == ss->wbuf_next) {
 			session_read_cb(ss);
 			return;

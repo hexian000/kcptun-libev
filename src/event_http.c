@@ -327,7 +327,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	}
 	const struct http_message *restrict hdr = &ctx->http_msg;
 	bool nobanner = true;
-	int state_level = STATE_CONNECTED;
+	int state_level = KCP_STATE_ESTABLISHED;
 	while (uri->query != NULL) {
 		struct url_query_component comp;
 		if (!url_query_component(&uri->query, &comp)) {
@@ -343,15 +343,15 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 			} else if (
 				strcmp(comp.value, "1") == 0 ||
 				strcmp(comp.value, "connected") == 0) {
-				state_level = STATE_CONNECTED;
+				state_level = KCP_STATE_ESTABLISHED;
 			} else if (
 				strcmp(comp.value, "2") == 0 ||
 				strcmp(comp.value, "active") == 0) {
-				state_level = STATE_LINGER;
+				state_level = KCP_STATE_LINGER;
 			} else if (
 				strcmp(comp.value, "3") == 0 ||
 				strcmp(comp.value, "all") == 0) {
-				state_level = STATE_MAX;
+				state_level = KCP_STATE_MAX;
 			}
 		}
 	}

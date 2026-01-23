@@ -137,8 +137,8 @@ static bool timeout_filt(
 	ASSERT(key.data == ss->key);
 	ev_tstamp not_seen = now - ss->created;
 	switch (ss->kcp_state) {
-	case STATE_INIT:
-	case STATE_CONNECT:
+	case KCP_STATE_CLOSED:
+	case KCP_STATE_CONNECT:
 		if (not_seen > s->dial_timeout) {
 			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
 			       ss->conv);
@@ -147,9 +147,20 @@ static bool timeout_filt(
 			break;
 		}
 		break;
-	case STATE_CONNECTED:
+	case KCP_STATE_ESTABLISHED:
 		if (ss->last_recv != TSTAMP_NIL) {
 			not_seen = now - ss->last_recv;
+		}
+		/* half-close: use linger timeout if EOF exchanged */
+		if (ss->kcp_eof_sent || ss->kcp_eof_recv) {
+			if (not_seen > s->linger) {
+				LOGD_F("session [%08" PRIX32 "] "
+				       "timeout: half-close linger",
+				       ss->conv);
+				session_tcp_stop(ss);
+				session_kcp_stop(ss);
+			}
+			break;
 		}
 		if (not_seen > s->session_timeout) {
 			LOGW_F("session [%08" PRIX32 "] "
@@ -165,7 +176,7 @@ static bool timeout_filt(
 			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		break;
-	case STATE_LINGER:
+	case KCP_STATE_LINGER:
 		if (ss->last_send != TSTAMP_NIL) {
 			not_seen = now - ss->last_send;
 		}
@@ -175,7 +186,7 @@ static bool timeout_filt(
 			session_kcp_stop(ss);
 		}
 		break;
-	case STATE_TIME_WAIT:
+	case KCP_STATE_TIME_WAIT:
 		if (ss->last_reset != TSTAMP_NIL) {
 			not_seen = now - ss->last_reset;
 		}

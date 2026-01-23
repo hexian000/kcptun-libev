@@ -53,17 +53,27 @@ enum session_messages {
 	SMSG_KEEPALIVE = 0x0003,
 };
 
-enum session_state {
-	STATE_INIT,
-	STATE_CONNECT,
-	STATE_CONNECTED,
-	STATE_LINGER,
-	STATE_TIME_WAIT,
+enum tcp_state {
+	TCP_STATE_CLOSED,
+	TCP_STATE_CONNECTING,
+	TCP_STATE_ESTABLISHED,
+	TCP_STATE_LINGER,
 
-	STATE_MAX,
+	TCP_STATE_MAX,
 };
 
-extern const char session_state_char[STATE_MAX];
+enum kcp_state {
+	KCP_STATE_CLOSED,
+	KCP_STATE_CONNECT,
+	KCP_STATE_ESTABLISHED,
+	KCP_STATE_LINGER,
+	KCP_STATE_TIME_WAIT,
+
+	KCP_STATE_MAX,
+};
+
+extern const char tcp_state_char[TCP_STATE_MAX];
+extern const char kcp_state_char[KCP_STATE_MAX];
 
 struct IKCPCB;
 
@@ -74,7 +84,8 @@ struct session {
 	unsigned char key[SESSION_KEY_SIZE];
 	struct server *server;
 	struct IKCPCB *kcp;
-	int tcp_state, kcp_state;
+	enum tcp_state tcp_state;
+	enum kcp_state kcp_state;
 	int kcp_flush;
 	uint32_t conv;
 	union sockaddr_max raddr;
@@ -89,6 +100,9 @@ struct session {
 	};
 	struct {
 		bool is_accepted : 1;
+		bool kcp_eof_sent : 1; /* sent SMSG_EOF to KCP */
+		bool kcp_eof_recv : 1; /* received SMSG_EOF from KCP */
+		bool tcp_eof_sent : 1; /* shutdown(fd, SHUT_WR) called */
 	};
 	struct vbuffer *rbuf, *wbuf;
 	size_t wbuf_flush, wbuf_next;

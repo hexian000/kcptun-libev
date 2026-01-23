@@ -665,7 +665,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 }
 
 struct server_stats_ctx {
-	size_t num_in_state[STATE_MAX];
+	size_t num_in_state[KCP_STATE_MAX];
 	size_t waitsnd;
 	int level;
 	ev_tstamp now;
@@ -685,9 +685,9 @@ static bool print_session_iter(
 	ctx->num_in_state[state]++;
 	const size_t waitsnd = (ss->kcp != NULL) ? ikcp_waitsnd(ss->kcp) : 0;
 	switch (state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-	case STATE_LINGER:
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
+	case KCP_STATE_LINGER:
 		ctx->waitsnd += waitsnd;
 		break;
 	default:
@@ -724,8 +724,8 @@ static bool print_session_iter(
 		ctx->buf,
 		"[%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%d rto=%d waitsnd=%zu rx/tx=%s/%s\n",
-		ss->conv, session_state_char[state], addr_str, not_seen, rtt,
-		rto, waitsnd, kcp_rx, kcp_tx);
+		ss->conv, kcp_state_char[state], addr_str, not_seen, rtt, rto,
+		waitsnd, kcp_rx, kcp_tx);
 #undef FORMAT_BYTES
 
 	return true;
@@ -744,10 +744,10 @@ static struct vbuffer *print_session_table(
 	return VBUF_APPENDF(
 		ctx.buf,
 		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; waitsnd=%zu\n\n",
-		table_size(s->sessions), ctx.num_in_state[STATE_CONNECT],
-		ctx.num_in_state[STATE_CONNECTED],
-		ctx.num_in_state[STATE_LINGER],
-		ctx.num_in_state[STATE_TIME_WAIT], ctx.waitsnd);
+		table_size(s->sessions), ctx.num_in_state[KCP_STATE_CONNECT],
+		ctx.num_in_state[KCP_STATE_ESTABLISHED],
+		ctx.num_in_state[KCP_STATE_LINGER],
+		ctx.num_in_state[KCP_STATE_TIME_WAIT], ctx.waitsnd);
 }
 
 static struct vbuffer *append_traffic_stats(

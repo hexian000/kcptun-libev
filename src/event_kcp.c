@@ -117,9 +117,9 @@ void kcp_recv(struct session *restrict ss)
 static void kcp_update(struct session *restrict ss)
 {
 	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-	case STATE_LINGER:
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
+	case KCP_STATE_LINGER:
 		break;
 	default:
 		return;

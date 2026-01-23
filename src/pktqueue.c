@@ -141,7 +141,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			LOG_F(DEBUG, "session [%08" PRIX32 "] kcp: accepted %s",
 			      conv, addr_str);
 		}
-		ss->kcp_state = STATE_CONNECT;
+		ss->kcp_state = KCP_STATE_CONNECT;
 	}
 
 	const ev_tstamp now = ev_now(s->loop);
@@ -161,13 +161,13 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		return;
 	}
 	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-		ss->kcp_state = STATE_CONNECTED;
+	case KCP_STATE_CONNECT:
+		ss->kcp_state = KCP_STATE_ESTABLISHED;
 		/* fallthrough */
-	case STATE_CONNECTED:
-	case STATE_LINGER:
+	case KCP_STATE_ESTABLISHED:
+	case KCP_STATE_LINGER:
 		break;
-	case STATE_TIME_WAIT:
+	case KCP_STATE_TIME_WAIT:
 		if (ss->last_reset == TSTAMP_NIL ||
 		    now - ss->last_reset > 1.0) {
 			ss0_reset(s, sa, conv);

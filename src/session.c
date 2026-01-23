@@ -32,9 +32,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char session_state_char[STATE_MAX] = {
-	[STATE_INIT] = ' ',   [STATE_CONNECT] = '>',   [STATE_CONNECTED] = '-',
-	[STATE_LINGER] = '.', [STATE_TIME_WAIT] = 'x',
+const char tcp_state_char[TCP_STATE_MAX] = {
+	[TCP_STATE_CLOSED] = 'x',
+	[TCP_STATE_CONNECTING] = '>',
+	[TCP_STATE_ESTABLISHED] = '-',
+	[TCP_STATE_LINGER] = '.',
+};
+
+const char kcp_state_char[KCP_STATE_MAX] = {
+	[KCP_STATE_CLOSED] = ' ',      [KCP_STATE_CONNECT] = '>',
+	[KCP_STATE_ESTABLISHED] = '-', [KCP_STATE_LINGER] = '.',
+	[KCP_STATE_TIME_WAIT] = 'x',
 };
 
 static void kcp_log(const char *log, struct IKCPCB *kcp, void *user)
@@ -98,9 +106,9 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 			LOGE_F("connect: %s", strerror(err));
 			return false;
 		}
-		ss->tcp_state = STATE_CONNECT;
+		ss->tcp_state = TCP_STATE_CONNECTING;
 	} else {
-		ss->tcp_state = STATE_CONNECTED;
+		ss->tcp_state = TCP_STATE_ESTABLISHED;
 	}
 
 	if (LOGLEVEL(INFO)) {
@@ -122,7 +130,7 @@ static bool session_on_msg(
 			break;
 		}
 		LOGD_F("session [%08" PRIX32 "] msg: dial", ss->conv);
-		if (ss->tcp_state != STATE_INIT) {
+		if (ss->tcp_state != TCP_STATE_CLOSED) {
 			break;
 		}
 		if (!forward_dial(ss, &ss->server->connect.sa)) {
@@ -141,12 +149,21 @@ static bool session_on_msg(
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
+		if (ss->kcp_eof_recv) {
+			/* duplicate EOF, ignore */
+			return true;
+		}
 		LOGI_F("session [%08" PRIX32 "] kcp: "
-		       "connection closed by peer",
+		       "eof received from peer",
 		       ss->conv);
-		ss->kcp_state = STATE_LINGER;
-		ss->tcp_state = STATE_LINGER;
+		ss->kcp_eof_recv = true;
+		/* half-close: shutdown TCP write, but keep reading */
+		ss->tcp_state = TCP_STATE_LINGER;
 		ss->wbuf_flush = ss->wbuf_next;
+		/* check if both directions are closed */
+		if (ss->kcp_eof_sent) {
+			ss->kcp_state = KCP_STATE_LINGER;
+		}
 		return true;
 	}
 	case SMSG_KEEPALIVE: {
@@ -210,9 +227,13 @@ static int ss_process(struct session *restrict ss)
 
 bool session_kcp_send(struct session *restrict ss)
 {
+	if (ss->kcp_eof_sent) {
+		/* already sent EOF, can't send more data */
+		return false;
+	}
 	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
 		break;
 	default:
 		return false;
@@ -231,9 +252,13 @@ bool session_kcp_send(struct session *restrict ss)
 
 void session_kcp_close(struct session *restrict ss)
 {
+	if (ss->kcp_eof_sent) {
+		/* already sent EOF */
+		return;
+	}
 	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
 		break;
 	default:
 		return;
@@ -243,8 +268,12 @@ void session_kcp_close(struct session *restrict ss)
 		session_kcp_stop(ss);
 		return;
 	}
-	LOGD_F("session [%08" PRIX32 "] kcp: close", ss->conv);
-	ss->kcp_state = STATE_LINGER;
+	ss->kcp_eof_sent = true;
+	LOGD_F("session [%08" PRIX32 "] kcp: eof sent", ss->conv);
+	/* check if both directions are closed */
+	if (ss->kcp_eof_recv) {
+		ss->kcp_state = KCP_STATE_LINGER;
+	}
 	if (ss->kcp_flush >= 1) {
 		session_kcp_flush(ss);
 	}
@@ -264,7 +293,7 @@ void session_kcp_flush(struct session *restrict ss)
 
 void session_tcp_stop(struct session *restrict ss)
 {
-	ss->tcp_state = STATE_TIME_WAIT;
+	ss->tcp_state = TCP_STATE_CLOSED;
 	ev_io *restrict w_socket = &ss->w_socket;
 	if (w_socket->fd == -1) {
 		return;
@@ -278,7 +307,7 @@ void session_tcp_stop(struct session *restrict ss)
 
 void session_kcp_stop(struct session *restrict ss)
 {
-	ss->kcp_state = STATE_TIME_WAIT;
+	ss->kcp_state = KCP_STATE_TIME_WAIT;
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
@@ -309,7 +338,10 @@ void session_free(struct session *restrict ss)
 void session_read_cb(struct session *restrict ss)
 {
 	int ret = 0;
-	while (ss->kcp_state == STATE_CONNECTED && ret == 0) {
+	/* process KCP messages even after sending EOF (half-close) */
+	while ((ss->kcp_state == KCP_STATE_ESTABLISHED ||
+		ss->kcp_state == KCP_STATE_LINGER) &&
+	       ret == 0) {
 		ret = ss_process(ss);
 	}
 	if (ret < 0) {
@@ -327,9 +359,9 @@ ss_flush_cb(struct ev_loop *loop, ev_idle *watcher, const int revents)
 	ev_idle_stop(loop, watcher);
 	struct session *restrict ss = watcher->data;
 	switch (ss->kcp_state) {
-	case STATE_CONNECT:
-	case STATE_CONNECTED:
-	case STATE_LINGER:
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
+	case KCP_STATE_LINGER:
 		break;
 	default:
 		return;
@@ -350,6 +382,8 @@ struct session *session_new(
 	const ev_tstamp now = ev_now(s->loop);
 	*ss = (struct session){
 		.server = s,
+		.tcp_state = TCP_STATE_CLOSED,
+		.kcp_state = KCP_STATE_CLOSED,
 		.kcp_flush = s->conf->kcp_flush,
 		.conv = conv,
 		.raddr = *addr,
@@ -588,7 +622,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	if (!table_find(s->sessions, hkey, (void **)&ss)) {
 		return true;
 	}
-	if (ss->kcp_state == STATE_TIME_WAIT) {
+	if (ss->kcp_state == KCP_STATE_TIME_WAIT) {
 		return true;
 	}
 	LOGI_F("session [%08" PRIX32 "] kcp: reset by peer", conv);
