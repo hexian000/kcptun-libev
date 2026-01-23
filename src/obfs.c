@@ -180,23 +180,23 @@ static void obfs_write_cb(struct ev_loop *loop, ev_io *watcher, int revents);
 
 static void obfs_sched_redial(struct obfs *restrict obfs);
 
-static void obfs_tcp_setup(const int fd)
+static void socket_tcp_quickack(const int fd, const bool enabled)
 {
-	socket_set_buffer(fd, 65536, 65536);
-	socket_set_tcp(fd, false, false);
-	if (setsockopt(
-		    fd, SOL_SOCKET, TCP_WINDOW_CLAMP, &(int){ 32768 },
-		    sizeof(int))) {
-		LOGW_F("TCP_WINDOW_CLAMP: %s", strerror(errno));
+	const int val = enabled ? 1 : 0;
+	if (setsockopt(fd, SOL_TCP, TCP_QUICKACK, &val, sizeof(val))) {
+		LOGW_F("TCP_QUICKACK: %s", strerror(errno));
 	}
 }
 
-static void obfs_tcp_quickack(const int fd, const bool enabled)
+static void obfs_tcp_setup(const int fd)
 {
-	const int val = enabled ? 1 : 0;
-	if (setsockopt(fd, SOL_SOCKET, TCP_QUICKACK, &val, sizeof(val))) {
-		LOGW_F("TCP_QUICKACK: %s", strerror(errno));
+	socket_set_buffer(fd, 1, 1);
+	socket_set_tcp(fd, true, false);
+	if (setsockopt(
+		    fd, SOL_TCP, TCP_WINDOW_CLAMP, &(int){ 1 }, sizeof(int))) {
+		LOGW_F("TCP_WINDOW_CLAMP: %s", strerror(errno));
 	}
+	socket_tcp_quickack(fd, false);
 }
 
 struct filter_compiler_ctx {
@@ -1703,8 +1703,6 @@ void obfs_fail_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 static void obfs_on_ready(struct obfs_ctx *restrict ctx)
 {
 	ev_set_cb(&ctx->w_read, obfs_fail_cb);
-	obfs_tcp_quickack(ctx->fd, false);
-
 	struct obfs *restrict obfs = ctx->obfs;
 	struct server *restrict s = obfs->server;
 	const bool is_client = !!(s->conf->mode & MODE_CLIENT);
