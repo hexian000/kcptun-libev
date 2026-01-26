@@ -175,7 +175,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		return;
 	default:
-		FAIL();
+		FAILMSGF("invalid session state: %d", ss->kcp_state);
 	}
 
 	const int r =

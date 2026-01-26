@@ -287,7 +287,7 @@ struct crypto *crypto_new(const char *method)
 		};
 	} break;
 	default:
-		FAIL();
+		FAILMSGF("invalid crypto method: %d", method);
 	}
 	return crypto;
 }

@@ -85,11 +85,11 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	/* Create client socket */
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	if (fd < 0) {
-		LOGE_F("socket: %s", strerror(errno));
+		LOG_PERROR("tcp socket");
 		return false;
 	}
 	if (!socket_set_nonblock(fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		LOG_PERROR("fcntl");
 		CLOSE_FD(fd);
 		return false;
 	}

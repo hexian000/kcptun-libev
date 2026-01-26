@@ -119,7 +119,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			return;
 		}
 		if (!socket_set_nonblock(fd)) {
-			LOGE_F("fcntl: %s", strerror(errno));
+			LOG_PERROR("fcntl");
 			CLOSE_FD(fd);
 			return;
 		}

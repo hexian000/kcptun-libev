@@ -77,7 +77,7 @@ static void crash_handler(const int signo)
 		}
 	}
 	if (sigaction(signo, act, NULL) != 0) {
-		LOGE_F("sigaction: %s", strerror(errno));
+		LOG_PERROR("sigaction");
 		_Exit(EXIT_FAILURE);
 	}
 	if (raise(signo)) {
@@ -95,7 +95,7 @@ static void set_crash_handler(void)
 		const int signo = sighandlers[i].signo;
 		struct sigaction *oact = &sighandlers[i].oact;
 		if (sigaction(signo, &act, oact) != 0) {
-			LOGE_F("sigaction: %s", strerror(errno));
+			LOG_PERROR("sigaction");
 		}
 	}
 }

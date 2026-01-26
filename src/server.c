@@ -42,11 +42,11 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	/* Create server socket */
 	const int fd = socket(sa->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if (fd < 0) {
-		LOGE_F("socket: %s", strerror(errno));
+		LOG_PERROR("tcp socket");
 		return -1;
 	}
 	if (!socket_set_nonblock(fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		LOG_PERROR("fcntl");
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -55,13 +55,13 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	/* Bind socket to address */
 	if (bind(fd, sa, getsocklen(sa)) != 0) {
-		LOGE_F("tcp bind: %s", strerror(errno));
+		LOG_PERROR("tcp bind");
 		CLOSE_FD(fd);
 		return -1;
 	}
 	/* Start listening on the socket */
 	if (listen(fd, SOMAXCONN)) {
-		LOGE_F("listen: %s", strerror(errno));
+		LOG_PERROR("tcp listen");
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -131,11 +131,11 @@ static bool udp_socket(
 {
 	/* Setup a udp socket. */
 	if ((udp->fd = socket(udp_af, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-		LOGE_F("udp socket: %s", strerror(errno));
+		LOG_PERROR("udp socket");
 		return false;
 	}
 	if (!socket_set_nonblock(udp->fd)) {
-		LOGE_F("fcntl: %s", strerror(errno));
+		LOG_PERROR("fcntl");
 		return false;
 	}
 	socket_set_reuseport(udp->fd, conf->udp_reuseport);
@@ -159,7 +159,7 @@ static void addr_set_any(union sockaddr_max *addr, const int family)
 	default:
 		break;
 	}
-	FAIL();
+	FAILMSGF("invalid address family: %d", family);
 }
 
 static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
@@ -199,7 +199,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			}
 		}
 		if (bind(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
-			LOGE_F("udp bind: %s", strerror(errno));
+			LOG_PERROR("udp bind");
 			return false;
 		}
 		if (LOGLEVEL(NOTICE)) {
@@ -220,7 +220,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			}
 		}
 		if (connect(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
-			LOGE_F("udp connect: %s", strerror(errno));
+			LOG_PERROR("udp connect");
 			return false;
 		}
 		copy_sa(&udp->kcp_connect.sa, &addr.sa);
@@ -273,7 +273,7 @@ size_t udp_overhead(const struct pktconn *restrict udp)
 	default:
 		break;
 	}
-	FAIL();
+	FAILMSGF("invalid address family: %d", udp->domain);
 }
 
 /* calculate max send size */

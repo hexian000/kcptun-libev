@@ -151,7 +151,8 @@ static bool sa_matches_inet(
 	const struct sockaddr_in *restrict bind,
 	const struct sockaddr_in *restrict dest)
 {
-	if (bind->sin_port != dest->sin_port) {
+	/* port 0 means any port (skip check) */
+	if (bind->sin_port != 0 && bind->sin_port != dest->sin_port) {
 		return false;
 	}
 	if (bind->sin_addr.s_addr != INADDR_ANY &&
@@ -165,7 +166,8 @@ static bool sa_matches_inet6(
 	const struct sockaddr_in6 *restrict bind,
 	const struct sockaddr_in6 *restrict dest)
 {
-	if (bind->sin6_port != dest->sin6_port) {
+	/* port 0 means any port (skip check) */
+	if (bind->sin6_port != 0 && bind->sin6_port != dest->sin6_port) {
 		return false;
 	}
 	if (!IN6_IS_ADDR_UNSPECIFIED(&bind->sin6_addr) &&
@@ -196,7 +198,7 @@ bool sa_matches(
 	default:
 		break;
 	}
-	FAIL();
+	FAILMSGF("invalid address family: %d", bind->sa_family);
 }
 
 static int format_sa_inet(
