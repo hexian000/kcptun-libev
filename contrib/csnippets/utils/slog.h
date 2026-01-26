@@ -157,4 +157,11 @@ void slog_printf(
 	} while (0)
 #define LOGVV(message) LOGVV_F("%s", message)
 
+/* Convenience macro for logging errors with errno */
+#define LOG_PERROR(what)                                                       \
+	do {                                                                   \
+		const int err = errno;                                         \
+		LOGE_F("%s: [%d] %s", what, err, strerror(errno));             \
+	} while (0)
+
 #endif /* UTILS_SLOG_H */
