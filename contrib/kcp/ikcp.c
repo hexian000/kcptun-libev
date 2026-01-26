@@ -141,10 +141,11 @@ struct mcache *ikcp_segment_pool = NULL;
 static IKCPSEG *ikcp_segment_new(ikcpcb *kcp, int size)
 {
 	struct mcache *restrict pool = ikcp_segment_pool;
-	assert(0 < size && (sizeof(IKCPSEG) + (size_t)size) <= pool->elem_size);
+	assert(size > 0);
 	if (pool == NULL) {
 		return (IKCPSEG *)ikcp_malloc(sizeof(IKCPSEG) + size);
 	}
+	assert((sizeof(IKCPSEG) + (size_t)size) <= pool->elem_size);
 	return mcache_get(pool);
 }
 
@@ -154,6 +155,7 @@ static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
 	struct mcache *restrict pool = ikcp_segment_pool;
 	if (pool == NULL) {
 		ikcp_free(seg);
+		return;
 	}
 	return mcache_put(pool, seg);
 }
@@ -161,12 +163,12 @@ static void ikcp_segment_delete(ikcpcb *kcp, IKCPSEG *seg)
 // write log
 void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...)
 {
+	if ((mask & kcp->logmask) == 0 || kcp->writelog == NULL)
+		return;
 	char buffer[1024];
 	va_list argptr;
-	if ((mask & kcp->logmask) == 0 || kcp->writelog == 0)
-		return;
 	va_start(argptr, fmt);
-	vsprintf(buffer, fmt, argptr);
+	vsnprintf(buffer, sizeof(buffer), fmt, argptr);
 	va_end(argptr);
 	kcp->writelog(buffer, kcp, kcp->user);
 }
