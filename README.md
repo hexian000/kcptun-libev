@@ -252,7 +252,7 @@ Common fields in `server.json`/`client.json`:
 - Client: `listen` defines the local TCP address; traffic is sent to `kcp_connect`.
 - Server: receives on `kcp_bind` and forwards connections to `connect`.
 - Setting `password` or `psk` is strongly recommended on public networks.
-- `loglevel`: 0–7 map to Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose. The default is 4 (Notice). Higher levels can affect performance.
+- `loglevel`: 0–8 map to Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose, VeryVerbose. The default is 4 (Notice). Higher levels can affect performance.
 
 #### Rendezvous Mode
 
