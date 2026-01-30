@@ -282,15 +282,17 @@ void drop_privileges(const struct user_ident *restrict ident)
 	if (ident->gid != (gid_t)-1) {
 		LOGD_F("setgid: %jd", (intmax_t)ident->gid);
 		if (setgid(ident->gid) != 0 || setegid(ident->gid) != 0) {
-			LOGW_F("unable to drop group privileges: %s",
-			       strerror(errno));
+			const int err = errno;
+			LOGW_F("unable to drop group privileges: (%d) %s", err,
+			       strerror(err));
 		}
 	}
 	if (ident->uid != (uid_t)-1) {
 		LOGD_F("setuid: %jd", (intmax_t)ident->uid);
 		if (setuid(ident->uid) != 0 || seteuid(ident->uid) != 0) {
-			LOGW_F("unable to drop user privileges: %s",
-			       strerror(errno));
+			const int err = errno;
+			LOGW_F("unable to drop user privileges: (%d) %s", err,
+			       strerror(err));
 		}
 	}
 }
@@ -326,7 +328,8 @@ void daemonize(
 	}
 	/* In the child, call setsid(). */
 	if (setsid() < 0) {
-		LOGW_F("setsid: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("setsid: (%d) %s", err, strerror(err));
 	}
 	/* In the child, call fork() again. */
 	{
@@ -359,7 +362,8 @@ void daemonize(
            involuntarily blocks mount points from being unmounted. */
 	if (!nochdir) {
 		if (chdir("/") != 0) {
-			LOGW_F("chdir: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("chdir: (%d) %s", err, strerror(err));
 		}
 	}
 	/* In the daemon process, drop privileges */
@@ -381,9 +385,6 @@ void daemonize(
 	}
 	/* Close the anonymous pipe. */
 	CLOSE_FD(fd[1]);
-
-	/* Set logging output to syslog. */
-	slog_setoutput(SLOG_OUTPUT_SYSLOG, "kcptun-libev");
 }
 
 /** Read a timespec as signed 64-bit nanoseconds. */

@@ -50,6 +50,7 @@ FILE *slog_output;
 mtx_t slog_output_mu;
 
 atomic_int slog_level_ = LOG_LEVEL_VERBOSE;
+atomic_uint slog_flags_ = 0;
 static _Atomic(slog_printer_fn) slog_printer;
 static _Atomic(const char *) slog_fileprefix;
 
@@ -77,6 +78,7 @@ static void slog_init(void)
 {
 	THRD_ASSERT(mtx_init(&slog_output_mu, mtx_plain));
 	atomic_init(&slog_level_, LOG_LEVEL_SILENCE);
+	atomic_init(&slog_flags_, 0);
 	atomic_init(&slog_printer, NULL);
 	atomic_init(&slog_fileprefix, NULL);
 }
@@ -84,6 +86,7 @@ static void slog_init(void)
 #define SLOG_INIT() call_once(&slog_init_flag, &slog_init)
 #else
 int slog_level_ = LOG_LEVEL_SILENCE;
+unsigned int slog_flags_ = 0;
 static slog_printer_fn slog_printer = NULL;
 static const char *slog_fileprefix = NULL;
 
@@ -101,6 +104,12 @@ static struct {
 #define SLOG_INIT() ((void)(0))
 #endif /* SLOG_MT_SAFE */
 
+#if HAVE_GMTIME_R
+#define GMTIME(timer) gmtime_r((timer), &(struct tm){ 0 })
+#else
+#define GMTIME(timer) gmtime((timer))
+#endif /* HAVE_GMTIME_R */
+
 #if HAVE_LOCALTIME_R
 #define LOCALTIME(timer) localtime_r((timer), &(struct tm){ 0 })
 #else
@@ -111,15 +120,24 @@ static struct {
 static size_t slog_timestamp(
 	char *restrict s, const size_t maxsize, const time_t *restrict timer)
 {
-	const size_t len = sizeof("2006-01-02T15:04:05-07:00") - 1;
+	const size_t len = sizeof("2006-01-02T15:04:05-07:00") - sizeof("");
 	if (maxsize < len) {
 		return 0;
 	}
-	const size_t ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
-	if (ret != sizeof("2006-01-02T15:04:05-0700") - 1) {
+	const unsigned int flags = ATOMIC_LOAD(&slog_flags_);
+	size_t ftlen;
+	if (flags & SLOG_FLAG_UTC) {
+		ftlen = strftime(s, maxsize, "%FT%TZ", GMTIME(timer));
+		if (ftlen != sizeof("2006-01-02T15:04:05Z") - sizeof("")) {
+			return 0;
+		}
+		return ftlen;
+	}
+	ftlen = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
+	if (ftlen != sizeof("2006-01-02T15:04:05-0700") - sizeof("")) {
 		return 0;
 	}
-	const char *restrict tz = s + ret;
+	const char *restrict tz = s + ftlen;
 	char *restrict e = s + len;
 	*--e = *--tz;
 	*--e = *--tz;
@@ -266,6 +284,12 @@ void slog_setlevel(const int level)
 {
 	SLOG_INIT();
 	ATOMIC_STORE(&slog_level_, level);
+}
+
+void slog_setflags(unsigned int flags)
+{
+	SLOG_INIT();
+	ATOMIC_STORE(&slog_flags_, flags);
 }
 
 void slog_setoutput(const int type, ...)

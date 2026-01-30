@@ -321,6 +321,7 @@ struct config *conf_read(const char *path)
 {
 	struct config *conf = malloc(sizeof(struct config));
 	if (conf == NULL) {
+		LOGOOM();
 		return NULL;
 	}
 	*conf = conf_default();

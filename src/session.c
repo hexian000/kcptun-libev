@@ -34,7 +34,7 @@
 
 const char tcp_state_char[TCP_STATE_MAX] = {
 	[TCP_STATE_CLOSED] = 'x',
-	[TCP_STATE_CONNECTING] = '>',
+	[TCP_STATE_CONNECT] = '>',
 	[TCP_STATE_ESTABLISHED] = '-',
 	[TCP_STATE_LINGER] = '.',
 };
@@ -49,7 +49,7 @@ static void kcp_log(const char *log, struct IKCPCB *kcp, void *user)
 {
 	UNUSED(kcp);
 	struct session *restrict ss = user;
-	LOGV_F("session [%08" PRIX32 "] kcp internal: %s", ss->conv, log);
+	LOGV_F("[session:%08" PRIX32 "] kcp internal: %s", ss->conv, log);
 }
 
 static ikcpcb *
@@ -103,10 +103,10 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	if (connect(fd, sa, getsocklen(sa)) != 0) {
 		const int err = errno;
 		if (err != EINTR && err != EINPROGRESS) {
-			LOGE_F("connect: %s", strerror(err));
+			LOGE_F("connect: (%d) %s", err, strerror(err));
 			return false;
 		}
-		ss->tcp_state = TCP_STATE_CONNECTING;
+		ss->tcp_state = TCP_STATE_CONNECT;
 	} else {
 		ss->tcp_state = TCP_STATE_ESTABLISHED;
 	}
@@ -114,7 +114,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), sa);
-		LOG_F(INFO, "session [%08" PRIX32 "] tcp: connect %s", ss->conv,
+		LOG_F(INFO, "[session:%08" PRIX32 "] tcp: connect %s", ss->conv,
 		      addr_str);
 	}
 	session_tcp_start(ss, fd);
@@ -129,7 +129,7 @@ static bool session_on_msg(
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
-		LOGD_F("session [%08" PRIX32 "] msg: dial", ss->conv);
+		LOGD_F("[session:%08" PRIX32 "] msg: dial", ss->conv);
 		if (ss->tcp_state != TCP_STATE_CLOSED) {
 			break;
 		}
@@ -140,7 +140,7 @@ static bool session_on_msg(
 	}
 	case SMSG_PUSH: {
 		const size_t navail = (size_t)hdr->len - TLV_HEADER_SIZE;
-		LOGV_F("session [%08" PRIX32 "] msg: push, %zu bytes", ss->conv,
+		LOGV_F("[session:%08" PRIX32 "] msg: push, %zu bytes", ss->conv,
 		       navail);
 		ss->wbuf_flush = TLV_HEADER_SIZE;
 		return true;
@@ -153,7 +153,7 @@ static bool session_on_msg(
 			/* duplicate EOF, ignore */
 			return true;
 		}
-		LOGI_F("session [%08" PRIX32 "] kcp: "
+		LOGI_F("[session:%08" PRIX32 "] kcp: "
 		       "eof received from peer",
 		       ss->conv);
 		ss->kcp_eof_recv = true;
@@ -170,7 +170,7 @@ static bool session_on_msg(
 		if (hdr->len != TLV_HEADER_SIZE) {
 			break;
 		}
-		LOGD_F("session [%08" PRIX32 "] msg: keepalive", ss->conv);
+		LOGD_F("[session:%08" PRIX32 "] msg: keepalive", ss->conv);
 		if (ss->is_accepted) {
 			if (!kcp_sendmsg(ss, SMSG_KEEPALIVE)) {
 				return false;
@@ -180,7 +180,7 @@ static bool session_on_msg(
 	}
 	default:;
 	}
-	LOGE_F("session [%08" PRIX32 "] msg: error "
+	LOGE_F("[session:%08" PRIX32 "] msg: error "
 	       "msg=%04" PRIX16 ", len=%04" PRIX16,
 	       ss->conv, hdr->msg, hdr->len);
 	return false;
@@ -269,7 +269,7 @@ void session_kcp_close(struct session *restrict ss)
 		return;
 	}
 	ss->kcp_eof_sent = true;
-	LOGD_F("session [%08" PRIX32 "] kcp: eof sent", ss->conv);
+	LOGD_F("[session:%08" PRIX32 "] kcp: eof sent", ss->conv);
 	/* check if both directions are closed */
 	if (ss->kcp_eof_recv) {
 		ss->kcp_state = KCP_STATE_LINGER;
@@ -298,7 +298,7 @@ void session_tcp_stop(struct session *restrict ss)
 	if (w_socket->fd == -1) {
 		return;
 	}
-	LOGD_F("session [%08" PRIX32 "] tcp: stop, fd=%d", ss->conv,
+	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: stop", ss->conv,
 	       w_socket->fd);
 	ev_io_stop(ss->server->loop, w_socket);
 	CLOSE_FD(ss->w_socket.fd);
@@ -318,7 +318,7 @@ void session_kcp_stop(struct session *restrict ss)
 
 void session_tcp_start(struct session *restrict ss, const int fd)
 {
-	LOGD_F("session [%08" PRIX32 "] tcp: start, fd=%d", ss->conv, fd);
+	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: start", ss->conv, fd);
 	/* Initialize and start watchers to transfer data */
 	struct ev_loop *loop = ss->server->loop;
 	ev_io *restrict w_socket = &ss->w_socket;
@@ -625,7 +625,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	if (ss->kcp_state == KCP_STATE_TIME_WAIT) {
 		return true;
 	}
-	LOGI_F("session [%08" PRIX32 "] kcp: reset by peer", conv);
+	LOGI_F("[session:%08" PRIX32 "] kcp: reset by peer", conv);
 	session_tcp_stop(ss);
 	session_kcp_stop(ss);
 	return true;

@@ -166,16 +166,19 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 {
 	const int fd = socket(sa->sa_family, SOCK_DGRAM, IPPROTO_UDP);
 	if (fd < 0) {
-		LOGW_F("socket: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("socket: (%d) %s", err, strerror(err));
 		return false;
 	}
 	if (connect(fd, sa, getsocklen(sa))) {
-		LOGW_F("connect: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("connect: (%d) %s", err, strerror(err));
 		return false;
 	}
 	socklen_t len = sizeof(*addr);
 	if (getsockname(fd, &addr->sa, &len)) {
-		LOGW_F("getsockname: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("getsockname: (%d) %s", err, strerror(err));
 		return false;
 	}
 	CLOSE_FD(fd);
@@ -569,14 +572,14 @@ static void udp_free(struct pktconn *restrict conn)
 static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 {
 	if (l->fd != -1) {
-		LOGD_F("listener close: fd=%d", l->fd);
+		LOGD_F("listener [fd:%d] close", l->fd);
 		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
 		CLOSE_FD(l->fd);
 		l->fd = -1;
 	}
 	if (l->fd_http != -1) {
-		LOGD_F("http listener close: fd=%d", l->fd_http);
+		LOGD_F("http listener [fd:%d] close", l->fd_http);
 		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
 		CLOSE_FD(l->fd_http);

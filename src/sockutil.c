@@ -34,12 +34,14 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 {
 	int val = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val))) {
-		LOGW_F("SO_REUSEADDR: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_REUSEADDR: (%d) %s", err, strerror(err));
 	}
 #ifdef SO_REUSEPORT
 	val = reuseport ? 1 : 0;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(val))) {
-		LOGW_F("SO_REUSEPORT: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_REUSEPORT: (%d) %s", err, strerror(err));
 	}
 #else
 	if (reuseport) {
@@ -52,11 +54,13 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 {
 	int val = nodelay ? 1 : 0;
 	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val))) {
-		LOGW_F("TCP_NODELAY: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("TCP_NODELAY: (%d) %s", err, strerror(err));
 	}
 	val = keepalive ? 1 : 0;
 	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val))) {
-		LOGW_F("SO_KEEPALIVE: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_KEEPALIVE: (%d) %s", err, strerror(err));
 	}
 }
 
@@ -64,12 +68,14 @@ void socket_set_buffer(const int fd, int send, int recv)
 {
 	if (send > 0) {
 		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send, sizeof(send))) {
-			LOGW_F("SO_SNDBUF: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("SO_SNDBUF: (%d) %s", err, strerror(err));
 		}
 	}
 	if (recv > 0) {
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &recv, sizeof(recv))) {
-			LOGW_F("SO_RCVBUF: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("SO_RCVBUF: (%d) %s", err, strerror(err));
 		}
 	}
 }
@@ -82,7 +88,8 @@ void socket_bind_netdev(const int fd, const char *netdev)
 	ifname[sizeof(ifname) - 1] = '\0';
 	if (setsockopt(
 		    fd, SOL_SOCKET, SO_BINDTODEVICE, ifname, sizeof(ifname))) {
-		LOGW_F("SO_BINDTODEVICE: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_BINDTODEVICE: (%d) %s", err, strerror(err));
 	}
 #else
 	(void)fd;
@@ -97,7 +104,8 @@ int socket_get_error(const int fd)
 	int value = 0;
 	socklen_t len = sizeof(value);
 	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &len)) {
-		LOGW_F("SO_ERROR: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("SO_ERROR: (%d) %s", err, strerror(err));
 	}
 	return value;
 }

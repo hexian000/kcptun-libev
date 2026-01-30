@@ -140,7 +140,7 @@ static bool timeout_filt(
 	case KCP_STATE_CLOSED:
 	case KCP_STATE_CONNECT:
 		if (not_seen > s->dial_timeout) {
-			LOGW_F("session [%08" PRIX32 "] timeout: kcp connect",
+			LOGW_F("[session:%08" PRIX32 "] timeout: kcp connect",
 			       ss->conv);
 			session_tcp_stop(ss);
 			session_kcp_close(ss);
@@ -154,7 +154,7 @@ static bool timeout_filt(
 		/* half-close: use linger timeout if EOF exchanged */
 		if (ss->kcp_eof_sent || ss->kcp_eof_recv) {
 			if (not_seen > s->linger) {
-				LOGD_F("session [%08" PRIX32 "] "
+				LOGD_F("[session:%08" PRIX32 "] "
 				       "timeout: half-close linger",
 				       ss->conv);
 				session_tcp_stop(ss);
@@ -163,7 +163,7 @@ static bool timeout_filt(
 			break;
 		}
 		if (not_seen > s->session_timeout) {
-			LOGW_F("session [%08" PRIX32 "] "
+			LOGW_F("[session:%08" PRIX32 "] "
 			       "timeout: not seen in %.01fs",
 			       ss->conv, not_seen);
 			session_tcp_stop(ss);
@@ -171,7 +171,7 @@ static bool timeout_filt(
 			break;
 		}
 		if (!ss->is_accepted && not_seen > s->session_keepalive) {
-			LOGD_F("session [%08" PRIX32 "] kcp: send keepalive",
+			LOGD_F("[session:%08" PRIX32 "] kcp: send keepalive",
 			       ss->conv);
 			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
@@ -181,7 +181,7 @@ static bool timeout_filt(
 			not_seen = now - ss->last_send;
 		}
 		if (not_seen > s->linger) {
-			LOGD_F("session [%08" PRIX32 "] timeout: linger",
+			LOGD_F("[session:%08" PRIX32 "] timeout: linger",
 			       ss->conv);
 			session_kcp_stop(ss);
 		}

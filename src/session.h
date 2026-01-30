@@ -55,7 +55,7 @@ enum session_messages {
 
 enum tcp_state {
 	TCP_STATE_CLOSED,
-	TCP_STATE_CONNECTING,
+	TCP_STATE_CONNECT,
 	TCP_STATE_ESTABLISHED,
 	TCP_STATE_LINGER,
 

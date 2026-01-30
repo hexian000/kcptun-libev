@@ -62,7 +62,7 @@ static bool kcp_send(
 	if (r < 0) {
 		return false;
 	}
-	LOGV_F("session [%08" PRIX32 "] kcp: send %zu bytes", ss->conv, len);
+	LOGV_F("[session:%08" PRIX32 "] kcp: send %zu bytes", ss->conv, len);
 	ss->last_send = ev_now(ss->server->loop);
 	return true;
 }
@@ -108,7 +108,7 @@ void kcp_recv(struct session *restrict ss)
 	if (nrecv > 0) {
 		ss->wbuf->len += nrecv;
 		ss->last_recv = ev_now(ss->server->loop);
-		LOGV_F("session [%08" PRIX32 "] kcp: "
+		LOGV_F("[session:%08" PRIX32 "] kcp: "
 		       "recv %zu bytes, cap: %zu bytes",
 		       ss->conv, nrecv, cap);
 	}

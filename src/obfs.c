@@ -325,7 +325,8 @@ static void socket_tcp_quickack(const int fd, const bool enabled)
 {
 	const int val = enabled ? 1 : 0;
 	if (setsockopt(fd, SOL_TCP, TCP_QUICKACK, &val, sizeof(val))) {
-		LOGW_F("TCP_QUICKACK: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("TCP_QUICKACK: (%d) %s", err, strerror(err));
 	}
 }
 
@@ -335,7 +336,8 @@ static void obfs_tcp_setup(const int fd)
 	socket_set_tcp(fd, true, false);
 	if (setsockopt(
 		    fd, SOL_TCP, TCP_WINDOW_CLAMP, &(int){ 1 }, sizeof(int))) {
-		LOGW_F("TCP_WINDOW_CLAMP: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("TCP_WINDOW_CLAMP: (%d) %s", err, strerror(err));
 	}
 	socket_tcp_quickack(fd, false);
 }
@@ -506,8 +508,9 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	if (conf->netdev != NULL) {
 		ifindex = if_nametoindex(conf->netdev);
 		if (ifindex == 0) {
-			LOGW_F("obfs invalid netdev `%s': %s", conf->netdev,
-			       strerror(errno));
+			const int err = errno;
+			LOGW_F("obfs invalid netdev `%s': (%d) %s",
+			       conf->netdev, err, strerror(err));
 		} else {
 			LOGD_F("obfs netdev `%s': index=%d", conf->netdev,
 			       ifindex);
@@ -538,7 +541,8 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 		FAILMSGF("invalid address family: %d", obfs->domain);
 	}
 	if (bind(obfs->cap_fd, (struct sockaddr *)&addr, sizeof(addr))) {
-		LOGW_F("cap bind: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("cap bind: (%d) %s", err, strerror(err));
 	}
 	struct sock_filter filter[32];
 	struct sock_fprog fprog = {
@@ -552,7 +556,8 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	if (setsockopt(
 		    obfs->cap_fd, SOL_SOCKET, SO_ATTACH_FILTER, &fprog,
 		    sizeof(fprog))) {
-		LOGW_F("cap filter: %s", strerror(errno));
+		const int err = errno;
+		LOGW_F("cap filter: (%d) %s", err, strerror(err));
 	}
 	if (LOGLEVEL(NOTICE)) {
 		char addr_str[64];
@@ -690,7 +695,9 @@ static bool obfs_tcp_send(
 		       getsocklen(&daddr.sa));
 	if (nsent < 0) {
 		if (!IS_TRANSIENT_ERROR(errno)) {
-			LOGW_F("obfs tcp raw send: %s", strerror(errno));
+			const int err = errno;
+			LOGW_F("obfs tcp raw send: (%d) %s", err,
+			       strerror(err));
 		}
 		return false;
 	}
@@ -1041,7 +1048,7 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
-			LOGE_F("obfs: %s", strerror(err));
+			LOGE_F("obfs: (%d) %s", err, strerror(err));
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
@@ -1239,7 +1246,8 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		if (connect(fd, sa, getsocklen(sa))) {
 			const int err = errno;
 			if (err != EINTR && err != EINPROGRESS) {
-				LOGE_F("obfs tcp connect: %s", strerror(err));
+				LOGE_F("obfs tcp connect: (%d) %s", err,
+				       strerror(err));
 				CLOSE_FD(fd);
 				obfs_ctx_free(loop, ctx);
 				return false;
@@ -2238,7 +2246,7 @@ void obfs_accept_cb(
 			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
-			LOGE_F("accept: %s", strerror(err));
+			LOGE_F("accept: (%d) %s", err, strerror(err));
 			/* sleep for a while, see obfs_listener_cb */
 			ev_io_stop(loop, watcher);
 			ev_timer_start(loop, &obfs->w_listener);
@@ -2341,12 +2349,14 @@ void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 			return;
 		}
 		if (err == ECONNREFUSED || err == ECONNRESET) {
-			OBFS_CTX_LOG_F(DEBUG, ctx, "recv: %s", strerror(err));
+			OBFS_CTX_LOG_F(
+				DEBUG, ctx, "recv: (%d) %s", err,
+				strerror(err));
 			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			return;
 		}
-		OBFS_CTX_LOG_F(ERROR, ctx, "recv: %s", strerror(err));
+		OBFS_CTX_LOG_F(ERROR, ctx, "recv: (%d) %s", err, strerror(err));
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 		return;
@@ -2445,7 +2455,7 @@ void obfs_client_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 		if (IS_TRANSIENT_ERROR(err)) {
 			return;
 		}
-		LOGE_F("read: %s", strerror(err));
+		LOGE_F("read: (%d) %s", err, strerror(err));
 		obfs_ctx_stop(loop, ctx);
 		obfs_sched_redial(obfs);
 		return;

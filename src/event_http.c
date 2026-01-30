@@ -78,7 +78,7 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		if (IS_TRANSIENT_ERROR(err)) {
 			return;
 		}
-		LOGE_F("accept: %s", strerror(err));
+		LOGE_F("accept: (%d) %s", err, strerror(err));
 		/* sleep for a while, see listener_cb */
 		ev_io_stop(loop, watcher);
 		ev_timer *restrict w_timer = &s->listener.w_timer;
@@ -140,7 +140,7 @@ void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		if (IS_TRANSIENT_ERROR(err)) {
 			return;
 		}
-		LOGE_F("recv: %s", strerror(err));
+		LOGE_F("recv: (%d) %s", err, strerror(err));
 		http_ctx_free(ctx);
 		return;
 	}
@@ -219,7 +219,7 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
-			LOGE_F("send: %s", strerror(err));
+			LOGE_F("send: (%d) %s", err, strerror(err));
 			http_ctx_free(ctx);
 			return;
 		}

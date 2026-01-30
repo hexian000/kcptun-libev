@@ -128,7 +128,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		/* accept new kcp session */
 		ss = session_new(s, &msg->addr, conv);
 		if (ss == NULL) {
-			LOGE("out of memory");
+			LOGOOM();
 			return;
 		}
 		ss->is_accepted = true;
@@ -138,7 +138,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
 			format_sa(addr_str, sizeof(addr_str), sa);
-			LOG_F(DEBUG, "session [%08" PRIX32 "] kcp: accepted %s",
+			LOG_F(DEBUG, "[session:%08" PRIX32 "] kcp: accepted %s",
 			      conv, addr_str);
 		}
 		ss->kcp_state = KCP_STATE_CONNECT;
@@ -152,7 +152,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			format_sa(oaddr_str, sizeof(oaddr_str), &ss->raddr.sa);
 			char addr_str[64];
 			format_sa(addr_str, sizeof(addr_str), sa);
-			LOGW_F("session [%08" PRIX32 "] conflict: "
+			LOGW_F("[session:%08" PRIX32 "] conflict: "
 			       "existing %s, refusing %s",
 			       conv, oaddr_str, addr_str);
 			ss0_reset(s, sa, conv);

@@ -38,7 +38,9 @@
 #define CLOSE_FD(fd)                                                           \
 	do {                                                                   \
 		if (close((fd)) != 0) {                                        \
-			LOGW_F("close: fd=%d %s", (fd), strerror(errno));      \
+			const int err = errno;                                 \
+			LOGW_F("close [fd:%d]: (%d) %s", (fd), err,            \
+			       strerror(err));                                 \
 		}                                                              \
 	} while (0)
 
@@ -72,8 +74,7 @@ static inline uint32_t tstamp2ms(const ev_tstamp t)
 	do {                                                                   \
 		if (((revents) & EV_ERROR) != 0) {                             \
 			const int err = errno;                                 \
-			LOGE_F("error event: [errno=%d] %s", err,              \
-			       strerror(err));                                 \
+			LOGE_F("io error: (%d) %s", err, strerror(err));       \
 		}                                                              \
 		ASSERT(((revents) & ((accept) | EV_ERROR)) == (revents));      \
 		if (((revents) & (accept)) == 0) {                             \

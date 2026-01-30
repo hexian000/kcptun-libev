@@ -139,18 +139,4 @@ int debug_backtrace(void **frames, int calldepth, int len);
 #define ASSERT(cond) CHECKMSGF(cond, "assertion failed: `%s'", #cond)
 #endif
 
-/* check critical allocation failure */
-#define FAILOOM()                                                              \
-	do {                                                                   \
-		LOGF("out of memory");                                         \
-		_Exit(EXIT_FAILURE); /* no core dump */                        \
-	} while (0)
-#define CHECKOOM(ptr)                                                          \
-	do {                                                                   \
-		if ((ptr) == NULL) {                                           \
-			FAILOOM();                                             \
-		}                                                              \
-	} while (0)
-#define LOGOOM() LOGE("out of memory")
-
 #endif /* UTILS_DEBUG_H */

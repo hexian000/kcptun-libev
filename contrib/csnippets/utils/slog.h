@@ -39,6 +39,11 @@ void slog_setoutput(int type, ...);
 
 void slog_setfileprefix(const char *prefix);
 
+enum {
+	SLOG_FLAG_UTC = 0x0001,
+};
+void slog_setflags(unsigned int flags);
+
 struct slog_extra {
 	void (*func)(FILE *f, void *data);
 	void *data;
@@ -161,7 +166,21 @@ void slog_printf(
 #define LOG_PERROR(what)                                                       \
 	do {                                                                   \
 		const int err = errno;                                         \
-		LOGE_F("%s: [%d] %s", what, err, strerror(errno));             \
+		LOGE_F("%s: (%d) %s", what, err, strerror(err));               \
 	} while (0)
+
+/* Check critical allocation failure */
+#define FAILOOM()                                                              \
+	do {                                                                   \
+		LOGF("out of memory");                                         \
+		_Exit(EXIT_FAILURE); /* no core dump */                        \
+	} while (0)
+#define CHECKOOM(ptr)                                                          \
+	do {                                                                   \
+		if ((ptr) == NULL) {                                           \
+			FAILOOM();                                             \
+		}                                                              \
+	} while (0)
+#define LOGOOM() LOGE("out of memory")
 
 #endif /* UTILS_SLOG_H */

@@ -34,7 +34,7 @@ static void modify_io_events(
 	const int ioevents = events & (EV_READ | EV_WRITE);
 	if (ioevents == 0) {
 		if (ev_is_active(watcher)) {
-			LOGV_F("io: fd=%d stop", fd);
+			LOGV_F("[fd:%d] io stop", fd);
 			ev_io_stop(loop, watcher);
 		}
 		return;
@@ -48,7 +48,7 @@ static void modify_io_events(
 #endif
 	}
 	if (!ev_is_active(watcher)) {
-		LOGV_F("io: fd=%d modified events=0x%x", fd, ioevents);
+		LOGV_F("[fd:%d] modified io events=0x%x", fd, ioevents);
 		ev_io_start(loop, watcher);
 	}
 }
@@ -79,7 +79,7 @@ static void accept_one(
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		format_sa(addr_str, sizeof(addr_str), client_sa);
-		LOG_F(INFO, "session [%08" PRIX32 "] tcp: accepted %s", conv,
+		LOG_F(INFO, "[session:%08" PRIX32 "] tcp: accepted %s", conv,
 		      addr_str);
 	}
 	session_tcp_start(ss, fd);
@@ -102,7 +102,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			if (IS_TRANSIENT_ERROR(err)) {
 				break;
 			}
-			LOGE_F("accept: %s", strerror(err));
+			LOGE_F("accept: (%d) %s", err, strerror(err));
 			/* sleep for a while, see listener_cb */
 			ev_io_stop(loop, watcher);
 			ev_timer *restrict w_timer = &s->listener.w_timer;
@@ -150,18 +150,19 @@ void tcp_notify(struct session *restrict ss)
 		if (ss->kcp_eof_sent) {
 			/* both directions closed, stop TCP */
 			session_tcp_stop(ss);
-			LOGD_F("session [%08" PRIX32 "] tcp: close", ss->conv);
+			LOGD_F("[session:%08" PRIX32 "] tcp: close", ss->conv);
 			return;
 		}
 		/* half-close: shutdown TCP write, but keep reading from TCP */
 		if (!ss->tcp_eof_sent) {
-			LOGD_F("session [%08" PRIX32 "] tcp: shutdown write",
+			LOGD_F("[session:%08" PRIX32 "] tcp: shutdown write",
 			       ss->conv);
 			const int fd = ss->w_socket.fd;
 			if (fd != -1) {
 				if (shutdown(fd, SHUT_WR) != 0) {
-					LOGW_F("shutdown: fd=%d %s", fd,
-					       strerror(errno));
+					const int err = errno;
+					LOGW_F("[fd:%d] shutdown: (%d) %s", fd,
+					       err, strerror(err));
 				}
 			}
 			ss->tcp_eof_sent = true;
@@ -205,12 +206,12 @@ static int tcp_recv(struct session *restrict ss)
 		if (IS_TRANSIENT_ERROR(err)) {
 			return 1;
 		}
-		LOGE_F("session [%08" PRIX32 "] tcp recv: %s", ss->conv,
-		       strerror(err));
+		LOGE_F("[session:%08" PRIX32 "] tcp recv: (%d) %s", ss->conv,
+		       err, strerror(err));
 		return -1;
 	}
 	if (nread == 0) {
-		LOGI_F("session [%08" PRIX32 "] tcp: "
+		LOGI_F("[session:%08" PRIX32 "] tcp: "
 		       "connection closed by peer",
 		       ss->conv);
 		return -1;
@@ -221,7 +222,7 @@ static int tcp_recv(struct session *restrict ss)
 	if (len > 0) {
 		ss->stats.tcp_rx += len;
 		ss->server->stats.tcp_rx += len;
-		LOGV_F("session [%08" PRIX32 "] "
+		LOGV_F("[session:%08" PRIX32 "] "
 		       "tcp fd=%d: recv %zu bytes, cap: %zu bytes",
 		       ss->conv, fd, len, cap);
 	}
@@ -282,8 +283,8 @@ static int tcp_send(struct session *restrict ss)
 		if (IS_TRANSIENT_ERROR(err)) {
 			return 1;
 		}
-		LOGE_F("session [%08" PRIX32 "] tcp send: %s", ss->conv,
-		       strerror(err));
+		LOGE_F("[session:%08" PRIX32 "] tcp send: (%d) %s", ss->conv,
+		       err, strerror(err));
 		return -1;
 	}
 	if (ret == 0) {
@@ -293,7 +294,7 @@ static int tcp_send(struct session *restrict ss)
 	ss->wbuf_flush += (size_t)ret;
 	ss->stats.tcp_tx += (uintmax_t)ret;
 	ss->server->stats.tcp_tx += (uintmax_t)ret;
-	LOGV_F("session [%08" PRIX32 "] tcp fd=%d: "
+	LOGV_F("[session:%08" PRIX32 "] tcp [fd:%d]: "
 	       "send %zd/%zu bytes",
 	       ss->conv, fd, ret, len);
 	if ((size_t)ret < len) {
@@ -307,14 +308,14 @@ static void connected_cb(struct session *restrict ss)
 	const int fd = ss->w_socket.fd;
 	const int sockerr = socket_get_error(fd);
 	if (sockerr != 0) {
-		LOGE_F("connect: %s", strerror(sockerr));
+		LOGE_F("connect: (%d) %s", sockerr, strerror(sockerr));
 		session_tcp_stop(ss);
 		session_kcp_close(ss);
 		return;
 	}
 
 	ss->tcp_state = TCP_STATE_ESTABLISHED;
-	LOGD_F("session [%08" PRIX32 "] tcp fd=%d: connected", ss->conv, fd);
+	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d] connected", ss->conv, fd);
 }
 
 void tcp_flush(struct session *restrict ss)
@@ -341,9 +342,9 @@ void tcp_socket_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_READ | EV_WRITE);
 
-	LOGVV_F("io: fd=%d revents=0x%x", watcher->fd, revents);
+	LOGVV_F("[fd:%d] io revents=0x%x", watcher->fd, revents);
 	struct session *restrict ss = watcher->data;
-	if (ss->tcp_state == TCP_STATE_CONNECTING) {
+	if (ss->tcp_state == TCP_STATE_CONNECT) {
 		connected_cb(ss);
 	}
 

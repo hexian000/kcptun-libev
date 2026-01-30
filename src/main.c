@@ -235,6 +235,7 @@ int main(int argc, char **argv)
 		/* Either daemonize (with privilege drop) or just drop privileges */
 		if (args.daemonize) {
 			daemonize(pident, true, false);
+			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
 		} else if (pident != NULL) {
 			drop_privileges(pident);
 		}
