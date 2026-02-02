@@ -55,7 +55,7 @@ static void modify_io_events(
 
 static void accept_one(
 	struct server *restrict s, const int fd,
-	const struct sockaddr *client_sa)
+	const struct sockaddr *restrict client_sa)
 {
 	/* Initialize and start watcher to read client requests */
 	const uint32_t conv = conv_new(s, &s->pkt.kcp_connect.sa);

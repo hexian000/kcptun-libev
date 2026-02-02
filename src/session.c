@@ -423,7 +423,8 @@ struct session0_header {
 
 #define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
 
-static inline struct session0_header ss0_header_read(const unsigned char *d)
+static inline struct session0_header
+ss0_header_read(const unsigned char *restrict d)
 {
 	return (struct session0_header){
 		.zero = read_uint32(d),
@@ -432,7 +433,7 @@ static inline struct session0_header ss0_header_read(const unsigned char *d)
 }
 
 static inline void
-ss0_header_write(unsigned char *d, const struct session0_header header)
+ss0_header_write(unsigned char *restrict d, const struct session0_header header)
 {
 	write_uint32(d, header.zero);
 	write_uint16(d + sizeof(uint32_t), header.what);

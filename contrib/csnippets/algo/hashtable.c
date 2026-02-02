@@ -198,7 +198,7 @@ static inline void table_reseed(struct hashtable *restrict table)
 
 struct hashtable *table_set(
 	struct hashtable *restrict table, const struct hashkey key,
-	void **restrict element)
+	void **element)
 {
 	assert(table != NULL && element != NULL);
 	const uint_least32_t hash = GET_HASH(key, table->seed);
@@ -264,7 +264,7 @@ struct hashtable *table_set(
 
 bool table_find(
 	const struct hashtable *restrict table, const struct hashkey key,
-	void **element)
+	void **restrict element)
 {
 	if (table == NULL) {
 		return false;
@@ -287,7 +287,7 @@ bool table_find(
 
 struct hashtable *table_del(
 	struct hashtable *restrict table, const struct hashkey key,
-	void **restrict element)
+	void **element)
 {
 	if (table == NULL) {
 		return NULL;
@@ -382,7 +382,8 @@ table_reserve(struct hashtable *restrict table, const size_t new_size)
 }
 
 struct hashtable *table_filter(
-	struct hashtable *restrict table, const table_iterate_cb f, void *data)
+	struct hashtable *restrict table, const table_iterate_cb f,
+	void *restrict data)
 {
 	if (table == NULL) {
 		return NULL;
@@ -416,7 +417,7 @@ struct hashtable *table_filter(
 
 void table_iterate(
 	const struct hashtable *restrict table, const table_iterate_cb f,
-	void *data)
+	void *restrict data)
 {
 	if (table == NULL) {
 		return;

@@ -25,13 +25,13 @@
 void listener_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
-	struct listener *restrict l = watcher->data;
+	struct listener *l = watcher->data;
 	/* check & restart accept watchers */
-	ev_io *restrict w_accept = &l->w_accept;
+	ev_io *w_accept = &l->w_accept;
 	if (l->fd != -1 && !ev_is_active(w_accept)) {
 		ev_io_start(loop, w_accept);
 	}
-	ev_io *restrict w_accept_http = &l->w_accept_http;
+	ev_io *w_accept_http = &l->w_accept_http;
 	if (l->fd_http != -1 && !ev_is_active(w_accept_http)) {
 		ev_io_start(loop, w_accept_http);
 	}

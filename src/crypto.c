@@ -89,9 +89,9 @@ struct crypto_impl {
 };
 
 size_t crypto_seal(
-	const struct crypto *restrict crypto, unsigned char *dst,
-	const size_t dst_size, const unsigned char *nonce,
-	const unsigned char *plain, const size_t plain_size)
+	const struct crypto *restrict crypto, unsigned char *restrict dst,
+	const size_t dst_size, const unsigned char *restrict nonce,
+	const unsigned char *restrict plain, const size_t plain_size)
 {
 	if (dst_size < plain_size + crypto->overhead) {
 		LOGW_F("crypto_seal: insufficient crypto buffer %zu < %zu",
@@ -122,9 +122,9 @@ size_t crypto_seal(
 }
 
 size_t crypto_open(
-	const struct crypto *restrict crypto, unsigned char *dst,
-	const size_t dst_size, const unsigned char *nonce,
-	const unsigned char *cipher, const size_t cipher_size)
+	const struct crypto *restrict crypto, unsigned char *restrict dst,
+	const size_t dst_size, const unsigned char *restrict nonce,
+	const unsigned char *restrict cipher, const size_t cipher_size)
 {
 	if (dst_size + crypto->overhead < cipher_size) {
 		LOGW("crypto_seal: insufficient crypto buffer");

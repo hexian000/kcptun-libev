@@ -137,8 +137,8 @@ struct obfs_ctx {
 		.data = (ctx)->key,                                            \
 	})
 
-static inline struct obfs_ctx *
-obfs_find_ctx(const struct obfs *restrict obfs, const struct sockaddr *sa)
+static inline struct obfs_ctx *obfs_find_ctx(
+	const struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 {
 	unsigned char key[OBFS_CTX_KEY_SIZE];
 	const size_t n = getsocklen(sa);
@@ -225,7 +225,7 @@ static inline uint16_t in_cksum_fin(uint32_t sum, const void *data, size_t n)
 static uint16_t tcp_checksum(
 	const int domain, const union sockaddr_max *restrict src,
 	const union sockaddr_max *restrict dst, struct tcphdr *restrict tcp,
-	const void *data, const size_t datalen)
+	const void *restrict data, const size_t datalen)
 {
 	const uint16_t plen = sizeof(struct tcphdr) + datalen;
 	uint32_t sum = 0;

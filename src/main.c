@@ -244,21 +244,21 @@ int main(int argc, char **argv)
 	/* Set up signal watchers for graceful shutdown and config reload */
 	{
 		/* SIGHUP: reload configuration */
-		ev_signal *restrict w_sighup = &app.w_sighup;
+		ev_signal *w_sighup = &app.w_sighup;
 		ev_signal_init(w_sighup, signal_cb, SIGHUP);
 		ev_set_priority(w_sighup, EV_MAXPRI);
 		w_sighup->data = s;
 		ev_signal_start(loop, w_sighup);
 
 		/* SIGINT: graceful shutdown (Ctrl+C) */
-		ev_signal *restrict w_sigint = &app.w_sigint;
+		ev_signal *w_sigint = &app.w_sigint;
 		ev_signal_init(w_sigint, signal_cb, SIGINT);
 		ev_set_priority(w_sigint, EV_MAXPRI);
 		w_sigint->data = s;
 		ev_signal_start(loop, w_sigint);
 
 		/* SIGTERM: graceful shutdown (service stop) */
-		ev_signal *restrict w_sigterm = &app.w_sigterm;
+		ev_signal *w_sigterm = &app.w_sigterm;
 		ev_signal_init(w_sigterm, signal_cb, SIGTERM);
 		ev_set_priority(w_sigterm, EV_MAXPRI);
 		w_sigterm->data = s;
