@@ -13,14 +13,12 @@
 #include "util.h"
 
 /* contrib */
+#include "os/daemon.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 
 /* runtime */
 #include <ev.h>
-#if WITH_SYSTEMD
-#include <systemd/sd-daemon.h>
-#endif
 
 /* std */
 #include <stdbool.h>
@@ -222,22 +220,15 @@ int main(int argc, char **argv)
 
 	/* Handle user identity and daemonization */
 	{
-		struct user_ident ident, *pident = NULL;
 		/* Use command line user or config file user */
 		const char *user_name =
 			args.user_name ? args.user_name : conf->user;
-		if (user_name != NULL) {
-			if (!parse_user(&ident, user_name)) {
-				exit(EXIT_FAILURE);
-			}
-			pident = &ident;
-		}
 		/* Either daemonize (with privilege drop) or just drop privileges */
 		if (args.daemonize) {
-			daemonize(pident, true, false);
+			daemonize(user_name, true, false);
 			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
-		} else if (pident != NULL) {
-			drop_privileges(pident);
+		} else if (user_name != NULL) {
+			drop_privileges(user_name);
 		}
 	}
 
@@ -266,7 +257,7 @@ int main(int argc, char **argv)
 	}
 
 #if WITH_SYSTEMD
-	(void)sd_notify(0, "READY=1");
+	(void)systemd_notify(SYSTEMD_STATE_READY);
 #endif
 	/* Start the main event loop - this blocks until shutdown */
 	LOGN_F("%s start", conf_modestr(conf));
@@ -292,7 +283,7 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 	switch (watcher->signum) {
 	case SIGHUP: {
 #if WITH_SYSTEMD
-		(void)sd_notify(0, "RELOADING=1");
+		(void)systemd_notify(SYSTEMD_STATE_RELOADING);
 #endif
 		/* Attempt to reload configuration file */
 		struct config *conf = conf_read(args.conf_path);
@@ -316,14 +307,14 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 		/* Re-resolve any hostnames in case DNS changed */
 		(void)server_resolve(s);
 #if WITH_SYSTEMD
-		(void)sd_notify(0, "READY=1");
+		(void)systemd_notify(SYSTEMD_STATE_READY);
 #endif
 	} break;
 	case SIGINT:
 	case SIGTERM: {
 		LOGD_F("signal %d received, breaking", watcher->signum);
 #if WITH_SYSTEMD
-		(void)sd_notify(0, "STOPPING=1");
+		(void)systemd_notify(SYSTEMD_STATE_STOPPING);
 #endif
 		/* Break out of the main event loop */
 		ev_break(loop, EVBREAK_ALL);

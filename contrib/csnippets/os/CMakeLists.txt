@@ -1,0 +1,11 @@
+target_sources(csnippets
+    PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/daemon.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/signal.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/socket.c"
+    PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/clock.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/daemon.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/signal.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/socket.h"
+)

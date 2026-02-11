@@ -4,9 +4,8 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include "sockutil.h"
-
 #include "algo/hashtable.h"
+#include "os/socket.h"
 #include "utils/buffer.h"
 
 #include <ev.h>

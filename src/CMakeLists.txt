@@ -1,7 +1,6 @@
 add_executable(kcptun-libev main.c
     crypto.c crypto.h
     util.c util.h
-    sockutil.c sockutil.h
     conf.c conf.h
     jsonutil.c jsonutil.h
     pktqueue.c pktqueue.h
@@ -95,24 +94,6 @@ endif()
 
 if(WITH_CRYPTO AND (CMAKE_SYSTEM_NAME STREQUAL "Linux") AND NOT FORCE_POSIX)
     set(WITH_OBFS TRUE)
-endif()
-
-# find systemd
-if(ENABLE_SYSTEMD)
-    find_path(SYSTEMD_INCLUDE_DIR NAMES systemd/sd-daemon.h)
-    find_library(SYSTEMD_LIBRARY NAMES systemd)
-    if((EXISTS ${SYSTEMD_INCLUDE_DIR}) AND (EXISTS ${SYSTEMD_LIBRARY}))
-        message(STATUS "systemd: ${SYSTEMD_LIBRARY}")
-        set(WITH_SYSTEMD TRUE)
-        target_include_directories(kcptun-libev SYSTEM PRIVATE ${SYSTEMD_INCLUDE_DIR})
-        target_link_libraries(kcptun-libev PRIVATE ${SYSTEMD_LIBRARY})
-    else()
-        message(WARNING "systemd not found")
-    endif()
-endif()
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    set(WITH_CRASH_HANDLER TRUE)
 endif()
 
 include(CheckLibraryExists)

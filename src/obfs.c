@@ -12,12 +12,13 @@
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
+#include "net/addr.h"
 #include "net/http.h"
+#include "os/socket.h"
 #include "utils/arraysize.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
@@ -141,7 +142,7 @@ static inline struct obfs_ctx *obfs_find_ctx(
 	const struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 {
 	unsigned char key[OBFS_CTX_KEY_SIZE];
-	const size_t n = getsocklen(sa);
+	const size_t n = sa_len(sa);
 	memcpy(key, (sa), n);
 	memset(key + n, 0, sizeof(key) - n);
 	const struct hashkey hkey = {
@@ -159,8 +160,8 @@ static inline struct obfs_ctx *obfs_find_ctx(
 	do {                                                                   \
 		if (LOGLEVEL(level)) {                                         \
 			char laddr[64], raddr[64];                             \
-			format_sa(laddr, sizeof(laddr), &(ctx)->laddr.sa);     \
-			format_sa(raddr, sizeof(raddr), &(ctx)->raddr.sa);     \
+			sa_format(laddr, sizeof(laddr), &(ctx)->laddr.sa);     \
+			sa_format(raddr, sizeof(raddr), &(ctx)->raddr.sa);     \
 			LOG_F(level, "obfs %s<->%s: " format, laddr, raddr,    \
 			      __VA_ARGS__);                                    \
 		}                                                              \
@@ -495,7 +496,7 @@ static void
 obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 {
 	if (sa != NULL) {
-		copy_sa(&obfs->bind_addr.sa, sa);
+		sa_copy(&obfs->bind_addr.sa, sa);
 	}
 
 	const struct sockaddr *restrict bind_sa = &obfs->bind_addr.sa;
@@ -561,7 +562,7 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 	if (LOGLEVEL(NOTICE)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), bind_sa);
+		sa_format(addr_str, sizeof(addr_str), bind_sa);
 		LOG_F(NOTICE, "obfs bind: %s", addr_str);
 	}
 }
@@ -692,7 +693,7 @@ static bool obfs_tcp_send(
 
 	const ssize_t nsent =
 		sendto(obfs->raw_fd, pkt, ip_hdr_len + plen, 0, &daddr.sa,
-		       getsocklen(&daddr.sa));
+		       sa_len(&daddr.sa));
 	if (nsent < 0) {
 		if (!IS_TRANSIENT_ERROR(errno)) {
 			const int err = errno;
@@ -768,12 +769,12 @@ static struct obfs_ctx *obfs_tcp_raw_new_ctx(
 	}
 
 	/* set addresses */
-	copy_sa(&ctx->laddr.sa, &local->sa);
-	copy_sa(&ctx->raddr.sa, &remote->sa);
+	sa_copy(&ctx->laddr.sa, &local->sa);
+	sa_copy(&ctx->raddr.sa, &remote->sa);
 	ctx->cap_flow = flow;
 
 	/* register in hashtable */
-	const size_t n = getsocklen(&ctx->raddr.sa);
+	const size_t n = sa_len(&ctx->raddr.sa);
 	memcpy(ctx->key, &ctx->raddr.sa, n);
 	memset(ctx->key + n, 0, sizeof(ctx->key) - n);
 
@@ -872,7 +873,7 @@ static struct obfs_ctx *obfs_tcp_input(
 	}
 
 	ctx->last_seen = msg->ts;
-	copy_sa(&msg->addr.sa, &remote->sa);
+	sa_copy(&msg->addr.sa, &remote->sa);
 	msg->off = ihl + doff;
 	msg->len = plen - doff;
 	return ctx;
@@ -1081,7 +1082,7 @@ static bool obfs_ctx_start(
 {
 	{
 		const struct sockaddr *sa = &ctx->raddr.sa;
-		const size_t n = getsocklen(sa);
+		const size_t n = sa_len(sa);
 		memcpy(ctx->key, sa, n);
 		memset(ctx->key + n, 0, sizeof(ctx->key) - n);
 	}
@@ -1123,8 +1124,8 @@ static bool obfs_ctx_start(
 	ctx->last_seen = now;
 	if (LOGLEVEL(DEBUG)) {
 		char laddr[64], raddr[64];
-		format_sa(laddr, sizeof(laddr), &ctx->laddr.sa);
-		format_sa(raddr, sizeof(raddr), &ctx->raddr.sa);
+		sa_format(laddr, sizeof(laddr), &ctx->laddr.sa);
+		sa_format(raddr, sizeof(raddr), &ctx->raddr.sa);
 		LOG_F(DEBUG, "obfs: start %s <-> %s", laddr, raddr);
 	}
 	return true;
@@ -1145,7 +1146,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 	socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
 	obfs_tcp_setup(obfs->fd);
-	if (bind(obfs->fd, sa, getsocklen(sa))) {
+	if (bind(obfs->fd, sa, sa_len(sa))) {
 		LOG_PERROR("tcp bind");
 		return false;
 	}
@@ -1155,7 +1156,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), sa);
+		sa_format(addr_str, sizeof(addr_str), sa);
 		LOG_F(INFO, "tcp listen: %s", addr_str);
 	}
 	return true;
@@ -1178,10 +1179,10 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 	case OBFS_TCP:
 		/* dpi/tcp mode: use raw TCP dial */
 		/* set remote address */
-		copy_sa(&ctx->raddr.sa, sa);
+		sa_copy(&ctx->raddr.sa, sa);
 
 		/* set local address (use bind address with ephemeral port) */
-		copy_sa(&ctx->laddr.sa, &obfs->bind_addr.sa);
+		sa_copy(&ctx->laddr.sa, &obfs->bind_addr.sa);
 		ctx->local_port = obfs_tcp_alloc_port();
 		switch (obfs->domain) {
 		case AF_INET:
@@ -1197,7 +1198,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		}
 
 		/* register in hashtable using remote address as key */
-		const size_t n = getsocklen(&ctx->raddr.sa);
+		const size_t n = sa_len(&ctx->raddr.sa);
 		memcpy(ctx->key, &ctx->raddr.sa, n);
 		memset(ctx->key + n, 0, sizeof(ctx->key) - n);
 
@@ -1243,7 +1244,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		}
 		obfs_tcp_setup(fd);
 
-		if (connect(fd, sa, getsocklen(sa))) {
+		if (connect(fd, sa, sa_len(sa))) {
 			const int err = errno;
 			if (err != EINTR && err != EINPROGRESS) {
 				LOGE_F("obfs tcp connect: (%d) %s", err,
@@ -1260,7 +1261,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
-		copy_sa(&ctx->raddr.sa, sa);
+		sa_copy(&ctx->raddr.sa, sa);
 		OBFS_CTX_LOG(INFO, ctx, "connect");
 
 		obfs_bind(obfs, &ctx->laddr.sa);
@@ -1273,7 +1274,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 		/* send the request */
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &ctx->raddr.sa);
+		sa_format(addr_str, sizeof(addr_str), &ctx->raddr.sa);
 		char *b = (char *)ctx->wbuf.data;
 		const int ret = snprintf(
 			b, ctx->wbuf.cap,
@@ -1374,13 +1375,11 @@ obfs_redial_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	const int redial_count = ++obfs->redial_count;
 	LOGI_F("obfs: redial #%d to `%s'", redial_count, conf->kcp_connect);
 	union sockaddr_max addr;
-	if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_TCP)) {
-		return;
-	}
+	RESOLVE_ADDR(&addr, conf->kcp_connect, tcp, return);
 	if (!obfs_ctx_dial(obfs, &addr.sa)) {
 		return;
 	}
-	copy_sa(&s->pkt.kcp_connect.sa, &addr.sa);
+	sa_copy(&s->pkt.kcp_connect.sa, &addr.sa);
 }
 
 static void
@@ -1470,7 +1469,7 @@ static bool print_ctx_iter(
 	ASSERT(key.data == ctx->key);
 	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
-	format_sa(addr_str, sizeof(addr_str), &ctx->raddr.sa);
+	sa_format(addr_str, sizeof(addr_str), &ctx->raddr.sa);
 	char state = '>';
 	if (ctx->captured) {
 		state = ctx->authenticated ? '-' : '?';
@@ -1583,11 +1582,8 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		/* dpi/tcp mode: pure raw socket, no real TCP socket */
 		if (conf->mode & MODE_SERVER) {
 			union sockaddr_max addr;
-			if (!resolve_addr(
-				    &addr, conf->kcp_bind,
-				    RESOLVE_TCP | RESOLVE_PASSIVE)) {
-				return false;
-			}
+			RESOLVE_BINDADDR(
+				&addr, conf->kcp_bind, tcpbind, return false);
 			obfs->domain = addr.sa.sa_family;
 			if (!obfs_raw_start(obfs)) {
 				return false;
@@ -1597,20 +1593,16 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 		if (conf->mode & MODE_CLIENT) {
 			union sockaddr_max addr;
-			if (!resolve_addr(
-				    &addr, conf->kcp_connect, RESOLVE_TCP)) {
-				return false;
-			}
+			RESOLVE_ADDR(
+				&addr, conf->kcp_connect, tcp, return false);
 			obfs->domain = addr.sa.sa_family;
 
 			/* resolve local bind address for client */
 			union sockaddr_max bind_addr;
 			if (conf->kcp_bind != NULL) {
-				if (!resolve_addr(
-					    &bind_addr, conf->kcp_bind,
-					    RESOLVE_TCP)) {
-					return false;
-				}
+				RESOLVE_ADDR(
+					&bind_addr, conf->kcp_bind, tcp,
+					return false);
 			} else {
 				/* use INADDR_ANY with same family as connect address */
 				memset(&bind_addr, 0, sizeof(bind_addr));
@@ -1625,18 +1617,15 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 			if (!obfs_ctx_dial(obfs, &addr.sa)) {
 				return false;
 			}
-			copy_sa(&s->pkt.kcp_connect.sa, &addr.sa);
+			sa_copy(&s->pkt.kcp_connect.sa, &addr.sa);
 		}
 		break;
 	case OBFS_TCP_WND:
 		/* dpi/tcp-wnd mode: use real TCP socket + raw socket */
 		if (conf->mode & MODE_SERVER) {
 			union sockaddr_max addr;
-			if (!resolve_addr(
-				    &addr, conf->kcp_bind,
-				    RESOLVE_TCP | RESOLVE_PASSIVE)) {
-				return false;
-			}
+			RESOLVE_BINDADDR(
+				&addr, conf->kcp_bind, tcpbind, return false);
 			obfs->domain = addr.sa.sa_family;
 			if (!obfs_raw_start(obfs)) {
 				return false;
@@ -1648,10 +1637,8 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 		if (conf->mode & MODE_CLIENT) {
 			union sockaddr_max addr;
-			if (!resolve_addr(
-				    &addr, conf->kcp_connect, RESOLVE_TCP)) {
-				return false;
-			}
+			RESOLVE_ADDR(
+				&addr, conf->kcp_connect, tcp, return false);
 			obfs->domain = addr.sa.sa_family;
 			if (!obfs_raw_start(obfs)) {
 				return false;
@@ -1659,7 +1646,7 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 			if (!obfs_ctx_dial(obfs, &addr.sa)) {
 				return false;
 			}
-			copy_sa(&s->pkt.kcp_connect.sa, &addr.sa);
+			sa_copy(&s->pkt.kcp_connect.sa, &addr.sa);
 		}
 		break;
 	default:
@@ -1879,7 +1866,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (ctx == NULL) {
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				DEBUG, now, 1.0,
@@ -1892,7 +1879,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	/* inbound */
 	if (LOGLEVEL(DEBUG) && tcp.rst) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITED_F(
 			DEBUG, now, 1.0, "* obfs: rst from %s", addr_str);
@@ -1999,7 +1986,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (ctx == NULL) {
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				DEBUG, now, 1.0,
@@ -2012,7 +1999,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	/* inbound */
 	if (LOGLEVEL(DEBUG) && tcp.rst) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITED_F(
 			DEBUG, now, 1.0, "* obfs: rst from %s", addr_str);
@@ -2135,7 +2122,7 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 	if (ctx == NULL) {
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				WARNING, now, 1.0,

@@ -116,44 +116,52 @@ static struct {
 #define LOCALTIME(timer) localtime((timer))
 #endif /* HAVE_LOCALTIME_R */
 
+#define STRLEN(s) (sizeof(s "") - sizeof(""))
+
+#define LAYOUT_C "2006-01-02T15:04:05-0700"
+#define LAYOUT_C_UTC "2006-01-02T15:04:05Z"
+
+#define STRFTIME(s, maxlen, timer)                                             \
+	(strftime((s), (maxlen), "%FT%T%z", LOCALTIME(timer)) ==               \
+	 STRLEN(LAYOUT_C))
+
+#define STRFTIME_UTC(s, maxlen, timer)                                         \
+	(strftime((s), (maxlen), "%FT%TZ", GMTIME(timer)) ==                   \
+	 STRLEN(LAYOUT_C_UTC))
+
+#define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
+#define LAYOUT_RFC3339_UTC "2006-01-02T15:04:05Z"
+
 /* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
 static size_t slog_timestamp(
-	char *restrict s, const size_t maxsize, const time_t *restrict timer)
+	char *restrict s, const size_t maxsize, const time_t *restrict t,
+	const uint32_t flags)
 {
-	const size_t len = sizeof("2006-01-02T15:04:05-07:00") - sizeof("");
-	if (maxsize < len) {
+	if (flags & SLOG_FLAG_UTC) {
+		if (!STRFTIME_UTC(s, maxsize, t)) {
+			return 0;
+		}
+		return STRLEN(LAYOUT_RFC3339_UTC);
+	}
+	if (!STRFTIME(s, maxsize, t)) {
 		return 0;
 	}
-	size_t ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
-	if (ret != sizeof("2006-01-02T15:04:05-0700") - sizeof("")) {
-		return 0;
-	}
-	const char *restrict tz = s + ret;
-	char *restrict e = s + len;
+	const char *restrict tz = s + STRLEN(LAYOUT_C);
+	char *restrict e = s + sizeof(LAYOUT_RFC3339);
+	*--e = '\0';
 	*--e = *--tz;
 	*--e = *--tz;
 	*--e = ':';
-	return len;
+	return STRLEN(LAYOUT_RFC3339);
 }
 
-static size_t slog_timestamp_utc(
-	char *restrict s, const size_t maxsize, const time_t *restrict timer)
-{
-	return strftime(s, maxsize, "%FT%TZ", GMTIME(timer));
-}
-
-#define BUF_APPENDTS(buf, timer)                                               \
+#define BUF_APPENDTS(buf, flags)                                               \
 	do {                                                                   \
-		const unsigned int flags = ATOMIC_LOAD(&slog_flags_);          \
-		if (flags & SLOG_FLAG_UTC) {                                   \
-			(buf).len += slog_timestamp_utc(                       \
-				(char *)(buf).data + (buf).len,                \
-				(buf).cap - (buf).len, (timer));               \
-		} else {                                                       \
-			(buf).len += slog_timestamp(                           \
-				(char *)(buf).data + (buf).len,                \
-				(buf).cap - (buf).len, (timer));               \
-		}                                                              \
+		time_t now;                                                    \
+		(void)time(&now);                                              \
+		((buf).len += slog_timestamp(                                  \
+			 (char *)(buf).data + (buf).len,                       \
+			 (buf).cap - (buf).len, &now, (flags)));               \
 	} while (0)
 
 static const char *slog_filename(const char *restrict file)
@@ -177,15 +185,13 @@ static void slog_print_terminal(
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
+	const uint32_t flags = ATOMIC_LOAD(&slog_flags_);
+
 	BUF_INIT(slog_buffer, 0);
 	BUF_APPENDF(
 		slog_buffer, "%s%c ", slog_level_color[level],
 		slog_level_char[level]);
-	{
-		time_t now;
-		(void)time(&now);
-		BUF_APPENDTS(slog_buffer, &now);
-	}
+	BUF_APPENDTS(slog_buffer, flags);
 	BUF_APPENDF(slog_buffer, " %s:%d ", slog_filename(file), line);
 
 	const size_t prefixlen = slog_buffer.len;
@@ -221,14 +227,12 @@ static void slog_print_file(
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
+	const uint32_t flags = ATOMIC_LOAD(&slog_flags_);
+
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
 	slog_buffer.data[1] = ' ';
-	{
-		time_t now;
-		(void)time(&now);
-		BUF_APPENDTS(slog_buffer, &now);
-	}
+	BUF_APPENDTS(slog_buffer, flags);
 	BUF_APPENDF(slog_buffer, " %s:%d ", slog_filename(file), line);
 
 	const size_t prefixlen = slog_buffer.len;

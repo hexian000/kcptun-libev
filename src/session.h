@@ -5,8 +5,8 @@
 #define SESSION_H
 
 #include "server.h"
-#include "sockutil.h"
 
+#include "os/socket.h"
 #include "utils/buffer.h"
 #include "utils/serialize.h"
 
@@ -120,7 +120,7 @@ struct session {
 	do {                                                                   \
 		unsigned char *restrict p = (key);                             \
 		size_t size = SESSION_KEY_SIZE;                                \
-		const size_t n = getsocklen(sa);                               \
+		const size_t n = sa_len(sa);                                   \
 		write_uint32(p, conv);                                         \
 		p += sizeof(uint32_t), size -= sizeof(uint32_t);               \
 		memcpy(p, (sa), n);                                            \

@@ -10,7 +10,6 @@
 #include "obfs.h"
 #include "server.h"
 #include "session.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"
@@ -36,7 +35,7 @@
 			break;                                                 \
 		}                                                              \
 		char addr[64];                                                 \
-		format_sa(addr, sizeof(addr), &(msg)->addr.sa);                \
+		sa_format(addr, sizeof(addr), &(msg)->addr.sa);                \
 		LOG_BIN_F(                                                     \
 			VERYVERBOSE, (msg)->buf, (msg)->len, 0,                \
 			what ": %" PRIu16 " bytes, addr=%s", (msg)->len,       \
@@ -137,7 +136,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		ASSERT(elem == NULL);
 		if (LOGLEVEL(DEBUG)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), sa);
+			sa_format(addr_str, sizeof(addr_str), sa);
 			LOG_F(DEBUG, "[session:%08" PRIX32 "] kcp: accepted %s",
 			      conv, addr_str);
 		}
@@ -149,9 +148,9 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		if (ss->last_reset == TSTAMP_NIL ||
 		    now - ss->last_reset > 1.0) {
 			char oaddr_str[64];
-			format_sa(oaddr_str, sizeof(oaddr_str), &ss->raddr.sa);
+			sa_format(oaddr_str, sizeof(oaddr_str), &ss->raddr.sa);
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), sa);
+			sa_format(addr_str, sizeof(addr_str), sa);
 			LOGW_F("[session:%08" PRIX32 "] conflict: "
 			       "existing %s, refusing %s",
 			       conv, oaddr_str, addr_str);

@@ -4,9 +4,9 @@
 #ifndef PACKET_H
 #define PACKET_H
 
-#include "sockutil.h"
 #include "util.h"
 
+#include "os/socket.h"
 #include "utils/mcache.h"
 
 #include <ev.h>

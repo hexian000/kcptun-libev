@@ -7,7 +7,6 @@
 #include "event.h"
 #include "pktqueue.h"
 #include "server.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"
@@ -100,7 +99,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	}
 
 	/* Connect to address */
-	if (connect(fd, sa, getsocklen(sa)) != 0) {
+	if (connect(fd, sa, sa_len(sa)) != 0) {
 		const int err = errno;
 		if (err != EINTR && err != EINPROGRESS) {
 			LOGE_F("connect: (%d) %s", err, strerror(err));
@@ -113,7 +112,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), sa);
+		sa_format(addr_str, sizeof(addr_str), sa);
 		LOG_F(INFO, "[session:%08" PRIX32 "] tcp: connect %s", ss->conv,
 		      addr_str);
 	}
@@ -529,7 +528,7 @@ bool ss0_send(
 		LOGOOM();
 		return false;
 	}
-	copy_sa(&msg->addr.sa, sa);
+	sa_copy(&msg->addr.sa, sa);
 	unsigned char *packet = msg->buf + msg->off;
 	ss0_header_write(
 		packet, (struct session0_header){
@@ -573,7 +572,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 		s->pkt.connected = true;
 		if (LOGLEVEL(INFO)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 			LOG_F(INFO, "rendezvoused at: %s", addr_str);
 		}
 	}
@@ -594,7 +593,7 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 
 	if (LOGLEVEL(DEBUG)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		LOG_F(DEBUG,
 		      "roundtrip finished: %s, rtt: %" PRIu32 " ms, "
 		      "capacity rx: %s/s, tx: %s/s",
@@ -660,10 +659,10 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		if (!sa_equals(&msg->addr.sa, &svc->server_addr[1].sa)) {
 			if (LOGLEVEL(VERBOSE)) {
 				char saddr_str[64], maddr_str[64];
-				format_sa(
+				sa_format(
 					saddr_str, sizeof(saddr_str),
 					&svc->server_addr[1].sa);
-				format_sa(
+				sa_format(
 					maddr_str, sizeof(maddr_str),
 					&msg->addr.sa);
 				LOG_BIN_F(
@@ -695,9 +694,9 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 	svc->server_addr[1] = msg->addr;
 	if (created && LOGLEVEL(INFO)) {
 		char addr1_str[64], addr2_str[64];
-		format_sa(
+		sa_format(
 			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
-		format_sa(
+		sa_format(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen, 0,
@@ -732,19 +731,19 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	const struct service *restrict svc;
 	if (!table_find(s->pkt.services, key, (void **)&svc)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &msg->addr.sa);
+		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		LOGE_F("failed connecting %s: no server available", addr_str);
 		return true;
 	}
 	if (LOGLEVEL(INFO)) {
 		char caddr1_str[64], caddr2_str[64];
-		format_sa(caddr1_str, sizeof(caddr1_str), &addr.sa);
-		format_sa(caddr2_str, sizeof(caddr2_str), &msg->addr.sa);
+		sa_format(caddr1_str, sizeof(caddr1_str), &addr.sa);
+		sa_format(caddr2_str, sizeof(caddr2_str), &msg->addr.sa);
 		char saddr1_str[64], saddr2_str[64];
-		format_sa(
+		sa_format(
 			saddr1_str, sizeof(saddr1_str),
 			&svc->server_addr[0].sa);
-		format_sa(
+		sa_format(
 			saddr2_str, sizeof(saddr2_str),
 			&svc->server_addr[1].sa);
 		LOG_BIN_F(
@@ -835,8 +834,8 @@ ss0_on_punch(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	if (LOGLEVEL(DEBUG)) {
 		char addr1_str[64], addr2_str[64];
-		format_sa(addr1_str, sizeof(addr1_str), &addr[0].sa);
-		format_sa(addr2_str, sizeof(addr2_str), &addr[1].sa);
+		sa_format(addr1_str, sizeof(addr1_str), &addr[0].sa);
+		sa_format(addr2_str, sizeof(addr2_str), &addr[1].sa);
 		LOG_F(DEBUG, "punch: (%s, %s)", addr1_str, addr2_str);
 	}
 	const ev_tstamp now = ev_now(s->loop);

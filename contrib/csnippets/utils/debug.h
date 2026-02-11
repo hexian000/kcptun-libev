@@ -30,11 +30,11 @@ struct slog_extra_stack {
 };
 void slog_extra_stack(FILE *f, void *data);
 
-int debug_backtrace(void **frames, int calldepth, int len);
+int debug_backtrace(void **frames, int skip, int len);
 
 #define STACK_MAXDEPTH 256
 
-#define LOG_STACK_F(level, calldepth, format, ...)                             \
+#define LOG_STACK_F(level, skip, format, ...)                                  \
 	do {                                                                   \
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
@@ -43,8 +43,8 @@ int debug_backtrace(void **frames, int calldepth, int len);
 			size_t len;                                            \
 			void *pc[STACK_MAXDEPTH];                              \
 		} frames;                                                      \
-		frames.len = debug_backtrace(                                  \
-			frames.pc, (calldepth), STACK_MAXDEPTH);               \
+		frames.len =                                                   \
+			debug_backtrace(frames.pc, (skip), STACK_MAXDEPTH);    \
 		struct slog_extra extra = {                                    \
 			.func = slog_extra_stack,                              \
 			.data = &frames,                                       \
@@ -53,8 +53,9 @@ int debug_backtrace(void **frames, int calldepth, int len);
 			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
 			(format), __VA_ARGS__);                                \
 	} while (0)
-#define LOG_STACK(level, calldepth, msg)                                       \
-	LOG_STACK_F(level, calldepth, "%s", msg)
+#define LOG_STACK(level, skip, msg)                                            \
+	LOG_STACK_F(                                                           \
+		level, skip, "%s", (msg) != NULL ? (msg) : "stack traceback:")
 
 #define LOG_TXT_F(level, txt, txtsize, wrap, format, ...)                      \
 	do {                                                                   \

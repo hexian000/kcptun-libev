@@ -31,18 +31,8 @@
   */
 #define TSTAMP_NIL (-1.0)
 
-/**
- * @brief Close a file descriptor and log a warning on failure.
- * @param fd File descriptor to close.
- */
-#define CLOSE_FD(fd)                                                           \
-	do {                                                                   \
-		if (close((fd)) != 0) {                                        \
-			const int err = errno;                                 \
-			LOGW_F("close [fd:%d]: (%d) %s", (fd), err,            \
-			       strerror(err));                                 \
-		}                                                              \
-	} while (0)
+/* RFC 1035: Section 2.3.4 */
+#define FQDN_MAX_LENGTH ((size_t)(255))
 
 extern struct mcache *msgpool;
 
@@ -111,33 +101,40 @@ void unloadlibs(void);
 void genpsk(const char *method);
 #endif
 
-/** User and group identifiers. */
-struct user_ident {
-	uid_t uid;
-	gid_t gid;
-};
+/* socket utilities */
+void socket_bind_netdev(int fd, const char *netdev);
 
-/** Parse a "[user][:[group]]" spec into numeric IDs using passwd/group DBs. */
-bool parse_user(struct user_ident *ident, const char *s);
+#define RESOLVE_ADDR(addr, addrstr, type, error)                               \
+	do {                                                                   \
+		const size_t addrlen = strlen((addrstr));                      \
+		ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));          \
+		char buf[addrlen + 1];                                         \
+		memcpy(buf, (addrstr), addrlen);                               \
+		buf[addrlen] = '\0';                                           \
+		char *hoststr, *portstr;                                       \
+		if (!splithostport(buf, &hoststr, &portstr)) {                 \
+			error;                                                 \
+		}                                                              \
+		if (!sa_resolve_##type((addr), hoststr, portstr, PF_UNSPEC)) { \
+			error;                                                 \
+		}                                                              \
+	} while (0)
 
-/**
- * @brief Drop real and effective privileges to the specified identifiers.
- * @param ident Target user and group IDs. Unspecified fields may be -1.
- */
-void drop_privileges(const struct user_ident *ident);
-
-/**
- * @brief Daemonize the current process using the double-fork pattern.
- *
- * Optionally avoid changing directory and/or closing stdio, then drop
- * privileges if `ident` is provided. On success, the parent exits after
- * receiving a readiness message from the daemon.
- *
- * @param ident Optional identifiers to drop to after daemonizing.
- * @param nochdir Do not chdir to "/" when true.
- * @param noclose Do not redirect stdio to /dev/null when true.
- */
-void daemonize(const struct user_ident *ident, bool nochdir, bool noclose);
+#define RESOLVE_BINDADDR(addr, addrstr, type, error)                           \
+	do {                                                                   \
+		const size_t addrlen = strlen((addrstr));                      \
+		ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));          \
+		char buf[addrlen + 1];                                         \
+		memcpy(buf, (addrstr), addrlen);                               \
+		buf[addrlen] = '\0';                                           \
+		char *hoststr, *portstr;                                       \
+		if (!splithostport(buf, &hoststr, &portstr)) {                 \
+			error;                                                 \
+		}                                                              \
+		if (!sa_resolve_##type((addr), hoststr, portstr)) {            \
+			error;                                                 \
+		}                                                              \
+	} while (0)
 
 /**
  * @brief Per-thread CPU load since the previous call.

@@ -7,7 +7,6 @@
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"
@@ -216,9 +215,9 @@ static bool svc_timeout_filt(
 	}
 	if (LOGLEVEL(INFO)) {
 		char addr1_str[64], addr2_str[64];
-		format_sa(
+		sa_format(
 			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
-		format_sa(
+		sa_format(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen, 0,

@@ -6,7 +6,6 @@
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "net/http.h"
@@ -119,7 +118,7 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	ev_timer_start(loop, w_timeout);
 	if (LOGLEVEL(VERBOSE)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), &addr.sa);
+		sa_format(addr_str, sizeof(addr_str), &addr.sa);
 		LOG_F(VERBOSE, "http: accept %s", addr_str);
 	}
 }

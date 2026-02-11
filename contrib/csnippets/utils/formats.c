@@ -306,6 +306,9 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 #define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
 #define LAYOUT_RFC3339_UTC "2006-01-02T15:04:05Z"
 
+#define LAYOUT_RFC3339NANO "2006-01-02T15:04:05.999999999-07:00"
+#define LAYOUT_RFC3339NANO_UTC "2006-01-02T15:04:05.999999999Z"
+
 /* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
 int format_rfc3339(
 	char *restrict s, const size_t maxlen, const time_t timer,
@@ -347,9 +350,6 @@ int format_rfc3339(
 	*--e = ':';
 	return (int)STRLEN(LAYOUT_RFC3339);
 }
-
-#define LAYOUT_RFC3339NANO "2006-01-02T15:04:05.999999999-07:00"
-#define LAYOUT_RFC3339NANO_UTC "2006-01-02T15:04:05.999999999Z"
 
 int format_rfc3339nano(
 	char *restrict s, const size_t maxlen,

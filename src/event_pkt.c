@@ -5,7 +5,6 @@
 #include "event.h"
 #include "pktqueue.h"
 #include "server.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "utils/buffer.h"
@@ -29,7 +28,7 @@
 			break;                                                 \
 		}                                                              \
 		char addr[64];                                                 \
-		format_sa(addr, sizeof(addr), &(msg)->addr.sa);                \
+		sa_format(addr, sizeof(addr), &(msg)->addr.sa);                \
 		LOG_F(VERYVERBOSE, what ": %" PRIu16 " bytes, addr=%s",        \
 		      (msg)->len, addr);                                       \
 	} while (0)
@@ -220,7 +219,7 @@ static size_t pkt_send_drop(struct pktqueue *restrict q)
 #define SENDMSG_HDR(msg, iov)                                                  \
 	((struct msghdr){                                                      \
 		.msg_name = &(msg)->addr,                                      \
-		.msg_namelen = getsocklen(&(msg)->addr.sa),                    \
+		.msg_namelen = sa_len(&(msg)->addr.sa),                        \
 		.msg_iov = (iov),                                              \
 		.msg_iovlen = 1,                                               \
 		.msg_control = NULL,                                           \

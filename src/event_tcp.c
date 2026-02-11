@@ -6,7 +6,6 @@
 #include "pktqueue.h"
 #include "server.h"
 #include "session.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"
@@ -78,7 +77,7 @@ static void accept_one(
 	ASSERT(elem == NULL);
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
-		format_sa(addr_str, sizeof(addr_str), client_sa);
+		sa_format(addr_str, sizeof(addr_str), client_sa);
 		LOG_F(INFO, "[session:%08" PRIX32 "] tcp: accepted %s", conv,
 		      addr_str);
 	}

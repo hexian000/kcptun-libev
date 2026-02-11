@@ -9,11 +9,11 @@
 #include "obfs.h"
 #include "pktqueue.h"
 #include "session.h"
-#include "sockutil.h"
 #include "util.h"
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
+#include "net/addr.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
@@ -54,7 +54,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
 	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 	/* Bind socket to address */
-	if (bind(fd, sa, getsocklen(sa)) != 0) {
+	if (bind(fd, sa, sa_len(sa)) != 0) {
 		LOG_PERROR("tcp bind");
 		CLOSE_FD(fd);
 		return -1;
@@ -75,9 +75,8 @@ static bool listener_start(struct server *restrict s)
 
 	if (conf->listen != NULL) {
 		union sockaddr_max addr;
-		if (!resolve_addr(&addr, conf->listen, RESOLVE_PASSIVE)) {
-			return false;
-		}
+		RESOLVE_BINDADDR(&addr, conf->listen, tcpbind, return false);
+
 		const int fd = tcp_listen(conf, &addr.sa);
 		if (fd == -1) {
 			return false;
@@ -91,16 +90,16 @@ static bool listener_start(struct server *restrict s)
 		l->fd = fd;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "tcp listen: %s", addr_str);
 		}
 	}
 
 	if (conf->http_listen != NULL) {
 		union sockaddr_max addr;
-		if (!resolve_addr(&addr, conf->http_listen, RESOLVE_PASSIVE)) {
-			return false;
-		}
+		RESOLVE_BINDADDR(
+			&addr, conf->http_listen, tcpbind, return false);
+
 		const int fd = tcp_listen(conf, &addr.sa);
 		if (fd == -1) {
 			return false;
@@ -113,7 +112,7 @@ static bool listener_start(struct server *restrict s)
 		l->fd_http = fd;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "http listen at %s", addr_str);
 		}
 	}
@@ -170,7 +169,7 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 		LOGW_F("socket: (%d) %s", err, strerror(err));
 		return false;
 	}
-	if (connect(fd, sa, getsocklen(sa))) {
+	if (connect(fd, sa, sa_len(sa))) {
 		const int err = errno;
 		LOGW_F("connect: (%d) %s", err, strerror(err));
 		return false;
@@ -190,55 +189,48 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 {
 	if (conf->kcp_bind != NULL) {
 		union sockaddr_max addr;
-		if (!resolve_addr(
-			    &addr, conf->kcp_bind,
-			    RESOLVE_UDP | RESOLVE_PASSIVE)) {
-			return false;
-		}
+		RESOLVE_BINDADDR(&addr, conf->kcp_bind, udpbind, return false);
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
 				return false;
 			}
 		}
-		if (bind(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
+		if (bind(udp->fd, &addr.sa, sa_len(&addr.sa))) {
 			LOG_PERROR("udp bind");
 			return false;
 		}
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "udp bind: %s", addr_str);
 		}
 	}
 	if (conf->kcp_connect != NULL) {
 		union sockaddr_max addr;
-		if (!resolve_addr(&addr, conf->kcp_connect, RESOLVE_UDP)) {
-			return false;
-		}
+		RESOLVE_ADDR(&addr, conf->kcp_connect, udp, return false);
+
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
 				return false;
 			}
 		}
-		if (connect(udp->fd, &addr.sa, getsocklen(&addr.sa))) {
+		if (connect(udp->fd, &addr.sa, sa_len(&addr.sa))) {
 			LOG_PERROR("udp connect");
 			return false;
 		}
-		copy_sa(&udp->kcp_connect.sa, &addr.sa);
+		sa_copy(&udp->kcp_connect.sa, &addr.sa);
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &addr.sa);
+			sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "udp connect: %s", addr_str);
 		}
 		udp->connected = true;
 	}
 	if ((conf->mode & MODE_RENDEZVOUS) != 0) {
 		union sockaddr_max addr, laddr;
-		if (!resolve_addr(&addr, conf->rendezvous_server, RESOLVE_UDP)) {
-			return false;
-		}
+		RESOLVE_ADDR(&addr, conf->rendezvous_server, udp, return false);
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
@@ -252,8 +244,8 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		udp->rendezvous_local = laddr;
 		if (LOGLEVEL(INFO)) {
 			char addr_str[64], laddr_str[64];
-			format_sa(addr_str, sizeof(addr_str), &addr.sa);
-			format_sa(laddr_str, sizeof(laddr_str), &laddr.sa);
+			sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			sa_format(laddr_str, sizeof(laddr_str), &laddr.sa);
 			LOG_F(INFO, "rendezvous mode: %s -> %s", laddr_str,
 			      addr_str);
 		}
@@ -306,9 +298,7 @@ bool server_resolve(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
 	if (conf->connect != NULL) {
-		if (!resolve_addr(&s->connect, conf->connect, RESOLVE_TCP)) {
-			return false;
-		}
+		RESOLVE_ADDR(&s->connect, conf->connect, tcp, return false);
 	}
 	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_OBFS
@@ -484,9 +474,7 @@ bool server_start(struct server *restrict s)
 	s->last_stats_time = now;
 	const struct config *restrict conf = s->conf;
 	if (conf->connect != NULL) {
-		if (!resolve_addr(&s->connect, conf->connect, RESOLVE_TCP)) {
-			return false;
-		}
+		RESOLVE_ADDR(&s->connect, conf->connect, tcp, return false);
 	}
 	s->last_resolve_time = now;
 	ev_timer_start(loop, &s->w_kcp_update);
@@ -700,7 +688,7 @@ static bool print_session_iter(
 		return true;
 	}
 	char addr_str[64];
-	format_sa(addr_str, sizeof(addr_str), &ss->raddr.sa);
+	sa_format(addr_str, sizeof(addr_str), &ss->raddr.sa);
 	ev_tstamp last_seen = ss->created;
 	if (ss->last_send != TSTAMP_NIL && ss->last_send > last_seen) {
 		last_seen = ss->last_send;
