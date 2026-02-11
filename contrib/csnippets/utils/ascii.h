@@ -4,6 +4,14 @@
 #ifndef UTILS_ASCII_H
 #define UTILS_ASCII_H
 
+#if defined(isdigit) || defined(isalpha) || defined(isalnum) ||                \
+	defined(isspace) || defined(iscntrl) || defined(islower) ||            \
+	defined(isupper) || defined(isprint) || defined(isgraph) ||            \
+	defined(ispunct) || defined(isxdigit) || defined(isblank) ||           \
+	defined(tolower) || defined(toupper)
+#error "ascii.h is intended to be a standalone header and should not be included with ctype.h or similar headers that define character classification macros."
+#endif
+
 #define isascii(c) (((c) & ~0x7f) == 0)
 
 #define isdigit(c) ('0' <= (c) && (c) <= '9')

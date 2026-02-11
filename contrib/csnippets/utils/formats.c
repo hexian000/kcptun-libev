@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 static int
 format_abnormal(char *restrict s, const size_t maxlen, const double value)
@@ -275,4 +276,149 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		return snprintf(s, maxlen, SIGNED_STR(d.sign, "%uns"), d.nano);
 	}
 	return snprintf(s, maxlen, SIGNED_STR(d.sign, "0"));
+}
+
+#if HAVE_GMTIME_R
+#define GMTIME(timer) gmtime_r((timer), &(struct tm){ 0 })
+#else
+#define GMTIME(timer) gmtime((timer))
+#endif /* HAVE_GMTIME_R */
+
+#if HAVE_LOCALTIME_R
+#define LOCALTIME(timer) localtime_r((timer), &(struct tm){ 0 })
+#else
+#define LOCALTIME(timer) localtime((timer))
+#endif /* HAVE_LOCALTIME_R */
+
+#define STRLEN(s) (sizeof(s "") - sizeof(""))
+
+#define LAYOUT_C "2006-01-02T15:04:05-0700"
+#define LAYOUT_C_UTC "2006-01-02T15:04:05Z"
+
+#define STRFTIME(s, maxlen, timer)                                             \
+	(strftime((s), (maxlen), "%FT%T%z", LOCALTIME(timer)) ==               \
+	 STRLEN(LAYOUT_C))
+
+#define STRFTIME_UTC(s, maxlen, timer)                                         \
+	(strftime((s), (maxlen), "%FT%TZ", GMTIME(timer)) ==                   \
+	 STRLEN(LAYOUT_C_UTC))
+
+#define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
+#define LAYOUT_RFC3339_UTC "2006-01-02T15:04:05Z"
+
+/* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
+int format_rfc3339(
+	char *restrict s, const size_t maxlen, const time_t timer,
+	const bool utc)
+{
+	if (utc) {
+		if (maxlen < sizeof(LAYOUT_RFC3339_UTC)) {
+			if (maxlen > 0) {
+				s[0] = '\0';
+			}
+			return (int)STRLEN(LAYOUT_RFC3339_UTC);
+		}
+		if (!STRFTIME_UTC(s, maxlen, &timer)) {
+			if (maxlen > 0) {
+				s[0] = '\0';
+			}
+			return -1;
+		}
+		return (int)STRLEN(LAYOUT_RFC3339_UTC);
+	}
+
+	if (maxlen < sizeof(LAYOUT_RFC3339)) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return (int)STRLEN(LAYOUT_RFC3339);
+	}
+	if (!STRFTIME(s, maxlen, &timer)) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return -1;
+	}
+	const char *restrict tz = s + STRLEN(LAYOUT_C);
+	char *restrict e = s + sizeof(LAYOUT_RFC3339);
+	*--e = '\0';
+	*--e = *--tz;
+	*--e = *--tz;
+	*--e = ':';
+	return (int)STRLEN(LAYOUT_RFC3339);
+}
+
+#define LAYOUT_RFC3339NANO "2006-01-02T15:04:05.999999999-07:00"
+#define LAYOUT_RFC3339NANO_UTC "2006-01-02T15:04:05.999999999Z"
+
+int format_rfc3339nano(
+	char *restrict s, const size_t maxlen,
+	const struct timespec *restrict tp, const bool utc)
+{
+	if (utc) {
+		if (maxlen < sizeof(LAYOUT_RFC3339NANO_UTC)) {
+			if (maxlen > 0) {
+				s[0] = '\0';
+			}
+			return (int)STRLEN(LAYOUT_RFC3339NANO_UTC);
+		}
+		if (!STRFTIME_UTC(s, maxlen, &tp->tv_sec)) {
+			if (maxlen > 0) {
+				s[0] = '\0';
+			}
+			return -1;
+		}
+		unsigned char *restrict e =
+			(unsigned char *)s + sizeof(LAYOUT_RFC3339NANO_UTC);
+		int ns = (int)tp->tv_nsec;
+		*--e = '\0';
+		*--e = 'Z';
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10;
+		*--e = '.';
+		return (int)STRLEN(LAYOUT_RFC3339NANO_UTC);
+	}
+
+	if (maxlen < sizeof(LAYOUT_RFC3339NANO)) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return (int)STRLEN(LAYOUT_RFC3339NANO);
+	}
+	if (!STRFTIME(s, maxlen, &tp->tv_sec)) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return -1;
+	}
+	const unsigned char *restrict tz =
+		(unsigned char *)s + STRLEN(LAYOUT_C);
+	unsigned char *restrict e =
+		(unsigned char *)s + sizeof(LAYOUT_RFC3339NANO);
+	*--e = '\0';
+	*--e = *--tz;
+	*--e = *--tz;
+	*--e = ':';
+	*--e = *--tz;
+	*--e = *--tz;
+	*--e = *--tz;
+	int ns = (int)tp->tv_nsec;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10;
+	*--e = '.';
+	return (int)STRLEN(LAYOUT_RFC3339NANO);
 }

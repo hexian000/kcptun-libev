@@ -106,6 +106,7 @@ static inline void table_compact(struct hashtable *restrict table)
 		}
 		if (r > w) {
 			struct hash_element *restrict q = &table->p[w];
+			q->valid = true;
 			q->hash = p->hash;
 			q->key = p->key;
 			q->element = p->element;
@@ -446,6 +447,33 @@ size_t table_size(const struct hashtable *restrict table)
 		return 0;
 	}
 	return table->size;
+}
+
+bool table_next(
+	const struct hashtable *restrict table, size_t *restrict iter,
+	struct hashkey *restrict key, void **restrict element)
+{
+	if (table == NULL || iter == NULL) {
+		return false;
+	}
+	const size_t capacity = table->capacity;
+	for (size_t i = *iter; i < capacity; i++) {
+		const struct hash_element *restrict p = &table->p[i];
+		if (!p->valid) {
+			continue;
+		}
+		*iter = i + 1;
+		if (key != NULL) {
+			*key = p->key;
+		}
+		if (element != NULL) {
+			*element = p->element;
+		}
+		return true;
+	}
+	/* reset out-of-bounds iterator */
+	*iter = SIZE_MAX;
+	return false;
 }
 
 struct hashtable *table_clear(struct hashtable *restrict table)

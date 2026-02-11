@@ -4,8 +4,11 @@
 #ifndef UTILS_SLOG_H
 #define UTILS_SLOG_H
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #if SLOG_MT_SAFE
 #include <stdatomic.h>
@@ -163,10 +166,10 @@ void slog_printf(
 #define LOGVV(message) LOGVV_F("%s", message)
 
 /* Convenience macro for logging errors with errno */
-#define LOG_PERROR(what)                                                       \
+#define LOG_PERROR(msg)                                                        \
 	do {                                                                   \
 		const int err = errno;                                         \
-		LOGE_F("%s: (%d) %s", what, err, strerror(err));               \
+		LOGE_F(msg ": (%d) %s", err, strerror(err));                   \
 	} while (0)
 
 /* Check critical allocation failure */

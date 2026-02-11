@@ -124,20 +124,11 @@ static size_t slog_timestamp(
 	if (maxsize < len) {
 		return 0;
 	}
-	const unsigned int flags = ATOMIC_LOAD(&slog_flags_);
-	size_t ftlen;
-	if (flags & SLOG_FLAG_UTC) {
-		ftlen = strftime(s, maxsize, "%FT%TZ", GMTIME(timer));
-		if (ftlen != sizeof("2006-01-02T15:04:05Z") - sizeof("")) {
-			return 0;
-		}
-		return ftlen;
-	}
-	ftlen = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
-	if (ftlen != sizeof("2006-01-02T15:04:05-0700") - sizeof("")) {
+	size_t ret = strftime(s, maxsize, "%FT%T%z", LOCALTIME(timer));
+	if (ret != sizeof("2006-01-02T15:04:05-0700") - sizeof("")) {
 		return 0;
 	}
-	const char *restrict tz = s + ftlen;
+	const char *restrict tz = s + ret;
 	char *restrict e = s + len;
 	*--e = *--tz;
 	*--e = *--tz;
@@ -145,10 +136,25 @@ static size_t slog_timestamp(
 	return len;
 }
 
+static size_t slog_timestamp_utc(
+	char *restrict s, const size_t maxsize, const time_t *restrict timer)
+{
+	return strftime(s, maxsize, "%FT%TZ", GMTIME(timer));
+}
+
 #define BUF_APPENDTS(buf, timer)                                               \
-	(buf).len += slog_timestamp(                                           \
-		(char *)(buf).data + (buf).len, (buf).cap - (buf).len,         \
-		(timer))
+	do {                                                                   \
+		const unsigned int flags = ATOMIC_LOAD(&slog_flags_);          \
+		if (flags & SLOG_FLAG_UTC) {                                   \
+			(buf).len += slog_timestamp_utc(                       \
+				(char *)(buf).data + (buf).len,                \
+				(buf).cap - (buf).len, (timer));               \
+		} else {                                                       \
+			(buf).len += slog_timestamp(                           \
+				(char *)(buf).data + (buf).len,                \
+				(buf).cap - (buf).len, (timer));               \
+		}                                                              \
+	} while (0)
 
 static const char *slog_filename(const char *restrict file)
 {

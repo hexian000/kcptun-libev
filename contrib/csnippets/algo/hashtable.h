@@ -116,6 +116,23 @@ void table_iterate(
 size_t table_size(const struct hashtable *table);
 
 /**
+ * @brief Iterate over a table using an external iterator.
+ * @param table Pointer to the table.
+ * @param[inout] iter Iterator state, initialize to 0 before first call.
+ * @param[out] key If not NULL, returns the key of the current element.
+ * @param[out] element If not NULL, returns the current element.
+ * @return true if an element was found, false if iteration is complete.
+ * @warning The iterator may be invalidated by any operation that modifies the
+ * table (table_set, table_del, table_reserve, table_filter, table_clear).
+ * Using an invalidated iterator is safe but may cause elements to be skipped
+ * or visited multiple times. Use table_iterate for reliable iteration, or
+ * ensure no modifications occur during the loop.
+ */
+bool table_next(
+	const struct hashtable *table, size_t *iter, struct hashkey *key,
+	void **element);
+
+/**
  * @brief Remove all elements from a table.
  * @param table Pointer to the table.
  * @details This clears the table but preserves the allocated capacity.

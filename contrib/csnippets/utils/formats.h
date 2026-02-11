@@ -4,8 +4,10 @@
 #ifndef UTILS_FORMATS_H
 #define UTILS_FORMATS_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 /**
  * @brief Format the value with human-readable SI metric prefix.
@@ -70,5 +72,24 @@ int format_duration_nanos(char *s, size_t maxlen, struct duration d);
  * @return Same as snprintf.
  */
 int format_duration(char *s, size_t maxlen, struct duration d);
+
+/**
+ * @brief Format timespec into RFC3339 format.
+ * @param utc If true, the time is formatted in UTC and the timezone offset is replaced with 'Z'.
+ * Otherwise, the time is formatted in local time and the timezone offset is included.
+ * @return Same as snprintf.
+ * @details The output string always has a fixed length regardless of the time value.
+ */
+int format_rfc3339(char *s, size_t maxlen, time_t t, bool utc);
+
+/**
+ * @brief Format timespec into RFC3339 format with nanosecond precision.
+ * @param utc If true, the time is formatted in UTC and the timezone offset is replaced with 'Z'.
+ * Otherwise, the time is formatted in local time and the timezone offset is included.
+ * @return Same as snprintf.
+ * @details The output string always has a fixed length regardless of the time value.
+ */
+int format_rfc3339nano(
+	char *s, size_t maxlen, const struct timespec *tp, bool utc);
 
 #endif /* UTILS_FORMATS_H */
