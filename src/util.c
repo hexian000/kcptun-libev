@@ -138,11 +138,6 @@ void genpsk(const char *method)
 }
 #endif
 
-/** Read a timespec as signed 64-bit nanoseconds. */
-#define READ_TIMESPEC(ts)                                                      \
-	((int_fast64_t)(ts).tv_sec * INT64_C(1000000000) +                     \
-	 (int_fast64_t)(ts).tv_nsec)
-
 double thread_load(void)
 {
 	static _Thread_local struct {
@@ -158,10 +153,8 @@ double thread_load(void)
 		return load;
 	}
 	if (last.set) {
-		const int_fast64_t total =
-			READ_TIMESPEC(monotime) - READ_TIMESPEC(last.monotime);
-		const int_fast64_t busy =
-			READ_TIMESPEC(cputime) - READ_TIMESPEC(last.cputime);
+		const intmax_t total = TIMESPEC_DIFF(monotime, last.monotime);
+		const intmax_t busy = TIMESPEC_DIFF(cputime, last.cputime);
 		if (busy > 0 && total > 0 && busy <= total) {
 			load = (double)busy / (double)total;
 		}
@@ -171,8 +164,6 @@ double thread_load(void)
 	last.set = true;
 	return load;
 }
-
-#undef READ_TIMESPEC
 
 void socket_bind_netdev(const int fd, const char *restrict netdev)
 {

@@ -207,6 +207,7 @@ int socket_recv(const int fd, void *restrict buf, size_t *restrict len)
 			return -1;
 		}
 		if (nrecv == 0) {
+			*len = nbrecv;
 			return 1; /* EOF */
 		}
 		b += nrecv;
