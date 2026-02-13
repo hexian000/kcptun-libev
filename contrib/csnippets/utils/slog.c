@@ -132,18 +132,83 @@ static struct {
 #define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
 #define LAYOUT_RFC3339_UTC "2006-01-02T15:04:05Z"
 
-/* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
-static size_t slog_timestamp(
-	char *restrict s, const size_t maxsize, const time_t *restrict t,
-	const uint32_t flags)
+#define LAYOUT_RFC3339NANO "2006-01-02T15:04:05.999999999-07:00"
+#define LAYOUT_RFC3339NANO_UTC "2006-01-02T15:04:05.999999999Z"
+
+static size_t slog_timestamp_nanos(
+	char *restrict s, const size_t maxsize, const uint32_t flags,
+	const struct timespec *restrict tp)
 {
 	if (flags & SLOG_FLAG_UTC) {
-		if (!STRFTIME_UTC(s, maxsize, t)) {
+		if (!STRFTIME_UTC(s, maxsize, &tp->tv_sec)) {
+			return 0;
+		}
+		unsigned char *restrict e =
+			(unsigned char *)s + sizeof(LAYOUT_RFC3339NANO_UTC);
+		int ns = (int)tp->tv_nsec;
+		*--e = '\0';
+		*--e = 'Z';
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10, ns /= 10;
+		*--e = '0' + ns % 10;
+		*--e = '.';
+		return STRLEN(LAYOUT_RFC3339NANO_UTC);
+	}
+
+	if (!STRFTIME(s, maxsize, &tp->tv_sec)) {
+		return 0;
+	}
+	const unsigned char *restrict tz =
+		(unsigned char *)s + STRLEN(LAYOUT_C);
+	unsigned char *restrict e =
+		(unsigned char *)s + sizeof(LAYOUT_RFC3339NANO);
+	*--e = '\0';
+	*--e = *--tz;
+	*--e = *--tz;
+	*--e = ':';
+	*--e = *--tz;
+	*--e = *--tz;
+	*--e = *--tz;
+	int ns = (int)tp->tv_nsec;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10, ns /= 10;
+	*--e = '0' + ns % 10;
+	*--e = '.';
+	return STRLEN(LAYOUT_RFC3339NANO);
+}
+
+/* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
+static size_t
+slog_timestamp(char *restrict s, const size_t maxsize, const uint32_t flags)
+{
+	if (flags & SLOG_FLAG_NANOS) {
+		struct timespec ts;
+		if (timespec_get(&ts, TIME_UTC) == TIME_UTC) {
+			return slog_timestamp_nanos(s, maxsize, flags, &ts);
+		}
+	}
+
+	time_t now;
+	(void)time(&now);
+	if (flags & SLOG_FLAG_UTC) {
+		if (!STRFTIME_UTC(s, maxsize, &now)) {
 			return 0;
 		}
 		return STRLEN(LAYOUT_RFC3339_UTC);
 	}
-	if (!STRFTIME(s, maxsize, t)) {
+	if (!STRFTIME(s, maxsize, &now)) {
 		return 0;
 	}
 	const char *restrict tz = s + STRLEN(LAYOUT_C);
@@ -157,11 +222,9 @@ static size_t slog_timestamp(
 
 #define BUF_APPENDTS(buf, flags)                                               \
 	do {                                                                   \
-		time_t now;                                                    \
-		(void)time(&now);                                              \
 		((buf).len += slog_timestamp(                                  \
 			 (char *)(buf).data + (buf).len,                       \
-			 (buf).cap - (buf).len, &now, (flags)));               \
+			 (buf).cap - (buf).len, (flags)));                     \
 	} while (0)
 
 static const char *slog_filename(const char *restrict file)

@@ -44,6 +44,7 @@ void slog_setfileprefix(const char *prefix);
 
 enum {
 	SLOG_FLAG_UTC = 0x0001,
+	SLOG_FLAG_NANOS = 0x0002,
 };
 void slog_setflags(unsigned int flags);
 
