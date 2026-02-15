@@ -78,4 +78,10 @@ if(ENABLE_SYSTEMD)
     endif()
 endif()
 
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=")
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffile-compilation-dir=${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
+
 configure_file(config.h.in config.h ESCAPE_QUOTES)

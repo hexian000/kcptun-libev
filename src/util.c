@@ -4,11 +4,9 @@
 #include "util.h"
 
 #include "crypto.h"
-#include "os/socket.h"
 #include "pktqueue.h"
 
 #include "math/rand.h"
-#include "net/addr.h"
 #include "os/clock.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
