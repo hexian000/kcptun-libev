@@ -115,16 +115,16 @@ struct duration make_duration(const double seconds)
 	return d;
 }
 
-struct duration make_duration_nanos(const int_least64_t nanos)
+struct duration make_duration_nanos(const intmax_t nanos)
 {
-	uint_fast64_t value;
+	uintmax_t value;
 	struct duration d;
-	if (nanos < INT64_C(0)) {
+	if (nanos < INTMAX_C(0)) {
 		d.sign = -1;
-		value = -(uint_fast64_t)nanos;
+		value = -(uintmax_t)nanos;
 	} else {
 		d.sign = 1;
-		value = (uint_fast64_t)nanos;
+		value = (uintmax_t)nanos;
 	}
 	d.nano = (unsigned int)(value % 1000);
 	value /= 1000;

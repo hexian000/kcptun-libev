@@ -10,10 +10,10 @@
 #include <stdint.h>
 
 /**
- * @brief Get current realtime timestamp.
- * @return Timestamp in nanoseconds. (Unix epoch)
+ * @brief Get current Unix timestamp.
+ * @return Timestamp in struct timespec. (Unix epoch)
  */
-static inline bool clock_realtime(struct timespec *restrict tp)
+static inline bool clock_unix(struct timespec *restrict tp)
 {
 #if HAVE_CLOCK_GETTIME && defined(CLOCK_REALTIME)
 	if (clock_gettime(CLOCK_REALTIME, tp) == 0) {
@@ -28,7 +28,7 @@ static inline bool clock_realtime(struct timespec *restrict tp)
 
 /**
  * @brief Get current monotonic timestamp.
- * @return Timestamp in nanoseconds.
+ * @return Timestamp in struct timespec.
  */
 static inline bool clock_monotonic(struct timespec *restrict tp)
 {
@@ -103,6 +103,19 @@ static inline bool clock_boot(struct timespec *restrict tp)
 	 (intmax_t)(ts0).tv_nsec -                                             \
 	 (intmax_t)(ts1).tv_sec * INTMAX_C(1000000000) -                       \
 	 (intmax_t)(ts1).tv_nsec)
+
+/**
+ * @brief Get current Unix timestamp.
+ * @return Timestamp in nanoseconds.
+ */
+static inline intmax_t clock_unix_ns(void)
+{
+	struct timespec ts;
+	if (!clock_unix(&ts)) {
+		return -1;
+	}
+	return TIMESPEC_NANO(ts);
+}
 
 /**
  * @brief Get current monotonic timestamp.
