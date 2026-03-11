@@ -68,17 +68,6 @@ struct hashtable *
 table_set(struct hashtable *table, struct hashkey key, void **element);
 
 /**
- * @brief Find an element by key.
- * @param table Pointer to the table.
- * @param key The key to find.
- * @param[out] element If found, returns the element when not NULL. Otherwise
- * undefined.
- * @return false if not found.
- */
-bool table_find(
-	const struct hashtable *table, struct hashkey key, void **element);
-
-/**
  * @brief Delete an element by key.
  * @param table Pointer to the table is invalidated after call.
  * @param key The key to find and delete.
@@ -90,30 +79,15 @@ struct hashtable *
 table_del(struct hashtable *table, struct hashkey key, void **element);
 
 /**
- * @brief Delete elements while iterating over the table.
- * @param table Pointer to the table is invalidated after call.
- * @param f Callback function, return false to delete.
- * @param data Transparently passed to f
- * @return Pointer to the modified table.
- */
-struct hashtable *
-table_filter(struct hashtable *table, table_iterate_cb f, void *data);
-
-/**
- * @brief Iterate over a table.
+ * @brief Find an element by key.
  * @param table Pointer to the table.
- * @param f Callback function, return true to continue.
- * @param data Transparently passed to f
+ * @param key The key to find.
+ * @param[out] element If found, returns the element when not NULL. Otherwise
+ * undefined.
+ * @return false if not found.
  */
-void table_iterate(
-	const struct hashtable *table, table_iterate_cb f, void *data);
-
-/**
- * @brief Get the number of elements in a table.
- * @param table Pointer to a table, can be NULL.
- * @return The number of elements in the table, or 0 if table is NULL.
- */
-size_t table_size(const struct hashtable *table);
+bool table_find(
+	const struct hashtable *table, struct hashkey key, void **element);
 
 /**
  * @brief Iterate over a table using an external iterator.
@@ -131,6 +105,32 @@ size_t table_size(const struct hashtable *table);
 bool table_next(
 	const struct hashtable *table, size_t *iter, struct hashkey *key,
 	void **element);
+
+/**
+ * @brief Iterate over a table.
+ * @param table Pointer to the table.
+ * @param f Callback function, return true to continue.
+ * @param data Transparently passed to f
+ */
+void table_iterate(
+	const struct hashtable *table, table_iterate_cb f, void *data);
+
+/**
+ * @brief Delete elements while iterating over the table.
+ * @param table Pointer to the table is invalidated after call.
+ * @param f Callback function, return false to delete.
+ * @param data Transparently passed to f
+ * @return Pointer to the modified table.
+ */
+struct hashtable *
+table_filter(struct hashtable *table, table_iterate_cb f, void *data);
+
+/**
+ * @brief Get the number of elements in a table.
+ * @param table Pointer to a table, can be NULL.
+ * @return The number of elements in the table, or 0 if table is NULL.
+ */
+size_t table_size(const struct hashtable *table);
 
 /**
  * @brief Remove all elements from a table.

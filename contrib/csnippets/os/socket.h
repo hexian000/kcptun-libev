@@ -138,6 +138,24 @@ void socket_rcvlowat(int fd, int bytes);
 int socket_get_error(int fd);
 
 /**
+ * @brief Retrieves the local address of the socket.
+ * @param fd The socket file descriptor.
+ * @param[out] sa The output sockaddr union.
+ * @return The length of the address on success, 0 on failure.
+ * @note POSIX version: POSIX.1-2001
+ */
+socklen_t socket_get_addr(int fd, union sockaddr_max *sa);
+
+/**
+ * @brief Retrieves the peer address of the socket.
+ * @param fd The socket file descriptor.
+ * @param[out] sa The output sockaddr union.
+ * @return The length of the address on success, 0 on failure.
+ * @note POSIX version: POSIX.1-2001
+ */
+socklen_t socket_get_peer(int fd, union sockaddr_max *sa);
+
+/**
  * @brief Sends data on a socket, handling partial sends and transient errors.
  * @param fd The socket file descriptor.
  * @param buf The data buffer.

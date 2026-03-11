@@ -163,6 +163,28 @@ int socket_get_error(const int fd)
 	return err;
 }
 
+socklen_t socket_get_addr(const int fd, union sockaddr_max *const sa)
+{
+	socklen_t len = sizeof(union sockaddr_max);
+	if (getsockname(fd, &sa->sa, &len) != 0) {
+		const int err = errno;
+		LOGE_F("getsockname [fd:%d]: (%d) %s", fd, err, strerror(err));
+		return 0;
+	}
+	return len;
+}
+
+socklen_t socket_get_peer(const int fd, union sockaddr_max *const sa)
+{
+	socklen_t len = sizeof(union sockaddr_max);
+	if (getpeername(fd, &sa->sa, &len) != 0) {
+		const int err = errno;
+		LOGE_F("getpeername [fd:%d]: (%d) %s", fd, err, strerror(err));
+		return 0;
+	}
+	return len;
+}
+
 int socket_send(const int fd, const void *restrict buf, size_t *restrict len)
 {
 	const unsigned char *b = buf;
