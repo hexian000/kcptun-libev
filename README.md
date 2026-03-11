@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/github/downloads/hexian000/kcptun-libev/total.svg)](https://github.com/hexian000/kcptun-libev/releases)
 [![Release](https://img.shields.io/github/release/hexian000/kcptun-libev.svg?style=flat)](https://github.com/hexian000/kcptun-libev/releases)
 
-A powerful, extremely lightweight, encrypted port forwarder built on a reliable UDP transport.
+A powerful, extremely lightweight, encrypted port forwarder with NAT traversal support, built on a reliable UDP transport.
 
 Status: **Stable**
 
@@ -25,37 +25,34 @@ Status: **Stable**
 - [Runtime](#runtime)
   - [Dependencies](#dependencies-1)
   - [Configurations](#configurations)
+    - [Rendezvous Mode (NAT Traversal)](#rendezvous-mode-nat-traversal)
     - [Basic Usage](#basic-usage)
-    - [Rendezvous Mode](#rendezvous-mode)
 - [Tunables](#tunables)
 - [Observability](#observability)
 - [Credits](#credits)
 
 ## Introduction
 
-kcptun-libev is a TCP port forwarder that converts the transport to a UDP‑based protocol called [KCP](https://github.com/skywind3000/kcp).
-KCP is more configurable and typically performs much better on lossy, lightly congested networks. This project can help you achieve higher throughput in such situations.
+kcptun-libev is a TCP port forwarder built on [KCP](https://github.com/skywind3000/kcp), a reliable UDP‑based transport protocol.
 
-Example: wrap your service to use KCP instead of TCP:
-```
-client -> kcptun-libev client ->
-    lossy network (carried by KCP)
--> kcptun-libev server -> server
-```
+**NAT traversal** is the primary use case: kcptun-libev can connect a TCP service behind NAT to clients anywhere on the internet, without port forwarding or a VPN. A small, publicly reachable rendezvous server bootstraps the connection; all subsequent traffic flows directly between peers.
 
-A common setup is to pair kcptun-libev with a proxy to speed up Internet access over lossy links:
-```
-network access -> proxy client -> kcptun-libev client ->
-    lossy network (carried by KCP)
--> kcptun-libev server -> proxy server -> stable network
-```
-
-Reliable UDP can also help connect to TCP services behind NAT; see [Rendezvous Mode](#rendezvous-mode).
 ```
 client -> NAT1 -> rendezvous server
 server -> NAT2 -> rendezvous server
 
+              (after hole-punching)
 client -> NAT1 -> NAT2 -> server
+```
+
+Example: play LAN multiplayer games with friends over the internet. The game host runs kcptun-libev server behind their home NAT; each friend runs kcptun-libev client. After hole-punching via the rendezvous server, everyone connects to the host's game port as if on a local network — no router configuration needed on either side.
+
+It also works as a plain KCP transport accelerator for services on networks with packet loss or congestion:
+
+```
+client -> kcptun-libev client ->
+    lossy network (carried by KCP)
+-> kcptun-libev server -> server
 ```
 
 Because KCP retransmits packets aggressively, we recommend enabling proper QoS at the NIC level when running on public networks.
@@ -64,20 +61,18 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 
 ## Features
 
+- NAT traversal: Servers behind certain types of NAT can connect directly to clients via a well‑known rendezvous server, with no port forwarding required.
 - Secure: Proper integration with modern authenticated encryption.
 - Responsive: No multiplexer; one TCP connection maps to one KCP connection with 0‑RTT opening.
 - Precise: KCP flushes on demand; no artificial latency introduced.
 - Simple: Does one thing well — acts as a Layer 4 forwarder.
 - Modern: Full IPv6 support.
 - Dynamic DNS aware: Dynamic IP addresses can be resolved automatically.
-- NAT traversal: Servers behind certain types of NAT can connect directly via a well‑known rendezvous server.
 - Configurable: When used with other encryption (e.g., udp2raw, WireGuard), built‑in encryption can be disabled or omitted at build time.
 - Portable: Compliant with ISO C; supports both GNU/Linux and POSIX APIs.
 - Long-Term Supported: Follow the latest releases of the dependent projects. Even if we don't make any changes, the binary release will be rebuilt at least once a year.
 
-There is a previous implementation of [kcptun](https://github.com/xtaci/kcptun) which is written in Go.
-
-Compared to it, kcptun-libev is much more lightweight. The main executable is 100~200 KiB on most platforms\* and it also has much lower CPU usage and memory footprint.
+kcptun-libev is extremely lightweight. The main executable is 100~200 KiB on most platforms\*, with low CPU usage and memory footprint.
 
 *\* Some required libraries are dynamically linked; see runtime dependencies below. Statically linked executables can be larger due to these libraries.*
 
@@ -202,51 +197,6 @@ opkg install libjson-c5 libev libsodium
 ```
 
 ### Configurations
-#### Basic Usage
-
-Generate a random key for encryption:
-
-```sh
-./kcptun-libev --genpsk xchacha20poly1305_ietf
-```
-
-Create a `server.json` file and fill in the options:
-
-```json
-{
-    "kcp_bind": "0.0.0.0:12345",
-    "connect": "127.0.0.1:1080",
-    "method": "xchacha20poly1305_ietf",
-    "psk": "// your key here"
-}
-```
-
-Start the server:
-
-```sh
-./kcptun-libev -c server.json
-```
-
-Create a `client.json` file and fill in the options:
-
-```json
-{
-    "listen": "127.0.0.1:1080",
-    "kcp_connect": "203.0.113.1:12345",
-    "method": "xchacha20poly1305_ietf",
-    "psk": "// your key here"
-}
-```
-
-Start the client:
-
-```sh
-./kcptun-libev -c client.json
-```
-
-127.0.0.1:1080 on the client is now forwarded to the server via kcptun-libev.
-
-See [server.json](server.json) and [client.json](client.json) in the repository for more tunables.
 
 Common fields in `server.json`/`client.json`:
 - Client: `listen` defines the local TCP address; traffic is sent to `kcp_connect`.
@@ -254,15 +204,21 @@ Common fields in `server.json`/`client.json`:
 - Setting `password` or `psk` is strongly recommended on public networks.
 - `loglevel`: 0–8 map to Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose, VeryVerbose. The default is 4 (Notice). Higher levels can affect performance.
 
-#### Rendezvous Mode
+First, generate a random key for encryption:
 
-Rendezvous mode helps access servers behind NAT. The rendezvous server only bootstraps the connection; traffic flows directly between client and server.
+```sh
+./kcptun-libev --genpsk xchacha20poly1305_ietf
+```
+
+#### Rendezvous Mode (NAT Traversal)
+
+Rendezvous mode lets a server behind NAT accept connections from clients, without any port forwarding. The rendezvous server only bootstraps the connection; all subsequent traffic flows directly between client and server.
 
 Rendezvous mode requires UDP at the transport layer; it is incompatible with non‑UDP obfuscators.
 
 *The method is non-standard and may not work with all NAT implementations.*
 
-`rendezvous_server.json`: The rendezvous server should have an address which is reachable by both client and server.
+`rendezvous_server.json`: Deploy the rendezvous server at a publicly reachable address accessible by both client and server.
 
 ```json
 {
@@ -296,9 +252,51 @@ Rendezvous mode requires UDP at the transport layer; it is incompatible with non
 }
 ```
 
-rendezvous_server : server : client = 1 : m : m*n
+Scaling: rendezvous_server : server : client = 1 : m : m×n
 
-All peers must be either all IPv4 or all IPv6.
+All peers must use the same address family (all IPv4 or all IPv6).
+
+#### Basic Usage
+
+For direct connectivity where both peers have reachable addresses, use the standard forwarding mode.
+
+Create a `server.json` file:
+
+```json
+{
+    "kcp_bind": "0.0.0.0:12345",
+    "connect": "127.0.0.1:1080",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+Start the server:
+
+```sh
+./kcptun-libev -c server.json
+```
+
+Create a `client.json` file:
+
+```json
+{
+    "listen": "127.0.0.1:1080",
+    "kcp_connect": "203.0.113.1:12345",
+    "method": "xchacha20poly1305_ietf",
+    "psk": "// your key here"
+}
+```
+
+Start the client:
+
+```sh
+./kcptun-libev -c client.json
+```
+
+127.0.0.1:1080 on the client is now forwarded to the server via kcptun-libev.
+
+See [server.json](server.json) and [client.json](client.json) in the repository for more tunables.
 
 ## Tunables
 
