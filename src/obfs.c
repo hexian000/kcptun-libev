@@ -1484,7 +1484,7 @@ static bool print_ctx_iter(
 
 #undef FORMAT_BYTES
 
-	stats->buf = VBUF_APPENDF(
+	VBUF_APPENDF(
 		stats->buf, "[%s] %c seen=%.0lfs rx/tx=%s/%s ecn/ece=%ju/%ju\n",
 		addr_str, state, stats->now - ctx->last_seen, byt_rx, byt_tx,
 		ctx->num_ecn, ctx->num_ece);
@@ -1516,7 +1516,7 @@ struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
 
 #undef FORMAT_BYTES
 
-	buf = VBUF_APPENDF(
+	VBUF_APPENDF(
 		buf, "  = %zu(+%zu) contexts; drop %s\n", authenticated,
 		num_contexts - authenticated, byt_drop);
 	return buf;
@@ -1561,7 +1561,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 
 #undef FORMAT_BYTES
 
-	buf = VBUF_APPENDF(
+	VBUF_APPENDF(
 		buf, "  = %zu(+%zu) contexts; drop %.1lf/s (%s/s), %s\n",
 		authenticated, num_contexts - authenticated, dpkt_drop,
 		dbyt_drop, byt_drop);

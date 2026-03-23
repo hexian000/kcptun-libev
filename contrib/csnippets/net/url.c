@@ -34,9 +34,9 @@ static int unhex(const unsigned char c)
 	do {                                                                   \
 		size_t n = strlen(str);                                        \
 		size_t copy_n =                                                \
-			(written + n <= buf_size) ?                            \
+			(written + n <= maxlen) ?                              \
 				n :                                            \
-				(buf_size > written ? buf_size - written : 0); \
+				(maxlen > written ? maxlen - written : 0);     \
 		for (size_t i = 0; i < copy_n; i++) {                          \
 			buf[written + i] = (str)[i];                           \
 		}                                                              \
@@ -45,14 +45,14 @@ static int unhex(const unsigned char c)
 
 #define APPEND_CHAR(ch)                                                        \
 	do {                                                                   \
-		if (written < buf_size) {                                      \
+		if (written < maxlen) {                                        \
 			buf[written] = ch;                                     \
 		}                                                              \
 		written++;                                                     \
 	} while (0)
 
 static int
-escape(char *buf, size_t buf_size, const char *str, const size_t len,
+escape(char *buf, size_t maxlen, const char *str, const size_t len,
        const char *allowed_symbols, const bool space)
 {
 	size_t written = 0;
@@ -66,18 +66,18 @@ escape(char *buf, size_t buf_size, const char *str, const size_t len,
 			APPEND_CHAR('+');
 			continue;
 		}
-		if (written < buf_size) {
+		if (written < maxlen) {
 			buf[written] = '%';
 		}
-		if (written + 1 < buf_size) {
+		if (written + 1 < maxlen) {
 			hex(buf + written + 1, (uint_fast8_t)(ch));
 		}
 		written += 3;
 	}
-	if (buf_size > 0 && written < buf_size) {
+	if (maxlen > 0 && written < maxlen) {
 		buf[written] = '\0';
-	} else if (buf_size > 0) {
-		buf[buf_size - 1] = '\0';
+	} else if (maxlen > 0) {
+		buf[maxlen - 1] = '\0';
 	}
 	return (int)written;
 }
@@ -87,52 +87,50 @@ escape(char *buf, size_t buf_size, const char *str, const size_t len,
 #define S_PCHAR S_UNRESERVED S_SUB_DELIMS ":@"
 
 static int escape_hostport(
-	char *buf, const size_t buf_size, const char *host, const size_t len)
+	char *buf, const size_t maxlen, const char *host, const size_t len)
 {
 	/* RFC 1738, RFC 2732 */
 	return escape(
-		buf, buf_size, host, len, S_UNRESERVED S_SUB_DELIMS ":[]",
-		false);
+		buf, maxlen, host, len, S_UNRESERVED S_SUB_DELIMS ":[]", false);
 }
 
 static int escape_userinfo(
-	char *buf, const size_t buf_size, const char *userinfo,
-	const size_t len)
+	char *buf, const size_t maxlen, const char *userinfo, const size_t len)
 {
 	return escape(
-		buf, buf_size, userinfo, len, S_UNRESERVED S_SUB_DELIMS ":",
+		buf, maxlen, userinfo, len, S_UNRESERVED S_SUB_DELIMS ":",
 		false);
 }
 
 static int escape_query(
-	char *buf, const size_t buf_size, const char *query, const size_t len)
+	char *buf, const size_t maxlen, const char *query, const size_t len)
 {
-	return escape(buf, buf_size, query, len, S_PCHAR "/?", true);
+	return escape(buf, maxlen, query, len, S_PCHAR "/?", true);
 }
 
 static int escape_fragment(
-	char *buf, const size_t buf_size, const char *fragment,
-	const size_t len)
+	char *buf, const size_t maxlen, const char *fragment, const size_t len)
 {
-	return escape(buf, buf_size, fragment, len, S_PCHAR "/?", false);
+	return escape(buf, maxlen, fragment, len, S_PCHAR "/?", false);
 }
 
 int url_escape_userinfo(
-	char *buf, size_t buf_size, char *username, char *password)
+	char *restrict buf, size_t maxlen, const char *restrict username,
+	const char *restrict password)
 {
 	size_t written = 0;
 
-	int n = escape_userinfo(buf, buf_size, username, strlen(username));
+	int n = escape_userinfo(buf, maxlen, username, strlen(username));
 	if (n < 0) {
 		return -1;
 	}
 	written += (size_t)n;
 
 	if (password == NULL) {
-		if (buf_size > 0 && written < buf_size) {
+		if (maxlen > 0 && written < maxlen) {
 			buf[written] = '\0';
-		} else if (buf_size > 0) {
-			buf[buf_size - 1] = '\0';
+		} else if (maxlen > 0) {
+			buf[maxlen - 1] = '\0';
 		}
 		return (int)written;
 	}
@@ -140,32 +138,33 @@ int url_escape_userinfo(
 	APPEND_CHAR(':');
 
 	n = escape_userinfo(
-		written < buf_size ? buf + written : buf + buf_size - 1,
-		written < buf_size ? buf_size - written : 1, password,
+		written < maxlen ? buf + written : buf + maxlen - 1,
+		written < maxlen ? maxlen - written : 1, password,
 		strlen(password));
 	if (n < 0) {
 		return -1;
 	}
 	written += (size_t)n;
 
-	if (buf_size > 0 && written < buf_size) {
+	if (maxlen > 0 && written < maxlen) {
 		buf[written] = '\0';
-	} else if (buf_size > 0) {
-		buf[buf_size - 1] = '\0';
+	} else if (maxlen > 0) {
+		buf[maxlen - 1] = '\0';
 	}
 	return (int)written;
 }
 
-int url_escape_path(char *buf, const size_t buf_size, const char *path)
+int url_escape_path(
+	char *restrict buf, const size_t maxlen, const char *restrict path)
 {
-	return escape(
-		buf, buf_size, path, strlen(path), "-_.~$&+,/:;=@", false);
+	return escape(buf, maxlen, path, strlen(path), "-_.~$&+,/:;=@", false);
 }
 
-int url_escape_query(char *buf, size_t buf_size, const char *query)
+int url_escape_query(
+	char *restrict buf, size_t maxlen, const char *restrict query)
 {
 	if (*query == '\0') {
-		if (buf_size > 0) {
+		if (maxlen > 0) {
 			buf[0] = '\0';
 		}
 		return 0;
@@ -181,8 +180,8 @@ int url_escape_query(char *buf, size_t buf_size, const char *query)
 			return -1;
 		}
 		int n = escape_query(
-			written < buf_size ? buf + written : buf + buf_size - 1,
-			written < buf_size ? buf_size - written : 1, query,
+			written < maxlen ? buf + written : buf + maxlen - 1,
+			written < maxlen ? maxlen - written : 1, query,
 			eq - query);
 		if (n < 0) {
 			return -1;
@@ -191,8 +190,8 @@ int url_escape_query(char *buf, size_t buf_size, const char *query)
 		APPEND_CHAR('=');
 		query = eq + 1;
 		n = escape_query(
-			written < buf_size ? buf + written : buf + buf_size - 1,
-			written < buf_size ? buf_size - written : 1, query,
+			written < maxlen ? buf + written : buf + maxlen - 1,
+			written < maxlen ? maxlen - written : 1, query,
 			next - query);
 		if (n < 0) {
 			return -1;
@@ -204,28 +203,28 @@ int url_escape_query(char *buf, size_t buf_size, const char *query)
 		query = next + 1;
 		APPEND_CHAR('&');
 	}
-	if (buf_size > 0 && written < buf_size) {
+	if (maxlen > 0 && written < maxlen) {
 		buf[written] = '\0';
-	} else if (buf_size > 0) {
-		buf[buf_size - 1] = '\0';
+	} else if (maxlen > 0) {
+		buf[maxlen - 1] = '\0';
 	}
 	return (int)written;
 }
 
 int url_escape_path_segment(
-	char *buf, const size_t buf_size, const char *segment)
+	char *restrict buf, const size_t maxlen, const char *restrict segment)
 {
 	return escape(
-		buf, buf_size, segment, strlen(segment), "-_.~$&+:=@", false);
+		buf, maxlen, segment, strlen(segment), "-_.~$&+:=@", false);
 }
 
 int url_escape_query_component(
-	char *buf, const size_t buf_size, const char *component)
+	char *restrict buf, const size_t maxlen, const char *restrict component)
 {
-	return escape_query(buf, buf_size, component, strlen(component));
+	return escape_query(buf, maxlen, component, strlen(component));
 }
 
-int url_build(char *buf, size_t buf_size, const struct url *url)
+int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 {
 	size_t written = 0;
 
@@ -246,11 +245,14 @@ int url_build(char *buf, size_t buf_size, const struct url *url)
 				APPEND_STR(url->userinfo);
 				APPEND_CHAR('@');
 			}
+			char *p = NULL;
+			size_t avail = 0;
+			if (buf != NULL && written < maxlen) {
+				p = buf + written;
+				avail = maxlen - written;
+			}
 			int n = escape_hostport(
-				written < buf_size ? buf + written :
-						     buf + buf_size - 1,
-				written < buf_size ? buf_size - written : 1,
-				url->host, strlen(url->host));
+				p, avail, url->host, strlen(url->host));
 			if (n < 0) {
 				return -1;
 			}
@@ -270,20 +272,24 @@ int url_build(char *buf, size_t buf_size, const struct url *url)
 	}
 	if (url->fragment != NULL) {
 		APPEND_CHAR('#');
+		char *p = NULL;
+		size_t avail = 0;
+		if (buf != NULL && written < maxlen) {
+			p = buf + written;
+			avail = maxlen - written;
+		}
 		int n = escape_fragment(
-			written < buf_size ? buf + written : buf + buf_size - 1,
-			written < buf_size ? buf_size - written : 1,
-			url->fragment, strlen(url->fragment));
+			p, avail, url->fragment, strlen(url->fragment));
 		if (n < 0) {
 			return -1;
 		}
 		written += (size_t)n;
 	}
 
-	if (buf_size > 0 && written < buf_size) {
+	if (maxlen > 0 && written < maxlen) {
 		buf[written] = '\0';
-	} else if (buf_size > 0) {
-		buf[buf_size - 1] = '\0';
+	} else if (maxlen > 0) {
+		buf[maxlen - 1] = '\0';
 	}
 	return (int)written;
 }

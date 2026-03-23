@@ -11,59 +11,59 @@
 
 #include <stdint.h>
 
-static inline uint_least8_t read_uint8(const void *restrict p)
+static inline uint_fast8_t read_uint8(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return b[0];
 }
 
-static inline void write_uint8(void *restrict p, uint_least8_t v)
+static inline void write_uint8(void *restrict p, uint_fast8_t v)
 {
 	unsigned char *b = p;
 	b[0] = v;
 }
 
-static inline uint_least16_t read_uint16(const void *restrict p)
+static inline uint_fast16_t read_uint16(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return (((uint_fast16_t)b[0]) << 8U) | ((uint_fast16_t)b[1]);
 }
 
-static inline uint_least16_t read_uint16_le(const void *restrict p)
+static inline uint_fast16_t read_uint16_le(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return (((uint_fast16_t)b[0])) | ((uint_fast16_t)b[1] << 8U);
 }
 
-static inline void write_uint16(void *restrict p, uint_least16_t v)
+static inline void write_uint16(void *restrict p, uint_fast16_t v)
 {
 	unsigned char *b = p;
 	b[0] = (unsigned char)(v >> 8U);
 	b[1] = (unsigned char)v;
 }
 
-static inline void write_uint16_le(void *restrict p, uint_least16_t v)
+static inline void write_uint16_le(void *restrict p, uint_fast16_t v)
 {
 	unsigned char *b = p;
 	b[0] = (unsigned char)v;
 	b[1] = (unsigned char)(v >> 8U);
 }
 
-static inline uint_least32_t read_uint32(const void *restrict p)
+static inline uint_fast32_t read_uint32(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return (uint_fast32_t)(b[0]) << 24U | (uint_fast32_t)(b[1]) << 16U |
 	       (uint_fast32_t)(b[2]) << 8U | (uint_fast32_t)(b[3]);
 }
 
-static inline uint_least32_t read_uint32_le(const void *restrict p)
+static inline uint_fast32_t read_uint32_le(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return (uint_fast32_t)(b[0]) | (uint_fast32_t)(b[1]) << 8U |
 	       (uint_fast32_t)(b[2]) << 16U | (uint_fast32_t)(b[3]) << 24U;
 }
 
-static inline void write_uint32(void *restrict p, uint_least32_t v)
+static inline void write_uint32(void *restrict p, uint_fast32_t v)
 {
 	unsigned char *b = p;
 	b[0] = (unsigned char)(v >> 24U);
@@ -72,7 +72,7 @@ static inline void write_uint32(void *restrict p, uint_least32_t v)
 	b[3] = (unsigned char)v;
 }
 
-static inline void write_uint32_le(void *restrict p, uint_least32_t v)
+static inline void write_uint32_le(void *restrict p, uint_fast32_t v)
 {
 	unsigned char *b = p;
 	b[0] = (unsigned char)v;
@@ -81,7 +81,7 @@ static inline void write_uint32_le(void *restrict p, uint_least32_t v)
 	b[3] = (unsigned char)(v >> 24U);
 }
 
-static inline uint_least64_t read_uint64(const void *restrict p)
+static inline uint_fast64_t read_uint64(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return (uint_fast64_t)(b[0]) << 56U | (uint_fast64_t)(b[1]) << 48U |
@@ -90,7 +90,7 @@ static inline uint_least64_t read_uint64(const void *restrict p)
 	       (uint_fast64_t)(b[6]) << 8U | (uint_fast64_t)(b[7]);
 }
 
-static inline uint_least64_t read_uint64_le(const void *restrict p)
+static inline uint_fast64_t read_uint64_le(const void *restrict p)
 {
 	const unsigned char *b = p;
 	return (uint_fast64_t)(b[0]) | (uint_fast64_t)(b[1]) << 8U |
@@ -99,7 +99,7 @@ static inline uint_least64_t read_uint64_le(const void *restrict p)
 	       (uint_fast64_t)(b[6]) << 48U | (uint_fast64_t)(b[7]) << 56U;
 }
 
-static inline void write_uint64(void *restrict p, uint_least64_t v)
+static inline void write_uint64(void *restrict p, uint_fast64_t v)
 {
 	unsigned char *b = p;
 	b[0] = (unsigned char)(v >> 56U);
@@ -112,7 +112,7 @@ static inline void write_uint64(void *restrict p, uint_least64_t v)
 	b[7] = (unsigned char)v;
 }
 
-static inline void write_uint64_le(void *restrict p, uint_least64_t v)
+static inline void write_uint64_le(void *restrict p, uint_fast64_t v)
 {
 	unsigned char *b = p;
 	b[0] = (unsigned char)v;

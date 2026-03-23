@@ -13,13 +13,13 @@
  * @brief Format the value with human-readable SI metric prefix.
  * @return Same as snprintf.
  */
-int format_si_prefix(char *s, size_t maxlen, double value);
+int format_si_prefix(char *restrict s, size_t maxlen, double value);
 
 /**
  * @brief Format byte count as a human-readable string in IEC unit.
  * @return Same as snprintf.
  */
-int format_iec_bytes(char *s, size_t maxlen, double value);
+int format_iec_bytes(char *restrict s, size_t maxlen, double value);
 
 struct duration {
 	signed int sign; /* +1 or -1, 0 is null, otherwise undefined */
@@ -51,28 +51,28 @@ struct duration make_duration_nanos(intmax_t nanos);
  * @details The duration value is truncated.
  * @return Same as snprintf.
  */
-int format_duration_seconds(char *s, size_t maxlen, struct duration d);
+int format_duration_seconds(char *restrict s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format duration in milliseconds.
  * @details The duration value is truncated.
  * @return Same as snprintf.
  */
-int format_duration_millis(char *s, size_t maxlen, struct duration d);
+int format_duration_millis(char *restrict s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format duration in nanoseconds.
  * @details The duration value remains accurate.
  * @return Same as snprintf.
  */
-int format_duration_nanos(char *s, size_t maxlen, struct duration d);
+int format_duration_nanos(char *restrict s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format duration into a human-readable format.
  * @details The duration value is rounded.
  * @return Same as snprintf.
  */
-int format_duration(char *s, size_t maxlen, struct duration d);
+int format_duration(char *restrict s, size_t maxlen, struct duration d);
 
 /**
  * @brief Format timespec into RFC3339 format.
@@ -81,7 +81,7 @@ int format_duration(char *s, size_t maxlen, struct duration d);
  * @return Same as snprintf.
  * @details The output string always has a fixed length regardless of the time value.
  */
-int format_rfc3339(char *s, size_t maxlen, time_t t, bool utc);
+int format_rfc3339(char *restrict s, size_t maxlen, time_t t, bool utc);
 
 /**
  * @brief Format timespec into RFC3339 format with nanosecond precision.
@@ -91,6 +91,7 @@ int format_rfc3339(char *s, size_t maxlen, time_t t, bool utc);
  * @details The output string always has a fixed length regardless of the time value.
  */
 int format_rfc3339nano(
-	char *s, size_t maxlen, const struct timespec *tp, bool utc);
+	char *restrict s, size_t maxlen, const struct timespec *restrict tp,
+	bool utc);
 
 #endif /* UTILS_FORMATS_H */

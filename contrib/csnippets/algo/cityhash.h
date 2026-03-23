@@ -7,10 +7,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-uint64_t cityhash64_64(const void *ptr, size_t len, uint64_t seed);
+uint_fast64_t
+cityhash64_64(const void *restrict ptr, size_t len, uint_fast64_t seed);
 
 /* 👍(2023) */
-uint32_t cityhash64low_32(const void *ptr, size_t len, uint32_t seed);
+uint_fast32_t
+cityhash64low_32(const void *restrict ptr, size_t len, uint_fast32_t seed);
 
 /* 👍(2023) */
 void cityhash128_128(

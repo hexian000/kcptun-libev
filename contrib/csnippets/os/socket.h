@@ -33,13 +33,14 @@
 	 (err) == ENOBUFS || (err) == ENOMEM)
 
 /**
- * @def SHUTDOWN_FD(fd)
+ * @def SHUTDOWN_FD(fd, dir)
  * @brief Shuts down the write end of the socket and logs any errors.
  * @param fd The socket file descriptor.
+ * @param dir The shutdown direction (RD, WR, RDWR).
  */
-#define SHUTDOWN_FD(fd)                                                        \
+#define SHUTDOWN_FD(fd, dir)                                                   \
 	do {                                                                   \
-		if (shutdown((fd), SHUT_WR) != 0) {                            \
+		if (shutdown((fd), SHUT_##dir) != 0) {                         \
 			const int err = errno;                                 \
 			LOGW_F("shutdown [fd:%d]: (%d) %s", (fd), err,         \
 			       strerror(err));                                 \
@@ -73,7 +74,7 @@ union sockaddr_max {
 /**
  * @brief Sets the socket to non-blocking mode and enables the close-on-exec flag.
  * @param fd The socket file descriptor.
- * @return True on success, false on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
 bool socket_set_nonblock(int fd);
@@ -83,7 +84,7 @@ bool socket_set_nonblock(int fd);
  * @param fd The socket file descriptor.
  * @param sndbuf The send buffer size in bytes; ignored if <= 0.
  * @param rcvbuf The receive buffer size in bytes; ignored if <= 0.
- * @return True on success, false on failure.
+ * @return Always returns true; setsockopt failures are logged as LOGW.
  * @note POSIX version: POSIX.1-2001
  */
 bool socket_set_buffer(int fd, int sndbuf, int rcvbuf);
@@ -92,7 +93,7 @@ bool socket_set_buffer(int fd, int sndbuf, int rcvbuf);
  * @brief Sets socket reuse options for binding to the same address and port.
  * @param fd The socket file descriptor.
  * @param reuseport If true, enables SO_REUSEPORT (Linux 3.9+), otherwise only SO_REUSEADDR.
- * @note POSIX version: POSIX.1-2001 (SO_REUSEADDR), Linux 3.9+ (SO_REUSEPORT)
+ * @note POSIX version: POSIX.1-2001 (SO_REUSEADDR), Linux 3.9+ (SO_REUSEPORT). Logs LOGE on failure.
  */
 void socket_set_reuseport(int fd, bool reuseport);
 
@@ -101,15 +102,24 @@ void socket_set_reuseport(int fd, bool reuseport);
  * @param fd The socket file descriptor.
  * @param nodelay If true, disables Nagle's algorithm (TCP_NODELAY).
  * @param keepalive If true, enables TCP keepalive.
- * @note POSIX version: POSIX.1-2001
+ * @note POSIX version: POSIX.1-2001. Logs LOGW on individual option failures.
  */
 void socket_set_tcp(int fd, bool nodelay, bool keepalive);
+
+/**
+ * @brief Sets SO_LINGER behavior for close() on the socket.
+ * @param fd The socket file descriptor.
+ * @param enabled If true, enables linger behavior.
+ * @param seconds Linger timeout in seconds when enabled.
+ * @note POSIX version: POSIX.1-2001. Logs LOGW on failure.
+ */
+void socket_set_linger(int fd, bool enabled, int seconds);
 
 /**
  * @brief Enables TCP Fast Open for server-side.
  * @param fd The socket file descriptor.
  * @param backlog The maximum number of pending TFO connections.
- * @note Linux version: Linux 3.6+
+ * @note No-op unless compiled with WITH_TCP_FASTOPEN (Linux 3.6+). Logs LOGW on failure.
  */
 void socket_set_fastopen(int fd, int backlog);
 
@@ -117,22 +127,22 @@ void socket_set_fastopen(int fd, int backlog);
  * @brief Enables TCP Fast Open for client-side.
  * @param fd The socket file descriptor.
  * @param enabled If true, enables client-side TFO.
- * @note Linux version: Linux 4.11+
+ * @note No-op unless TCP_FASTOPEN_CONNECT is defined at compile time (Linux 4.11+). Logs LOGW on failure.
  */
 void socket_set_fastopen_connect(int fd, bool enabled);
 
 /**
  * @brief Sets the minimum number of bytes to receive before notifying.
  * @param fd The socket file descriptor.
- * @param bytes The minimum receive buffer low water mark.
- * @note POSIX version: POSIX.1-2001
+ * @param bytes The minimum receive buffer low water mark; no-op if <= 0.
+ * @note POSIX version: POSIX.1-2001. Logs LOGE on failure.
  */
 void socket_rcvlowat(int fd, int bytes);
 
 /**
  * @brief Retrieves the pending socket error.
  * @param fd The socket file descriptor.
- * @return The error code, or 0 if no error.
+ * @return SO_ERROR value on success, or errno if getsockopt itself fails.
  * @note POSIX version: POSIX.1-2001
  */
 int socket_get_error(int fd);
@@ -141,7 +151,7 @@ int socket_get_error(int fd);
  * @brief Retrieves the local address of the socket.
  * @param fd The socket file descriptor.
  * @param[out] sa The output sockaddr union.
- * @return The length of the address on success, 0 on failure.
+ * @return The length of the address on success, 0 on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
 socklen_t socket_get_addr(int fd, union sockaddr_max *sa);
@@ -150,7 +160,7 @@ socklen_t socket_get_addr(int fd, union sockaddr_max *sa);
  * @brief Retrieves the peer address of the socket.
  * @param fd The socket file descriptor.
  * @param[out] sa The output sockaddr union.
- * @return The length of the address on success, 0 on failure.
+ * @return The length of the address on success, 0 on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
 socklen_t socket_get_peer(int fd, union sockaddr_max *sa);
@@ -159,8 +169,8 @@ socklen_t socket_get_peer(int fd, union sockaddr_max *sa);
  * @brief Sends data on a socket, handling partial sends and transient errors.
  * @param fd The socket file descriptor.
  * @param buf The data buffer.
- * @param len Pointer to the length of data to send; updated to bytes sent.
- * @return 0 on success, -1 on unrecoverable failure.
+ * @param len Pointer to the length of data to send; updated to bytes sent in all cases.
+ * @return 0 on success or transient break, -1 on unrecoverable failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
 int socket_send(int fd, const void *restrict buf, size_t *restrict len);
@@ -169,8 +179,8 @@ int socket_send(int fd, const void *restrict buf, size_t *restrict len);
  * @brief Receives data from a socket, handling partial receives and transient errors.
  * @param fd The socket file descriptor.
  * @param buf The data buffer.
- * @param len Pointer to the buffer size; updated to bytes received.
- * @return 0 on success, -1 on unrecoverable failure, 1 on EOF.
+ * @param len Pointer to the buffer size; updated to bytes received in all cases.
+ * @return 0 on success, EOF, or transient break, -1 on unrecoverable failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
 int socket_recv(int fd, void *restrict buf, size_t *restrict len);
@@ -249,7 +259,7 @@ bool sa_is_local(const struct sockaddr *sa);
  * @param[in] name The hostname or IP.
  * @param[in] service The service name or port.
  * @param family The preferred protocol family (PF_UNSPEC, PF_INET, or PF_INET6).
- * @return True on success.
+ * @return True on success, false on failure; logs LOGE on getaddrinfo failure.
  * @note POSIX version: POSIX.1-2001
  */
 bool sa_resolve_tcp(
@@ -261,7 +271,7 @@ bool sa_resolve_tcp(
  * @param[out] sa The output sockaddr union.
  * @param[in] name The hostname or IP.
  * @param[in] service The service name or port.
- * @return True on success.
+ * @return True on success, false on failure; logs LOGE on getaddrinfo failure.
  * @note POSIX version: POSIX.1-2001
  */
 bool sa_resolve_tcpbind(
@@ -273,7 +283,7 @@ bool sa_resolve_tcpbind(
  * @param[in] name The hostname or IP.
  * @param[in] service The service name or port.
  * @param family The preferred protocol family (PF_UNSPEC, PF_INET, or PF_INET6).
- * @return True on success.
+ * @return True on success, false on failure; logs LOGE on getaddrinfo failure.
  * @note POSIX version: POSIX.1-2001
  */
 bool sa_resolve_udp(
@@ -285,7 +295,7 @@ bool sa_resolve_udp(
  * @param[out] sa The output sockaddr union.
  * @param[in] name The hostname or IP.
  * @param[in] service The service name or port.
- * @return True on success.
+ * @return True on success, false on failure; logs LOGE on getaddrinfo failure.
  * @note POSIX version: POSIX.1-2001
  */
 bool sa_resolve_udpbind(

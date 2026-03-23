@@ -711,7 +711,7 @@ static bool print_session_iter(
 		rtt = CLAMP(ss->kcp->rx_srtt, INT_MIN, INT_MAX);
 		rto = CLAMP(ss->kcp->rx_rto, INT_MIN, INT_MAX);
 	}
-	ctx->buf = VBUF_APPENDF(
+	VBUF_APPENDF(
 		ctx->buf,
 		"[%08" PRIX32 "] %c peer=%s seen=%.0lfs "
 		"rtt=%d rto=%d waitsnd=%zu rx/tx=%s/%s\n",
@@ -732,13 +732,14 @@ static struct vbuffer *print_session_table(
 		.buf = buf,
 	};
 	table_iterate(s->sessions, &print_session_iter, &ctx);
-	return VBUF_APPENDF(
+	VBUF_APPENDF(
 		ctx.buf,
 		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; waitsnd=%zu\n\n",
 		table_size(s->sessions), ctx.num_in_state[KCP_STATE_CONNECT],
 		ctx.num_in_state[KCP_STATE_ESTABLISHED],
 		ctx.num_in_state[KCP_STATE_LINGER],
 		ctx.num_in_state[KCP_STATE_TIME_WAIT], ctx.waitsnd);
+	return ctx.buf;
 }
 
 static struct vbuffer *append_traffic_stats(
@@ -756,9 +757,10 @@ static struct vbuffer *append_traffic_stats(
 	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
 
 #undef FORMAT_BYTES
-	return VBUF_APPENDF(
+	VBUF_APPENDF(
 		buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
 		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
+	return buf;
 }
 
 struct vbuffer *
@@ -772,7 +774,7 @@ server_stats_const(const struct server *s, struct vbuffer *buf, const int level)
 	(void)format_duration(
 		uptime_str, sizeof(uptime_str), make_duration(uptime));
 	buf = append_traffic_stats(buf, &s->stats);
-	buf = VBUF_APPENDF(buf, "  = uptime: %s\n", uptime_str);
+	VBUF_APPENDF(buf, "  = uptime: %s\n", uptime_str);
 	return buf;
 }
 
@@ -817,7 +819,7 @@ struct vbuffer *server_stats(
 		const double deff_tx =
 			(double)dstats.tcp_rx * 100.0 / (double)dstats.kcp_tx;
 
-		buf = VBUF_APPENDF(
+		VBUF_APPENDF(
 			buf,
 			"[rx,tx] tcp: %s/s, %s/s; kcp: %s/s, %s/s; efficiency: %.1f%%, %.1f%%\n",
 			dtcp_rx, dtcp_tx, dkcp_rx, dkcp_tx, deff_rx, deff_tx);
@@ -834,7 +836,7 @@ struct vbuffer *server_stats(
 	FORMAT_DURATION(dt_str, make_duration(dt));
 	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
 	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
-	buf = VBUF_APPENDF(
+	VBUF_APPENDF(
 		buf, "  = load: %s (last %s); pkt: %s/s, %s/s; uptime: %s\n",
 		load_str, dt_str, dpkt_rx, dpkt_tx, uptime_str);
 

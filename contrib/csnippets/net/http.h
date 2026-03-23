@@ -74,7 +74,7 @@ struct http_message {
  * @return The start position of next parsing, or NULL when parsing failed.
  * If the position is not moved, wait for more data.
  */
-char *http_parse(char *buf, struct http_message *msg);
+char *http_parse(char *buf, struct http_message *restrict msg);
 
 /**
  * @brief Parse a HTTP header line.
@@ -85,7 +85,8 @@ char *http_parse(char *buf, struct http_message *msg);
  * @return The start position of next parsing, or NULL when parsing failed.
  * If the position is not moved, wait for more data.
  */
-char *http_parsehdr(char *buf, char **key, char **value);
+char *
+http_parsehdr(char *restrict buf, char **restrict key, char **restrict value);
 
 /**
  * @brief Get the name of a HTTP status code.
@@ -93,7 +94,7 @@ char *http_parsehdr(char *buf, char **key, char **value);
  * @return Name of HTTP status code, or NULL when failed.
  * @see enum http_status_code
  */
-const char *http_status(uint_least16_t code);
+const char *http_status(uint_fast16_t code);
 
 /**
  * @brief Generate a date string in IMF-fixdate format.
@@ -101,7 +102,7 @@ const char *http_status(uint_least16_t code);
  * @param buf_size size of string buffer
  * @return Length of the generated string.
  */
-size_t http_date(char *buf, size_t buf_size);
+size_t http_date(char *restrict buf, size_t buf_size);
 
 /**
  * @brief Generate an error response.
@@ -111,7 +112,7 @@ size_t http_date(char *buf, size_t buf_size);
  * @return snprintf result, or 0 if the code is unknown.
  * @see enum http_status_code
  */
-int http_error(char *buf, size_t buf_size, uint_least16_t code);
+int http_error(char *restrict buf, size_t buf_size, uint_fast16_t code);
 
 /** @} */
 

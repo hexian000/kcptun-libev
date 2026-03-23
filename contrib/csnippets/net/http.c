@@ -108,7 +108,8 @@ char *http_parse(char *buf, struct http_message *restrict msg)
 	return next;
 }
 
-char *http_parsehdr(char *buf, char **key, char **value)
+char *
+http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 {
 	char *next = strstr(buf, "\r\n");
 	if (next == NULL) {
@@ -150,15 +151,16 @@ size_t http_date(char *restrict buf, const size_t buf_size)
 
 static int http_resp_comp(const void *key, const void *elem)
 {
-	const uint_least16_t code = *(const uint_least16_t *)key;
+	const uint_fast16_t code = *(const uint_least16_t *)key;
 	const struct http_status_info *info = elem;
 	return (code > info->code) - (code < info->code);
 }
 
-const char *http_status(const uint_least16_t code)
+const char *http_status(const uint_fast16_t code)
 {
+	const uint_least16_t code_key = (uint_least16_t)code;
 	const struct http_status_info *info =
-		bsearch(&code, http_resp, ARRAY_SIZE(http_resp),
+		bsearch(&code_key, http_resp, ARRAY_SIZE(http_resp),
 			sizeof(http_resp[0]), http_resp_comp);
 	if (info != NULL) {
 		return info->name;
@@ -167,10 +169,11 @@ const char *http_status(const uint_least16_t code)
 }
 
 int http_error(
-	char *restrict buf, const size_t buf_size, const uint_least16_t code)
+	char *restrict buf, const size_t buf_size, const uint_fast16_t code)
 {
+	const uint_least16_t code_key = (uint_least16_t)code;
 	const struct http_status_info *info =
-		bsearch(&code, http_resp, ARRAY_SIZE(http_resp),
+		bsearch(&code_key, http_resp, ARRAY_SIZE(http_resp),
 			sizeof(http_resp[0]), http_resp_comp);
 	if (info == NULL) {
 		return 0;
@@ -184,12 +187,12 @@ int http_error(
 	const size_t date_len = http_date(date_str, sizeof(date_str));
 	return snprintf(
 		buf, buf_size,
-		"HTTP/1.1 %" PRIu16 " %s\r\n"
+		"HTTP/1.1 %" PRIuFAST16 " %s\r\n"
 		"Date: %.*s\r\n"
 		"Connection: close\r\n"
 		"Content-type: text/html\r\n\r\n"
-		"<HTML><HEAD><TITLE>%" PRIu16 " %s</TITLE></HEAD>\n"
-		"<BODY><H1>%" PRIu16 " %s</H1>\n"
+		"<HTML><HEAD><TITLE>%" PRIuFAST16 " %s</TITLE></HEAD>\n"
+		"<BODY><H1>%" PRIuFAST16 " %s</H1>\n"
 		"%s\n"
 		"</BODY></HTML>\n",
 		code, name, (int)date_len, date_str, code, name, code, name,

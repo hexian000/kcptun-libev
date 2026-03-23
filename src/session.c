@@ -311,8 +311,8 @@ void session_kcp_stop(struct session *restrict ss)
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
-	ss->rbuf = VBUF_FREE(ss->rbuf);
-	ss->wbuf = VBUF_FREE(ss->wbuf);
+	VBUF_FREE(ss->rbuf);
+	VBUF_FREE(ss->wbuf);
 }
 
 void session_tcp_start(struct session *restrict ss, const int fd)

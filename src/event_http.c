@@ -11,7 +11,6 @@
 #include "net/http.h"
 #include "net/url.h"
 #include "utils/buffer.h"
-#include "utils/debug.h"
 #include "utils/slog.h"
 
 #include <ev.h>
@@ -264,9 +263,9 @@ static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)
 		const size_t date_len = http_date(date_str, sizeof(date_str)); \
 		const char *status = http_status((code));                      \
 		if ((buf) != NULL) {                                           \
-			(buf)->len = 0;                                        \
+			VBUF_RESET((buf));                                     \
 		}                                                              \
-		(buf) = VBUF_APPENDF(                                          \
+		VBUF_APPENDF(                                                  \
 			(buf),                                                 \
 			"HTTP/1.1 %" PRIu16 " %s\r\n"                          \
 			"Date: %.*s\r\n"                                       \
@@ -373,7 +372,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	}
 
 	if (!nobanner) {
-		buf = VBUF_APPENDF(
+		VBUF_APPENDF(
 			buf, "%s %s\n  %s\n\n", PROJECT_NAME, PROJECT_VER,
 			PROJECT_HOMEPAGE);
 	}
@@ -383,7 +382,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		(void)strftime(
 			timestamp, sizeof(timestamp), "%FT%T%z",
 			localtime(&server_time));
-		buf = VBUF_APPENDF(buf, "server time: %s\n\n", timestamp);
+		VBUF_APPENDF(buf, "server time: %s\n\n", timestamp);
 	}
 
 	struct server *restrict s = ctx->data;
@@ -396,7 +395,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 #if WITH_OBFS
 	struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
-		buf = VBUF_APPENDSTR(buf, "\n");
+		VBUF_APPENDSTR(buf, "\n");
 		if (stateless) {
 			buf = obfs_stats_const(obfs, buf);
 		} else {
@@ -410,7 +409,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		static size_t last_query = 0;
 		const size_t hit = msgpool->hit - last_hit;
 		const size_t query = msgpool->query - last_query;
-		buf = VBUF_APPENDF(
+		VBUF_APPENDF(
 			buf,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
 			msgpool->num_elem, msgpool->cache_size, hit,

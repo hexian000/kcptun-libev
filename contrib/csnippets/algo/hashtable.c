@@ -124,7 +124,7 @@ static inline void table_rehash(struct hashtable *restrict table)
 	/* perform rehash */
 	const size_t size = table->size;
 	const size_t capacity = table->capacity;
-	const uint_least32_t seed = table->seed;
+	const uint_fast32_t seed = table->seed;
 	for (size_t i = 0; i < size; i++) {
 		struct hash_element *restrict p = &table->p[i];
 		const size_t hash = GET_HASH(p->key, seed);
@@ -264,7 +264,7 @@ struct hashtable *table_set(
 	void **element)
 {
 	assert(table != NULL && element != NULL);
-	const uint_least32_t hash = GET_HASH(key, table->seed);
+	const uint_fast32_t hash = GET_HASH(key, table->seed);
 	elemid_type bucket = hash % table->capacity;
 	size_t collision = 0;
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
@@ -332,7 +332,7 @@ struct hashtable *table_del(
 	if (table == NULL) {
 		return NULL;
 	}
-	const uint_least32_t hash = GET_HASH(key, table->seed);
+	const uint_fast32_t hash = GET_HASH(key, table->seed);
 	const elemid_type bucket = hash % table->capacity;
 	elemid_type *last_next = &table->p[bucket].bucket;
 	for (elemid_type i = *last_next; i != ID_NIL; i = *last_next) {
@@ -366,7 +366,7 @@ bool table_find(
 	if (table == NULL) {
 		return false;
 	}
-	const uint_least32_t hash = GET_HASH(key, table->seed);
+	const uint_fast32_t hash = GET_HASH(key, table->seed);
 	const elemid_type bucket = hash % table->capacity;
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
 	     i = table->p[i].next) {

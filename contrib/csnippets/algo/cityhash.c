@@ -37,9 +37,9 @@
 #include <stdint.h>
 
 // Some primes between 2^63 and 2^64 for various uses.
-static const uint64_t k0 = UINT64_C(0xc3a5c85c97cb3127);
-static const uint64_t k1 = UINT64_C(0xb492b66fbe98f273);
-static const uint64_t k2 = UINT64_C(0x9ae16a3b2f90404f);
+static const uint_least64_t k0 = UINT64_C(0xc3a5c85c97cb3127);
+static const uint_least64_t k1 = UINT64_C(0xb492b66fbe98f273);
+static const uint_least64_t k2 = UINT64_C(0x9ae16a3b2f90404f);
 
 #ifndef INTSWAP
 #define INTSWAP(a, b)                                                          \
@@ -130,11 +130,13 @@ static uint64_t HashLen0to16(const unsigned char *restrict s, size_t len)
 			len + (a << 3), read_uint32(s + len - 4), mul);
 	}
 	if (len > 0) {
-		uint8_t a = (uint8_t)(s[0]);
-		uint8_t b = (uint8_t)(s[len >> 1]);
-		uint8_t c = (uint8_t)(s[len - 1]);
-		uint32_t y = (uint32_t)(a) + ((uint32_t)(b) << 8);
-		uint32_t z = (uint32_t)(len) + ((uint32_t)(c) << 2);
+		uint_fast8_t a = (uint_fast8_t)(s[0]);
+		uint_fast8_t b = (uint_fast8_t)(s[len >> 1]);
+		uint_fast8_t c = (uint_fast8_t)(s[len - 1]);
+		uint_fast32_t y =
+			(uint_fast32_t)(a) + ((uint_fast32_t)(b) << 8);
+		uint_fast32_t z =
+			(uint_fast32_t)(len) + ((uint_fast32_t)(c) << 2);
 		return shift_mix(y * k2 ^ z * k0) * k2;
 	}
 	return k2;
@@ -388,16 +390,17 @@ static void CityHash128(unsigned char hash[16], const void *ptr, size_t len)
 }
 */
 
-uint64_t
-cityhash64_64(const void *restrict ptr, const size_t len, const uint64_t seed)
+uint_fast64_t cityhash64_64(
+	const void *restrict ptr, const size_t len, const uint_fast64_t seed)
 {
 	return CityHash64WithSeed(ptr, len, seed);
 }
 
-uint32_t cityhash64low_32(
-	const void *restrict ptr, const size_t len, const uint32_t seed)
+uint_fast32_t cityhash64low_32(
+	const void *restrict ptr, const size_t len, const uint_fast32_t seed)
 {
-	return (uint32_t)CityHash64WithSeed(ptr, len, seed);
+	/* Explicit truncation to 32 bits; name implies low-32 output. */
+	return (uint_fast32_t)(uint32_t)CityHash64WithSeed(ptr, len, seed);
 }
 
 void cityhash128_128(

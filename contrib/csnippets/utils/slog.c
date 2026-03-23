@@ -136,7 +136,7 @@ static struct {
 #define LAYOUT_RFC3339NANO_UTC "2006-01-02T15:04:05.999999999Z"
 
 static size_t slog_timestamp_nanos(
-	char *restrict s, const size_t maxsize, const uint32_t flags,
+	char *restrict s, const size_t maxsize, const unsigned int flags,
 	const struct timespec *restrict tp)
 {
 	if (flags & SLOG_FLAG_UTC) {
@@ -191,7 +191,7 @@ static size_t slog_timestamp_nanos(
 
 /* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
 static size_t
-slog_timestamp(char *restrict s, const size_t maxsize, const uint32_t flags)
+slog_timestamp(char *restrict s, const size_t maxsize, const unsigned int flags)
 {
 	if (flags & SLOG_FLAG_NANOS) {
 		struct timespec ts;
@@ -248,7 +248,7 @@ static void slog_print_terminal(
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
-	const uint32_t flags = ATOMIC_LOAD(&slog_flags_);
+	const unsigned int flags = ATOMIC_LOAD(&slog_flags_);
 
 	BUF_INIT(slog_buffer, 0);
 	BUF_APPENDF(
@@ -290,7 +290,7 @@ static void slog_print_file(
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
-	const uint32_t flags = ATOMIC_LOAD(&slog_flags_);
+	const unsigned int flags = ATOMIC_LOAD(&slog_flags_);
 
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];

@@ -36,7 +36,8 @@ struct url_query_component {
  * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
 int url_escape_userinfo(
-	char *buf, size_t buf_size, char *username, char *password);
+	char *restrict buf, size_t buf_size, const char *restrict username,
+	const char *restrict password);
 
 /**
  * @brief Escape a path string to be safely used in URL.
@@ -45,7 +46,8 @@ int url_escape_userinfo(
  * @param[in] path The full path string like "/s1/s2/s3".
  * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-int url_escape_path(char *buf, size_t buf_size, const char *path);
+int url_escape_path(
+	char *restrict buf, size_t buf_size, const char *restrict path);
 
 /**
  * @brief Escape a query string to be safely used in URL.
@@ -54,7 +56,8 @@ int url_escape_path(char *buf, size_t buf_size, const char *path);
  * @param[in] query The full query string like "k1=v1&k2=v1".
  * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-int url_escape_query(char *buf, size_t buf_size, const char *query);
+int url_escape_query(
+	char *restrict buf, size_t buf_size, const char *restrict query);
 
 /**
  * @brief Escape a path segment to be safely used in URL.
@@ -63,7 +66,8 @@ int url_escape_query(char *buf, size_t buf_size, const char *query);
  * @param[in] segment The path segment.
  * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
-int url_escape_path_segment(char *buf, size_t buf_size, const char *segment);
+int url_escape_path_segment(
+	char *restrict buf, size_t buf_size, const char *restrict segment);
 
 /**
  * @brief Escape a query component to be safely used in URL.
@@ -73,17 +77,19 @@ int url_escape_path_segment(char *buf, size_t buf_size, const char *segment);
  * @return Number of characters that would have been written (excluding null terminator), or negative on error.
  */
 int url_escape_query_component(
-	char *buf, size_t buf_size, const char *component);
+	char *restrict buf, size_t buf_size, const char *restrict component);
 
 /**
  * @brief Build a URL string from structured data.
- * @param[out] buf Out buffer.
- * @param buf_size Buffer size in bytes.
+ * @param[out] buf Out buffer. Can be NULL if buf_size is 0.
+ * @param buf_size Buffer size in bytes. If 0, no output is written.
  * @param[in] url URL struct.
  * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @note When buf is NULL and buf_size is 0, returns the required buffer size (excluding null terminator), like snprintf.
  * @see struct url
  */
-int url_build(char *buf, size_t buf_size, const struct url *url);
+int url_build(
+	char *restrict buf, size_t buf_size, const struct url *restrict url);
 
 /**
  * @brief Parse a URL string into structured data.

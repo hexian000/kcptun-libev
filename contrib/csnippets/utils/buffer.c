@@ -140,14 +140,15 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
  * Append formatted text to a growable buffer using a va_list.
  * Performs a two-pass attempt: try in-place then grow and retry.
  * Keeps a trailing NUL in the reserved byte. On failure, truncates to fit.
+ * Returns vsnprintf-style count. Returns -1 when OOM is already recorded.
  */
-struct vbuffer *vbuf_vappendf(
-	struct vbuffer *restrict vbuf, const char *restrict format,
-	va_list args)
+int vbuf_vappendf(
+	struct vbuffer **pvbuf, const char *restrict format, va_list args)
 {
+	struct vbuffer *restrict vbuf = *pvbuf;
 	if (vbuf->cap == vbuf->len) {
 		/* allocation failure occurred, skip */
-		return vbuf;
+		return -1;
 	}
 
 	/* null-byte is reserved by vbuf_alloc() */
@@ -161,36 +162,36 @@ struct vbuffer *vbuf_vappendf(
 		va_end(args0);
 	}
 	if (ret <= 0) {
-		return vbuf;
+		return ret;
 	}
 	/* 1 extra byte is reserved for detecting allocation failures */
 	const size_t want = vbuf->len + (size_t)ret + 1;
 	if (want <= vbuf->cap) {
 		/* first try success */
 		vbuf->len += (size_t)ret;
-		return vbuf;
+		return ret;
 	}
-	vbuf = vbuf_grow(vbuf, want);
+	*pvbuf = vbuf_grow(vbuf, want);
+	vbuf = *pvbuf;
 	/* when failed, append as much as possible */
-	char *restrict s = (char *)(vbuf->data + vbuf->len);
-	const size_t maxlen = vbuf->cap - vbuf->len;
-	ret = vsnprintf(s, maxlen + 1, format, args);
-	if (ret > 0) {
+	{
+		char *restrict s = (char *)(vbuf->data + vbuf->len);
+		const size_t maxlen = vbuf->cap - vbuf->len;
+		(void)vsnprintf(s, maxlen + 1, format, args);
 		if ((size_t)ret < maxlen) {
 			vbuf->len += (size_t)ret;
 		} else {
 			vbuf->len = vbuf->cap;
 		}
 	}
-	return vbuf;
+	return ret;
 }
 
-struct vbuffer *
-vbuf_appendf(struct vbuffer *restrict vbuf, const char *restrict format, ...)
+int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...)
 {
 	va_list args;
 	va_start(args, format);
-	vbuf = vbuf_vappendf(vbuf, format, args);
+	const int ret = vbuf_vappendf(pvbuf, format, args);
 	va_end(args);
-	return vbuf;
+	return ret;
 }
