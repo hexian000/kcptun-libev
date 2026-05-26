@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /**
  * @defgroup hashtable
@@ -21,7 +22,7 @@ struct hashkey {
 struct hashtable;
 
 typedef bool (*table_iterate_cb)(
-	const struct hashtable *table, struct hashkey key, void *element,
+	const struct hashtable *table, const void *key, void *element,
 	void *data);
 
 enum table_flags {
@@ -30,11 +31,35 @@ enum table_flags {
 };
 
 /**
+ * @brief Options for configuring a new hash table.
+ * @details Pass NULL to table_new() for all defaults (equivalent to
+ * &TABLE_OPTS_BYTES). When hash and eq are both NULL, the key is treated
+ * as const struct hashkey * and hashed/compared by content (cityhash + memcmp).
+ */
+struct table_opts {
+	/** Hash function. NULL = default (cityhash on struct hashkey). */
+	uint_fast32_t (*hash)(const void *key, uint_fast32_t seed);
+	/** Equality function. NULL = default (memcmp on struct hashkey). */
+	bool (*eq)(const void *a, const void *b);
+	/** Any combination of enum table_flags. */
+	int flags;
+};
+
+/** @brief Default opts: key is const struct hashkey *, cityhash + memcmp. */
+extern const struct table_opts TABLE_OPTS_BYTES;
+
+/** @brief String opts: key is const char *, cityhash + strcmp. */
+extern const struct table_opts TABLE_OPTS_STR;
+
+/** @brief Pointer opts: key is a pointer value, identity hash + pointer equality. */
+extern const struct table_opts TABLE_OPTS_PTR;
+
+/**
  * @brief Create a new hash table.
- * @param flags Any combination of enum table_flags.
+ * @param opts Options, or NULL for defaults (&TABLE_OPTS_BYTES).
  * @return Pointer to the newly created table.
  */
-struct hashtable *table_new(int flags);
+struct hashtable *table_new(const struct table_opts *opts);
 
 /**
  * @brief Free all memory used by a table.
@@ -55,8 +80,9 @@ struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
 /**
  * @brief Insert or assign to an element in the table.
  * @param table Pointer to the table is invalidated after call.
- * @param key The key of the new element. The key data pointer should be
- * contained within the element for proper lifetime management.
+ * @param key Pointer to the key. Must remain valid and unmodified for the
+ * lifetime of the element in the table; typically points into the element
+ * itself. Mutating the key after insertion is undefined behavior.
  * @param[inout] element The new element in, the replaced element out.
  * If insertion succeeds and no previous element exists, returns NULL.
  * If the key already exists, returns the previous element.
@@ -65,7 +91,7 @@ struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
  * @return Pointer to the modified table.
  */
 struct hashtable *
-table_set(struct hashtable *table, struct hashkey key, void **element);
+table_set(struct hashtable *table, const void *key, void **element);
 
 /**
  * @brief Delete an element by key.
@@ -76,7 +102,7 @@ table_set(struct hashtable *table, struct hashkey key, void **element);
  * @return Pointer to the modified table, or NULL if table was NULL.
  */
 struct hashtable *
-table_del(struct hashtable *table, struct hashkey key, void **element);
+table_del(struct hashtable *table, const void *key, void **element);
 
 /**
  * @brief Find an element by key.
@@ -86,14 +112,13 @@ table_del(struct hashtable *table, struct hashkey key, void **element);
  * undefined.
  * @return false if not found.
  */
-bool table_find(
-	const struct hashtable *table, struct hashkey key, void **element);
+bool table_find(const struct hashtable *table, const void *key, void **element);
 
 /**
  * @brief Iterate over a table using an external iterator.
  * @param table Pointer to the table.
  * @param[inout] iter Iterator state, initialize to 0 before first call.
- * @param[out] key If not NULL, returns the key of the current element.
+ * @param[out] key If not NULL, returns the key pointer of the current element.
  * @param[out] element If not NULL, returns the current element.
  * @return true if an element was found, false if iteration is complete.
  * @warning The iterator may be invalidated by any operation that modifies the
@@ -103,7 +128,7 @@ bool table_find(
  * ensure no modifications occur during the loop.
  */
 bool table_next(
-	const struct hashtable *table, size_t *iter, struct hashkey *key,
+	const struct hashtable *table, size_t *iter, const void **key,
 	void **element);
 
 /**

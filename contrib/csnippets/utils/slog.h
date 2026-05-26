@@ -73,17 +73,11 @@ void slog_printf(
 #define LOGLEVEL(level) ((LOG_LEVEL_##level) <= slog_level_)
 #endif
 
-/* Temporary: Temporary logs are printed in any debug build regardless of log level. */
-#ifndef NDEBUG
+/* Temporary: Temporary logs are printed regardless of log level. */
 #define LOGT_F(format, ...)                                                    \
 	do {                                                                   \
 		LOG_F(SILENCE, format, __VA_ARGS__);                           \
 	} while (0)
-#else
-#define LOGT_F(format, ...)                                                    \
-	do {                                                                   \
-	} while (0)
-#endif
 #define LOGT(message) LOGT_F("%s", message)
 
 /* Fatal: Serious problems that are likely to cause the program to exit. */

@@ -87,8 +87,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 		LOG_PERROR("tcp socket");
 		return false;
 	}
-	if (!socket_set_nonblock(fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(fd) != 0) {
 		CLOSE_FD(fd);
 		return false;
 	}
@@ -392,6 +391,7 @@ struct session *session_new(
 		.last_recv = TSTAMP_NIL,
 	};
 	SESSION_MAKEKEY(ss->key, &addr->sa, conv);
+	ss->hkey = (struct hashkey){ .len = SESSION_KEY_SIZE, .data = ss->key };
 	ev_io_init(&ss->w_socket, tcp_socket_cb, -1, EV_NONE);
 	ss->w_socket.data = ss;
 	ev_idle_init(&ss->w_flush, ss_flush_cb);
@@ -619,7 +619,7 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 		.data = sskey,
 	};
 	struct session *restrict ss;
-	if (!table_find(s->sessions, hkey, (void **)&ss)) {
+	if (!table_find(s->sessions, &hkey, (void **)&ss)) {
 		return true;
 	}
 	if (ss->kcp_state == KCP_STATE_TIME_WAIT) {
@@ -655,7 +655,7 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	bool created = false;
 	struct service *restrict svc;
-	if (table_find(s->pkt.services, key, (void **)&svc)) {
+	if (table_find(s->pkt.services, &key, (void **)&svc)) {
 		if (!sa_equals(&msg->addr.sa, &svc->server_addr[1].sa)) {
 			if (LOGLEVEL(VERBOSE)) {
 				char saddr_str[64], maddr_str[64];
@@ -679,9 +679,11 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 		}
 		svc->idlen = key.len;
 		memcpy(svc->id, key.data, key.len);
-		key = (struct hashkey){ .data = svc->id, .len = svc->idlen };
+		svc->hkey =
+			(struct hashkey){ .data = svc->id, .len = svc->idlen };
 		void *element = svc;
-		s->pkt.services = table_set(s->pkt.services, key, &element);
+		s->pkt.services =
+			table_set(s->pkt.services, &svc->hkey, &element);
 		if (element != NULL) {
 			LOGOOM();
 			free(svc);
@@ -729,7 +731,7 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 		}
 	}
 	const struct service *restrict svc;
-	if (!table_find(s->pkt.services, key, (void **)&svc)) {
+	if (!table_find(s->pkt.services, &key, (void **)&svc)) {
 		char addr_str[64];
 		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		LOGE_F("failed connecting %s: no server available", addr_str);

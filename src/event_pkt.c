@@ -105,7 +105,10 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 				msgframe_delete(q, frames[i]);
 			}
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -166,7 +169,10 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		if (nbrecv < 0) {
 			const int err = errno;
 			msgframe_delete(q, msg);
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -253,7 +259,10 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 		const int ret = sendmmsg(fd, mmsgs, nbatch, 0);
 		if (ret < 0) {
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			LOGE_F("sendmmsg: (%d) %s", err, strerror(err));
@@ -304,10 +313,13 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 		struct msgframe *restrict msg = q->mq_send[i];
 		struct iovec iov = SENDMSG_IOV(msg);
 		struct msghdr hdr = SENDMSG_HDR(msg, &iov);
-		const ssize_t ret = sendmsg(fd, &hdr, 0);
+		ssize_t ret;
+		do {
+			ret = sendmsg(fd, &hdr, 0);
+		} while (ret < 0 && errno == EINTR);
 		if (ret < 0) {
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			LOGE_F("sendmsg: (%d) %s", err, strerror(err));

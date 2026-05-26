@@ -7,6 +7,7 @@
 #include "pktqueue.h"
 
 #include "math/rand.h"
+#include "net/addr.h"
 #include "os/clock.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
@@ -180,4 +181,34 @@ void socket_bind_netdev(const int fd, const char *restrict netdev)
 		LOGW_F("SO_BINDTODEVICE: %s", "not supported in current build");
 	}
 #endif
+}
+
+bool resolve_addr(
+	union sockaddr_max *restrict addr, const char *restrict addrstr,
+	const enum sa_resolve_type type)
+{
+	const size_t addrlen = strlen(addrstr);
+	ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));
+	char buf[addrlen + 1];
+	memcpy(buf, addrstr, addrlen + 1);
+	char *hoststr, *portstr;
+	if (!splithostport(buf, &hoststr, &portstr)) {
+		return false;
+	}
+	return sa_resolve(addr, hoststr, portstr, type, PF_UNSPEC);
+}
+
+bool resolve_bindaddr(
+	union sockaddr_max *restrict addr, const char *restrict addrstr,
+	const enum sa_resolve_type type)
+{
+	const size_t addrlen = strlen(addrstr);
+	ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));
+	char buf[addrlen + 1];
+	memcpy(buf, addrstr, addrlen + 1);
+	char *hoststr, *portstr;
+	if (!splithostport(buf, &hoststr, &portstr)) {
+		return false;
+	}
+	return sa_resolve_bind(addr, hoststr, portstr, type);
 }

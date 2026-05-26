@@ -2,7 +2,7 @@ add_executable(kcptun-libev main.c
     crypto.c crypto.h
     util.c util.h
     conf.c conf.h
-    jsonutil.c jsonutil.h
+    conf_schema.gen.c conf_schema.gen.h
     pktqueue.c pktqueue.h
     session.c session.h
     server.c server.h
@@ -35,20 +35,6 @@ target_compile_options(kcptun-libev PRIVATE "-include${CMAKE_CURRENT_BINARY_DIR}
 target_compile_options(kcptun-libev PRIVATE -pedantic -Wall -Wextra -Werror)
 
 target_link_libraries(kcptun-libev PRIVATE kcp bloom csnippets)
-
-# find json-c
-find_path(JSONC_INCLUDE_DIR NAMES json-c/json.h)
-if(BUILD_STATIC OR LINK_STATIC_LIBS)
-    find_library(JSONC_LIBRARY NAMES libjson-c.a)
-else()
-    find_library(JSONC_LIBRARY NAMES json-c)
-endif()
-if((NOT EXISTS "${JSONC_INCLUDE_DIR}/json-c/json.h") OR (NOT EXISTS ${JSONC_LIBRARY}))
-    message(FATAL_ERROR "json-c not found")
-endif()
-message(STATUS "json-c: ${JSONC_LIBRARY}")
-target_include_directories(kcptun-libev SYSTEM PRIVATE ${JSONC_INCLUDE_DIR})
-target_link_libraries(kcptun-libev PRIVATE ${JSONC_LIBRARY})
 
 # find libev
 find_path(LIBEV_INCLUDE_DIR NAMES ev.h)

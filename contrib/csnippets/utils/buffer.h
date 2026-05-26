@@ -190,7 +190,8 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *format, ...);
  */
 #define BUF_INIT(buf, n)                                                       \
 	do {                                                                   \
-		_Static_assert((n) <= sizeof((buf).data), "buffer overflow");  \
+		enum { buf_cap_ = sizeof((buf).data) };                        \
+		_Static_assert((n) <= buf_cap_, "buffer overflow");            \
 		(buf).cap = sizeof((buf).data);                                \
 		(buf).len = (n);                                               \
 	} while (0)

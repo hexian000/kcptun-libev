@@ -98,7 +98,10 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		const int fd = accept(watcher->fd, &addr.sa, &addrlen);
 		if (fd < 0) {
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			LOGE_F("accept: (%d) %s", err, strerror(err));
@@ -117,8 +120,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			CLOSE_FD(fd);
 			return;
 		}
-		if (!socket_set_nonblock(fd)) {
-			LOG_PERROR("fcntl");
+		if (socket_set_nonblock(fd) != 0) {
 			CLOSE_FD(fd);
 			return;
 		}
@@ -199,10 +201,13 @@ static int tcp_recv(struct session *restrict ss)
 	unsigned char *buf = ss->rbuf->data + TLV_HEADER_SIZE + ss->rbuf->len;
 	size_t len = 0;
 	/* Receive message from client socket */
-	const ssize_t nread = recv(fd, buf, cap, 0);
+	ssize_t nread;
+	do {
+		nread = recv(fd, buf, cap, 0);
+	} while (nread < 0 && errno == EINTR);
 	if (nread < 0) {
 		const int err = errno;
-		if (IS_TRANSIENT_ERROR(err)) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return 1;
 		}
 		LOGE_F("[session:%08" PRIX32 "] tcp recv: (%d) %s", ss->conv,
@@ -276,10 +281,13 @@ static int tcp_send(struct session *restrict ss)
 
 	const int fd = ss->w_socket.fd;
 	unsigned char *buf = ss->wbuf->data + ss->wbuf_flush;
-	const ssize_t ret = send(fd, buf, len, 0);
+	ssize_t ret;
+	do {
+		ret = send(fd, buf, len, 0);
+	} while (ret < 0 && errno == EINTR);
 	if (ret < 0) {
 		const int err = errno;
-		if (IS_TRANSIENT_ERROR(err)) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return 1;
 		}
 		LOGE_F("[session:%08" PRIX32 "] tcp send: (%d) %s", ss->conv,

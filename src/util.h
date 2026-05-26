@@ -4,6 +4,7 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 
@@ -104,37 +105,13 @@ void genpsk(const char *method);
 /* socket utilities */
 void socket_bind_netdev(int fd, const char *netdev);
 
-#define RESOLVE_ADDR(addr, addrstr, type, error)                               \
-	do {                                                                   \
-		const size_t addrlen = strlen((addrstr));                      \
-		ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));          \
-		char buf[addrlen + 1];                                         \
-		memcpy(buf, (addrstr), addrlen);                               \
-		buf[addrlen] = '\0';                                           \
-		char *hoststr, *portstr;                                       \
-		if (!splithostport(buf, &hoststr, &portstr)) {                 \
-			error;                                                 \
-		}                                                              \
-		if (!sa_resolve_##type((addr), hoststr, portstr, PF_UNSPEC)) { \
-			error;                                                 \
-		}                                                              \
-	} while (0)
+bool resolve_addr(
+	union sockaddr_max *addr, const char *addrstr,
+	enum sa_resolve_type type);
 
-#define RESOLVE_BINDADDR(addr, addrstr, type, error)                           \
-	do {                                                                   \
-		const size_t addrlen = strlen((addrstr));                      \
-		ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));          \
-		char buf[addrlen + 1];                                         \
-		memcpy(buf, (addrstr), addrlen);                               \
-		buf[addrlen] = '\0';                                           \
-		char *hoststr, *portstr;                                       \
-		if (!splithostport(buf, &hoststr, &portstr)) {                 \
-			error;                                                 \
-		}                                                              \
-		if (!sa_resolve_##type((addr), hoststr, portstr)) {            \
-			error;                                                 \
-		}                                                              \
-	} while (0)
+bool resolve_bindaddr(
+	union sockaddr_max *addr, const char *addrstr,
+	enum sa_resolve_type type);
 
 /**
  * @brief Per-thread CPU load since the previous call.

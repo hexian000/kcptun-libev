@@ -1,41 +1,82 @@
 ---
-Checks:          'cert-*,clang-analyzer-*,clang-diagnostic-*,google-*,llvm-*,misc-*,modernize-*,performance-*,portability-*'
+# Checks are scoped to user code only (HeaderFilterRegex: '' means non-user
+# headers are suppressed).  Groups removed:
+#   clang-diagnostic-*  — duplicates compiler -Wall/-Wextra output
+#   google-*, llvm-*    — C++ style rules; zero user-code findings
+#   modernize-*         — C++ modernization; not applicable to C11
+#   performance-*       — C++ move/forward semantics; not applicable to C
+#   portability-*       — C++ std-lib portability; not applicable to C
+# Added:
+#   bugprone-*          — catches real bugs (branch-clone, implicit ptr cast…)
+#   misc-*              — const-correctness, unused params, header hygiene
+#   readability-*       — code clarity (braces, else-after-return, simplify…)
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-suspicious-include,
+  cert-con36-c,
+  cert-dcl03-c,
+  cert-dcl16-c,
+  cert-dcl37-c,
+  cert-env33-c,
+  cert-err33-c,
+  cert-err34-c,
+  cert-exp42-c,
+  cert-fio38-c,
+  cert-flp30-c,
+  cert-flp37-c,
+  cert-msc24-c,
+  cert-msc30-c,
+  cert-msc32-c,
+  cert-msc33-c,
+  cert-pos44-c,
+  cert-pos47-c,
+  cert-sig30-c,
+  cert-str34-c,
+  misc-const-correctness,
+  misc-definitions-in-headers,
+  misc-header-include-cycle,
+  misc-include-cleaner,
+  misc-misplaced-const,
+  misc-redundant-expression,
+  misc-static-assert,
+  misc-unused-parameters,
+  readability-braces-around-statements,
+  readability-else-after-return,
+  -readability-function-cognitive-complexity,
+  readability-function-size,
+  readability-non-const-parameter,
+  readability-redundant-control-flow,
+  readability-simplify-boolean-expr
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
 FormatStyle:     file
 CheckOptions:
-  - key:             llvm-else-after-return.WarnOnConditionVariables
-    value:           'false'
-  - key:             modernize-loop-convert.MinConfidence
-    value:           reasonable
-  - key:             modernize-replace-auto-ptr.IncludeStyle
-    value:           llvm
+  - key:             bugprone-assert-side-effect.AssertMacros
+    value:           'assert,ASSERT'
   - key:             cert-str34-c.DiagnoseSignedUnsignedCharComparisons
-    value:           'false'
-  - key:             google-readability-namespace-comments.ShortNamespaceLines
-    value:           '10'
-  - key:             cert-err33-c.CheckedFunctions
-    value:           '::aligned_alloc;::asctime_s;::at_quick_exit;::atexit;::bsearch;::bsearch_s;::btowc;::c16rtomb;::c32rtomb;::calloc;::clock;::cnd_broadcast;::cnd_init;::cnd_signal;::cnd_timedwait;::cnd_wait;::ctime_s;::fclose;::fflush;::fgetc;::fgetpos;::fgets;::fgetwc;::fopen;::fopen_s;::fprintf;::fprintf_s;::fputc;::fputs;::fputwc;::fputws;::fread;::freopen;::freopen_s;::fscanf;::fscanf_s;::fseek;::fsetpos;::ftell;::fwprintf;::fwprintf_s;::fwrite;::fwscanf;::fwscanf_s;::getc;::getchar;::getenv;::getenv_s;::gets_s;::getwc;::getwchar;::gmtime;::gmtime_s;::localtime;::localtime_s;::malloc;::mbrtoc16;::mbrtoc32;::mbsrtowcs;::mbsrtowcs_s;::mbstowcs;::mbstowcs_s;::memchr;::mktime;::mtx_init;::mtx_lock;::mtx_timedlock;::mtx_trylock;::mtx_unlock;::printf_s;::putc;::putwc;::raise;::realloc;::remove;::rename;::scanf;::scanf_s;::setlocale;::setvbuf;::signal;::snprintf;::snprintf_s;::sprintf;::sprintf_s;::sscanf;::sscanf_s;::strchr;::strerror_s;::strftime;::strpbrk;::strrchr;::strstr;::strtod;::strtof;::strtoimax;::strtok;::strtok_s;::strtol;::strtold;::strtoll;::strtoul;::strtoull;::strtoumax;::strxfrm;::swprintf;::swprintf_s;::swscanf;::swscanf_s;::thrd_create;::thrd_detach;::thrd_join;::thrd_sleep;::time;::timespec_get;::tmpfile;::tmpfile_s;::tmpnam;::tmpnam_s;::tss_create;::tss_get;::tss_set;::ungetc;::ungetwc;::vfprintf;::vfprintf_s;::vfscanf;::vfscanf_s;::vfwprintf;::vfwprintf_s;::vfwscanf;::vfwscanf_s;::vprintf_s;::vscanf;::vscanf_s;::vsnprintf;::vsnprintf_s;::vsprintf;::vsprintf_s;::vsscanf;::vsscanf_s;::vswprintf;::vswprintf_s;::vswscanf;::vswscanf_s;::vwprintf_s;::vwscanf;::vwscanf_s;::wcrtomb;::wcschr;::wcsftime;::wcspbrk;::wcsrchr;::wcsrtombs;::wcsrtombs_s;::wcsstr;::wcstod;::wcstof;::wcstoimax;::wcstok;::wcstok_s;::wcstol;::wcstold;::wcstoll;::wcstombs;::wcstombs_s;::wcstoul;::wcstoull;::wcstoumax;::wcsxfrm;::wctob;::wctrans;::wctype;::wmemchr;::wprintf_s;::wscanf;::wscanf_s;'
-  - key:             cert-oop54-cpp.WarnOnlyIfThisHasSuspiciousField
     value:           'false'
   - key:             cert-dcl16-c.NewSuffixes
     value:           'L;LL;LU;LLU'
-  - key:             google-readability-braces-around-statements.ShortStatementLines
+  # C11 standard library + POSIX functions whose return value must be checked.
+  # Windows-specific _s variants are omitted (not used in this POSIX project).
+  - key:             cert-err33-c.CheckedFunctions
+    value:           '::aligned_alloc;::at_quick_exit;::atexit;::bsearch;::btowc;::c16rtomb;::c32rtomb;::calloc;::clock;::cnd_broadcast;::cnd_init;::cnd_signal;::cnd_timedwait;::cnd_wait;::fclose;::fflush;::fgetc;::fgetpos;::fgets;::fgetwc;::fopen;::fprintf;::fputc;::fputs;::fputwc;::fputws;::fread;::freopen;::fscanf;::fseek;::fsetpos;::ftell;::fwprintf;::fwrite;::fwscanf;::getc;::getchar;::getenv;::getwc;::getwchar;::gmtime;::localtime;::malloc;::mbrtoc16;::mbrtoc32;::mbsrtowcs;::mbstowcs;::memchr;::mktime;::mtx_init;::mtx_lock;::mtx_timedlock;::mtx_trylock;::mtx_unlock;::putc;::putwc;::raise;::realloc;::remove;::rename;::scanf;::setlocale;::setvbuf;::signal;::snprintf;::sprintf;::sscanf;::strchr;::strftime;::strpbrk;::strrchr;::strstr;::strtod;::strtof;::strtoimax;::strtok;::strtol;::strtold;::strtoll;::strtoul;::strtoull;::strtoumax;::strxfrm;::swprintf;::swscanf;::thrd_create;::thrd_detach;::thrd_join;::thrd_sleep;::time;::timespec_get;::tmpfile;::tmpnam;::tss_create;::tss_get;::tss_set;::ungetc;::ungetwc;::vfprintf;::vfscanf;::vfwprintf;::vfwscanf;::vscanf;::vsnprintf;::vsprintf;::vsscanf;::vswprintf;::vswscanf;::wcrtomb;::wcschr;::wcsftime;::wcspbrk;::wcsrchr;::wcsrtombs;::wcsstr;::wcstod;::wcstof;::wcstoimax;::wcstok;::wcstol;::wcstold;::wcstoll;::wcstombs;::wcstoul;::wcstoull;::wcstoumax;::wcsxfrm;::wctob;::wctrans;::wctype;::wmemchr;::accept;::bind;::chdir;::chmod;::close;::connect;::dup;::dup2;::epoll_create;::epoll_create1;::epoll_ctl;::epoll_wait;::eventfd;::fcntl;::fstat;::getaddrinfo;::getnameinfo;::getsockopt;::inotify_add_watch;::inotify_init1;::kill;::listen;::lstat;::mkdir;::mmap;::open;::openat;::pipe;::pipe2;::poll;::posix_memalign;::pthread_cond_broadcast;::pthread_cond_init;::pthread_cond_signal;::pthread_cond_timedwait;::pthread_cond_wait;::pthread_create;::pthread_join;::pthread_mutex_init;::pthread_mutex_lock;::pthread_mutex_timedlock;::pthread_mutex_trylock;::pthread_mutex_unlock;::read;::recv;::recvfrom;::recvmsg;::sem_init;::sem_post;::sem_timedwait;::sem_trywait;::sem_wait;::send;::sendmsg;::sendto;::setsockopt;::shutdown;::sigaction;::signalfd;::socket;::socketpair;::stat;::timerfd_create;::timerfd_settime;::unlink;::waitpid;::write;::writev;'
+  - key:             misc-const-correctness.AnalyzeValues
+    value:           'false'
+  - key:             misc-const-correctness.WarnPointersAsValues
+    value:           'false'
+  - key:             readability-braces-around-statements.ShortStatementLines
     value:           '1'
-  - key:             google-readability-namespace-comments.SpacesBeforeComments
-    value:           '2'
-  - key:             modernize-loop-convert.MaxCopySize
-    value:           '16'
-  - key:             modernize-pass-by-value.IncludeStyle
-    value:           llvm
-  - key:             modernize-use-nullptr.NullMacros
-    value:           'NULL'
-  - key:             llvm-qualified-auto.AddConstToQualified
-    value:           'false'
-  - key:             modernize-loop-convert.NamingStyle
-    value:           lower_case
-  - key:             llvm-else-after-return.WarnOnUnfixable
-    value:           'false'
-  - key:             google-readability-function-size.StatementThreshold
-    value:           '800'
+  - key:             readability-function-cognitive-complexity.Threshold
+    value:           '30'
+  - key:             readability-function-size.StatementThreshold
+    value:           '300'
+  - key:             readability-function-size.ParameterThreshold
+    value:           '8'
+  - key:             readability-function-size.BranchThreshold
+    value:           '50'
 ...

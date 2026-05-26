@@ -36,7 +36,7 @@ struct mcache {
 	size_t request; /**< Total number of allocation requests (statistics) */
 	size_t hit; /**< Number of requests served from cache (statistics) */
 #endif
-	void *p[]; /**< Flexible array member storing pointers to cached elements */
+	void *elems[]; /**< Flexible array member storing pointers to cached elements */
 };
 
 /**
@@ -87,7 +87,7 @@ static inline void mcache_free(struct mcache *restrict cache)
 	}
 	/* Free all cached elements */
 	for (size_t i = 0; i < cache->num_elem; i++) {
-		free(cache->p[i]);
+		free(cache->elems[i]);
 	}
 	/* Free the cache structure itself */
 	free(cache);
@@ -120,7 +120,7 @@ static inline void *mcache_get(struct mcache *restrict cache)
 	cache->hit++; /* Count cache hits */
 #endif
 	/* Cache hit: return most recently cached element (LIFO) */
-	return cache->p[--cache->num_elem];
+	return cache->elems[--cache->num_elem];
 }
 
 /**
@@ -148,7 +148,7 @@ static inline void mcache_put(struct mcache *restrict cache, void *elem)
 		return;
 	}
 	/* Store element in cache for future reuse */
-	cache->p[cache->num_elem++] = elem;
+	cache->elems[cache->num_elem++] = elem;
 }
 
 /**
@@ -173,7 +173,7 @@ mcache_shrink(struct mcache *restrict cache, const size_t count)
 	const size_t stop = count < n ? n - count : 0;
 	/* Free elements from the top of the stack (LIFO order) */
 	while (n > stop) {
-		free(cache->p[--n]);
+		free(cache->elems[--n]);
 	}
 	/* Update the count of remaining elements */
 	cache->num_elem = n;

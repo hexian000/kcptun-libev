@@ -24,6 +24,7 @@ struct listener {
 
 /* plain data object */
 struct service {
+	struct hashkey hkey;
 	ev_tstamp last_seen;
 	union sockaddr_max server_addr[2];
 	size_t idlen;

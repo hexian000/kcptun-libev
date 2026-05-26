@@ -253,7 +253,7 @@ int debug_backtrace(void **restrict frames, int skip, const int len)
 		return 0;
 	}
 	(void)backtrace_simple(ctx.state, skip, backtrace_cb, NULL, &ctx);
-	return ctx.i;
+	return (int)ctx.i;
 #elif WITH_LIBUNWIND
 	int n = unw_backtrace(frames, len);
 	int w = 0;

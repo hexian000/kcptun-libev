@@ -82,6 +82,7 @@ struct IKCPCB;
 
 struct session {
 	unsigned char key[SESSION_KEY_SIZE];
+	struct hashkey hkey;
 	struct server *server;
 	struct IKCPCB *kcp;
 	enum tcp_state tcp_state;
@@ -110,11 +111,7 @@ struct session {
 	struct link_stats stats;
 };
 
-#define SESSION_GETKEY(ss)                                                     \
-	((struct hashkey){                                                     \
-		.len = SESSION_KEY_SIZE,                                       \
-		.data = (ss)->key,                                             \
-	})
+#define SESSION_GETKEY(ss) (&(ss)->hkey)
 
 #define SESSION_MAKEKEY(key, sa, conv)                                         \
 	do {                                                                   \

@@ -20,7 +20,7 @@
  * @param[out] port Port number or service string.
  * @return false if no colon in str. Only in this case, str is not destructed.
  */
-bool splithostport(char *str, char **host, char **port);
+bool splithostport(char *str, char **restrict host, char **restrict port);
 
 /** @} */
 

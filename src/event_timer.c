@@ -125,15 +125,14 @@ void resolve_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 }
 
 static bool timeout_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	const struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
 	struct session *restrict ss = element;
-	ASSERT(key.data == ss->key);
+	ASSERT(((const struct hashkey *)key)->data == ss->key);
 	ev_tstamp not_seen = now - ss->created;
 	switch (ss->kcp_state) {
 	case KCP_STATE_CLOSED:
@@ -200,15 +199,14 @@ static bool timeout_filt(
 }
 
 static bool svc_timeout_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	const struct server *restrict s = user;
 	const ev_tstamp now = ev_now(s->loop);
 	struct service *restrict svc = element;
-	ASSERT(key.data == svc->id);
+	ASSERT(((const struct hashkey *)key)->data == svc->id);
 	const ev_tstamp not_seen = now - svc->last_seen;
 	if (not_seen < s->session_timeout) {
 		return true;

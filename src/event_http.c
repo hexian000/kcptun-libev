@@ -69,11 +69,15 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 
 	struct server *restrict s = watcher->data;
 	union sockaddr_max addr;
-	socklen_t addrlen = sizeof(addr);
-	const int fd = accept(watcher->fd, &addr.sa, &addrlen);
+	socklen_t addrlen;
+	int fd;
+	do {
+		addrlen = sizeof(addr);
+		fd = accept(watcher->fd, &addr.sa, &addrlen);
+	} while (fd < 0 && errno == EINTR);
 	if (fd < 0) {
 		const int err = errno;
-		if (IS_TRANSIENT_ERROR(err)) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
 		LOGE_F("accept: (%d) %s", err, strerror(err));
@@ -85,8 +89,7 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		}
 		return;
 	}
-	if (!socket_set_nonblock(fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(fd) != 0) {
 		CLOSE_FD(fd);
 		return;
 	}
@@ -132,10 +135,13 @@ void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
 	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
 		     (size_t)1; /* for null-terminator */
-	const ssize_t nrecv = recv(watcher->fd, data, cap, 0);
+	ssize_t nrecv;
+	do {
+		nrecv = recv(watcher->fd, data, cap, 0);
+	} while (nrecv < 0 && errno == EINTR);
 	if (nrecv < 0) {
 		const int err = errno;
-		if (IS_TRANSIENT_ERROR(err)) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
 		LOGE_F("recv: (%d) %s", err, strerror(err));
@@ -214,7 +220,10 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			LOGE_F("send: (%d) %s", err, strerror(err));

@@ -9,27 +9,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static void hex(char *restrict p, const uint_fast8_t c)
-{
-	static const char hex[] = "0123456789ABCDEF";
-	p[1] = hex[c & UINT8_C(0xF)];
-	p[0] = hex[(c >> 4u) & UINT8_C(0xF)];
-}
-
-static int unhex(const unsigned char c)
-{
-	if (isdigit(c)) {
-		return c - '0';
-	}
-	if ('A' <= c && c <= 'F') {
-		return c - 'A' + 10;
-	}
-	if ('a' <= c && c <= 'f') {
-		return c - 'a' + 10;
-	}
-	return -1;
-}
-
 #define APPEND_STR(str)                                                        \
 	do {                                                                   \
 		size_t n = strlen(str);                                        \
@@ -70,7 +49,7 @@ escape(char *buf, size_t maxlen, const char *str, const size_t len,
 			buf[written] = '%';
 		}
 		if (written + 1 < maxlen) {
-			hex(buf + written + 1, (uint_fast8_t)(ch));
+			tohex(buf + written + 1, ch);
 		}
 		written += 3;
 	}
@@ -176,23 +155,32 @@ int url_escape_query(
 			next = query + strlen(query);
 		}
 		const char *eq = memchr(query, '=', next - query);
-		if (eq == NULL) {
-			return -1;
+		int n;
+		if (eq != NULL) {
+			n = escape_query(
+				written < maxlen ? buf + written :
+						   buf + maxlen - 1,
+				written < maxlen ? maxlen - written : 1, query,
+				eq - query);
+			if (n < 0) {
+				return -1;
+			}
+			written += (size_t)n;
+			APPEND_CHAR('=');
+			query = eq + 1;
+			n = escape_query(
+				written < maxlen ? buf + written :
+						   buf + maxlen - 1,
+				written < maxlen ? maxlen - written : 1, query,
+				next - query);
+		} else {
+			/* RFC 3986: key without value is a valid query component */
+			n = escape_query(
+				written < maxlen ? buf + written :
+						   buf + maxlen - 1,
+				written < maxlen ? maxlen - written : 1, query,
+				next - query);
 		}
-		int n = escape_query(
-			written < maxlen ? buf + written : buf + maxlen - 1,
-			written < maxlen ? maxlen - written : 1, query,
-			eq - query);
-		if (n < 0) {
-			return -1;
-		}
-		written += (size_t)n;
-		APPEND_CHAR('=');
-		query = eq + 1;
-		n = escape_query(
-			written < maxlen ? buf + written : buf + maxlen - 1,
-			written < maxlen ? maxlen - written : 1, query,
-			next - query);
 		if (n < 0) {
 			return -1;
 		}
@@ -226,6 +214,9 @@ int url_escape_query_component(
 
 int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 {
+	if (buf == NULL) {
+		maxlen = 0;
+	}
 	size_t written = 0;
 
 	/* [scheme:][//[userinfo@]host]/path[?query][#fragment] */
@@ -466,15 +457,15 @@ bool url_query_component(
 	}
 	char *k = s;
 	char *v = strchr(s, '=');
-	if (v == NULL) {
-		return false;
+	if (v != NULL) {
+		*v = '\0';
+		v++;
 	}
-	*v = '\0';
-	v++;
 	if (!unescape(k, true)) {
 		return false;
 	}
-	if (!unescape(v, true)) {
+	/* RFC 3986: value is optional; NULL indicates key-only component */
+	if (v != NULL && !unescape(v, true)) {
 		return false;
 	}
 	*comp = (struct url_query_component){

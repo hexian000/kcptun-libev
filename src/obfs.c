@@ -16,7 +16,6 @@
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
-#include "net/addr.h"
 #include "net/http.h"
 #include "os/socket.h"
 #include "utils/arraysize.h"
@@ -97,6 +96,7 @@ struct obfs {
 
 struct obfs_ctx {
 	unsigned char key[OBFS_CTX_KEY_SIZE];
+	struct hashkey hkey;
 	struct obfs *obfs;
 	ev_io w_read, w_write;
 	union sockaddr_max laddr, raddr;
@@ -132,11 +132,7 @@ struct obfs_ctx {
 	} rbuf, wbuf;
 };
 
-#define OBFS_CTX_GETKEY(ctx)                                                   \
-	((struct hashkey){                                                     \
-		.len = OBFS_CTX_KEY_SIZE,                                      \
-		.data = (ctx)->key,                                            \
-	})
+#define OBFS_CTX_GETKEY(ctx) (&(ctx)->hkey)
 
 static inline struct obfs_ctx *obfs_find_ctx(
 	const struct obfs *restrict obfs, const struct sockaddr *restrict sa)
@@ -150,7 +146,7 @@ static inline struct obfs_ctx *obfs_find_ctx(
 		.data = key,
 	};
 	struct obfs_ctx *ctx;
-	if (!table_find(obfs->contexts, hkey, (void **)&ctx)) {
+	if (!table_find(obfs->contexts, &hkey, (void **)&ctx)) {
 		return NULL;
 	}
 	return ctx;
@@ -587,8 +583,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		LOG_PERROR("cap socket");
 		return false;
 	}
-	if (!socket_set_nonblock(obfs->cap_fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(obfs->cap_fd) != 0) {
 		return false;
 	}
 	socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
@@ -598,8 +593,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		LOG_PERROR("raw socket");
 		return false;
 	}
-	if (!socket_set_nonblock(obfs->raw_fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(obfs->raw_fd) != 0) {
 		return false;
 	}
 	switch (domain) {
@@ -691,12 +685,15 @@ static bool obfs_tcp_send(
 		memcpy(pkt + ip_hdr_len + sizeof(tcp), data, datalen);
 	}
 
-	const ssize_t nsent =
-		sendto(obfs->raw_fd, pkt, ip_hdr_len + plen, 0, &daddr.sa,
-		       sa_len(&daddr.sa));
+	ssize_t nsent;
+	do {
+		nsent =
+			sendto(obfs->raw_fd, pkt, ip_hdr_len + plen, 0,
+			       &daddr.sa, sa_len(&daddr.sa));
+	} while (nsent < 0 && errno == EINTR);
 	if (nsent < 0) {
-		if (!IS_TRANSIENT_ERROR(errno)) {
-			const int err = errno;
+		const int err = errno;
+		if (err != EAGAIN && err != EWOULDBLOCK) {
 			LOGW_F("obfs tcp raw send: (%d) %s", err,
 			       strerror(err));
 		}
@@ -995,13 +992,12 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 }
 
 static bool ctx_del_filter(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = element;
-	ASSERT(key.data == ss->key);
+	ASSERT(((const struct hashkey *)key)->data == ss->key);
 	if (sa_equals(&ss->raddr.sa, user)) {
 		session_free(element);
 		return false;
@@ -1046,7 +1042,10 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 		const ssize_t nsend = send(ctx->fd, data, len, 0);
 		if (nsend < 0) {
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			LOGE_F("obfs: (%d) %s", err, strerror(err));
@@ -1086,6 +1085,8 @@ static bool obfs_ctx_start(
 		memcpy(ctx->key, sa, n);
 		memset(ctx->key + n, 0, sizeof(ctx->key) - n);
 	}
+	ctx->hkey =
+		(struct hashkey){ .len = OBFS_CTX_KEY_SIZE, .data = ctx->key };
 	struct server *restrict s = obfs->server;
 
 	if ((s->conf->mode & MODE_SERVER) &&
@@ -1140,8 +1141,7 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 		LOG_PERROR("tcp socket");
 		return false;
 	}
-	if (!socket_set_nonblock(obfs->fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(obfs->fd) != 0) {
 		return false;
 	}
 	socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
@@ -1236,8 +1236,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
-		if (!socket_set_nonblock(fd)) {
-			LOG_PERROR("fcntl");
+		if (socket_set_nonblock(fd) != 0) {
 			CLOSE_FD(fd);
 			obfs_ctx_free(loop, ctx);
 			return false;
@@ -1328,15 +1327,14 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 }
 
 static bool obfs_ctx_timeout_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct obfs *restrict obfs = user;
 	struct ev_loop *loop = obfs->server->loop;
 	struct obfs_ctx *restrict ctx = element;
-	ASSERT(key.data == ctx->key);
+	ASSERT(((const struct hashkey *)key)->data == ctx->key);
 	const ev_tstamp now = ev_now(loop);
 	ASSERT(now >= ctx->last_seen);
 	double not_seen, timeout;
@@ -1375,7 +1373,9 @@ obfs_redial_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	const int redial_count = ++obfs->redial_count;
 	LOGI_F("obfs: redial #%d to `%s'", redial_count, conf->kcp_connect);
 	union sockaddr_max addr;
-	RESOLVE_ADDR(&addr, conf->kcp_connect, tcp, return);
+	if (!resolve_addr(&addr, conf->kcp_connect, SA_RESOLVE_TCP)) {
+		return;
+	}
 	if (!obfs_ctx_dial(obfs, &addr.sa)) {
 		return;
 	}
@@ -1434,7 +1434,8 @@ struct obfs *obfs_new(struct server *restrict s)
 	if ((conf->mode & MODE_SERVER) != 0) {
 		flags |= TABLE_FAST;
 	}
-	obfs->contexts = table_new(flags);
+	const struct table_opts opts = { .flags = flags };
+	obfs->contexts = table_new(&opts);
 	if (obfs->contexts == NULL) {
 		LOGOOM();
 		free(obfs);
@@ -1460,13 +1461,12 @@ struct obfs_stats_ctx {
 };
 
 static bool print_ctx_iter(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	const struct obfs_ctx *restrict ctx = element;
-	ASSERT(key.data == ctx->key);
+	ASSERT(((const struct hashkey *)key)->data == ctx->key);
 	struct obfs_stats_ctx *restrict stats = user;
 	char addr_str[64];
 	sa_format(addr_str, sizeof(addr_str), &ctx->raddr.sa);
@@ -1582,8 +1582,10 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		/* dpi/tcp mode: pure raw socket, no real TCP socket */
 		if (conf->mode & MODE_SERVER) {
 			union sockaddr_max addr;
-			RESOLVE_BINDADDR(
-				&addr, conf->kcp_bind, tcpbind, return false);
+			if (!resolve_bindaddr(
+				    &addr, conf->kcp_bind, SA_RESOLVE_TCP)) {
+				return false;
+			}
 			obfs->domain = addr.sa.sa_family;
 			if (!obfs_raw_start(obfs)) {
 				return false;
@@ -1593,16 +1595,20 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 		if (conf->mode & MODE_CLIENT) {
 			union sockaddr_max addr;
-			RESOLVE_ADDR(
-				&addr, conf->kcp_connect, tcp, return false);
+			if (!resolve_addr(
+				    &addr, conf->kcp_connect, SA_RESOLVE_TCP)) {
+				return false;
+			}
 			obfs->domain = addr.sa.sa_family;
 
 			/* resolve local bind address for client */
 			union sockaddr_max bind_addr;
 			if (conf->kcp_bind != NULL) {
-				RESOLVE_ADDR(
-					&bind_addr, conf->kcp_bind, tcp,
-					return false);
+				if (!resolve_addr(
+					    &bind_addr, conf->kcp_bind,
+					    SA_RESOLVE_TCP)) {
+					return false;
+				}
 			} else {
 				/* use INADDR_ANY with same family as connect address */
 				memset(&bind_addr, 0, sizeof(bind_addr));
@@ -1624,8 +1630,10 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		/* dpi/tcp-wnd mode: use real TCP socket + raw socket */
 		if (conf->mode & MODE_SERVER) {
 			union sockaddr_max addr;
-			RESOLVE_BINDADDR(
-				&addr, conf->kcp_bind, tcpbind, return false);
+			if (!resolve_bindaddr(
+				    &addr, conf->kcp_bind, SA_RESOLVE_TCP)) {
+				return false;
+			}
 			obfs->domain = addr.sa.sa_family;
 			if (!obfs_raw_start(obfs)) {
 				return false;
@@ -1637,8 +1645,10 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		}
 		if (conf->mode & MODE_CLIENT) {
 			union sockaddr_max addr;
-			RESOLVE_ADDR(
-				&addr, conf->kcp_connect, tcp, return false);
+			if (!resolve_addr(
+				    &addr, conf->kcp_connect, SA_RESOLVE_TCP)) {
+				return false;
+			}
 			obfs->domain = addr.sa.sa_family;
 			if (!obfs_raw_start(obfs)) {
 				return false;
@@ -1692,13 +1702,12 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 	return true;
 }
 static bool obfs_shutdown_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct obfs_ctx *restrict ctx = element;
-	ASSERT(key.data == ctx->key);
+	ASSERT(((const struct hashkey *)key)->data == ctx->key);
 	struct obfs *restrict obfs = (struct obfs *)user;
 	obfs_ctx_free(obfs->server->loop, ctx);
 	return false;
@@ -2230,7 +2239,10 @@ void obfs_accept_cb(
 		const int fd = accept(watcher->fd, &m_sa.sa, &addrlen);
 		if (fd < 0) {
 			const int err = errno;
-			if (IS_TRANSIENT_ERROR(err)) {
+			if (err == EINTR) {
+				continue;
+			}
+			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
 			LOGE_F("accept: (%d) %s", err, strerror(err));
@@ -2246,8 +2258,7 @@ void obfs_accept_cb(
 			CLOSE_FD(fd);
 			return;
 		}
-		if (!socket_set_nonblock(fd)) {
-			LOG_PERROR("fcntl");
+		if (socket_set_nonblock(fd) != 0) {
 			CLOSE_FD(fd);
 			return;
 		}
@@ -2329,10 +2340,13 @@ void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
 	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
 		     (size_t)1; /* for null-terminator */
-	const ssize_t nbrecv = recv(watcher->fd, data, cap, 0);
+	ssize_t nbrecv;
+	do {
+		nbrecv = recv(watcher->fd, data, cap, 0);
+	} while (nbrecv < 0 && errno == EINTR);
 	if (nbrecv < 0) {
 		const int err = errno;
-		if (IS_TRANSIENT_ERROR(err)) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
 		if (err == ECONNREFUSED || err == ECONNRESET) {
@@ -2436,10 +2450,13 @@ void obfs_client_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
 	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
 		     (size_t)1; /* for null-terminator */
-	const ssize_t nbrecv = recv(watcher->fd, data, cap, 0);
+	ssize_t nbrecv;
+	do {
+		nbrecv = recv(watcher->fd, data, cap, 0);
+	} while (nbrecv < 0 && errno == EINTR);
 	if (nbrecv < 0) {
 		const int err = errno;
-		if (IS_TRANSIENT_ERROR(err)) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
 		LOGE_F("read: (%d) %s", err, strerror(err));

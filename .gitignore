@@ -8,4 +8,5 @@
 /build
 /xbuild
 /cmake-build-*
+/scripts/__pycache__/
 /compile_commands.json

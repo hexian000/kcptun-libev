@@ -11,6 +11,7 @@ endif()
 target_compile_definitions(csnippets PUBLIC MCACHE_STATS=0 SLOG_MT_SAFE=0)
 
 add_subdirectory(algo)
+add_subdirectory(codec)
 add_subdirectory(math)
 add_subdirectory(net)
 add_subdirectory(os)

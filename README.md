@@ -155,17 +155,16 @@ Given a version number `MAJOR.MINOR.PATCH`:
 ## Build
 ### Dependencies
 
-| Name      | Version   | Required | Feature     |
-| --------- | --------- | -------- | ----------- |
-| json-c    | >= 0.15   | yes      | config file |
-| libev     | >= 4.31   | yes      |             |
-| libsodium | >= 1.0.18 | no       | encryption  |
+| Name      | Version   | Required | Feature    |
+| --------- | --------- | -------- | ---------- |
+| libev     | >= 4.31   | yes      |            |
+| libsodium | >= 1.0.18 | no       | encryption |
 
 ```sh
 # Debian / Ubuntu
-sudo apt install libjson-c-dev libev-dev libsodium-dev
+sudo apt install libev-dev libsodium-dev
 # Alpine Linux
-apk add json-c-dev libev-dev libsodium-dev
+apk add libev-dev libsodium-dev
 ```
 
 ### Build on Unix-like Systems
@@ -189,11 +188,11 @@ See [m.sh](m.sh) for cross‑compiling support.
 
 ```sh
 # Debian / Ubuntu
-sudo apt install libjson-c5 libev4 libsodium23
+sudo apt install libev4 libsodium23
 # Alpine Linux
-apk add json-c libev libsodium
+apk add libev libsodium
 # OpenWRT
-opkg install libjson-c5 libev libsodium
+opkg install libev libsodium
 ```
 
 ### Configurations
@@ -347,7 +346,6 @@ The URI "/healthy" always responds with HTTP 200; use it for health checks.
 
 Thanks to:
 - [kcp](https://github.com/skywind3000/kcp) (with modifications)
-- [json-c](https://github.com/json-c/json-c)
 - [libev](http://software.schmorp.de/pkg/libev.html)
 - [libsodium](https://github.com/jedisct1/libsodium)
 - [libbloom](https://github.com/jvirkki/libbloom) (with modifications)

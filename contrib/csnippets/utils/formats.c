@@ -78,7 +78,7 @@ int format_iec_bytes(char *restrict s, const size_t maxlen, const double value)
 		return format_abnormal(s, maxlen, value);
 	}
 	const double absvalue = fabs(value);
-	const int e = absvalue > 1.0 ? ((int)log2(absvalue) - 1) / 10 : 0.0;
+	const int e = absvalue > 1.0 ? ((int)log2(absvalue) - 1) / 10 : 0;
 	const int i = MIN(e, (int)ARRAY_SIZE(iec_units) - 1);
 	const double v = ldexp(value, i * -10);
 	if (i > 0) {

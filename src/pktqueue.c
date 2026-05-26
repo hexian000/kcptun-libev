@@ -113,7 +113,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		.data = sskey,
 	};
 	struct session *restrict ss;
-	if (!table_find(s->sessions, hkey, (void **)&ss)) {
+	if (!table_find(s->sessions, &hkey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			if (LOGLEVEL(WARNING)) {
 				LOG_RATELIMITED_F(

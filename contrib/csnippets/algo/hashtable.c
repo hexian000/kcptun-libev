@@ -4,6 +4,7 @@
 #include "hashtable.h"
 
 #include "algo/cityhash.h"
+#include "algo/luahash.h"
 #include "math/rand.h"
 #include "utils/arraysize.h"
 #include "utils/minmax.h"
@@ -59,7 +60,7 @@ struct hash_element {
 	elemid_type bucket, next;
 	bool valid : 1;
 	uint_least32_t hash;
-	struct hashkey key;
+	const void *key;
 	void *element;
 };
 
@@ -68,16 +69,67 @@ struct hashtable {
 	elemid_type freelist;
 	uint_least32_t seed;
 	int flags;
+	uint_fast32_t (*hash_fn)(const void *key, uint_fast32_t seed);
+	bool (*eq_fn)(const void *a, const void *b);
 #ifndef NDEBUG
 	unsigned int version;
 #endif
 	struct hash_element p[];
 };
 
-#define KEY_EQUALS(a, b)                                                       \
-	((a).len == (b).len && memcmp((a).data, (b).data, (a).len) == 0)
+static uint_fast32_t default_hash(const void *key, const uint_fast32_t seed)
+{
+	const struct hashkey *k = key;
+	return cityhash64low_32(k->data, k->len, seed);
+}
 
-#define GET_HASH(x, seed) (cityhash64low_32((x).data, (x).len, (seed)))
+static bool default_eq(const void *a, const void *b)
+{
+	const struct hashkey *ka = a;
+	const struct hashkey *kb = b;
+	return ka->len == kb->len && memcmp(ka->data, kb->data, ka->len) == 0;
+}
+
+static uint_fast32_t str_hash(const void *key, const uint_fast32_t seed)
+{
+	const char *s = key;
+	return luahash(s, strlen(s), seed);
+}
+
+static bool str_eq(const void *a, const void *b)
+{
+	return strcmp((const char *)a, (const char *)b) == 0;
+}
+
+static uint_fast32_t ptr_hash(const void *key, const uint_fast32_t seed)
+{
+	unsigned char buf[sizeof(key)];
+	memcpy(buf, (const void *)&key, sizeof(buf));
+	return cityhash64low_32(buf, sizeof(buf), seed);
+}
+
+static bool ptr_eq(const void *a, const void *b)
+{
+	return a == b;
+}
+
+const struct table_opts TABLE_OPTS_BYTES = {
+	.hash = default_hash,
+	.eq = default_eq,
+	.flags = 0,
+};
+
+const struct table_opts TABLE_OPTS_STR = {
+	.hash = str_hash,
+	.eq = str_eq,
+	.flags = 0,
+};
+
+const struct table_opts TABLE_OPTS_PTR = {
+	.hash = ptr_hash,
+	.eq = ptr_eq,
+	.flags = 0,
+};
 
 static inline void
 init_elements(struct hashtable *restrict table, const size_t start)
@@ -127,9 +179,10 @@ static inline void table_rehash(struct hashtable *restrict table)
 	const uint_fast32_t seed = table->seed;
 	for (size_t i = 0; i < size; i++) {
 		struct hash_element *restrict p = &table->p[i];
-		const size_t hash = GET_HASH(p->key, seed);
+		const uint_fast32_t hash =
+			table->hash_fn(p->key, seed) & UINT32_MAX;
 		const size_t bucket = hash % capacity;
-		p->hash = hash;
+		p->hash = (uint_least32_t)hash;
 		p->next = table->p[bucket].bucket;
 		table->p[bucket].bucket = i;
 	}
@@ -173,7 +226,7 @@ table_realloc(struct hashtable *restrict table, const size_t new_capacity)
 static inline struct hashtable *table_grow(struct hashtable *restrict table)
 {
 	static const size_t threshold =
-		2 * 1024 * 1024 / sizeof(struct hash_element);
+		(size_t)2 * 1024 * 1024 / sizeof(struct hash_element);
 	const size_t want =
 		table->size < threshold ? table->size : table->size / 3 + 1;
 	size_t estimated = table->size;
@@ -197,8 +250,11 @@ static inline void table_reseed(struct hashtable *restrict table)
 	table_rehash(table);
 }
 
-struct hashtable *table_new(const int flags)
+struct hashtable *table_new(const struct table_opts *opts)
 {
+	if (opts == NULL) {
+		opts = &TABLE_OPTS_BYTES;
+	}
 	struct hashtable *restrict table =
 		malloc(sizeof(struct hashtable) +
 		       sizeof(struct hash_element) * INITIAL_CAPACITY);
@@ -209,7 +265,9 @@ struct hashtable *table_new(const int flags)
 		.size = 0,
 		.freelist = ID_NIL,
 		.seed = (uint_least32_t)rand64n(UINT32_MAX),
-		.flags = flags,
+		.flags = opts->flags,
+		.hash_fn = opts->hash != NULL ? opts->hash : default_hash,
+		.eq_fn = opts->eq != NULL ? opts->eq : default_eq,
 #ifndef NDEBUG
 		.version = 0,
 #endif
@@ -233,7 +291,7 @@ table_reserve(struct hashtable *restrict table, const size_t new_size)
 		new_capacity = table->size;
 	}
 	if (table->flags & TABLE_FAST) {
-		const size_t want = new_size / 3 + 1;
+		const size_t want = new_capacity / 3 + 1;
 		if (new_capacity < MAX_CAPACITY - want) {
 			new_capacity += want;
 		} else {
@@ -259,18 +317,18 @@ table_reserve(struct hashtable *restrict table, const size_t new_size)
 	return table;
 }
 
-struct hashtable *table_set(
-	struct hashtable *restrict table, const struct hashkey key,
-	void **element)
+struct hashtable *
+table_set(struct hashtable *restrict table, const void *key, void **element)
 {
 	assert(table != NULL && element != NULL);
-	const uint_fast32_t hash = GET_HASH(key, table->seed);
+	const uint_fast32_t hash =
+		table->hash_fn(key, table->seed) & UINT32_MAX;
 	elemid_type bucket = hash % table->capacity;
 	size_t collision = 0;
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
 	     i = table->p[i].next) {
 		struct hash_element *restrict p = &table->p[i];
-		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
+		if (p->hash == hash && table->eq_fn(p->key, key)) {
 			/* replace existing element */
 			void *old_elem = p->element;
 			p->key = key;
@@ -308,7 +366,7 @@ struct hashtable *table_set(
 
 	struct hash_element *restrict p = &table->p[index];
 	p->valid = true;
-	p->hash = hash;
+	p->hash = (uint_least32_t)hash;
 	p->key = key;
 	p->element = *element;
 	elemid_type *old_bucket = &table->p[bucket].bucket;
@@ -325,19 +383,19 @@ struct hashtable *table_set(
 	return table;
 }
 
-struct hashtable *table_del(
-	struct hashtable *restrict table, const struct hashkey key,
-	void **element)
+struct hashtable *
+table_del(struct hashtable *restrict table, const void *key, void **element)
 {
 	if (table == NULL) {
 		return NULL;
 	}
-	const uint_fast32_t hash = GET_HASH(key, table->seed);
+	const uint_fast32_t hash =
+		table->hash_fn(key, table->seed) & UINT32_MAX;
 	const elemid_type bucket = hash % table->capacity;
 	elemid_type *last_next = &table->p[bucket].bucket;
 	for (elemid_type i = *last_next; i != ID_NIL; i = *last_next) {
 		struct hash_element *restrict p = &table->p[i];
-		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
+		if (p->hash == hash && table->eq_fn(p->key, key)) {
 			*last_next = p->next;
 			p->valid = false;
 			p->next = table->freelist;
@@ -360,18 +418,19 @@ struct hashtable *table_del(
 }
 
 bool table_find(
-	const struct hashtable *restrict table, const struct hashkey key,
+	const struct hashtable *restrict table, const void *key,
 	void **restrict element)
 {
 	if (table == NULL) {
 		return false;
 	}
-	const uint_fast32_t hash = GET_HASH(key, table->seed);
+	const uint_fast32_t hash =
+		table->hash_fn(key, table->seed) & UINT32_MAX;
 	const elemid_type bucket = hash % table->capacity;
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
 	     i = table->p[i].next) {
 		const struct hash_element *restrict p = &(table->p[i]);
-		if (p->hash == hash && KEY_EQUALS(p->key, key)) {
+		if (p->hash == hash && table->eq_fn(p->key, key)) {
 			/* found */
 			if (element != NULL) {
 				*element = p->element;
@@ -384,7 +443,7 @@ bool table_find(
 
 bool table_next(
 	const struct hashtable *restrict table, size_t *restrict iter,
-	struct hashkey *restrict key, void **restrict element)
+	const void **restrict key, void **restrict element)
 {
 	if (table == NULL || iter == NULL) {
 		return false;

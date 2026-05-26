@@ -13,7 +13,6 @@
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
-#include "net/addr.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
@@ -45,8 +44,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 		LOG_PERROR("tcp socket");
 		return -1;
 	}
-	if (!socket_set_nonblock(fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(fd) != 0) {
 		CLOSE_FD(fd);
 		return -1;
 	}
@@ -75,7 +73,9 @@ static bool listener_start(struct server *restrict s)
 
 	if (conf->listen != NULL) {
 		union sockaddr_max addr;
-		RESOLVE_BINDADDR(&addr, conf->listen, tcpbind, return false);
+		if (!resolve_bindaddr(&addr, conf->listen, SA_RESOLVE_TCP)) {
+			return false;
+		}
 
 		const int fd = tcp_listen(conf, &addr.sa);
 		if (fd == -1) {
@@ -97,8 +97,10 @@ static bool listener_start(struct server *restrict s)
 
 	if (conf->http_listen != NULL) {
 		union sockaddr_max addr;
-		RESOLVE_BINDADDR(
-			&addr, conf->http_listen, tcpbind, return false);
+		if (!resolve_bindaddr(
+			    &addr, conf->http_listen, SA_RESOLVE_TCP)) {
+			return false;
+		}
 
 		const int fd = tcp_listen(conf, &addr.sa);
 		if (fd == -1) {
@@ -133,8 +135,7 @@ static bool udp_socket(
 		LOG_PERROR("udp socket");
 		return false;
 	}
-	if (!socket_set_nonblock(udp->fd)) {
-		LOG_PERROR("fcntl");
+	if (socket_set_nonblock(udp->fd) != 0) {
 		return false;
 	}
 	socket_set_reuseport(udp->fd, conf->udp_reuseport);
@@ -189,7 +190,9 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 {
 	if (conf->kcp_bind != NULL) {
 		union sockaddr_max addr;
-		RESOLVE_BINDADDR(&addr, conf->kcp_bind, udpbind, return false);
+		if (!resolve_bindaddr(&addr, conf->kcp_bind, SA_RESOLVE_UDP)) {
+			return false;
+		}
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
@@ -208,7 +211,9 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 	}
 	if (conf->kcp_connect != NULL) {
 		union sockaddr_max addr;
-		RESOLVE_ADDR(&addr, conf->kcp_connect, udp, return false);
+		if (!resolve_addr(&addr, conf->kcp_connect, SA_RESOLVE_UDP)) {
+			return false;
+		}
 
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
@@ -230,7 +235,10 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 	}
 	if ((conf->mode & MODE_RENDEZVOUS) != 0) {
 		union sockaddr_max addr, laddr;
-		RESOLVE_ADDR(&addr, conf->rendezvous_server, udp, return false);
+		if (!resolve_addr(
+			    &addr, conf->rendezvous_server, SA_RESOLVE_UDP)) {
+			return false;
+		}
 		udp->domain = addr.sa.sa_family;
 		if (udp->fd == -1) {
 			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
@@ -298,7 +306,9 @@ bool server_resolve(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
 	if (conf->connect != NULL) {
-		RESOLVE_ADDR(&s->connect, conf->connect, tcp, return false);
+		if (!resolve_addr(&s->connect, conf->connect, SA_RESOLVE_TCP)) {
+			return false;
+		}
 	}
 	struct pktqueue *restrict q = s->pkt.queue;
 #if WITH_OBFS
@@ -422,13 +432,14 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 	if ((conf->mode & MODE_SERVER) != 0) {
 		flags |= TABLE_FAST;
 	}
-	s->sessions = table_new(flags);
+	const struct table_opts opts = { .flags = flags };
+	s->sessions = table_new(&opts);
 	if (s->sessions == NULL) {
 		LOGOOM();
 		server_free(s);
 		return NULL;
 	}
-	s->pkt.services = table_new(flags);
+	s->pkt.services = table_new(&opts);
 	if (s->pkt.services == NULL) {
 		LOGOOM();
 		server_free(s);
@@ -474,7 +485,9 @@ bool server_start(struct server *restrict s)
 	s->last_stats_time = now;
 	const struct config *restrict conf = s->conf;
 	if (conf->connect != NULL) {
-		RESOLVE_ADDR(&s->connect, conf->connect, tcp, return false);
+		if (!resolve_addr(&s->connect, conf->connect, SA_RESOLVE_TCP)) {
+			return false;
+		}
 	}
 	s->last_resolve_time = now;
 	ev_timer_start(loop, &s->w_kcp_update);
@@ -518,14 +531,13 @@ void server_ping(struct server *restrict s)
 }
 
 static bool svc_shutdown_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	UNUSED(user);
 	struct service *restrict svc = element;
-	ASSERT(key.data == svc->id);
+	ASSERT(((const struct hashkey *)key)->data == svc->id);
 	free(svc);
 	return false;
 }
@@ -577,14 +589,13 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 }
 
 static bool shutdown_filt(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	UNUSED(user);
 	struct session *restrict ss = element;
-	ASSERT(key.data == ss->key);
+	ASSERT(((const struct hashkey *)key)->data == ss->key);
 	session_free(ss);
 	return false;
 }
@@ -640,7 +651,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 		.data = key,
 	};
 	SESSION_MAKEKEY(key, sa, conv);
-	if (table_find(s->sessions, hkey, NULL)) {
+	if (table_find(s->sessions, &hkey, NULL)) {
 		const double usage =
 			(double)table_size(s->sessions) / (double)UINT32_MAX;
 		do {
@@ -649,7 +660,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 			}
 			conv = conv_next(conv);
 			SESSION_MAKEKEY(key, sa, conv);
-		} while (table_find(s->sessions, hkey, NULL));
+		} while (table_find(s->sessions, &hkey, NULL));
 	}
 	s->m_conv = conv;
 	return conv;
@@ -664,13 +675,12 @@ struct server_stats_ctx {
 };
 
 static bool print_session_iter(
-	const struct hashtable *t, const struct hashkey key, void *element,
-	void *user)
+	const struct hashtable *t, const void *key, void *element, void *user)
 {
 	UNUSED(t);
 	UNUSED(key);
 	struct session *restrict ss = element;
-	ASSERT(key.data == ss->key);
+	ASSERT(((const struct hashkey *)key)->data == ss->key);
 	struct server_stats_ctx *restrict ctx = user;
 	const int state = ss->kcp_state;
 	ctx->num_in_state[state]++;

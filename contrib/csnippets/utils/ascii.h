@@ -75,4 +75,32 @@ static inline char *strtrimspace(char *restrict s)
 	return strtrimrightspace(strtrimleftspace(s));
 }
 
+static inline void tohex(char *restrict s, const int value)
+{
+	static const char tab[] = "0123456789ABCDEF";
+	s[1] = tab[value & 0xF];
+	s[0] = tab[(value >> 4u) & 0xF];
+}
+
+static inline void tohexlower(char *restrict s, const int value)
+{
+	static const char tab[] = "0123456789abcdef";
+	s[1] = tab[value & 0xF];
+	s[0] = tab[(value >> 4u) & 0xF];
+}
+
+static inline int unhex(const int ch)
+{
+	if (isdigit(ch)) {
+		return ch - '0';
+	}
+	if ('A' <= ch && ch <= 'F') {
+		return ch - 'A' + 10;
+	}
+	if ('a' <= ch && ch <= 'f') {
+		return ch - 'a' + 10;
+	}
+	return -1;
+}
+
 #endif /* UTILS_ASCII_H */

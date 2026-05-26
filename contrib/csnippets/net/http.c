@@ -130,6 +130,12 @@ http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 	}
 	*v = '\0';
 	v = skip_whitespace(v + 1);
+	/* RFC 7230 Section 3.2: trim trailing OWS from field value */
+	char *end = v + strlen(v);
+	while (end > v && (end[-1] == ' ' || end[-1] == '\t')) {
+		end--;
+	}
+	*end = '\0';
 	*key = buf, *value = v;
 	return next;
 }

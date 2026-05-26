@@ -4,6 +4,11 @@ cd "$(dirname "$0")"
 set -ex
 
 case "$1" in
+"gen")
+    # generate code from schemas
+    # conf: parsed once at startup — optimize for binary size
+    python3 scripts/gen_schema.py --prefix json_ --optimize size --generate unmarshal src/conf_schema.json
+    ;;
 "c")
     # clean artifacts
     rm -rf build compile_commands.json

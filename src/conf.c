@@ -3,187 +3,54 @@
 
 #include "conf.h"
 
-#include "jsonutil.h"
+#include "conf_schema.gen.h"
 #include "util.h"
 
 #include "utils/slog.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static struct jutil_value *conf_parse(const char *filename)
+/* Read the entire file at path into a heap-allocated, NUL-terminated buffer.
+ * Returns the buffer and sets *out_len to the byte count (excluding NUL).
+ * The caller must free() the returned pointer.  Returns NULL on error. */
+static char *read_alloc(const char *path, size_t *out_len)
 {
-	struct jutil_value *obj = jutil_parsefile(filename);
-	if (obj == NULL) {
-		LOGF("conf_parse: failed parsing json");
+	FILE *f = fopen(path, "r");
+	if (f == NULL) {
 		return NULL;
 	}
-	return obj;
+	if (fseek(f, 0, SEEK_END) != 0) {
+		(void)fclose(f);
+		return NULL;
+	}
+	const long pos = ftell(f);
+	if (pos < 0) {
+		(void)fclose(f);
+		return NULL;
+	}
+	if (fseek(f, 0, SEEK_SET) != 0) {
+		(void)fclose(f);
+		return NULL;
+	}
+	const size_t cap = (size_t)pos;
+	char *buf = malloc(cap + 1);
+	if (buf == NULL) {
+		(void)fclose(f);
+		return NULL;
+	}
+	const size_t n = fread(buf, 1, cap, f);
+	(void)fclose(f);
+	if (n == 0 && cap > 0) {
+		free(buf);
+		return NULL;
+	}
+	buf[n] = '\0';
+	*out_len = n;
+	return buf;
 }
-
-static bool
-kcp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
-{
-	struct config *restrict conf = ud;
-	if (strcmp(key, "mtu") == 0) {
-		return jutil_get_int(value, &conf->kcp_mtu);
-	}
-	if (strcmp(key, "sndwnd") == 0) {
-		return jutil_get_int(value, &conf->kcp_sndwnd);
-	}
-	if (strcmp(key, "rcvwnd") == 0) {
-		return jutil_get_int(value, &conf->kcp_rcvwnd);
-	}
-	if (strcmp(key, "nodelay") == 0) {
-		return jutil_get_int(value, &conf->kcp_nodelay);
-	}
-	if (strcmp(key, "interval") == 0) {
-		return jutil_get_int(value, &conf->kcp_interval);
-	}
-	if (strcmp(key, "resend") == 0) {
-		return jutil_get_int(value, &conf->kcp_resend);
-	}
-	if (strcmp(key, "nc") == 0) {
-		return jutil_get_int(value, &conf->kcp_nc);
-	}
-	if (strcmp(key, "flush") == 0) {
-		return jutil_get_int(value, &conf->kcp_flush);
-	}
-	LOGW_F("unknown config: \"kcp.%s\"", key);
-	return true;
-}
-
-static bool
-tcp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
-{
-	struct config *restrict conf = ud;
-	if (strcmp(key, "reuseport") == 0) {
-		return jutil_get_bool(value, &conf->tcp_reuseport);
-	}
-	if (strcmp(key, "keepalive") == 0) {
-		return jutil_get_bool(value, &conf->tcp_keepalive);
-	}
-	if (strcmp(key, "nodelay") == 0) {
-		return jutil_get_bool(value, &conf->tcp_nodelay);
-	}
-	if (strcmp(key, "sndbuf") == 0) {
-		return jutil_get_int(value, &conf->tcp_sndbuf);
-	}
-	if (strcmp(key, "rcvbuf") == 0) {
-		return jutil_get_int(value, &conf->tcp_rcvbuf);
-	}
-	LOGW_F("unknown config: \"tcp.%s\"", key);
-	return true;
-}
-
-static bool
-udp_scope_cb(void *ud, const char *key, const struct jutil_value *value)
-{
-	struct config *restrict conf = ud;
-	if (strcmp(key, "reuseport") == 0) {
-		return jutil_get_bool(value, &conf->udp_reuseport);
-	}
-	if (strcmp(key, "sndbuf") == 0) {
-		return jutil_get_int(value, &conf->udp_sndbuf);
-	}
-	if (strcmp(key, "rcvbuf") == 0) {
-		return jutil_get_int(value, &conf->udp_rcvbuf);
-	}
-	LOGW_F("unknown config: \"udp.%s\"", key);
-	return true;
-}
-
-static bool
-main_scope_cb(void *ud, const char *key, const struct jutil_value *value)
-{
-	struct config *restrict conf = ud;
-	if (strcmp(key, "kcp") == 0) {
-		return jutil_walk_object(conf, value, kcp_scope_cb);
-	}
-	if (strcmp(key, "udp") == 0) {
-		return jutil_walk_object(conf, value, udp_scope_cb);
-	}
-	if (strcmp(key, "tcp") == 0) {
-		return jutil_walk_object(conf, value, tcp_scope_cb);
-	}
-	if (strcmp(key, "listen") == 0) {
-		conf->listen = jutil_dup_string(value);
-		return conf->listen != NULL;
-	}
-	if (strcmp(key, "connect") == 0) {
-		conf->connect = jutil_dup_string(value);
-		return conf->connect != NULL;
-	}
-	if (strcmp(key, "kcp_bind") == 0) {
-		conf->kcp_bind = jutil_dup_string(value);
-		return conf->kcp_bind != NULL;
-	}
-	if (strcmp(key, "kcp_connect") == 0) {
-		conf->kcp_connect = jutil_dup_string(value);
-		return conf->kcp_connect != NULL;
-	}
-	if (strcmp(key, "rendezvous_server") == 0) {
-		conf->rendezvous_server = jutil_dup_string(value);
-		return conf->rendezvous_server != NULL;
-	}
-	if (strcmp(key, "service_id") == 0) {
-		conf->service_id =
-			jutil_dup_lstring(value, &conf->service_idlen);
-		return conf->service_id != NULL;
-	}
-	if (strcmp(key, "http_listen") == 0) {
-		conf->http_listen = jutil_dup_string(value);
-		return conf->http_listen != NULL;
-	}
-	if (strcmp(key, "netdev") == 0) {
-		conf->netdev = jutil_dup_string(value);
-		return conf->netdev != NULL;
-	}
-#if WITH_CRYPTO
-	if (strcmp(key, "method") == 0) {
-		conf->method = jutil_dup_string(value);
-		return conf->method != NULL;
-	}
-	if (strcmp(key, "password") == 0) {
-		conf->password = jutil_dup_string(value);
-		return conf->password != NULL;
-	}
-	if (strcmp(key, "psk") == 0) {
-		conf->psk = jutil_dup_string(value);
-		return conf->psk != NULL;
-	}
-#endif /* WITH_CRYPTO */
-#if WITH_OBFS
-	if (strcmp(key, "obfs") == 0) {
-		conf->obfs = jutil_dup_string(value);
-		return conf->obfs != NULL;
-	}
-#endif /* WITH_OBFS */
-	if (strcmp(key, "linger") == 0) {
-		return jutil_get_int(value, &conf->linger);
-	}
-	if (strcmp(key, "timeout") == 0) {
-		return jutil_get_int(value, &conf->timeout);
-	}
-	if (strcmp(key, "keepalive") == 0) {
-		return jutil_get_int(value, &conf->keepalive);
-	}
-	if (strcmp(key, "time_wait") == 0) {
-		return jutil_get_int(value, &conf->time_wait);
-	}
-	if (strcmp(key, "loglevel") == 0) {
-		return jutil_get_int(value, &conf->log_level);
-	}
-	if (strcmp(key, "user") == 0) {
-		conf->user = jutil_dup_string(value);
-		return conf->user != NULL;
-	}
-	LOGW_F("unknown config: `%s'", key);
-	return true;
-}
-
-#undef NAME_EQUAL
 
 const char *conf_modestr(const struct config *restrict conf)
 {
@@ -317,6 +184,18 @@ static bool conf_check(struct config *restrict conf)
 	return true;
 }
 
+/* strndup a parsed zero-copy string field into a freshly-allocated buffer.
+ * Returns false and goes to oom on allocation failure. */
+#define COPY_STRING(dst, key)                                                  \
+	do {                                                                   \
+		if ((parsed.key) != NULL) {                                    \
+			(dst) = strndup(parsed.key, parsed.key##_len);         \
+			if ((dst) == NULL) {                                   \
+				goto oom;                                      \
+			}                                                      \
+		}                                                              \
+	} while (0)
+
 struct config *conf_read(const char *path)
 {
 	struct config *conf = malloc(sizeof(struct config));
@@ -325,23 +204,143 @@ struct config *conf_read(const char *path)
 		return NULL;
 	}
 	*conf = conf_default();
-	struct jutil_value *root = conf_parse(path);
-	if (root == NULL) {
+
+	size_t buflen = 0;
+	char *buf = read_alloc(path, &buflen);
+	if (buf == NULL) {
+		LOGE_F("conf: failed to read \"%s\"", path);
 		conf_free(conf);
 		return NULL;
 	}
-	if (!jutil_walk_object(conf, root, main_scope_cb)) {
-		LOGE("invalid config file");
+
+	struct json_conf parsed = { 0 };
+	if (!json_conf_unmarshal(&parsed, buf, buflen)) {
+		LOGE_F("conf: failed to parse \"%s\"", path);
+		free(buf);
 		conf_free(conf);
-		jutil_free(root);
 		return NULL;
 	}
-	jutil_free(root);
+
+	/* copy strings (strndup since the json buffer is freed below) */
+	COPY_STRING(conf->listen, listen);
+	COPY_STRING(conf->connect, connect);
+	COPY_STRING(conf->kcp_bind, kcp_bind);
+	COPY_STRING(conf->kcp_connect, kcp_connect);
+	COPY_STRING(conf->rendezvous_server, rendezvous_server);
+	if (parsed.service_id != NULL) {
+		conf->service_id =
+			strndup(parsed.service_id, parsed.service_id_len);
+		if (conf->service_id == NULL) {
+			goto oom;
+		}
+		conf->service_idlen = parsed.service_id_len;
+	}
+	COPY_STRING(conf->http_listen, http_listen);
+	COPY_STRING(conf->netdev, netdev);
+	COPY_STRING(conf->user, user);
+#if WITH_CRYPTO
+	COPY_STRING(conf->method, method);
+	COPY_STRING(conf->password, password);
+	COPY_STRING(conf->psk, psk);
+#endif /* WITH_CRYPTO */
+#if WITH_OBFS
+	COPY_STRING(conf->obfs, obfs);
+#endif /* WITH_OBFS */
+
+	/* copy kcp settings */
+	if (parsed.has_kcp) {
+		const struct json_conf_kcp *k = &parsed.kcp;
+		if (k->has_mtu) {
+			conf->kcp_mtu = (int)k->mtu;
+		}
+		if (k->has_sndwnd) {
+			conf->kcp_sndwnd = (int)k->sndwnd;
+		}
+		if (k->has_rcvwnd) {
+			conf->kcp_rcvwnd = (int)k->rcvwnd;
+		}
+		if (k->has_nodelay) {
+			conf->kcp_nodelay = (int)k->nodelay;
+		}
+		if (k->has_interval) {
+			conf->kcp_interval = (int)k->interval;
+		}
+		if (k->has_resend) {
+			conf->kcp_resend = (int)k->resend;
+		}
+		if (k->has_nc) {
+			conf->kcp_nc = (int)k->nc;
+		}
+		if (k->has_flush) {
+			conf->kcp_flush = (int)k->flush;
+		}
+	}
+
+	/* copy tcp settings */
+	if (parsed.has_tcp) {
+		const struct json_conf_tcp *t = &parsed.tcp;
+		if (t->has_reuseport) {
+			conf->tcp_reuseport = t->reuseport;
+		}
+		if (t->has_keepalive) {
+			conf->tcp_keepalive = t->keepalive;
+		}
+		if (t->has_nodelay) {
+			conf->tcp_nodelay = t->nodelay;
+		}
+		if (t->has_sndbuf) {
+			conf->tcp_sndbuf = (int)t->sndbuf;
+		}
+		if (t->has_rcvbuf) {
+			conf->tcp_rcvbuf = (int)t->rcvbuf;
+		}
+	}
+
+	/* copy udp settings */
+	if (parsed.has_udp) {
+		const struct json_conf_udp *u = &parsed.udp;
+		if (u->has_reuseport) {
+			conf->udp_reuseport = u->reuseport;
+		}
+		if (u->has_sndbuf) {
+			conf->udp_sndbuf = (int)u->sndbuf;
+		}
+		if (u->has_rcvbuf) {
+			conf->udp_rcvbuf = (int)u->rcvbuf;
+		}
+	}
+
+	/* copy top-level integer settings */
+	if (parsed.has_timeout) {
+		conf->timeout = (int)parsed.timeout;
+	}
+	if (parsed.has_linger) {
+		conf->linger = (int)parsed.linger;
+	}
+	if (parsed.has_keepalive) {
+		conf->keepalive = (int)parsed.keepalive;
+	}
+	if (parsed.has_time_wait) {
+		conf->time_wait = (int)parsed.time_wait;
+	}
+	if (parsed.has_loglevel) {
+		conf->log_level = (int)parsed.loglevel;
+	}
+
+	json_conf_free(&parsed);
+	free(buf);
+
 	if (!conf_check(conf)) {
 		conf_free(conf);
 		return NULL;
 	}
 	return conf;
+oom:
+	LOGOOM();
+	json_conf_free(&parsed);
+	free(buf);
+	conf_free(conf);
+	return NULL;
 }
 
 void conf_free(struct config *conf)
