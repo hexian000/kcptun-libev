@@ -29,6 +29,12 @@ enum json_type {
 	JSON_OBJECT, /* object: val.iter = offset just past '{' */
 };
 
+/* String fragment. Pointed into the original JSON buffer. */
+struct json_string {
+	size_t len;
+	char *str; /* Not NUL-terminated */
+};
+
 /* Result of json_parse(). */
 struct json_val {
 	enum json_type type;

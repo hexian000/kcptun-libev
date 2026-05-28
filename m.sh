@@ -142,7 +142,7 @@ case "$1" in
 "d")
     # rebuild for debug
     if command -v clang-format >/dev/null; then
-        find src -type f -regex '.*\.[hc]' -exec clang-format -i {} +
+        find src -type f -regex '.*\.[hc]' -not -regex '.*\.gen\.[hc]' -exec clang-format -i {} +
     fi
     rm -rf build && mkdir -p build && cd build
     cmake \

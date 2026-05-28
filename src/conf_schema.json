@@ -1,28 +1,28 @@
 {
-    "$schema": "https://json-schema.org/draft-07/schema",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "properties": {
         "connect": { "type": "string" },
         "http_listen": { "type": "string" },
         "kcp_bind": { "type": "string" },
         "kcp_connect": { "type": "string" },
-        "keepalive": { "type": "integer", "minimum": 0, "maximum": 600 },
+        "keepalive": { "type": "integer", "minimum": 0, "maximum": 600, "default": 25 },
         "kcp": {
             "type": "object",
             "properties": {
-                "flush":    { "type": "integer", "minimum": 0,   "maximum": 2     },
-                "interval": { "type": "integer", "minimum": 10,  "maximum": 500   },
-                "mtu":      { "type": "integer", "minimum": 300, "maximum": 1500  },
-                "nc":       { "type": "integer", "minimum": 0,   "maximum": 1     },
-                "nodelay":  { "type": "integer", "minimum": 0,   "maximum": 2     },
-                "rcvwnd":   { "type": "integer", "minimum": 16,  "maximum": 65536 },
-                "resend":   { "type": "integer", "minimum": 0,   "maximum": 100   },
-                "sndwnd":   { "type": "integer", "minimum": 16,  "maximum": 65536 }
+                "flush":    { "type": "integer", "minimum": 0,   "maximum": 2,     "default": 1   },
+                "interval": { "type": "integer", "minimum": 10,  "maximum": 500,   "default": 100 },
+                "mtu":      { "type": "integer", "minimum": 300, "maximum": 1500,  "default": 1400 },
+                "nc":       { "type": "integer", "minimum": 0,   "maximum": 1,     "default": 1   },
+                "nodelay":  { "type": "integer", "minimum": 0,   "maximum": 2,     "default": 1   },
+                "rcvwnd":   { "type": "integer", "minimum": 16,  "maximum": 65536, "default": 256 },
+                "resend":   { "type": "integer", "minimum": 0,   "maximum": 100,   "default": 0   },
+                "sndwnd":   { "type": "integer", "minimum": 16,  "maximum": 65536, "default": 256 }
             }
         },
-        "linger": { "type": "integer", "minimum": 5, "maximum": 600 },
+        "linger": { "type": "integer", "minimum": 5, "maximum": 600, "default": 30 },
         "listen": { "type": "string" },
-        "loglevel": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "loglevel": { "type": "integer", "minimum": 0, "maximum": 8, "default": 4 },
         "method": { "type": "string" },
         "netdev": { "type": "string" },
         "obfs": { "type": "string" },
@@ -33,20 +33,20 @@
         "tcp": {
             "type": "object",
             "properties": {
-                "keepalive":  { "type": "boolean" },
-                "nodelay":    { "type": "boolean" },
+                "keepalive":  { "type": "boolean", "default": false },
+                "nodelay":    { "type": "boolean", "default": true  },
                 "rcvbuf":     { "type": "integer", "minimum": 0, "maximum": 33554432 },
-                "reuseport":  { "type": "boolean" },
+                "reuseport":  { "type": "boolean", "default": false },
                 "sndbuf":     { "type": "integer", "minimum": 0, "maximum": 33554432 }
             }
         },
-        "time_wait": { "type": "integer", "minimum": 5,  "maximum": 3600  },
-        "timeout":   { "type": "integer", "minimum": 60, "maximum": 86400 },
+        "time_wait": { "type": "integer", "minimum": 5,  "maximum": 3600,  "default": 120 },
+        "timeout":   { "type": "integer", "minimum": 60, "maximum": 86400, "default": 600 },
         "udp": {
             "type": "object",
             "properties": {
                 "rcvbuf":    { "type": "integer", "minimum": 0, "maximum": 33554432 },
-                "reuseport": { "type": "boolean" },
+                "reuseport": { "type": "boolean", "default": false },
                 "sndbuf":    { "type": "integer", "minimum": 0, "maximum": 33554432 }
             }
         },

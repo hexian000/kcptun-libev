@@ -63,29 +63,6 @@ const char *conf_modestr(const struct config *restrict conf)
 	return "rendezvous server";
 }
 
-static struct config conf_default(void)
-{
-	return (struct config){
-		.kcp_mtu = 1400,
-		.kcp_sndwnd = 256,
-		.kcp_rcvwnd = 256,
-		.kcp_nodelay = 1,
-		.kcp_interval = 100,
-		.kcp_resend = 0,
-		.kcp_nc = 1,
-		.kcp_flush = 1,
-		.timeout = 600,
-		.linger = 30,
-		.keepalive = 25,
-		.time_wait = 120,
-		.tcp_reuseport = false,
-		.tcp_keepalive = false,
-		.tcp_nodelay = true,
-		.udp_reuseport = false,
-		.log_level = LOG_LEVEL_NOTICE,
-	};
-}
-
 static bool range_check_int(
 	const char *key, const int value, const int lbound, const int ubound)
 {
@@ -188,8 +165,8 @@ static bool conf_check(struct config *restrict conf)
  * Returns false and goes to oom on allocation failure. */
 #define COPY_STRING(dst, key)                                                  \
 	do {                                                                   \
-		if ((parsed.key) != NULL) {                                    \
-			(dst) = strndup(parsed.key, parsed.key##_len);         \
+		if ((parsed.key.str) != NULL) {                                \
+			(dst) = strndup(parsed.key.str, parsed.key.len);       \
 			if ((dst) == NULL) {                                   \
 				goto oom;                                      \
 			}                                                      \
@@ -203,7 +180,7 @@ struct config *conf_read(const char *path)
 		LOGOOM();
 		return NULL;
 	}
-	*conf = conf_default();
+	*conf = (struct config){ 0 };
 
 	size_t buflen = 0;
 	char *buf = read_alloc(path, &buflen);
@@ -227,13 +204,13 @@ struct config *conf_read(const char *path)
 	COPY_STRING(conf->kcp_bind, kcp_bind);
 	COPY_STRING(conf->kcp_connect, kcp_connect);
 	COPY_STRING(conf->rendezvous_server, rendezvous_server);
-	if (parsed.service_id != NULL) {
+	if (parsed.service_id.str != NULL) {
 		conf->service_id =
-			strndup(parsed.service_id, parsed.service_id_len);
+			strndup(parsed.service_id.str, parsed.service_id.len);
 		if (conf->service_id == NULL) {
 			goto oom;
 		}
-		conf->service_idlen = parsed.service_id_len;
+		conf->service_idlen = parsed.service_id.len;
 	}
 	COPY_STRING(conf->http_listen, http_listen);
 	COPY_STRING(conf->netdev, netdev);
@@ -248,84 +225,42 @@ struct config *conf_read(const char *path)
 #endif /* WITH_OBFS */
 
 	/* copy kcp settings */
-	if (parsed.has_kcp) {
+	{
 		const struct json_conf_kcp *k = &parsed.kcp;
-		if (k->has_mtu) {
-			conf->kcp_mtu = (int)k->mtu;
-		}
-		if (k->has_sndwnd) {
-			conf->kcp_sndwnd = (int)k->sndwnd;
-		}
-		if (k->has_rcvwnd) {
-			conf->kcp_rcvwnd = (int)k->rcvwnd;
-		}
-		if (k->has_nodelay) {
-			conf->kcp_nodelay = (int)k->nodelay;
-		}
-		if (k->has_interval) {
-			conf->kcp_interval = (int)k->interval;
-		}
-		if (k->has_resend) {
-			conf->kcp_resend = (int)k->resend;
-		}
-		if (k->has_nc) {
-			conf->kcp_nc = (int)k->nc;
-		}
-		if (k->has_flush) {
-			conf->kcp_flush = (int)k->flush;
-		}
+		conf->kcp_mtu = (int)k->mtu;
+		conf->kcp_sndwnd = (int)k->sndwnd;
+		conf->kcp_rcvwnd = (int)k->rcvwnd;
+		conf->kcp_nodelay = (int)k->nodelay;
+		conf->kcp_interval = (int)k->interval;
+		conf->kcp_resend = (int)k->resend;
+		conf->kcp_nc = (int)k->nc;
+		conf->kcp_flush = (int)k->flush;
 	}
 
 	/* copy tcp settings */
-	if (parsed.has_tcp) {
+	{
 		const struct json_conf_tcp *t = &parsed.tcp;
-		if (t->has_reuseport) {
-			conf->tcp_reuseport = t->reuseport;
-		}
-		if (t->has_keepalive) {
-			conf->tcp_keepalive = t->keepalive;
-		}
-		if (t->has_nodelay) {
-			conf->tcp_nodelay = t->nodelay;
-		}
-		if (t->has_sndbuf) {
-			conf->tcp_sndbuf = (int)t->sndbuf;
-		}
-		if (t->has_rcvbuf) {
-			conf->tcp_rcvbuf = (int)t->rcvbuf;
-		}
+		conf->tcp_reuseport = t->reuseport;
+		conf->tcp_keepalive = t->keepalive;
+		conf->tcp_nodelay = t->nodelay;
+		conf->tcp_sndbuf = (int)t->sndbuf;
+		conf->tcp_rcvbuf = (int)t->rcvbuf;
 	}
 
 	/* copy udp settings */
-	if (parsed.has_udp) {
+	{
 		const struct json_conf_udp *u = &parsed.udp;
-		if (u->has_reuseport) {
-			conf->udp_reuseport = u->reuseport;
-		}
-		if (u->has_sndbuf) {
-			conf->udp_sndbuf = (int)u->sndbuf;
-		}
-		if (u->has_rcvbuf) {
-			conf->udp_rcvbuf = (int)u->rcvbuf;
-		}
+		conf->udp_reuseport = u->reuseport;
+		conf->udp_sndbuf = (int)u->sndbuf;
+		conf->udp_rcvbuf = (int)u->rcvbuf;
 	}
 
 	/* copy top-level integer settings */
-	if (parsed.has_timeout) {
-		conf->timeout = (int)parsed.timeout;
-	}
-	if (parsed.has_linger) {
-		conf->linger = (int)parsed.linger;
-	}
-	if (parsed.has_keepalive) {
-		conf->keepalive = (int)parsed.keepalive;
-	}
-	if (parsed.has_time_wait) {
-		conf->time_wait = (int)parsed.time_wait;
-	}
-	if (parsed.has_loglevel) {
-		conf->log_level = (int)parsed.loglevel;
-	}
+	conf->timeout = (int)parsed.timeout;
+	conf->linger = (int)parsed.linger;
+	conf->keepalive = (int)parsed.keepalive;
+	conf->time_wait = (int)parsed.time_wait;
+	conf->log_level = (int)parsed.loglevel;
 
 	json_conf_free(&parsed);
 	free(buf);
