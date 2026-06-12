@@ -22,6 +22,7 @@
         },
         "linger": { "type": "integer", "minimum": 5, "maximum": 600, "default": 30 },
         "listen": { "type": "string" },
+        "log": { "type": "string" },
         "loglevel": { "type": "integer", "minimum": 0, "maximum": 8, "default": 4 },
         "method": { "type": "string" },
         "netdev": { "type": "string" },

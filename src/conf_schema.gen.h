@@ -49,6 +49,7 @@ struct json_conf {
 	struct json_string kcp_bind;
 	struct json_string kcp_connect;
 	struct json_string listen;
+	struct json_string log;
 	struct json_string method;
 	struct json_string netdev;
 	struct json_string obfs;

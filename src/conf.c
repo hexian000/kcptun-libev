@@ -214,6 +214,7 @@ struct config *conf_read(const char *path)
 	}
 	COPY_STRING(conf->http_listen, http_listen);
 	COPY_STRING(conf->netdev, netdev);
+	COPY_STRING(conf->log, log);
 	COPY_STRING(conf->user, user);
 #if WITH_CRYPTO
 	COPY_STRING(conf->method, method);
@@ -288,6 +289,7 @@ void conf_free(struct config *conf)
 	UTIL_SAFE_FREE(conf->service_id);
 	UTIL_SAFE_FREE(conf->http_listen);
 	UTIL_SAFE_FREE(conf->netdev);
+	UTIL_SAFE_FREE(conf->log);
 	UTIL_SAFE_FREE(conf->user);
 #if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);

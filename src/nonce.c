@@ -79,9 +79,6 @@ static const unsigned char *next_random(struct noncegen *restrict g)
 
 void noncegen_init(struct noncegen *restrict g)
 {
-	if (g->method == noncegen_counter) {
-		randombytes_buf(g->buf.data, g->buf.len);
-	}
 	switch (g->method) {
 	case noncegen_counter:
 		/* use random base of nonce counter to (probably) avoid nonce reuse from different peers */

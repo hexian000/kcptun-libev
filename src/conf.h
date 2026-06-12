@@ -49,6 +49,7 @@ struct config {
 
 	int timeout, linger, keepalive, time_wait;
 	int log_level;
+	char *log;
 	char *user;
 };
 

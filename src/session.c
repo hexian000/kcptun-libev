@@ -793,28 +793,21 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 static bool is_punch_addr(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
-	case AF_INET: {
-		const struct sockaddr_in *restrict in =
-			(const struct sockaddr_in *)sa;
-		const uint32_t addr = ntohl(in->sin_addr.s_addr);
-		return addr != INADDR_ANY &&
-		       ((addr & 0xff000000) != 0xff000000) && /* loopback */
-		       ((addr & 0xf0000000) != 0xe0000000) && /* multicast */
-		       in->sin_port != 0;
-	}
-	case AF_INET6: {
-		const struct sockaddr_in6 *restrict in6 =
-			(const struct sockaddr_in6 *)sa;
-		return !IN6_IS_ADDR_UNSPECIFIED(&in6->sin6_addr) &&
-		       !IN6_IS_ADDR_LOOPBACK(&in6->sin6_addr) &&
-		       !IN6_IS_ADDR_LINKLOCAL(&in6->sin6_addr) &&
-		       !IN6_IS_ADDR_MULTICAST(&in6->sin6_addr) &&
-		       in6->sin6_port != 0;
-	}
-	default:
+	case AF_INET:
+		if (((const struct sockaddr_in *)sa)->sin_port == 0) {
+			return false;
+		}
 		break;
+	case AF_INET6:
+		if (((const struct sockaddr_in6 *)sa)->sin6_port == 0) {
+			return false;
+		}
+		break;
+	default:
+		return false;
 	}
-	return false;
+	const enum ipclass cls = sa_ipclassify(sa);
+	return cls == IPCLASS_SITELOCAL || cls == IPCLASS_GLOBAL;
 }
 
 static bool

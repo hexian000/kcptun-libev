@@ -16,6 +16,5 @@
     },
     "method": "xchacha20poly1305_ietf",
     "password": "k",
-    "loglevel": 7,
-    "obfs": "dpi/tcp"
+    "loglevel": 6
 }

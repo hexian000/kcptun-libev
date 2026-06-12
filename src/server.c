@@ -475,7 +475,7 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 	if (s->pkt.queue == NULL) {
 		LOGE("failed creating packet queue");
 		server_free(s);
-		return false;
+		return NULL;
 	}
 	return s;
 }
@@ -606,8 +606,8 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 	}
 	if (l->fd_http != -1) {
 		LOGD_F("http listener [fd:%d] close", l->fd_http);
-		ev_io *restrict w_accept = &l->w_accept;
-		ev_io_stop(loop, w_accept);
+		ev_io *restrict w_accept_http = &l->w_accept_http;
+		ev_io_stop(loop, w_accept_http);
 		SOCKET_CLOSE_FD(l->fd_http);
 		l->fd_http = -1;
 	}

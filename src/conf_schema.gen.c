@@ -14,26 +14,27 @@
 typedef struct { const char *name; size_t len; int idx; } json_lookup_conf_entry_;
 static const json_lookup_conf_entry_ json_lookup_conf_keys_[] = {
 	{"kcp", 3, 2},
-	{"psk", 3, 13},
-	{"tcp", 3, 16},
-	{"udp", 3, 19},
-	{"obfs", 4, 11},
-	{"user", 4, 20},
+	{"log", 3, 8},
+	{"psk", 3, 14},
+	{"tcp", 3, 17},
+	{"udp", 3, 20},
+	{"obfs", 4, 12},
+	{"user", 4, 21},
 	{"linger", 6, 6},
 	{"listen", 6, 7},
-	{"method", 6, 9},
-	{"netdev", 6, 10},
+	{"method", 6, 10},
+	{"netdev", 6, 11},
 	{"connect", 7, 0},
-	{"timeout", 7, 18},
+	{"timeout", 7, 19},
 	{"kcp_bind", 8, 3},
-	{"loglevel", 8, 8},
-	{"password", 8, 12},
+	{"loglevel", 8, 9},
+	{"password", 8, 13},
 	{"keepalive", 9, 5},
-	{"time_wait", 9, 17},
-	{"service_id", 10, 15},
+	{"time_wait", 9, 18},
+	{"service_id", 10, 16},
 	{"http_listen", 11, 1},
 	{"kcp_connect", 11, 4},
-	{"rendezvous_server", 17, 14},
+	{"rendezvous_server", 17, 15},
 };
 static int json_lookup_conf_cmp_(const void *key_, const void *entry_)
 {
@@ -48,7 +49,7 @@ json_lookup_conf(const char *str, size_t len)
 {
 	const json_lookup_conf_entry_ key_ = {str, len, 0};
 	const json_lookup_conf_entry_ *e_ =
-		bsearch(&key_, json_lookup_conf_keys_, 21, sizeof(*json_lookup_conf_keys_), json_lookup_conf_cmp_);
+		bsearch(&key_, json_lookup_conf_keys_, 22, sizeof(*json_lookup_conf_keys_), json_lookup_conf_cmp_);
 	return e_ ? e_->idx : -1;
 }
 
@@ -137,19 +138,20 @@ enum json_conf_key {
 	JSON_CONF_KEEPALIVE = 5,
 	JSON_CONF_LINGER = 6,
 	JSON_CONF_LISTEN = 7,
-	JSON_CONF_LOGLEVEL = 8,
-	JSON_CONF_METHOD = 9,
-	JSON_CONF_NETDEV = 10,
-	JSON_CONF_OBFS = 11,
-	JSON_CONF_PASSWORD = 12,
-	JSON_CONF_PSK = 13,
-	JSON_CONF_RENDEZVOUS_SERVER = 14,
-	JSON_CONF_SERVICE_ID = 15,
-	JSON_CONF_TCP = 16,
-	JSON_CONF_TIME_WAIT = 17,
-	JSON_CONF_TIMEOUT = 18,
-	JSON_CONF_UDP = 19,
-	JSON_CONF_USER = 20,
+	JSON_CONF_LOG = 8,
+	JSON_CONF_LOGLEVEL = 9,
+	JSON_CONF_METHOD = 10,
+	JSON_CONF_NETDEV = 11,
+	JSON_CONF_OBFS = 12,
+	JSON_CONF_PASSWORD = 13,
+	JSON_CONF_PSK = 14,
+	JSON_CONF_RENDEZVOUS_SERVER = 15,
+	JSON_CONF_SERVICE_ID = 16,
+	JSON_CONF_TCP = 17,
+	JSON_CONF_TIME_WAIT = 18,
+	JSON_CONF_TIMEOUT = 19,
+	JSON_CONF_UDP = 20,
+	JSON_CONF_USER = 21,
 };
 
 enum json_conf_kcp_key {
@@ -469,6 +471,10 @@ bool json_unmarshal_conf(
 		}
 		case JSON_CONF_LISTEN: {
 			if (!json_parse_string(val_, val_len_, &obj->listen.str, &obj->listen.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_LOG: {
+			if (!json_parse_string(val_, val_len_, &obj->log.str, &obj->log.len)) { goto fail_; }
 			break;
 		}
 		case JSON_CONF_LOGLEVEL: {

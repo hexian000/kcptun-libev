@@ -1,35 +1,23 @@
 /* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-/**
- * @file main.c
- * @brief Main entry point for kcptun-libev
- */
-
-/* internal */
 #include "conf.h"
 #include "crypto.h"
 #include "server.h"
 #include "util.h"
 
-/* contrib */
 #include "os/daemon.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 
-/* runtime */
 #include <ev.h>
 
-/* std */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/**
- * Global structure to hold parsed command line arguments
- */
 static struct {
 	const char *conf_path;
 	const char *user_name;
@@ -40,27 +28,14 @@ static struct {
 	bool daemonize : 1;
 } args = { 0 };
 
-/**
- * Global application state for signal watchers
- */
 static struct {
 	ev_signal w_sighup;
 	ev_signal w_sigint;
 	ev_signal w_sigterm;
 } app;
 
-/**
- * Signal handler callback for processing system signals
- * @param loop Event loop instance
- * @param watcher Signal watcher that triggered
- * @param revents Event flags
- */
 void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents);
 
-/**
- * Print program usage information and available command line options
- * @param argv0 Program name from argv[0]
- */
 static void print_usage(char *argv0)
 {
 	(void)fprintf(
@@ -87,15 +62,26 @@ static void print_usage(char *argv0)
 	(void)fflush(stderr);
 }
 
-/**
- * @brief Parse command line arguments and populate global args structure
- * @param argc Number of command line arguments
- * @param argv Array of command line argument strings
- *
- * Parses all supported command line options and stores the configuration
- * in the global args structure. Exits the program on invalid arguments
- * or when help is requested.
- */
+static void set_log_config(const struct config *restrict conf, const int level)
+{
+	slog_setlevel(level);
+	if (conf->log == NULL) {
+		return;
+	}
+	const char *log = conf->log;
+	if (strcmp(log, "stdout") == 0) {
+		slog_setoutput(SLOG_OUTPUT_FILE, stdout);
+	} else if (strcmp(log, "stderr") == 0) {
+		slog_setoutput(SLOG_OUTPUT_FILE, stderr);
+	} else if (strcmp(log, "syslog") == 0) {
+		slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
+	} else if (strcmp(log, "discard") == 0) {
+		slog_setoutput(SLOG_OUTPUT_DISCARD);
+	} else {
+		LOGW_F("unknown log output: \"%s\"", conf->log);
+	}
+}
+
 static void parse_args(int argc, char **argv)
 {
 #define OPT_REQUIRE_ARG(argc, argv, i)                                         \
@@ -165,51 +151,41 @@ static void parse_args(int argc, char **argv)
 	}
 
 #undef OPT_REQUIRE_ARG
-	/* Set initial log level based on verbosity argument */
 	slog_setlevel(LOG_LEVEL_NOTICE + args.verbosity);
 }
 
 int main(int argc, char **argv)
 {
-	/* Initialize application and parse command line arguments */
 	init(argc, argv);
 	parse_args(argc, argv);
 #if WITH_CRYPTO
-	/* Handle PSK generation mode - generate key and exit */
 	if (args.genpsk) {
 		genpsk(args.genpsk);
 		return EXIT_SUCCESS;
 	}
 #endif
-	/* Validate that configuration file was specified */
 	if (args.conf_path == NULL) {
 		LOGF("config file must be specified");
 		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
-	/* Load and parse configuration file */
 	struct config *restrict conf = conf_read(args.conf_path);
 	if (conf == NULL) {
 		LOGF_F("failed to read config `%s'", args.conf_path);
 		return EXIT_FAILURE;
 	}
-	/* Adjust log level based on config and command line verbosity */
-	slog_setlevel(conf->log_level + args.verbosity);
-	/* Load required dynamic libraries */
+	set_log_config(conf, conf->log_level + args.verbosity);
 	loadlibs();
 
-	/* Initialize libev event loop */
 	struct ev_loop *loop = ev_default_loop(0);
 	CHECK(loop != NULL);
 
-	/* Create and initialize server instance */
 	struct server *restrict s = server_new(loop, conf);
 	if (s == NULL) {
 		LOGE_F("failed to init %s", conf_modestr(conf));
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
-	/* Start the server (bind sockets, etc.) */
 	bool ok = server_start(s);
 	if (!ok) {
 		LOGE_F("failed to start %s", conf_modestr(conf));
@@ -218,12 +194,9 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	/* Handle user identity and daemonization */
 	{
-		/* Use command line user or config file user */
 		const char *user_name =
 			args.user_name ? args.user_name : conf->user;
-		/* Either daemonize (with privilege drop) or just drop privileges */
 		if (args.daemonize) {
 			daemonize(user_name, true, false);
 			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
@@ -232,23 +205,19 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* Set up signal watchers for graceful shutdown and config reload */
 	{
-		/* SIGHUP: reload configuration */
 		ev_signal *w_sighup = &app.w_sighup;
 		ev_signal_init(w_sighup, signal_cb, SIGHUP);
 		ev_set_priority(w_sighup, EV_MAXPRI);
 		w_sighup->data = s;
 		ev_signal_start(loop, w_sighup);
 
-		/* SIGINT: graceful shutdown (Ctrl+C) */
 		ev_signal *w_sigint = &app.w_sigint;
 		ev_signal_init(w_sigint, signal_cb, SIGINT);
 		ev_set_priority(w_sigint, EV_MAXPRI);
 		w_sigint->data = s;
 		ev_signal_start(loop, w_sigint);
 
-		/* SIGTERM: graceful shutdown (service stop) */
 		ev_signal *w_sigterm = &app.w_sigterm;
 		ev_signal_init(w_sigterm, signal_cb, SIGTERM);
 		ev_set_priority(w_sigterm, EV_MAXPRI);
@@ -259,11 +228,9 @@ int main(int argc, char **argv)
 #if WITH_SYSTEMD
 	(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
 #endif
-	/* Start the main event loop - this blocks until shutdown */
 	LOGN_F("%s start", conf_modestr(conf));
 	ev_run(loop, 0);
 
-	/* Cleanup sequence after event loop exits */
 	server_stop(s);
 	server_free(s);
 	LOGN_F("%s shutdown gracefully", conf_modestr(conf));
@@ -285,13 +252,11 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 #if WITH_SYSTEMD
 		(void)systemd_notify(DAEMON_SYSTEMD_STATE_RELOADING);
 #endif
-		/* Attempt to reload configuration file */
 		struct config *conf = conf_read(args.conf_path);
 		if (conf == NULL) {
 			LOGE_F("failed to read config: %s", args.conf_path);
 			return;
 		}
-		/* Validate that the new config is compatible (same mode) */
 		if (s->conf->mode != conf->mode) {
 			conf_modestr(conf);
 			LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
@@ -299,12 +264,10 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 			       conf_modestr(conf), conf->mode);
 			return;
 		}
-		/* Apply the new configuration */
-		slog_setlevel(conf->log_level);
+		set_log_config(conf, conf->log_level);
 		conf_free((struct config *)s->conf);
 		server_loadconf(s, conf);
 		LOGN("config successfully reloaded");
-		/* Re-resolve any hostnames in case DNS changed */
 		(void)server_resolve(s);
 		s->last_resolve_time = ev_now(s->loop);
 #if WITH_SYSTEMD
@@ -317,7 +280,6 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 #if WITH_SYSTEMD
 		(void)systemd_notify(DAEMON_SYSTEMD_STATE_STOPPING);
 #endif
-		/* Break out of the main event loop */
 		ev_break(loop, EVBREAK_ALL);
 	} break;
 	default:;
