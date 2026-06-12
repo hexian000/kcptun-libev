@@ -1,9 +1,10 @@
-#if !defined(ALGO_LUAHASH_H)
+#ifndef ALGO_LUAHASH_H
 #define ALGO_LUAHASH_H
 
 #include <stddef.h>
 
-static inline unsigned luahash(const void *ptr, size_t l, const unsigned seed)
+static inline unsigned
+luahash(const void *restrict ptr, size_t l, const unsigned seed)
 {
 	const unsigned char *str = ptr;
 	unsigned int h = seed ^ (unsigned)l;

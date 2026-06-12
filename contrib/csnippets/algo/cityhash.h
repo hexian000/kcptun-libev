@@ -16,7 +16,7 @@ cityhash64low_32(const void *restrict ptr, size_t len, uint_fast32_t seed);
 
 /* 👍(2023) */
 void cityhash128_128(
-	unsigned char hash[16], const void *ptr, size_t len,
-	const unsigned char seed[16]);
+	unsigned char hash[restrict 16], const void *restrict ptr, size_t len,
+	const unsigned char seed[restrict 16]);
 
 #endif /* ALGO_CITYHASH_H */

@@ -3,66 +3,66 @@
 #ifndef CONF_SCHEMA_GEN_H
 #define CONF_SCHEMA_GEN_H
 
+#include "codec/json.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#include "codec/json.h"
 
 /** @name Struct types
  *  @{ */
 
 struct json_conf_udp {
-    unsigned rcvbuf;
-    unsigned sndbuf;
+	unsigned rcvbuf;
+	unsigned sndbuf;
 
-    bool reuseport;
+	bool reuseport;
 };
 
 struct json_conf_tcp {
-    unsigned rcvbuf;
-    unsigned sndbuf;
+	unsigned rcvbuf;
+	unsigned sndbuf;
 
-    bool keepalive;
-    bool nodelay;
-    bool reuseport;
+	bool keepalive;
+	bool nodelay;
+	bool reuseport;
 };
 
 struct json_conf_kcp {
-    unsigned flush;
-    unsigned interval;
-    unsigned mtu;
-    unsigned nc;
-    unsigned nodelay;
-    unsigned rcvwnd;
-    unsigned resend;
-    unsigned sndwnd;
+	unsigned flush;
+	unsigned interval;
+	unsigned mtu;
+	unsigned nc;
+	unsigned nodelay;
+	unsigned rcvwnd;
+	unsigned resend;
+	unsigned sndwnd;
 };
 
 struct json_conf {
-    struct json_conf_kcp kcp;
-    struct json_conf_tcp tcp;
-    struct json_conf_udp udp;
+	struct json_conf_kcp kcp;
+	struct json_conf_tcp tcp;
+	struct json_conf_udp udp;
 
-    struct json_string connect;
-    struct json_string http_listen;
-    struct json_string kcp_bind;
-    struct json_string kcp_connect;
-    struct json_string listen;
-    struct json_string method;
-    struct json_string netdev;
-    struct json_string obfs;
-    struct json_string password;
-    struct json_string psk;
-    struct json_string rendezvous_server;
-    struct json_string service_id;
-    struct json_string user;
+	struct json_string connect;
+	struct json_string http_listen;
+	struct json_string kcp_bind;
+	struct json_string kcp_connect;
+	struct json_string listen;
+	struct json_string method;
+	struct json_string netdev;
+	struct json_string obfs;
+	struct json_string password;
+	struct json_string psk;
+	struct json_string rendezvous_server;
+	struct json_string service_id;
+	struct json_string user;
 
-    unsigned keepalive;
-    unsigned linger;
-    unsigned loglevel;
-    unsigned time_wait;
-    unsigned timeout;
+	unsigned keepalive;
+	unsigned linger;
+	unsigned loglevel;
+	unsigned time_wait;
+	unsigned timeout;
 };
 
 /** @} */
@@ -71,9 +71,14 @@ struct json_conf {
  *  @{ */
 
 /* Unmarshal json (length bytes) into *obj; the buffer is modified in-place. */
-/* The function zero-initializes *obj and applies schema defaults before parsing; pointer fields of set keys then point into the json buffer (keep it valid). Returns true on success. */
-bool json_conf_unmarshal(
-    struct json_conf *obj, char *json, size_t length);
+/* Zero-initializes *obj and applies schema defaults before parsing; pointer
+   fields of set keys then point into the json buffer (keep it valid while
+   *obj is in use).  Raw-fragment fields (dynamic objects) are stored without
+   validation.  Duplicate keys: last value wins.  Returns true on success.
+   On failure returns false; partial allocations are released and *obj is
+   reset to all-zero (calling the free function afterwards is harmless). */
+bool json_unmarshal_conf(
+	struct json_conf *obj, char *json, size_t length);
 
 /** @} */
 
@@ -81,7 +86,7 @@ bool json_conf_unmarshal(
  *  @{ */
 
 /* Free heap-allocated fields inside *obj (arrays). */
-void json_conf_free(struct json_conf *obj);
+void json_free_conf(struct json_conf *obj);
 
 /** @} */
 

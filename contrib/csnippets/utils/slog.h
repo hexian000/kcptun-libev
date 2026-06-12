@@ -6,13 +6,12 @@
 
 #include <errno.h>
 #include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #if SLOG_MT_SAFE
 #include <stdatomic.h>
 #endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 enum {
 	LOG_LEVEL_SILENCE,

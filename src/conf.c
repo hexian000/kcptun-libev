@@ -191,7 +191,7 @@ struct config *conf_read(const char *path)
 	}
 
 	struct json_conf parsed = { 0 };
-	if (!json_conf_unmarshal(&parsed, buf, buflen)) {
+	if (!json_unmarshal_conf(&parsed, buf, buflen)) {
 		LOGE_F("conf: failed to parse \"%s\"", path);
 		free(buf);
 		conf_free(conf);
@@ -262,7 +262,7 @@ struct config *conf_read(const char *path)
 	conf->time_wait = (int)parsed.time_wait;
 	conf->log_level = (int)parsed.loglevel;
 
-	json_conf_free(&parsed);
+	json_free_conf(&parsed);
 	free(buf);
 
 	if (!conf_check(conf)) {
@@ -272,7 +272,7 @@ struct config *conf_read(const char *path)
 	return conf;
 oom:
 	LOGOOM();
-	json_conf_free(&parsed);
+	json_free_conf(&parsed);
 	free(buf);
 	conf_free(conf);
 	return NULL;

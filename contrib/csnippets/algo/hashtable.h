@@ -51,7 +51,7 @@ extern const struct table_opts TABLE_OPTS_BYTES;
 /** @brief String opts: key is const char *, cityhash + strcmp. */
 extern const struct table_opts TABLE_OPTS_STR;
 
-/** @brief Pointer opts: key is a pointer value, identity hash + pointer equality. */
+/** @brief Pointer opts: key is a pointer value, hashed by value + pointer equality. */
 extern const struct table_opts TABLE_OPTS_PTR;
 
 /**
@@ -88,7 +88,8 @@ struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
  * If the key already exists, returns the previous element.
  * If allocation failed, no operation is performed and the new element
  * is returned unchanged.
- * @return Pointer to the modified table.
+ * @return Pointer to the modified table, or NULL if table was NULL
+ * (no operation is performed).
  */
 struct hashtable *
 table_set(struct hashtable *table, const void *key, void **element);

@@ -13,47 +13,6 @@ struct sigmap_entry {
 	const char *str;
 };
 
-static int compare_signo(const void *key, const void *element)
-{
-	int signo_key = *(const int *)key;
-	const struct sigmap_entry *entry = element;
-	return signo_key - entry->signo;
-}
-
-const char *os_strsignal(int signo)
-{
-	static const struct sigmap_entry sigmap[] = {
-		{ SIGHUP, "Hangup" },
-		{ SIGINT, "Interrupt" },
-		{ SIGQUIT, "Quit" },
-		{ SIGILL, "Illegal instruction" },
-		{ SIGTRAP, "Trace/breakpoint trap" },
-		{ SIGABRT, "Aborted" },
-		{ SIGBUS, "Bus error" },
-		{ SIGFPE, "Floating point exception" },
-		{ SIGKILL, "Killed" },
-		{ SIGUSR1, "User defined signal 1" },
-		{ SIGSEGV, "Segmentation fault" },
-		{ SIGUSR2, "User defined signal 2" },
-		{ SIGPIPE, "Broken pipe" },
-		{ SIGALRM, "Alarm clock" },
-		{ SIGTERM, "Terminated" },
-		{ SIGCHLD, "Child exited" },
-		{ SIGCONT, "Continued" },
-		{ SIGSTOP, "Stopped (signal)" },
-		{ SIGTSTP, "Stopped" },
-		{ SIGTTIN, "Stopped (tty input)" },
-		{ SIGTTOU, "Stopped (tty output)" },
-		{ SIGURG, "Urgent I/O condition" },
-		{ SIGSYS, "Bad system call" },
-	};
-
-	const struct sigmap_entry *result =
-		bsearch(&signo, sigmap, sizeof(sigmap) / sizeof(sigmap[0]),
-			sizeof(sigmap[0]), compare_signo);
-	return result ? result->str : NULL;
-}
-
 static struct {
 	int signo;
 	struct sigaction oact;
@@ -117,4 +76,45 @@ void crashhandler_uninstall(void)
 		sighandlers[i].oact =
 			(struct sigaction){ .sa_handler = SIG_DFL };
 	}
+}
+
+static int compare_signo(const void *restrict key, const void *restrict element)
+{
+	int signo_key = *(const int *)key;
+	const struct sigmap_entry *entry = element;
+	return signo_key - entry->signo;
+}
+
+const char *os_strsignal(int signo)
+{
+	static const struct sigmap_entry sigmap[] = {
+		{ SIGHUP, "Hangup" },
+		{ SIGINT, "Interrupt" },
+		{ SIGQUIT, "Quit" },
+		{ SIGILL, "Illegal instruction" },
+		{ SIGTRAP, "Trace/breakpoint trap" },
+		{ SIGABRT, "Aborted" },
+		{ SIGBUS, "Bus error" },
+		{ SIGFPE, "Floating point exception" },
+		{ SIGKILL, "Killed" },
+		{ SIGUSR1, "User defined signal 1" },
+		{ SIGSEGV, "Segmentation fault" },
+		{ SIGUSR2, "User defined signal 2" },
+		{ SIGPIPE, "Broken pipe" },
+		{ SIGALRM, "Alarm clock" },
+		{ SIGTERM, "Terminated" },
+		{ SIGCHLD, "Child exited" },
+		{ SIGCONT, "Continued" },
+		{ SIGSTOP, "Stopped (signal)" },
+		{ SIGTSTP, "Stopped" },
+		{ SIGTTIN, "Stopped (tty input)" },
+		{ SIGTTOU, "Stopped (tty output)" },
+		{ SIGURG, "Urgent I/O condition" },
+		{ SIGSYS, "Bad system call" },
+	};
+
+	const struct sigmap_entry *result =
+		bsearch(&signo, sigmap, sizeof(sigmap) / sizeof(sigmap[0]),
+			sizeof(sigmap[0]), compare_signo);
+	return result ? result->str : NULL;
 }

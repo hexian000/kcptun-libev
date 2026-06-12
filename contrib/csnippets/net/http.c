@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "http.h"
+
 #include "utils/arraysize.h"
 
 #include <inttypes.h>
@@ -140,7 +141,7 @@ http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 	return next;
 }
 
-#if HAVE_GMTIME_R
+#if defined(HAVE_GMTIME_R)
 #define GMTIME(timer) gmtime_r((timer), &(struct tm){ 0 })
 #else
 #define GMTIME(timer) gmtime((timer))
@@ -164,7 +165,7 @@ static int http_resp_comp(const void *key, const void *elem)
 
 const char *http_status(const uint_fast16_t code)
 {
-	const uint_least16_t code_key = (uint_least16_t)code;
+	const uint_least16_t code_key = code;
 	const struct http_status_info *info =
 		bsearch(&code_key, http_resp, ARRAY_SIZE(http_resp),
 			sizeof(http_resp[0]), http_resp_comp);
@@ -177,7 +178,7 @@ const char *http_status(const uint_fast16_t code)
 int http_error(
 	char *restrict buf, const size_t buf_size, const uint_fast16_t code)
 {
-	const uint_least16_t code_key = (uint_least16_t)code;
+	const uint_least16_t code_key = code;
 	const struct http_status_info *info =
 		bsearch(&code_key, http_resp, ARRAY_SIZE(http_resp),
 			sizeof(http_resp[0]), http_resp_comp);

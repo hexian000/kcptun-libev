@@ -32,7 +32,7 @@ void slog_extra_stack(FILE *f, void *data);
 
 int debug_backtrace(void **frames, int skip, int len);
 
-#define STACK_MAXDEPTH 256
+#define DEBUG_STACK_MAXDEPTH 256
 
 #define LOG_STACK_F(level, skip, format, ...)                                  \
 	do {                                                                   \
@@ -41,10 +41,10 @@ int debug_backtrace(void **frames, int skip, int len);
 		}                                                              \
 		struct {                                                       \
 			size_t len;                                            \
-			void *pc[STACK_MAXDEPTH];                              \
+			void *pc[DEBUG_STACK_MAXDEPTH];                        \
 		} frames;                                                      \
-		frames.len =                                                   \
-			debug_backtrace(frames.pc, (skip), STACK_MAXDEPTH);    \
+		frames.len = debug_backtrace(                                  \
+			frames.pc, (skip), DEBUG_STACK_MAXDEPTH);              \
 		struct slog_extra extra = {                                    \
 			.func = slog_extra_stack,                              \
 			.data = &frames,                                       \

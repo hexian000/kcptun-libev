@@ -28,8 +28,22 @@ Options:
                          struct types, function names, enum names,
                          lookup functions, and enum-value prefixes.
     --optimize MODE      fast (default): gperf perfect-hash for O(1) lookup.
-                         size: sorted table + strncmp binary search;
+                         size: sorted table + memcmp binary search;
                          smaller binary, no gperf dependency.
+                         Keys that cannot be embedded in gperf input fall
+                         back to the binary search automatically.
+    --strict             Reject unknown keys in unmarshal
+                         (additionalProperties: false semantics).
+    --no-validate        Omit schema-constraint validation from unmarshal.
+
+Semantics notes:
+    * unmarshal: duplicate keys follow last-value-wins; on failure *obj is
+      reset to all-zero with partial allocations released.
+    * marshal: snprintf semantics (returns required length excluding NUL,
+      NUL-terminates whenever bufsz > 0); returns -1 for non-finite doubles.
+    * minLength/maxLength compare UTF-8 byte lengths, not code points.
+    * $ref, union types, and other unsupported constructs degrade to raw
+      JSON fragment fields; a warning is printed for each.
 
 Output per input schema:
     <dir>/<stem>.gen.h   -- declarations (enums, lookups, structs, protos)
@@ -49,6 +63,7 @@ Examples:
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
@@ -278,8 +293,14 @@ def _infer_c_type(prop_schema: dict) -> dict:
     if t == "string":
         return {"kind": "string"}
     if t == "integer":
+        # JSON Schema allows non-integral bounds on integer types; tighten
+        # them to the nearest integer in the valid direction.
         minimum = prop_schema.get("minimum")
         maximum = prop_schema.get("maximum")
+        if minimum is not None:
+            minimum = math.ceil(minimum)
+        if maximum is not None:
+            maximum = math.floor(maximum)
         # Bounds exceed 64-bit range → store as a raw JSON fragment.
         if (minimum is not None and minimum < _INT64_MIN) or \
                 (maximum is not None and maximum > _UINT64_MAX):
@@ -337,30 +358,63 @@ _GPERF_MACROS = (
 _LINE_DIRECTIVE = re.compile(r'^#line\b')
 
 
-def _make_gperf_input(ext_scope: str, keys: list) -> str:
+def _lookup_root(pfx: str, scope_name: str) -> str:
+    """Return the shared prefix for every symbol in a scope's lookup table.
+
+    All gperf-derived and gperf-adjacent symbols (the public ``lookup``
+    function, the ``hash`` function, the internal ``kv_lookup_`` helper,
+    the ``stringpool`` storage macro, and the ``kv`` struct tag) share
+    this prefix so the naming convention ``<pfx>_lookup_<scope>`` is
+    visible at a glance.
+
+    The prefix is normalised so a user-supplied trailing underscore
+    (``ex_``) does not produce a double underscore in the output.
+    """
+    pfx = pfx.rstrip("_")
+    return f"{pfx}_lookup_{scope_name}"
+
+
+def _make_gperf_input(lookup_name: str, keys: list) -> str:
     header_lines = [
         "%language=ANSI-C",
         "%struct-type",
         "%readonly-tables",
-        f"%define hash-function-name {ext_scope}_hash",
-        f"%define lookup-function-name {ext_scope}_kv_lookup_",
+        f"%define hash-function-name {lookup_name}_hash",
+        f"%define lookup-function-name {lookup_name}_kv_lookup_",
         "%define slot-name name",
         "%{",
-        f"/* {ext_scope}: {len(keys)} keys  (auto-generated -- do not edit) */",
+        f"/* {lookup_name}: {len(keys)} keys  (auto-generated -- do not edit) */",
         "%}",
-        "struct " + ext_scope + "_kv { int name; int idx; };",
+        "struct " + lookup_name + "_kv { int name; int idx; };",
         "%%",
     ]
     keyword_lines = [f"{key}, {i}" for i, key in enumerate(keys)]
     return "\n".join(header_lines) + "\n" + "\n".join(keyword_lines) + "\n%%\n"
 
 
-def _run_gperf(ext_scope: str, keys: list) -> str:
-    src = _make_gperf_input(ext_scope, keys)
+def _gperf_safe_keys(keys: list) -> bool:
+    """True when every key is safe to embed verbatim in gperf input.
+
+    gperf keyword lines are not escaped by this generator, so keys must be
+    printable ASCII without the characters that have meaning in the gperf
+    input grammar (field separator, quoting, comments, escapes).  Unsafe
+    keys fall back to the bsearch lookup, which handles arbitrary bytes.
+    """
+    unsafe = set(',"\\\'%#')
+    for key in keys:
+        for ch in key:
+            o = ord(ch)
+            if o <= 0x20 or o >= 0x7F or ch in unsafe:
+                return False
+    return True
+
+
+def _run_gperf(lookup_name: str, keys: list) -> str:
+    src = _make_gperf_input(lookup_name, keys)
     try:
         r = subprocess.run(
             ["gperf", "-l", "-c", "-E", "-P",
-             f"-Q{ext_scope}_stringpool", "--null-strings",
+             f"-Q{lookup_name}_stringpool", "--null-strings",
              "--initializer-suffix=,0"],
             input=src,
             capture_output=True,
@@ -372,11 +426,11 @@ def _run_gperf(ext_scope: str, keys: list) -> str:
         sys.exit("error: gperf not found -- install it with: apt install gperf")
     except subprocess.CalledProcessError as e:
         sys.exit("error: gperf failed for scope " +
-                 repr(ext_scope) + ":\n" + e.stderr)
+                 repr(lookup_name) + ":\n" + e.stderr)
 
 
 def _postprocess_gperf(
-        src: str, ext_scope: str, public_lookup: bool = True) -> str:
+        src: str, lookup_name: str, public_lookup: bool = True) -> str:
     """Post-process gperf output for inclusion in the generated .c file.
 
     - Strip #line directives (they point to gperf's internal buffers).
@@ -390,7 +444,7 @@ def _postprocess_gperf(
       gperf generates ``hash(register const char *str, ...)`` but the
       trivial length-only hash never dereferences ``str``.
     - Append #undef guards for the gperf-emitted #define macros.
-    - Append a thin ``int {ext_scope}_lookup(...)`` wrapper.  When
+    - Append a thin ``int {lookup_name}(...)`` wrapper.  When
       ``public_lookup`` is True the wrapper has external linkage and is
       declared in the generated header; when False it is ``static``.
     """
@@ -424,12 +478,12 @@ def _postprocess_gperf(
     result = filtered
 
     # Make kv_lookup_ static.
-    kv_ret = "const struct " + ext_scope + "_kv *\n"
+    kv_ret = "const struct " + lookup_name + "_kv *\n"
     result = ["static " + ln if ln == kv_ret else ln for ln in result]
 
     # Suppress -Wunused-parameter on the hash function's `str` argument.
     patched = []
-    hash_sig = ext_scope + "_hash"
+    hash_sig = lookup_name + "_hash"
     in_hash_func = False
     for line in result:
         patched.append(line)
@@ -452,10 +506,10 @@ def _postprocess_gperf(
     result += [
         "\n",
         storage + "int\n",
-        ext_scope + "_lookup(const char *str, size_t len)\n",
+        lookup_name + "(const char *str, size_t len)\n",
         "{\n",
-        _INDENT + "const struct " + ext_scope + "_kv *kv_ = "
-        + ext_scope + "_kv_lookup_(str, len);\n",
+        _INDENT + "const struct " + lookup_name + "_kv *kv_ = "
+        + lookup_name + "_kv_lookup_(str, len);\n",
         _INDENT + "return kv_ ? kv_->idx : -1;\n",
         "}\n",
     ]
@@ -463,20 +517,24 @@ def _postprocess_gperf(
 
 
 def _generate_bsearch_lookup_c(
-        ext_scope: str, keys: list, public_lookup: bool) -> str:
+        lookup_name: str, keys: list, public_lookup: bool) -> str:
     """Generate a bsearch(3)-based lookup (--optimize size).
 
     Keys are sorted by (length, name) so the comparator can prune with a
     cheap integer comparison before calling memcmp.
     Requires <stdlib.h> (bsearch) and <string.h> (memcmp).
     """
-    tbl = f"{ext_scope}_keys_"
-    entry_t = f"{ext_scope}_entry_"
+    tbl = f"{lookup_name}_keys_"
+    entry_t = f"{lookup_name}_entry_"
     n = len(keys)
     storage = "" if public_lookup else "static "
-    # Sort entries by (length, name) for the table; record the original index
-    # so the returned idx still matches the enum values assigned in key order.
-    sorted_entries = sorted(enumerate(keys), key=lambda x: (len(x[1].encode("utf-8")), x[1]))
+    # Sort entries by (byte length, UTF-8 bytes) for the table; the comparator
+    # below uses memcmp, so the table order must match byte order (Python str
+    # ordering diverges from byte ordering for non-ASCII keys).  Record the
+    # original index so the returned idx still matches the enum values
+    # assigned in key order.
+    sorted_entries = sorted(enumerate(keys), key=lambda x: (
+        len(x[1].encode("utf-8")), x[1].encode("utf-8")))
     result = [
         f"typedef struct {{ const char *name; size_t len; int idx; }} {entry_t};",
         f"static const {entry_t} {tbl}[] = {{",
@@ -486,7 +544,7 @@ def _generate_bsearch_lookup_c(
         result.append(f'{_INDENT}{{"{c_key_esc}", {c_key_len}, {orig_i}}},')
     result += [
         f"}};",
-        f"static int {ext_scope}_cmp_(const void *key_, const void *entry_)",
+        f"static int {lookup_name}_cmp_(const void *key_, const void *entry_)",
         f"{{",
         f"{_INDENT}const {entry_t} *k_ = (const {entry_t} *)key_;",
         f"{_INDENT}const {entry_t} *e_ = (const {entry_t} *)entry_;",
@@ -495,11 +553,11 @@ def _generate_bsearch_lookup_c(
         f"{_INDENT}return memcmp(k_->name, e_->name, k_->len);",
         f"}}",
         f"{storage}int",
-        f"{ext_scope}_lookup(const char *str, size_t len)",
+        f"{lookup_name}(const char *str, size_t len)",
         f"{{",
         f"{_INDENT}const {entry_t} key_ = {{str, len, 0}};",
         f"{_INDENT}const {entry_t} *e_ =",
-        f"{_INDENT * 2}bsearch(&key_, {tbl}, {n}, sizeof(*{tbl}), {ext_scope}_cmp_);",
+        f"{_INDENT * 2}bsearch(&key_, {tbl}, {n}, sizeof(*{tbl}), {lookup_name}_cmp_);",
         f"{_INDENT}return e_ ? e_->idx : -1;",
         f"}}",
         "",
@@ -507,26 +565,11 @@ def _generate_bsearch_lookup_c(
     return "\n".join(result)
 
 
-def _c_char_escape(c: str) -> str:
-    """Escape a single character for use in a C char literal."""
-    if c == "\\":
-        return "\\\\"
-    if c == "'":
-        return "\\'"
-    if c == "\n":
-        return "\\n"
-    if c == "\r":
-        return "\\r"
-    if c == "\t":
-        return "\\t"
-    return c
-
-
 # Sentinel for "no default present" — distinguishes missing from default=0/false/""
 _MISSING = object()
 
-# One indentation level for generated C source (four spaces).
-_INDENT = "    "
+# One indentation level for generated C source (default tab).
+_INDENT = "\t"
 
 
 def _c_string_literal(s: str) -> tuple:
@@ -547,28 +590,39 @@ def _c_string_literal(s: str) -> tuple:
         elif 0x20 <= byte <= 0x7E:
             parts.append(chr(byte))
         else:
-            parts.append(f"\\x{byte:02x}")
+            # Three-digit octal: unlike \xNN, an octal escape consumes at
+            # most three digits, so a following literal hex digit cannot be
+            # absorbed into the escape sequence.
+            parts.append(f"\\{byte:03o}")
     return "".join(parts), len(encoded)
+
+
+def _json_escape(s: str) -> str:
+    """Return s escaped for JSON string content (without surrounding quotes)."""
+    return json.dumps(s)[1:-1]
 
 
 def _default_designated_init(
         fname: str, kind: str, desc: dict, default_val,
-        indent: str = _INDENT * 2) -> "str | None":
+        indent: "str | None" = None) -> "str | None":
     """Return a C designated-initializer string for a struct field default, or None."""
+    if indent is None:
+        indent = _INDENT * 2
     if kind == "bool":
         return f"{indent}.{fname} = {'true' if default_val else 'false'},"
     if kind == "int":
         n = int(default_val)
         c_type = desc.get("c_type", "intmax_t")
-        lit = f"INTMAX_C({n})" if c_type == "intmax_t" else str(n)
+        lit = _c_num_literal(n, kind, c_type)
         return f"{indent}.{fname} = {lit},"
     if kind == "uint":
         n = int(default_val)
         c_type = desc.get("c_type", "uintmax_t")
-        lit = f"UINTMAX_C({n})" if c_type == "uintmax_t" else f"{n}u"
+        lit = _c_num_literal(n, kind, c_type)
         return f"{indent}.{fname} = {lit},"
     if kind == "double":
-        c_val = f"{default_val}.0" if isinstance(default_val, int) else repr(float(default_val))
+        c_val = f"{default_val}.0" if isinstance(
+            default_val, int) else repr(float(default_val))
         return f"{indent}.{fname} = {c_val},"
     if kind == "string" and isinstance(default_val, str):
         escaped, byte_len = _c_string_literal(default_val)
@@ -578,7 +632,7 @@ def _default_designated_init(
 
 def _collect_object_defaults(
         scope_name: str, schema_pfx: str, scopes_map: dict,
-        indent: str = _INDENT * 2) -> list:
+        indent: "str | None" = None) -> list:
     """Recursively collect C designated-initializer lines for all fields with
     defaults in *scope_name*, including defaults inside nested object fields.
 
@@ -592,6 +646,8 @@ def _collect_object_defaults(
     Array fields are skipped — C pointer fields cannot be safely
     initialised with a JSON Schema array default.
     """
+    if indent is None:
+        indent = _INDENT * 2
     scope_data = scopes_map.get(scope_name)
     if scope_data is None:
         return []
@@ -624,33 +680,40 @@ def _collect_object_defaults(
 
 
 def _try_single_byte_lookup(
-        ext_scope: str, keys: list, public_lookup: bool) -> "str | None":
+        lookup_name: str, keys: list, public_lookup: bool) -> "str | None":
     """Return C source for a single-byte switch lookup, or None.
 
-    Scans byte positions 0..min_key_len-1.  The first position where every
-    key has a distinct character becomes the switch discriminator, avoiding
-    the need for gperf.  Each case performs a full-length memcmp to confirm
-    the match, so the result is correct even when two keys share a prefix.
+    Scans byte positions 0..min_key_len-1 (UTF-8 byte positions, matching
+    the memcmp-based confirmation and the runtime key bytes).  The first
+    position where every key has a distinct byte becomes the switch
+    discriminator, avoiding the need for gperf.  Each case performs a
+    full-length memcmp to confirm the match, so the result is correct even
+    when two keys share a prefix.
     """
     if not keys:
         return None
-    min_len = min(len(k) for k in keys)
+    encoded = [k.encode("utf-8") for k in keys]
+    min_len = min(len(e) for e in encoded)
     for pos in range(min_len):
-        chars = [k[pos] for k in keys]
-        if len(set(chars)) < len(keys):
+        bytes_at = [e[pos] for e in encoded]
+        if len(set(bytes_at)) < len(keys):
             continue
         storage = "" if public_lookup else "static "
         lines = [
             f"{storage}int",
-            f"{ext_scope}_lookup(const char *str, size_t len)",
+            f"{lookup_name}(const char *str, size_t len)",
             "{",
             f"{_INDENT}if (len < {pos + 1}) {{ return -1; }}",
             f"{_INDENT}switch ((unsigned char)str[{pos}]) {{",
         ]
         for i, key in enumerate(keys):
-            c_char = _c_char_escape(key[pos])
+            b = encoded[i][pos]
+            if 0x20 <= b <= 0x7E and chr(b) not in ("'", "\\"):
+                case_label = f"'{chr(b)}'"
+            else:
+                case_label = f"0x{b:02x}"
             c_key_esc, c_key_len = _c_string_literal(key)
-            lines.append(f"{_INDENT}case '{c_char}':")
+            lines.append(f"{_INDENT}case {case_label}:")
             lines.append(
                 f"{_INDENT * 2}return len == {c_key_len} && "
                 f"memcmp(str, \"{c_key_esc}\", {c_key_len}) == 0 ? {i} : -1;")
@@ -669,12 +732,33 @@ def _try_single_byte_lookup(
 # ---------------------------------------------------------------------------
 
 def _ext(scope_name: str, pfx: str) -> str:
-    """Return the external symbol name for a scope by prepending the user prefix.
+    """Return the external identifier for a scope by prepending the user prefix.
 
-    Applies uniformly to struct tags, function names, enum names, lookup
-    functions, and enum-value prefixes.
+    Applies to struct tags, enum tags, and the lookup-table struct tag, where
+    the identifier carries only a module+scope prefix (no verb).
     """
     return pfx + scope_name
+
+
+def make_fn_name(verb: str, scope_name: str, pfx: str, suffix: str = "") -> str:
+    """Build a generated function name with the verb in the middle.
+
+    The naming convention is ``<prefix>_<verb>_<scope>`` (or with a trailing
+    ``<suffix>`` segment, e.g. ``<prefix>_unmarshal_<scope>_<field>`` for the
+    per-field array helpers).  The scope part is identical to the struct tag
+    produced by ``_ext``, so the function name always reveals the encoded
+    struct at a glance.
+
+    The user-supplied prefix may be passed with or without a trailing
+    underscore (``ex`` or ``ex_``); a single separator is inserted between
+    the prefix and the verb so the result is always exactly one underscore
+    wide.
+    """
+    pfx = pfx.rstrip("_")
+    parts = [pfx, verb, scope_name]
+    if suffix:
+        parts.append(suffix)
+    return "_".join(p for p in parts if p)
 
 
 def _scope_of_child(parent_path: str, prop_key: str, schema_pfx: str) -> str:
@@ -706,14 +790,10 @@ def generate_structs_h(
     Scopes must be in *reverse* order (innermost first) so that nested structs
     are declared before the structs that embed them.
 
-    Layout per struct:
-      1. All ``bool`` bitfields (``has_*`` presence flags followed by boolean
-         value fields) at the top, each group sorted alphabetically.  Keeping
-         all bitfields contiguous lets the compiler pack them into a single
-         word.
-      2. Remaining fields grouped by C type (objects, strings, arrays,
-         dynamic JSON fragments, unsigned integers, signed integers, doubles),
-         sorted alphabetically within each group.
+    Layout per struct: fields are grouped by C type (objects, strings,
+    arrays, dynamic JSON fragments, unsigned integers, signed integers,
+    doubles, booleans), sorted alphabetically within each group, so that
+    fields of equal size and alignment stay contiguous.
     """
     lines = []
     # scopes list is (scope_name, keys, node) — emit innermost first
@@ -811,7 +891,7 @@ def generate_free_h(scopes: list, pfx: str, sub_schema: bool = False) -> list:
         ename = _ext(scope_name, pfx)
         lines += [
             f"/* Free heap-allocated fields inside *obj (arrays). */",
-            f"void {ename}_free(struct {ename} *obj);",
+            f"void {make_fn_name('free', scope_name, pfx)}(struct {ename} *obj);",
             "",
         ]
     return lines
@@ -825,7 +905,8 @@ def generate_free_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = 
         ename = _ext(scope_name, pfx)
         storage = "" if sub_schema or scope_name == root_scope else "static "
         fname_map = _make_field_map(keys, node)
-        lines.append(f"{storage}void {ename}_free(struct {ename} *obj)")
+        lines.append(
+            f"{storage}void {make_fn_name('free', scope_name, pfx)}(struct {ename} *obj)")
         lines.append("{")
         has_body = False
         for key in keys:
@@ -837,7 +918,7 @@ def generate_free_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = 
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), key, schema_pfx)
                 lines.append(
-                    f"{_INDENT}{_ext(child_scope, pfx)}_free(&obj->{fname});")
+                    f"{_INDENT}{make_fn_name('free', child_scope, pfx)}(&obj->{fname});")
                 has_body = True
             elif kind == "array_string":
                 lines.append(f"{_INDENT}free(obj->{fname});")
@@ -850,7 +931,7 @@ def generate_free_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = 
                 lines.append(
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{")
                 lines.append(
-                    f"{_INDENT * 3}{child_ename}_free(&obj->{fname}[i_]);")
+                    f"{_INDENT * 3}{make_fn_name('free', child_scope, pfx)}(&obj->{fname}[i_]);")
                 lines.append(f"{_INDENT * 2}}}")
                 lines.append(f"{_INDENT * 2}free(obj->{fname});")
                 lines.append(f"{_INDENT}}}")
@@ -910,6 +991,10 @@ def _scalar_constraint_checks(
               ``multipleOf``, ``enum``, ``const``
     double  : same as int/uint (uses floating-point comparisons; ``multipleOf`` via fmod)
     bool    : ``enum``, ``const``
+
+    Divergence from JSON Schema: ``minLength``/``maxLength`` compare UTF-8
+    *byte* lengths, not Unicode code-point counts.  Non-integral numeric
+    bounds on integer fields are tightened to the nearest valid integer.
     """
     lines = []
     c_type = desc.get("c_type", "")
@@ -917,15 +1002,17 @@ def _scalar_constraint_checks(
     if kind == "string":
         str_expr = f"{val_expr}.str"
         len_expr = f"{val_expr}.len"
-        min_len  = prop_schema.get("minLength")
-        max_len  = prop_schema.get("maxLength")
-        const_v  = prop_schema.get("const")
-        enum_vs  = prop_schema.get("enum")
+        min_len = prop_schema.get("minLength")
+        max_len = prop_schema.get("maxLength")
+        const_v = prop_schema.get("const")
+        enum_vs = prop_schema.get("enum")
 
         if min_len is not None:
-            lines.append(f"{indent}if ({len_expr} < {min_len}u) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({len_expr} < {min_len}u) {{ {fail_stmt} }}")
         if max_len is not None:
-            lines.append(f"{indent}if ({len_expr} > {max_len}u) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({len_expr} > {max_len}u) {{ {fail_stmt} }}")
 
         def _str_eq(v: str) -> str:
             esc, blen = _c_string_literal(str(v))
@@ -940,48 +1027,91 @@ def _scalar_constraint_checks(
 
     elif kind in ("int", "uint"):
         is_unsigned = c_type in ("unsigned", "uintmax_t")
-        minimum  = prop_schema.get("minimum")
-        maximum  = prop_schema.get("maximum")
+        minimum = prop_schema.get("minimum")
+        maximum = prop_schema.get("maximum")
         excl_min = prop_schema.get("exclusiveMinimum")
         excl_max = prop_schema.get("exclusiveMaximum")
-        mult_of  = prop_schema.get("multipleOf")
-        const_v  = prop_schema.get("const")
-        enum_vs  = prop_schema.get("enum")
+        mult_of = prop_schema.get("multipleOf")
+        const_v = prop_schema.get("const")
+        enum_vs = prop_schema.get("enum")
+
+        # JSON Schema allows non-integral bounds on integer types; tighten
+        # them to the nearest integer in the valid direction.  Non-integral
+        # exclusive bounds become inclusive after rounding (e.g.
+        # exclusiveMaximum 2.5 over the integers is exactly maximum 2).
+        if minimum is not None:
+            minimum = math.ceil(minimum)
+        if maximum is not None:
+            maximum = math.floor(maximum)
+        if excl_min is not None and excl_min != math.floor(excl_min):
+            new_min = math.ceil(excl_min)
+            minimum = new_min if minimum is None else max(minimum, new_min)
+            excl_min = None
+        if excl_max is not None and excl_max != math.floor(excl_max):
+            new_max = math.floor(excl_max)
+            maximum = new_max if maximum is None else min(maximum, new_max)
+            excl_max = None
 
         # Skip minimum <= 0 for unsigned types — the parser already rejects negatives.
         if minimum is not None and not (is_unsigned and minimum <= 0):
-            lines.append(f"{indent}if ({val_expr} < {_c_num_literal(minimum, kind, c_type)}) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({val_expr} < {_c_num_literal(minimum, kind, c_type)}) {{ {fail_stmt} }}")
         if maximum is not None:
-            lines.append(f"{indent}if ({val_expr} > {_c_num_literal(maximum, kind, c_type)}) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({val_expr} > {_c_num_literal(maximum, kind, c_type)}) {{ {fail_stmt} }}")
         if excl_min is not None and not (is_unsigned and excl_min < 0):
-            lines.append(f"{indent}if ({val_expr} <= {_c_num_literal(excl_min, kind, c_type)}) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({val_expr} <= {_c_num_literal(excl_min, kind, c_type)}) {{ {fail_stmt} }}")
         if excl_max is not None:
-            lines.append(f"{indent}if ({val_expr} >= {_c_num_literal(excl_max, kind, c_type)}) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({val_expr} >= {_c_num_literal(excl_max, kind, c_type)}) {{ {fail_stmt} }}")
         if mult_of is not None:
-            lines.append(f"{indent}if ({val_expr} % {_c_num_literal(mult_of, kind, c_type)} != 0) {{ {fail_stmt} }}")
+            if mult_of <= 0 or mult_of != math.floor(mult_of):
+                print(
+                    f"  warning: non-integral or non-positive multipleOf "
+                    f"{mult_of!r} on an integer field is not supported; "
+                    f"the check is omitted", file=sys.stderr)
+            else:
+                lines.append(
+                    f"{indent}if ({val_expr} % {_c_num_literal(mult_of, kind, c_type)} != 0) {{ {fail_stmt} }}")
         if const_v is not None:
-            lines.append(f"{indent}if ({val_expr} != {_c_num_literal(const_v, kind, c_type)}) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({val_expr} != {_c_num_literal(const_v, kind, c_type)}) {{ {fail_stmt} }}")
         if enum_vs is not None and len(enum_vs) > 0:
-            conds = " && ".join(f"{val_expr} != {_c_num_literal(v, kind, c_type)}" for v in enum_vs)
+            conds = " && ".join(
+                f"{val_expr} != {_c_num_literal(v, kind, c_type)}" for v in enum_vs)
             lines.append(f"{indent}if ({conds}) {{ {fail_stmt} }}")
 
     elif kind == "double":
-        minimum  = prop_schema.get("minimum")
-        maximum  = prop_schema.get("maximum")
+        minimum = prop_schema.get("minimum")
+        maximum = prop_schema.get("maximum")
         excl_min = prop_schema.get("exclusiveMinimum")
         excl_max = prop_schema.get("exclusiveMaximum")
-        mult_of  = prop_schema.get("multipleOf")
-        const_v  = prop_schema.get("const")
-        enum_vs  = prop_schema.get("enum")
+        mult_of = prop_schema.get("multipleOf")
+        const_v = prop_schema.get("const")
+        enum_vs = prop_schema.get("enum")
 
-        if minimum  is not None: lines.append(f"{indent}if ({val_expr} < {_c_num_literal(minimum, 'double', '')}) {{ {fail_stmt} }}")
-        if maximum  is not None: lines.append(f"{indent}if ({val_expr} > {_c_num_literal(maximum, 'double', '')}) {{ {fail_stmt} }}")
-        if excl_min is not None: lines.append(f"{indent}if ({val_expr} <= {_c_num_literal(excl_min, 'double', '')}) {{ {fail_stmt} }}")
-        if excl_max is not None: lines.append(f"{indent}if ({val_expr} >= {_c_num_literal(excl_max, 'double', '')}) {{ {fail_stmt} }}")
-        if mult_of  is not None: lines.append(f"{indent}if (fmod({val_expr}, {_c_num_literal(mult_of, 'double', '')}) != 0.0) {{ {fail_stmt} }}")
-        if const_v  is not None: lines.append(f"{indent}if ({val_expr} != {_c_num_literal(const_v, 'double', '')}) {{ {fail_stmt} }}")
-        if enum_vs  is not None and len(enum_vs) > 0:
-            conds = " && ".join(f"{val_expr} != {_c_num_literal(v, 'double', '')}" for v in enum_vs)
+        if minimum is not None:
+            lines.append(
+                f"{indent}if ({val_expr} < {_c_num_literal(minimum, 'double', '')}) {{ {fail_stmt} }}")
+        if maximum is not None:
+            lines.append(
+                f"{indent}if ({val_expr} > {_c_num_literal(maximum, 'double', '')}) {{ {fail_stmt} }}")
+        if excl_min is not None:
+            lines.append(
+                f"{indent}if ({val_expr} <= {_c_num_literal(excl_min, 'double', '')}) {{ {fail_stmt} }}")
+        if excl_max is not None:
+            lines.append(
+                f"{indent}if ({val_expr} >= {_c_num_literal(excl_max, 'double', '')}) {{ {fail_stmt} }}")
+        if mult_of is not None:
+            lines.append(
+                f"{indent}if (fmod({val_expr}, {_c_num_literal(mult_of, 'double', '')}) != 0.0) {{ {fail_stmt} }}")
+        if const_v is not None:
+            lines.append(
+                f"{indent}if ({val_expr} != {_c_num_literal(const_v, 'double', '')}) {{ {fail_stmt} }}")
+        if enum_vs is not None and len(enum_vs) > 0:
+            conds = " && ".join(
+                f"{val_expr} != {_c_num_literal(v, 'double', '')}" for v in enum_vs)
             lines.append(f"{indent}if ({conds}) {{ {fail_stmt} }}")
 
     elif kind == "bool":
@@ -989,9 +1119,11 @@ def _scalar_constraint_checks(
         enum_vs = prop_schema.get("enum")
 
         if const_v is not None:
-            lines.append(f"{indent}if ({val_expr} != {'true' if const_v else 'false'}) {{ {fail_stmt} }}")
+            lines.append(
+                f"{indent}if ({val_expr} != {'true' if const_v else 'false'}) {{ {fail_stmt} }}")
         if enum_vs is not None and len(enum_vs) > 0:
-            valid = ["true" if v else "false" for v in enum_vs if isinstance(v, bool)]
+            valid = [
+                "true" if v else "false" for v in enum_vs if isinstance(v, bool)]
             if valid:
                 conds = " && ".join(f"{val_expr} != {v}" for v in valid)
                 lines.append(f"{indent}if ({conds}) {{ {fail_stmt} }}")
@@ -1018,6 +1150,60 @@ def _schema_constraint_flags(scopes: list) -> dict:
     return flags
 
 
+def _has_double_fields(scopes: list) -> bool:
+    """True when any scope has a double field or a double array field
+    (the marshal functions then need <math.h> for isfinite)."""
+    for _, keys, node in scopes:
+        for key in keys:
+            desc = _infer_c_type(node["properties"][key])
+            if desc["kind"] == "double":
+                return True
+            if (desc["kind"] == "array_primitive"
+                    and desc.get("c_base") == "double"):
+                return True
+    return False
+
+
+def _warn_unsupported_props(node, path: str = "") -> None:
+    """Print a warning for every property whose schema degrades to a raw
+    JSON fragment for a reason the schema author may not expect
+    ($ref, union types, missing type, unsupported array items, out-of-range
+    integer bounds).  Deliberately dynamic objects (additionalProperties
+    without fixed properties) are not warned about."""
+    if not isinstance(node, dict):
+        return
+    if node.get("type") == "object" and "properties" in node:
+        for key, prop in sorted(node["properties"].items()):
+            ppath = f"{path}.{key}" if path else key
+            if not isinstance(prop, dict):
+                continue
+            desc = _infer_c_type(prop)
+            if desc["kind"] == "dynamic" and not _is_dynamic_object(prop):
+                if "$ref" in prop:
+                    reason = "$ref is not resolved"
+                elif isinstance(prop.get("type"), list):
+                    reason = "union types are not supported"
+                elif "type" not in prop:
+                    reason = "no 'type' keyword"
+                elif prop.get("type") == "array":
+                    reason = "unsupported array item type"
+                elif prop.get("type") == "integer":
+                    reason = "integer bounds exceed the 64-bit range"
+                else:
+                    reason = "unsupported construct"
+                print(
+                    f"  warning: property {ppath!r}: {reason}; "
+                    "the value is stored as a raw JSON fragment",
+                    file=sys.stderr)
+            _warn_unsupported_props(prop, ppath)
+    elif node.get("type") == "array" and isinstance(node.get("items"), dict):
+        _warn_unsupported_props(node["items"], path + "[]")
+    for defs_key in ("$defs", "definitions"):
+        for dname, dnode in sorted(node.get(defs_key, {}).items()):
+            _warn_unsupported_props(
+                dnode, f"{path}#{dname}" if path else f"#{dname}")
+
+
 def generate_unmarshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> list:
     lines = []
     root_scope = scopes[0][0]
@@ -1027,33 +1213,44 @@ def generate_unmarshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> li
         ename = _ext(scope_name, pfx)
         lines += [
             f"/* Unmarshal json (length bytes) into *obj; the buffer is modified in-place. */",
-            f"/* The function zero-initializes *obj and applies schema defaults before parsing; pointer fields of set keys then point into the json buffer (keep it valid). Returns true on success. */",
-            f"bool {ename}_unmarshal(",
+            f"/* Zero-initializes *obj and applies schema defaults before parsing; pointer",
+            f"   fields of set keys then point into the json buffer (keep it valid while",
+            f"   *obj is in use).  Raw-fragment fields (dynamic objects) are stored without",
+            f"   validation.  Duplicate keys: last value wins.  Returns true on success.",
+            f"   On failure returns false; partial allocations are released and *obj is",
+            f"   reset to all-zero (calling the free function afterwards is harmless). */",
+            f"bool {make_fn_name('unmarshal', scope_name, pfx)}(",
             f"{_INDENT}struct {ename} *obj, char *json, size_t length);",
             "",
         ]
     return lines
 
 
-def _gen_unmarshal_array_string_helper(ename: str, fname: str, item_checks: list = None) -> list:
+def _gen_unmarshal_array_string_helper(
+        scope_name: str, pfx: str, fname: str, item_checks: list = None,
+        max_items: "int | None" = None) -> list:
     ic = item_checks or []
+    ename = _ext(scope_name, pfx)
+    # The helper name lives in the same identifier space as nested-object
+    # unmarshal functions; embed "_arr_" in the suffix to disambiguate,
+    # because a field name can collide with a nested object scope name.
+    fn_name = make_fn_name("unmarshal", scope_name, pfx, suffix=f"arr_{fname}")
+    max_check = [] if max_items is None else [
+        f"{_INDENT * 2}if (count_ >= {max_items}u) {{ free(items_); return false; }}",
+    ]
     return [
-        f"static bool {ename}_unmarshal_{fname}(",
+        f"static bool {fn_name}(",
         f"{_INDENT}struct {ename} *obj, char *val_, size_t val_len_)",
         f"{{",
-        f"{_INDENT}const struct json_val arr_ = json_parse(val_, val_len_);",
+        f"{_INDENT}const struct json_val arr_ = json_parse(val_, &(size_t){{ val_len_ }});",
         f"{_INDENT}if (arr_.type != JSON_ARRAY) {{ return false; }}",
         f"{_INDENT}struct json_string *items_ = NULL;",
         f"{_INDENT}size_t count_ = 0, cap_ = 0;",
         f"{_INDENT}json_iter ait_ = arr_.iter;",
         f"{_INDENT}char *av_; size_t alen_;",
-        f"{_INDENT}while (json_arr_next(val_, val_len_, &ait_, &av_, &alen_)) {{",
-        f"{_INDENT * 2}const struct json_val sv_ = json_parse(av_, alen_);",
-        f"{_INDENT * 2}if (sv_.type != JSON_STRING) {{",
-        f"{_INDENT * 3}free(items_);",
-        f"{_INDENT * 3}return false;",
-        f"{_INDENT * 2}}}",
-    ] + ic + [
+        f"{_INDENT}int next_;",
+        f"{_INDENT}while ((next_ = json_arr_next(val_, &val_len_, &ait_, &av_, &alen_)) == JSON_NEXT_ITEM) {{",
+    ] + max_check + [
         f"{_INDENT * 2}if (count_ >= cap_) {{",
         f"{_INDENT * 3}const size_t nc_ = cap_ ? cap_ * 2 : 4;",
         f"{_INDENT * 3}struct json_string *na_ = realloc(items_, nc_ * sizeof(*na_));",
@@ -1063,14 +1260,19 @@ def _gen_unmarshal_array_string_helper(ename: str, fname: str, item_checks: list
         f"{_INDENT * 3}}}",
         f"{_INDENT * 3}items_ = na_; cap_ = nc_;",
         f"{_INDENT * 2}}}",
-        f"{_INDENT * 2}items_[count_].str = sv_.str;",
-        f"{_INDENT * 2}items_[count_].len = sv_.len;",
+        f"{_INDENT * 2}if (!json_parse_string(av_, alen_, &items_[count_].str, &items_[count_].len)) {{",
+        f"{_INDENT * 3}free(items_);",
+        f"{_INDENT * 3}return false;",
+        f"{_INDENT * 2}}}",
+    ] + ic + [
         f"{_INDENT * 2}count_++;",
         f"{_INDENT}}}",
-        f"{_INDENT}if (count_ == 0) {{",
-        f"{_INDENT * 2}items_ = malloc(sizeof(*items_));",
-        f"{_INDENT * 2}if (!items_) {{ return false; }}",
+        f"{_INDENT}if (next_ != JSON_NEXT_END) {{ free(items_); return false; }}",
+        f"{_INDENT}for (; ait_ < val_len_; ait_++) {{",
+        f"{_INDENT * 2}if (!json_iswhitespace(val_[ait_])) {{ free(items_); return false; }}",
         f"{_INDENT}}}",
+        f"{_INDENT}/* duplicate key: release any previous allocation */",
+        f"{_INDENT}free(obj->{fname});",
         f"{_INDENT}obj->{fname} = items_;",
         f"{_INDENT}obj->{fname}_count = count_;",
         f"{_INDENT}return true;",
@@ -1079,55 +1281,78 @@ def _gen_unmarshal_array_string_helper(ename: str, fname: str, item_checks: list
     ]
 
 
-def _gen_unmarshal_array_object_helper(ename: str, fname: str, child_ename: str) -> list:
+def _gen_unmarshal_array_object_helper(
+        scope_name: str, pfx: str, fname: str, child_scope: str,
+        max_items: "int | None" = None) -> list:
+    ename = _ext(scope_name, pfx)
+    child_ename = _ext(child_scope, pfx)
+    child_free = make_fn_name("free", child_scope, pfx)
+    # The helper name lives in the same identifier space as nested-object
+    # unmarshal functions; embed "_arr_" in the suffix to disambiguate,
+    # because a field name can collide with a nested object scope name.
+    fn_name = make_fn_name("unmarshal", scope_name, pfx, suffix=f"arr_{fname}")
+    max_check = [] if max_items is None else [
+        f"{_INDENT * 2}if (count_ >= {max_items}u) {{ goto fail_; }}",
+    ]
     return [
-        f"static bool {ename}_unmarshal_{fname}(",
+        f"static bool {fn_name}(",
         f"{_INDENT}struct {ename} *obj, char *val_, size_t val_len_)",
         f"{{",
-        f"{_INDENT}const struct json_val arr_ = json_parse(val_, val_len_);",
+        f"{_INDENT}const struct json_val arr_ = json_parse(val_, &(size_t){{ val_len_ }});",
         f"{_INDENT}if (arr_.type != JSON_ARRAY) {{ return false; }}",
         f"{_INDENT}struct {child_ename} *items_ = NULL;",
         f"{_INDENT}size_t count_ = 0, cap_ = 0;",
         f"{_INDENT}json_iter ait_ = arr_.iter;",
         f"{_INDENT}char *av_; size_t alen_;",
-        f"{_INDENT}while (json_arr_next(val_, val_len_, &ait_, &av_, &alen_)) {{",
+        f"{_INDENT}int next_;",
+        f"{_INDENT}while ((next_ = json_arr_next(val_, &val_len_, &ait_, &av_, &alen_)) == JSON_NEXT_ITEM) {{",
+    ] + max_check + [
         f"{_INDENT * 2}if (count_ >= cap_) {{",
         f"{_INDENT * 3}const size_t nc_ = cap_ ? cap_ * 2 : 4;",
         f"{_INDENT * 3}struct {child_ename} *na_ = realloc(items_, nc_ * sizeof(*na_));",
-        f"{_INDENT * 3}if (na_ == NULL) {{",
-        f"{_INDENT * 4}for (size_t i_ = 0; i_ < count_; i_++) {{",
-        f"{_INDENT * 5}{child_ename}_free(&items_[i_]);",
-        f"{_INDENT * 4}}}",
-        f"{_INDENT * 4}free(items_);",
-        f"{_INDENT * 4}return false;",
-        f"{_INDENT * 3}}}",
+        f"{_INDENT * 3}if (na_ == NULL) {{ goto fail_; }}",
         f"{_INDENT * 3}items_ = na_; cap_ = nc_;",
         f"{_INDENT * 2}}}",
-        f"{_INDENT * 2}memset(&items_[count_], 0, sizeof(items_[count_]));",
-        f"{_INDENT * 2}if (!{child_ename}_unmarshal(&items_[count_], av_, alen_)) {{",
-        f"{_INDENT * 3}{child_ename}_free(&items_[count_]);",
-        f"{_INDENT * 3}for (size_t i_ = 0; i_ < count_; i_++) {{",
-        f"{_INDENT * 4}{child_ename}_free(&items_[i_]);",
-        f"{_INDENT * 3}}}",
-        f"{_INDENT * 3}free(items_);",
-        f"{_INDENT * 3}return false;",
+        f"{_INDENT * 2}if (!{make_fn_name('unmarshal', child_scope, pfx)}(&items_[count_], av_, alen_)) {{",
+        f"{_INDENT * 3}goto fail_;",
         f"{_INDENT * 2}}}",
         f"{_INDENT * 2}count_++;",
         f"{_INDENT}}}",
-        f"{_INDENT}if (count_ == 0) {{",
-        f"{_INDENT * 2}items_ = malloc(sizeof(*items_));",
-        f"{_INDENT * 2}if (!items_) {{ return false; }}",
+        f"{_INDENT}if (next_ != JSON_NEXT_END) {{ goto fail_; }}",
+        f"{_INDENT}for (; ait_ < val_len_; ait_++) {{",
+        f"{_INDENT * 2}if (!json_iswhitespace(val_[ait_])) {{ goto fail_; }}",
+        f"{_INDENT}}}",
+        f"{_INDENT}/* duplicate key: release any previous allocation */",
+        f"{_INDENT}if (obj->{fname} != NULL) {{",
+        f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
+        f"{_INDENT * 3}{child_free}(&obj->{fname}[i_]);",
+        f"{_INDENT * 2}}}",
+        f"{_INDENT * 2}free(obj->{fname});",
         f"{_INDENT}}}",
         f"{_INDENT}obj->{fname} = items_;",
         f"{_INDENT}obj->{fname}_count = count_;",
         f"{_INDENT}return true;",
+        f"",
+        f"fail_:",
+        f"{_INDENT}for (size_t i_ = 0; i_ < count_; i_++) {{",
+        f"{_INDENT * 2}{child_free}(&items_[i_]);",
+        f"{_INDENT}}}",
+        f"{_INDENT}free(items_);",
+        f"{_INDENT}return false;",
         f"}}",
         "",
     ]
 
 
-def _gen_unmarshal_array_primitive_helper(ename: str, fname: str, c_base: str, item_checks: list = None) -> list:
+def _gen_unmarshal_array_primitive_helper(
+        scope_name: str, pfx: str, fname: str, c_base: str,
+        item_checks: list = None, max_items: "int | None" = None) -> list:
     ic = item_checks or []
+    ename = _ext(scope_name, pfx)
+    # The helper name lives in the same identifier space as nested-object
+    # unmarshal functions; embed "_arr_" in the suffix to disambiguate,
+    # because a field name can collide with a nested object scope name.
+    fn_name = make_fn_name("unmarshal", scope_name, pfx, suffix=f"arr_{fname}")
     if c_base == "bool":
         parse_fn = "json_parse_bool"
     elif c_base == "int":
@@ -1140,17 +1365,22 @@ def _gen_unmarshal_array_primitive_helper(ename: str, fname: str, c_base: str, i
         parse_fn = "json_parse_umax"
     else:  # double
         parse_fn = "json_parse_double"
+    max_check = [] if max_items is None else [
+        f"{_INDENT * 2}if (count_ >= {max_items}u) {{ free(items_); return false; }}",
+    ]
     return [
-        f"static bool {ename}_unmarshal_{fname}(",
+        f"static bool {fn_name}(",
         f"{_INDENT}struct {ename} *obj, char *val_, size_t val_len_)",
         f"{{",
-        f"{_INDENT}const struct json_val arr_ = json_parse(val_, val_len_);",
+        f"{_INDENT}const struct json_val arr_ = json_parse(val_, &(size_t){{ val_len_ }});",
         f"{_INDENT}if (arr_.type != JSON_ARRAY) {{ return false; }}",
         f"{_INDENT}{c_base} *items_ = NULL;",
         f"{_INDENT}size_t count_ = 0, cap_ = 0;",
         f"{_INDENT}json_iter ait_ = arr_.iter;",
         f"{_INDENT}char *av_; size_t alen_;",
-        f"{_INDENT}while (json_arr_next(val_, val_len_, &ait_, &av_, &alen_)) {{",
+        f"{_INDENT}int next_;",
+        f"{_INDENT}while ((next_ = json_arr_next(val_, &val_len_, &ait_, &av_, &alen_)) == JSON_NEXT_ITEM) {{",
+    ] + max_check + [
         f"{_INDENT * 2}{c_base} pv_;",
         f"{_INDENT * 2}if (!{parse_fn}(av_, alen_, &pv_)) {{ free(items_); return false; }}",
     ] + ic + [
@@ -1162,10 +1392,12 @@ def _gen_unmarshal_array_primitive_helper(ename: str, fname: str, c_base: str, i
         f"{_INDENT * 2}}}",
         f"{_INDENT * 2}items_[count_++] = ({c_base})pv_;",
         f"{_INDENT}}}",
-        f"{_INDENT}if (count_ == 0) {{",
-        f"{_INDENT * 2}items_ = malloc(sizeof(*items_));",
-        f"{_INDENT * 2}if (!items_) {{ return false; }}",
+        f"{_INDENT}if (next_ != JSON_NEXT_END) {{ free(items_); return false; }}",
+        f"{_INDENT}for (; ait_ < val_len_; ait_++) {{",
+        f"{_INDENT * 2}if (!json_iswhitespace(val_[ait_])) {{ free(items_); return false; }}",
         f"{_INDENT}}}",
+        f"{_INDENT}/* duplicate key: release any previous allocation */",
+        f"{_INDENT}free(obj->{fname});",
         f"{_INDENT}obj->{fname} = items_;",
         f"{_INDENT}obj->{fname}_count = count_;",
         f"{_INDENT}return true;",
@@ -1174,7 +1406,9 @@ def _gen_unmarshal_array_primitive_helper(ename: str, fname: str, c_base: str, i
     ]
 
 
-def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = False, validate: bool = True) -> list:
+def generate_unmarshal_c(
+        scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = False,
+        validate: bool = True, strict: bool = False) -> list:
     """Generate a pull-parse unmarshal function for every scope.
 
     Design
@@ -1185,15 +1419,22 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
     * Nested object fields: call the child's unmarshal directly on the raw
       value fragment (modifying it in-place; the outer iterator has already
       advanced past that fragment).
-    * Dynamic-key object fields: strndup the raw fragment before any
-      in-place decoding; the caller walks it later with json_parse +
-      json_obj_next on the heap copy.
+    * Dynamic-key object fields: store (ptr, len) of the raw fragment,
+      pointing into the caller's json buffer (zero-copy, NOT validated);
+      the caller walks it later with json_parse + json_obj_next.
     * Array-of-string fields: parse the raw array fragment in-place, collect
-      (ptr, len) pairs that point into the caller's json buffer; no heap
-      allocation per element.
+      (ptr, len) pairs that point into the caller's json buffer; only the
+      element table itself is heap-allocated.
     * Scalar string fields: parse the raw fragment in-place; obj->field
       is a json_string that points into the caller's json buffer.
     * Numeric/bool values: parse the raw fragment in-place.
+    * Duplicate keys: last value wins; array/object fields release the
+      previous allocation before storing the new one.
+    * Failure: every error path funnels through a single fail_ label that
+      releases partial allocations and resets *obj to all-zero, so callers
+      may (but need not) call the free function after a failure.
+    * ``strict``: unknown keys are rejected instead of skipped
+      (additionalProperties: false semantics).
     """
     lines = []
     root_scope = scopes[0][0]
@@ -1212,21 +1453,26 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
             desc = _infer_c_type(prop)
             kind = desc["kind"]
             fname = fname_map[key]
+            max_items = prop.get("maxItems") if validate else None
+            if max_items is not None:
+                max_items = int(max_items)
             if kind == "array_string":
                 item_checks = []
                 if validate:
                     item_schema = prop.get("items", {})
                     if item_schema:
                         item_checks = _scalar_constraint_checks(
-                            item_schema, "string", {"kind": "string", "c_type": ""},
-                            "sv_", _INDENT * 2, "free(items_); return false;")
-                lines += _gen_unmarshal_array_string_helper(ename, fname, item_checks)
+                            item_schema, "string", {
+                                "kind": "string", "c_type": ""},
+                            f"items_[count_]", _INDENT * 2,
+                            "free(items_); return false;")
+                lines += _gen_unmarshal_array_string_helper(
+                    scope_name, pfx, fname, item_checks, max_items)
             elif kind == "array_object":
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), key, schema_pfx)
-                child_ename = _ext(child_scope, pfx)
                 lines += _gen_unmarshal_array_object_helper(
-                    ename, fname, child_ename)
+                    scope_name, pfx, fname, child_scope, max_items)
             elif kind == "array_primitive":
                 c_base = desc.get("c_base", "int")
                 item_checks = []
@@ -1241,39 +1487,58 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
                                 item_schema, item_kind, item_desc, "pv_",
                                 _INDENT * 2, "free(items_); return false;")
                 lines += _gen_unmarshal_array_primitive_helper(
-                    ename, fname, c_base, item_checks)
+                    scope_name, pfx, fname, c_base, item_checks, max_items)
+
+        # Required-field tracking: one bit per required key, set when the key
+        # is seen.  A bitmask (unlike a counter) is immune to duplicate keys.
+        req_keys = [k for k in keys if k in required]
+        req_bit = {k: i for i, k in enumerate(req_keys)}
+        n_required = len(req_keys)
+        if validate and n_required > 64:
+            sys.exit(
+                f"error: scope {scope_name!r} has {n_required} required "
+                "properties; at most 64 are supported")
 
         # --- unmarshal function ---
         lines += [
-            f"{storage}bool {ename}_unmarshal(",
+            f"{storage}bool {make_fn_name('unmarshal', scope_name, pfx)}(",
             f"{_INDENT}struct {ename} *obj, char *json, size_t length)",
             f"{{",
-            f"{_INDENT}const struct json_val root_ = json_parse(json, length);",
-            f"{_INDENT}if (root_.type != JSON_OBJECT) {{ return false; }}",
-            f"{_INDENT}json_iter iter_ = root_.iter;",
-            f"{_INDENT}char *key_; size_t key_len_; char *val_; size_t val_len_;",
         ]
 
         # --- zero-init + defaults via a single compound literal ---
         # Recursively collects defaults for nested object fields too: when a
         # child object key is absent from the input JSON the compound literal
         # ensures its fields receive the schema-defined default values.
-        designated = _collect_object_defaults(scope_name, schema_pfx, scopes_map)
+        # Initializing *obj before any parsing keeps the failure path uniform:
+        # every error goes through fail_, which releases partial allocations
+        # and resets *obj to all-zero.
+        designated = _collect_object_defaults(
+            scope_name, schema_pfx, scopes_map)
         if designated:
             lines.append(f"{_INDENT}*obj = (struct {ename}){{")
             lines += designated
             lines.append(f"{_INDENT}}};")
         else:
             lines.append(f"{_INDENT}*obj = (struct {ename}){{ 0 }};")
-        n_required = sum(1 for k in required if k in keys)
-        if validate and n_required:
-            lines.append(f"{_INDENT}int required_ = {n_required};")
-        lines.append("")
 
         lines += [
-            f"{_INDENT}while (json_obj_next(json, length, &iter_,",
-            f"{_INDENT * 3}&key_, &key_len_, &val_, &val_len_)) {{",
-            f"{_INDENT * 2}const int k_ = {ename}_lookup(key_, key_len_);",
+            f"{_INDENT}const struct json_val root_ = json_parse(json, &(size_t){{ length }});",
+            f"{_INDENT}if (root_.type != JSON_OBJECT) {{ return false; }}",
+            f"{_INDENT}json_iter iter_ = root_.iter;",
+            f"{_INDENT}char *key_; size_t key_len_; char *val_; size_t val_len_;",
+        ]
+        if validate and n_required:
+            lines.append(f"{_INDENT}uint64_t required_ = 0;")
+        lines += [
+            f"{_INDENT}int next_;",
+            "",
+        ]
+
+        lines += [
+            f"{_INDENT}while ((next_ = json_obj_next(json, &length, &iter_,",
+            f"{_INDENT * 3}&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {{",
+            f"{_INDENT * 2}const int k_ = {_lookup_root(pfx, scope_name)}(key_, key_len_);",
             f"{_INDENT * 2}switch (k_) {{",
         ]
 
@@ -1283,13 +1548,17 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
             kind = desc["kind"]
             fname = fname_map[key]
             enum_val = ename.upper() + "_" + fname_map[key].upper()
-            seen_line = [f"{_INDENT * 3}required_--;"] if validate and key in required else []
+            seen_line = [
+                f"{_INDENT * 3}required_ |= UINT64_C(1) << {req_bit[key]};",
+            ] if validate and key in required else []
 
             lines.append(f"{_INDENT * 2}case {enum_val}: {{")
             if kind == "string":
-                cchks = _scalar_constraint_checks(prop, kind, desc, f"obj->{fname}", _INDENT * 3) if validate else []
+                cchks = _scalar_constraint_checks(
+                    prop, kind, desc, f"obj->{fname}", _INDENT * 3,
+                    "goto fail_;") if validate else []
                 lines += [
-                    f"{_INDENT * 3}if (!json_parse_string(val_, val_len_, &obj->{fname}.str, &obj->{fname}.len)) {{ return false; }}",
+                    f"{_INDENT * 3}if (!json_parse_string(val_, val_len_, &obj->{fname}.str, &obj->{fname}.len)) {{ goto fail_; }}",
                 ] + cchks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",
@@ -1297,9 +1566,11 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
             elif kind == "int":
                 c_type = desc.get("c_type", "intmax_t")
                 fn = "json_parse_int" if c_type == "int" else "json_parse_imax"
-                cchks = _scalar_constraint_checks(prop, kind, desc, f"obj->{fname}", _INDENT * 3) if validate else []
+                cchks = _scalar_constraint_checks(
+                    prop, kind, desc, f"obj->{fname}", _INDENT * 3,
+                    "goto fail_;") if validate else []
                 lines += [
-                    f"{_INDENT * 3}if (!{fn}(val_, val_len_, &obj->{fname})) {{ return false; }}",
+                    f"{_INDENT * 3}if (!{fn}(val_, val_len_, &obj->{fname})) {{ goto fail_; }}",
                 ] + cchks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",
@@ -1307,25 +1578,31 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
             elif kind == "uint":
                 c_type = desc.get("c_type", "uintmax_t")
                 fn = "json_parse_uint" if c_type == "unsigned" else "json_parse_umax"
-                cchks = _scalar_constraint_checks(prop, kind, desc, f"obj->{fname}", _INDENT * 3) if validate else []
+                cchks = _scalar_constraint_checks(
+                    prop, kind, desc, f"obj->{fname}", _INDENT * 3,
+                    "goto fail_;") if validate else []
                 lines += [
-                    f"{_INDENT * 3}if (!{fn}(val_, val_len_, &obj->{fname})) {{ return false; }}",
+                    f"{_INDENT * 3}if (!{fn}(val_, val_len_, &obj->{fname})) {{ goto fail_; }}",
                 ] + cchks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",
                 ]
             elif kind == "double":
-                cchks = _scalar_constraint_checks(prop, kind, desc, f"obj->{fname}", _INDENT * 3) if validate else []
+                cchks = _scalar_constraint_checks(
+                    prop, kind, desc, f"obj->{fname}", _INDENT * 3,
+                    "goto fail_;") if validate else []
                 lines += [
-                    f"{_INDENT * 3}if (!json_parse_double(val_, val_len_, &obj->{fname})) {{ return false; }}",
+                    f"{_INDENT * 3}if (!json_parse_double(val_, val_len_, &obj->{fname})) {{ goto fail_; }}",
                 ] + cchks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",
                 ]
             elif kind == "bool":
-                cchks = _scalar_constraint_checks(prop, kind, desc, f"obj->{fname}", _INDENT * 3) if validate else []
+                cchks = _scalar_constraint_checks(
+                    prop, kind, desc, f"obj->{fname}", _INDENT * 3,
+                    "goto fail_;") if validate else []
                 lines += [
-                    f"{_INDENT * 3}if (!json_parse_bool(val_, val_len_, &obj->{fname})) {{ return false; }}",
+                    f"{_INDENT * 3}if (!json_parse_bool(val_, val_len_, &obj->{fname})) {{ goto fail_; }}",
                 ] + cchks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",
@@ -1333,10 +1610,11 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
             elif kind == "object":
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), key, schema_pfx)
-                child_ename = _ext(child_scope, pfx)
                 lines += [
-                    f"{_INDENT * 3}if (!{child_ename}_unmarshal(&obj->{fname}, val_, val_len_)) {{",
-                    f"{_INDENT * 4}return false;",
+                    f"{_INDENT * 3}/* duplicate key: release the previous value first */",
+                    f"{_INDENT * 3}{make_fn_name('free', child_scope, pfx)}(&obj->{fname});",
+                    f"{_INDENT * 3}if (!{make_fn_name('unmarshal', child_scope, pfx)}(&obj->{fname}, val_, val_len_)) {{",
+                    f"{_INDENT * 4}goto fail_;",
                     f"{_INDENT * 3}}}",
                 ] + seen_line + [
                     f"{_INDENT * 3}break;",
@@ -1353,14 +1631,16 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
             elif kind in ("array_string", "array_object", "array_primitive"):
                 achks = []
                 if validate:
+                    # maxItems is enforced inside the helper loop (rejecting
+                    # oversized input before it is fully buffered); only
+                    # minItems needs a post-parse check.
                     min_items = prop.get("minItems")
-                    max_items = prop.get("maxItems")
                     if min_items is not None:
-                        achks.append(f"{_INDENT * 3}if (obj->{fname}_count < {min_items}u) {{ return false; }}")
-                    if max_items is not None:
-                        achks.append(f"{_INDENT * 3}if (obj->{fname}_count > {max_items}u) {{ return false; }}")
+                        achks.append(
+                            f"{_INDENT * 3}if (obj->{fname}_count < {int(min_items)}u) {{ goto fail_; }}")
                 lines += [
-                    f"{_INDENT * 3}if (!{ename}_unmarshal_{fname}(obj, val_, val_len_)) {{ return false; }}",
+                    f"{_INDENT * 3}if (!{make_fn_name('unmarshal', scope_name, pfx, suffix=f'arr_{fname}')
+                                         }(obj, val_, val_len_)) {{ goto fail_; }}",
                 ] + achks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",
@@ -1371,22 +1651,44 @@ def generate_unmarshal_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bo
                     f"{_INDENT * 2}}}",
                 ]
 
-        lines += [
-            f"{_INDENT * 2}default:",
-            f"{_INDENT * 3}break;",
-            f"{_INDENT * 2}}}",
-            f"{_INDENT}}}",
-        ]
+        if strict:
+            lines += [
+                f"{_INDENT * 2}default:",
+                f"{_INDENT * 3}/* unknown key rejected (--strict) */",
+                f"{_INDENT * 3}goto fail_;",
+                f"{_INDENT * 2}}}",
+                f"{_INDENT}}}",
+            ]
+        else:
+            lines += [
+                f"{_INDENT * 2}default:",
+                f"{_INDENT * 3}break;",
+                f"{_INDENT * 2}}}",
+                f"{_INDENT}}}",
+            ]
 
-        # Required field checks after the loop.
-        # When validation is enabled, verify that all required fields were
-        # present; required_ was initialised to the total count and
-        # decremented for each field encountered.
+        # The loop ends either at the closing '}' (JSON_NEXT_END) or on a
+        # parse error / truncated input (JSON_NEXT_ERROR); only a clean end
+        # is acceptable.
+        lines.append(f"{_INDENT}if (next_ != JSON_NEXT_END) {{ goto fail_; }}")
+
+        # Required field checks after the loop: every required key must have
+        # set its bit.
         if validate and n_required:
-            lines.append(f"{_INDENT}if (required_) {{ return false; }}")
+            full_mask = (1 << n_required) - 1
+            lines.append(
+                f"{_INDENT}if (required_ != UINT64_C({hex(full_mask)})) {{ goto fail_; }}")
 
         lines += [
+            f"{_INDENT}for (; iter_ < length; iter_++) {{",
+            f"{_INDENT * 2}if (!json_iswhitespace(json[iter_])) {{ goto fail_; }}",
+            f"{_INDENT}}}",
             f"{_INDENT}return true;",
+            f"",
+            f"fail_:",
+            f"{_INDENT}{make_fn_name('free', scope_name, pfx)}(obj);",
+            f"{_INDENT}*obj = (struct {ename}){{ 0 }};",
+            f"{_INDENT}return false;",
             f"}}",
             "",
         ]
@@ -1402,9 +1704,12 @@ def generate_marshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> list
             continue
         ename = _ext(scope_name, pfx)
         lines += [
-            f"/* Marshal *obj into buf as JSON text (snprintf semantics: returns chars written",
-            f"   excluding NUL, or required size including NUL when buf is NULL or bufsz is 0). */",
-            f"int {ename}_marshal(char *buf, size_t bufsz, const struct {ename} *obj);",
+            f"/* Marshal *obj into buf as JSON text (snprintf semantics): returns the length",
+            f"   required to encode *obj, excluding the terminating NUL, regardless of bufsz.",
+            f"   The output is NUL-terminated whenever buf != NULL and bufsz > 0, and is",
+            f"   truncated when the return value >= bufsz (pass buf = NULL to query the size).",
+            f"   Returns -1 on error (e.g. a non-finite number field). */",
+            f"int {make_fn_name('marshal', scope_name, pfx)}(char *buf, size_t bufsz, const struct {ename} *obj);",
             "",
         ]
     return lines
@@ -1415,29 +1720,48 @@ def generate_marshal_c(
         sub_schema: bool = False) -> list:
     """Generate marshal functions that write JSON text directly to a buffer.
 
-    Each function uses snprintf semantics: returns the number of characters
-    written (excluding NUL), or the required buffer size (including NUL) when
-    buf is NULL or bufsz is 0.  A two-pass approach is used internally when
-    the caller does not supply a buffer.
+    Each function uses snprintf semantics: returns the length required to
+    encode *obj (excluding the terminating NUL) regardless of bufsz; the
+    output is NUL-terminated whenever buf != NULL and bufsz > 0 and is
+    truncated when the return value >= bufsz.  Returns -1 on error (e.g. a
+    non-finite double, which has no JSON representation).
+
+    The EMIT* macros compute ``buf + n_`` only while ``n_ < bufsz``; once
+    the output is past the end of the buffer they pass NULL/0 instead, so
+    no out-of-bounds pointer is ever formed (pointer arithmetic beyond
+    one-past-the-end is undefined behavior even if never dereferenced).
     """
     lines = [
-        "#define EMIT(fmt, ...) do { \\",
-        f"{_INDENT}r_ = snprintf(buf ? buf + n_ : NULL, \\",
-        f"{_INDENT * 2}bufsz > (size_t)n_ ? bufsz - (size_t)n_ : 0, fmt, __VA_ARGS__); \\",
+        "#define EMIT(c) do { \\",
+        f"{_INDENT}if (buf != NULL && (size_t)n_ < bufsz) {{ buf[n_] = (char)(c); }} \\",
+        f"{_INDENT}n_++; \\",
+        "} while (0)",
+        "#define EMITF(fmt, ...) do { \\",
+        f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL; \\",
+        f"{_INDENT}r_ = snprintf(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, fmt, __VA_ARGS__); \\",
         f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
         f"{_INDENT}n_ += r_; \\",
         "} while (0)",
         "#define EMIT_STR(s, len) do { \\",
-        f"{_INDENT}r_ = json_marshal_string(buf ? buf + n_ : NULL, \\",
-        f"{_INDENT * 2}bufsz > (size_t)n_ ? bufsz - (size_t)n_ : 0, (s), (len)); \\",
+        f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL; \\",
+        f"{_INDENT}r_ = json_marshal_string(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, (s), (len)); \\",
         f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
         f"{_INDENT}n_ += r_; \\",
         "} while (0)",
         "#define EMIT_SUB(fn, arg) do { \\",
-        f"{_INDENT}r_ = (fn)(buf ? buf + n_ : NULL, \\",
-        f"{_INDENT * 2}bufsz > (size_t)n_ ? bufsz - (size_t)n_ : 0, (arg)); \\",
+        f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL; \\",
+        f"{_INDENT}r_ = (fn)(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, (arg)); \\",
         f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
         f"{_INDENT}n_ += r_; \\",
+        "} while (0)",
+        "#define EMIT_LIT(s) do { \\",
+        f"{_INDENT}static const char lit_[] = s; \\",
+        f"{_INDENT}const size_t l_ = sizeof(lit_) - 1; \\",
+        f"{_INDENT}if (buf != NULL && (size_t)n_ < bufsz) {{ \\",
+        f"{_INDENT * 2}const size_t cap_ = bufsz - (size_t)n_; \\",
+        f"{_INDENT * 2}memcpy(buf + n_, lit_, l_ < cap_ ? l_ : cap_); \\",
+        f"{_INDENT}}} \\",
+        f"{_INDENT}n_ += (int)l_; \\",
         "} while (0)",
         "",
     ]
@@ -1476,22 +1800,24 @@ def generate_marshal_c(
                 emit_fields.append((kind, fname, key, is_req))
 
         lines += [
-            f"{storage}int {ename}_marshal(",
+            f"{storage}int {make_fn_name('marshal', scope_name, pfx)}(",
             f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj)",
             f"{{",
             f"{_INDENT}int n_ = 0;",
-            f"{_INDENT}int r_;",
+            f"{_INDENT}int r_ = 0;",
+            f"{_INDENT}(void)r_;",
             "",
         ]
 
         # Opening brace; record n_ after '{' for trailing-comma removal.
         lines += [
-            f"{_INDENT}EMIT(\"%s\", \"{{\");",
+            f"{_INDENT}EMIT('{{');",
             f"{_INDENT}const int n_start_ = n_;",
             "",
         ]
 
         for idx, (kind, fname, json_key, is_req) in enumerate(emit_fields):
+            esc_key = _c_string_literal(_json_escape(json_key))[0]
             if kind == "todo":
                 lines += [
                     f"{_INDENT}/* TODO: {fname} marshal not yet generated */",
@@ -1531,7 +1857,10 @@ def generate_marshal_c(
             elif kind == "dynamic":
                 cond = f"obj->{fname}_json.str != NULL"
             elif kind in ("array_string", "array_object", "array_primitive"):
-                cond = f"obj->{fname} != NULL"
+                if is_req:
+                    cond = None
+                else:
+                    cond = f"obj->{fname} != NULL"
             else:
                 cond = None
 
@@ -1543,93 +1872,153 @@ def generate_marshal_c(
 
             if kind == "string":
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":\", \"{json_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
                     f"{_INDENT * 2}EMIT_STR(obj->{fname}.str, obj->{fname}.len);",
-                    f"{_INDENT * 2}EMIT(\"%s\", \",\");",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "int":
+                pdesc = _infer_c_type(node["properties"][json_key])
+                if pdesc.get("c_type") == "int":
+                    emitf_line = f"{_INDENT * 2}EMITF(\"%d\", obj->{fname});"
+                else:
+                    emitf_line = f"{_INDENT * 2}EMITF(\"%jd\", (intmax_t)obj->{fname});"
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":%jd,\", \"{json_key}\",",
-                    f"{_INDENT * 3}(intmax_t)obj->{fname});",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    emitf_line,
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "uint":
+                pdesc = _infer_c_type(node["properties"][json_key])
+                if pdesc.get("c_type") == "unsigned":
+                    emitf_line = f"{_INDENT * 2}EMITF(\"%u\", obj->{fname});"
+                else:
+                    emitf_line = f"{_INDENT * 2}EMITF(\"%ju\", (uintmax_t)obj->{fname});"
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":%ju,\", \"{json_key}\",",
-                    f"{_INDENT * 3}(uintmax_t)obj->{fname});",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    emitf_line,
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "double":
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":%.17g,\", \"{json_key}\",",
-                    f"{_INDENT * 3}obj->{fname});",
+                    f"{_INDENT * 2}/* NaN/Inf have no JSON representation */",
+                    f"{_INDENT * 2}if (!isfinite(obj->{fname})) {{ return -1; }}",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}EMITF(\"%.17g\", obj->{fname});",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "bool":
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":%s,\", \"{json_key}\",",
-                    f"{_INDENT * 3}obj->{fname} ? \"true\" : \"false\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}if (obj->{fname}) {{",
+                    f"{_INDENT * 3}EMIT_LIT(\"true\");",
+                    f"{_INDENT * 2}}} else {{",
+                    f"{_INDENT * 3}EMIT_LIT(\"false\");",
+                    f"{_INDENT * 2}}}",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "object":
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), json_key, schema_pfx)
-                child_ename = _ext(child_scope, pfx)
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":\", \"{json_key}\");",
-                    f"{_INDENT * 2}EMIT_SUB({child_ename}_marshal, &obj->{fname});",
-                    f"{_INDENT * 2}EMIT(\"%s\", \",\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}EMIT_SUB({make_fn_name('marshal', child_scope, pfx)}, &obj->{fname});",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "dynamic":
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":%.*s,\", \"{json_key}\",",
-                    f"{_INDENT * 3}(int)obj->{fname}_json.len, obj->{fname}_json.str);",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}EMITF(\"%.*s\", (int)obj->{fname}_json.len, obj->{fname}_json.str);",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "array_string":
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":[\", \"{json_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}EMIT('[');",
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
-                    f"{_INDENT * 3}if (i_ > 0) {{ if (buf && bufsz > (size_t)n_) buf[n_] = ','; n_++; }}",
+                    f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
                     f"{_INDENT * 3}EMIT_STR(obj->{fname}[i_].str, obj->{fname}[i_].len);",
                     f"{_INDENT * 2}}}",
-                    f"{_INDENT * 2}EMIT(\"%s\", \"],\");",
+                    f"{_INDENT * 2}EMIT(']');",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "array_object":
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), json_key, schema_pfx)
-                child_ename = _ext(child_scope, pfx)
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":[\", \"{json_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}EMIT('[');",
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
-                    f"{_INDENT * 3}if (i_ > 0) {{ if (buf && bufsz > (size_t)n_) buf[n_] = ','; n_++; }}",
-                    f"{_INDENT * 3}EMIT_SUB({child_ename}_marshal, &obj->{fname}[i_]);",
+                    f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
+                    f"{_INDENT * 3}EMIT_SUB({make_fn_name('marshal', child_scope, pfx)}, &obj->{fname}[i_]);",
                     f"{_INDENT * 2}}}",
-                    f"{_INDENT * 2}EMIT(\"%s\", \"],\");",
+                    f"{_INDENT * 2}EMIT(']');",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "array_primitive":
                 prop_schema = node["properties"][json_key]
                 prim_desc = _infer_c_type(prop_schema)
                 c_base = prim_desc.get("c_base", "int")
                 if c_base == "bool":
-                    elem_fmt = "\"%s%s\""
-                    elem_args = f"i_ > 0 ? \",\" : \"\", obj->{fname}[i_] ? \"true\" : \"false\""
-                elif c_base == "int":
-                    elem_fmt = "\"%s%d\""
-                    elem_args = f"i_ > 0 ? \",\" : \"\", obj->{fname}[i_]"
-                elif c_base == "intmax_t":
-                    elem_fmt = "\"%s%jd\""
-                    elem_args = f"i_ > 0 ? \",\" : \"\", obj->{fname}[i_]"
-                elif c_base == "unsigned":
-                    elem_fmt = "\"%s%u\""
-                    elem_args = f"i_ > 0 ? \",\" : \"\", obj->{fname}[i_]"
-                elif c_base == "uintmax_t":
-                    elem_fmt = "\"%s%ju\""
-                    elem_args = f"i_ > 0 ? \",\" : \"\", obj->{fname}[i_]"
-                else:  # double
-                    elem_fmt = "\"%s%.17g\""
-                    elem_args = f"i_ > 0 ? \",\" : \"\", obj->{fname}[i_]"
+                    elem_lines = [
+                        f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
+                        f"{_INDENT * 3}if (obj->{fname}[i_]) {{",
+                        f"{_INDENT * 4}EMIT_LIT(\"true\");",
+                        f"{_INDENT * 3}}} else {{",
+                        f"{_INDENT * 4}EMIT_LIT(\"false\");",
+                        f"{_INDENT * 3}}}",
+                    ]
+                else:
+                    fmt = {"int": "%d", "intmax_t": "%jd",
+                           "unsigned": "%u", "uintmax_t": "%ju"}.get(c_base, "%.17g")
+                    elem_lines = [
+                        f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
+                    ]
+                    if c_base == "double":
+                        elem_lines += [
+                            f"{_INDENT * 3}/* NaN/Inf have no JSON representation */",
+                            f"{_INDENT * 3}if (!isfinite(obj->{fname}[i_])) {{ return -1; }}",
+                        ]
+                    elem_lines += [
+                        f"{_INDENT * 3}EMITF(\"{fmt}\", obj->{fname}[i_]);",
+                    ]
                 field_lines += [
-                    f"{_INDENT * 2}EMIT(\"\\\"%s\\\":[\", \"{json_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                    f"{_INDENT * 2}EMIT('\"');",
+                    f"{_INDENT * 2}EMIT(':');",
+                    f"{_INDENT * 2}EMIT('[');",
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
-                    f"{_INDENT * 3}EMIT({elem_fmt}, {elem_args});",
+                ] + elem_lines + [
                     f"{_INDENT * 2}}}",
-                    f"{_INDENT * 2}EMIT(\"%s\", \"],\");",
+                    f"{_INDENT * 2}EMIT(']');",
+                    f"{_INDENT * 2}EMIT(',');",
                 ]
 
             # Wrap in condition if needed
@@ -1640,14 +2029,21 @@ def generate_marshal_c(
             else:
                 # Always emit — strip leading indentation
                 for fl in field_lines:
-                    lines.append(fl[len(_INDENT):] if fl.startswith(_INDENT) else fl)
+                    lines.append(fl[len(_INDENT):]
+                                 if fl.startswith(_INDENT) else fl)
 
         # Closing brace: strip the trailing comma left by the last emitted
         # field, then emit '}'; simpler and cheaper than tracking first_.
+        # Finally NUL-terminate (snprintf semantics).  Nested EMIT_SUB calls
+        # also write a NUL, but the parent's next EMIT overwrites it, so the
+        # outermost terminator always lands last.
         lines += [
             "",
             f"{_INDENT}if (n_ > n_start_) {{ n_--; }}",
-            f"{_INDENT}EMIT(\"%s\", \"}}\");",
+            f"{_INDENT}EMIT('}}');",
+            f"{_INDENT}if (buf != NULL && bufsz > 0) {{",
+            f"{_INDENT * 2}buf[(size_t)n_ < bufsz ? (size_t)n_ : bufsz - 1] = '\\0';",
+            f"{_INDENT}}}",
             "",
             f"{_INDENT}return n_;",
             f"}}",
@@ -1656,8 +2052,10 @@ def generate_marshal_c(
     lines += [
         "",
         "#undef EMIT",
+        "#undef EMITF",
         "#undef EMIT_STR",
         "#undef EMIT_SUB",
+        "#undef EMIT_LIT",
         "",
     ]
     return lines
@@ -1682,6 +2080,21 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
             "error: no object scopes with fixed properties found in "
             + str(schema_path)
         )
+
+    # Distinct JSON paths can map to the same C identifier (e.g. a property
+    # named "a_b" vs. a nested path a.b); the resulting duplicate struct/
+    # function definitions would not compile, so fail early.
+    seen_scopes = set()
+    for scope_name, _, _ in scopes:
+        if scope_name in seen_scopes:
+            sys.exit(
+                f"error: scope name collision: two JSON object paths map to "
+                f"the C identifier {scope_name!r}; rename the conflicting "
+                "properties")
+        seen_scopes.add(scope_name)
+
+    # Warn about constructs that silently degrade to raw JSON fragments.
+    _warn_unsupported_props(schema)
 
     do_structs = opts.do_structs
     do_unmarshal = opts.do_unmarshal
@@ -1711,12 +2124,13 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
         "#ifndef " + guard,
         "#define " + guard,
         "",
-    ] + sorted(h_sys_includes) + [""] + (sorted(h_proj_includes) + [""] if h_proj_includes else [])
+    ] + (sorted(h_proj_includes) + [""] if h_proj_includes else []) + sorted(h_sys_includes) + [""]
 
     if do_lookup:
         h_lines += ["/** @name Key tables", " *  @{ */", ""]
         for scope_name, keys, node in scopes:
             ename = _ext(scope_name, pfx)
+            lookup_name = _lookup_root(pfx, scope_name)
             fname_map = _make_field_map(keys, node)
             enum_members = [
                 _INDENT
@@ -1736,7 +2150,7 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
                 + [
                     "};",
                     f"/* Look up str (length len) in the {ename} {'lookup' if opts.optimize == 'size' else 'perfect-hash'} table; returns key index or -1. */",
-                    f"int {ename}_lookup(const char *str, size_t len);",
+                    f"int {lookup_name}(const char *str, size_t len);",
                     "",
                 ]
             )
@@ -1771,11 +2185,18 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
     c_sys_includes = set()
     if do_unmarshal or do_lookup:
         c_sys_includes.add("#include <string.h>")
-    if do_structs or do_unmarshal or (opts.optimize == "size" and do_lookup):
+    # stdlib.h: free/realloc (structs/unmarshal) and bsearch (size mode, or
+    # the bsearch fallback for keys that are not gperf-safe).
+    if do_structs or do_unmarshal or do_lookup:
         c_sys_includes.add("#include <stdlib.h>")
     if do_marshal:
         c_sys_includes.add("#include <stdio.h>")
         c_sys_includes.add("#include <stdint.h>")
+        # memcpy in EMIT_LIT
+        c_sys_includes.add("#include <string.h>")
+        if _has_double_fields(scopes):
+            # isfinite guard on double fields
+            c_sys_includes.add("#include <math.h>")
     if do_unmarshal and opts.validate:
         cflags = _schema_constraint_flags(scopes)
         if cflags["needs_math"]:
@@ -1798,17 +2219,25 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
         c_lines += ["/** @name Key tables", " *  @{ */", ""]
         for scope_name, keys, _ in scopes:
             ename = _ext(scope_name, pfx)
+            lookup_name = _lookup_root(pfx, scope_name)
             print("  " + ename + ": " + str(len(keys)) + " keys")
             c_src = _try_single_byte_lookup(
-                ename, keys, public_lookup=do_lookup)
+                lookup_name, keys, public_lookup=do_lookup)
             if c_src is None:
-                if opts.optimize == "size":
+                use_bsearch = opts.optimize == "size"
+                if not use_bsearch and not _gperf_safe_keys(keys):
+                    print(
+                        f"  note: keys of {ename} contain characters that "
+                        "cannot be embedded in gperf input; using the "
+                        "bsearch lookup instead", file=sys.stderr)
+                    use_bsearch = True
+                if use_bsearch:
                     c_src = _generate_bsearch_lookup_c(
-                        ename, keys, public_lookup=do_lookup)
+                        lookup_name, keys, public_lookup=do_lookup)
                 else:
-                    c_src = _run_gperf(ename, keys)
+                    c_src = _run_gperf(lookup_name, keys)
                     c_src = _postprocess_gperf(
-                        c_src, ename, public_lookup=do_lookup)
+                        c_src, lookup_name, public_lookup=do_lookup)
             c_lines += ["/* --- " + ename + " --- */", c_src]
         c_lines += ["/** @} */", ""]
 
@@ -1844,7 +2273,8 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
     if do_unmarshal:
         c_lines += ["/** @name Unmarshal", " *  @{ */", ""]
         c_lines += generate_unmarshal_c(
-            scopes, pfx, schema_pfx, opts.sub_schema, opts.validate)
+            scopes, pfx, schema_pfx, opts.sub_schema, opts.validate,
+            opts.strict)
         c_lines += ["/** @} */", ""]
 
     if do_marshal:
@@ -1900,7 +2330,9 @@ def main():
         default="fast",
         help=(
             "fast (default): gperf perfect-hash for O(1) lookup; "
-            "size: sorted table + strncmp binary search, no gperf dependency."
+            "size: sorted table + memcmp binary search, no gperf dependency. "
+            "Keys that cannot be embedded in gperf input fall back to the "
+            "binary search automatically."
         ),
     )
     parser.add_argument(
@@ -1928,14 +2360,43 @@ def main():
         action="store_true",
         default=False,
         help=(
-            "Omit required-field validation from the generated unmarshal "
-            "functions.  By default a uint64_t presence bitmask is used to "
-            "verify every required field appeared in the JSON input, and the "
-            "function returns false when any required field is absent."
+            "Omit schema-constraint validation from the generated unmarshal "
+            "functions.  By default a uint64_t presence bitmask verifies "
+            "that every required field appeared in the JSON input (robust "
+            "against duplicate keys), and constraint keywords (minimum, "
+            "maximum, minLength, enum, const, minItems, maxItems, ...) are "
+            "checked; the function returns false on any violation."
+        ),
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help=(
+            "Reject unknown keys in the generated unmarshal functions "
+            "(additionalProperties: false semantics).  By default unknown "
+            "keys are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--indent",
+        metavar="STYLE",
+        default="tab",
+        help=(
+            "Indentation style for generated C code.  'tab' (default) "
+            "uses a single \\t per level; an integer N uses N spaces "
+            "per level (e.g. --indent 4)."
         ),
     )
     opts = parser.parse_args()
     opts.validate = not opts.no_validate
+
+    global _INDENT
+    ind = opts.indent.strip()
+    if ind.lower() == "tab":
+        _INDENT = "\t"
+    else:
+        _INDENT = " " * int(ind)
 
     features = {f.strip() for f in opts.generate.split(",")}
     do_lookup = "lookup" in features

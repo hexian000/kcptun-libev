@@ -3,22 +3,18 @@
 
 #include "json.h"
 
+#include "utils/ascii.h"
 #include "utils/slog.h"
 
-#include <ctype.h>
+#include <errno.h>
+#include <float.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-/* JSON insignificant whitespace: SP, HT, LF, CR (RFC 8259 §2) */
-#define json_isws(c)                                                           \
-	((unsigned char)(c) == 0x20 || (unsigned char)(c) == 0x09 ||           \
-	 (unsigned char)(c) == 0x0A || (unsigned char)(c) == 0x0D)
 
 static bool parse_hex4(const char *restrict s, uint_fast32_t *restrict out)
 {
@@ -27,7 +23,7 @@ static bool parse_hex4(const char *restrict s, uint_fast32_t *restrict out)
 		const unsigned char c = (unsigned char)s[j];
 		uint_fast32_t digit;
 		if (c >= '0' && c <= '9') {
-			digit = c - '0';
+			digit = (uint_fast32_t)(c - '0');
 		} else if (c >= 'a' && c <= 'f') {
 			digit = (uint_fast32_t)(c - 'a') + 10;
 		} else if (c >= 'A' && c <= 'F') {
@@ -203,6 +199,11 @@ static size_t scan_number(const char *restrict s, const size_t len)
 	}
 	if (s[i] == '0') {
 		i++;
+		/* RFC 8259 §6: after a leading zero the next character must
+		 * be '.', 'e', 'E', or end-of-number — not another digit. */
+		if (i < len && isdigit((unsigned char)s[i])) {
+			return 0;
+		}
 	} else {
 		while (i < len && isdigit((unsigned char)s[i])) {
 			i++;
@@ -236,75 +237,127 @@ static size_t scan_number(const char *restrict s, const size_t len)
  * json_parse
  * ---------------------------------------------------------------------- */
 
-struct json_val json_parse(char *restrict json, const size_t len)
+struct json_val json_parse(char *restrict json, size_t *restrict len)
 {
-	const struct json_val err = { .type = JSON_ERROR };
+	const size_t buflen = *len;
 	/* skip leading whitespace */
 	size_t i = 0;
-	while (i < len && json_isws(json[i])) {
+	while (i < buflen && json_iswhitespace(json[i])) {
 		i++;
 	}
-	if (i >= len) {
+	if (i >= buflen) {
 		LOGE("jsonutil: empty input");
-		return err;
+		*len = i;
+		return (struct json_val){ .type = JSON_ERROR };
 	}
 	const unsigned char c = (unsigned char)json[i];
 	switch (c) {
 	case 'n':
-		if (len - i >= 4 && memcmp(json + i, "null", 4) == 0) {
+		if (buflen - i >= 4 && memcmp(json + i, "null", 4) == 0) {
+			*len = i + 4;
 			return (struct json_val){ .type = JSON_NULL };
 		}
 		LOGE("jsonutil: invalid value 'n...'");
-		return err;
+		break;
 	case 't':
-		if (len - i >= 4 && memcmp(json + i, "true", 4) == 0) {
-			return (struct json_val){ .type = JSON_BOOL,
-						  .b = true };
+		if (buflen - i >= 4 && memcmp(json + i, "true", 4) == 0) {
+			*len = i + 4;
+			return (struct json_val){
+				.type = JSON_BOOL,
+				.b = true,
+			};
 		}
 		LOGE("jsonutil: invalid value 't...'");
-		return err;
+		break;
 	case 'f':
-		if (len - i >= 5 && memcmp(json + i, "false", 5) == 0) {
-			return (struct json_val){ .type = JSON_BOOL,
-						  .b = false };
+		if (buflen - i >= 5 && memcmp(json + i, "false", 5) == 0) {
+			*len = i + 5;
+			return (struct json_val){
+				.type = JSON_BOOL,
+				.b = false,
+			};
 		}
 		LOGE("jsonutil: invalid value 'f...'");
-		return err;
+		break;
 	case '"': {
 		size_t slen, consumed;
-		if (!scan_string_inplace(
-			    json + i + 1, len - i - 1, &slen, &consumed)) {
-			return err;
+		if (scan_string_inplace(
+			    json + i + 1, buflen - i - 1, &slen, &consumed)) {
+			*len = i + 1 + consumed;
+			return (struct json_val){
+				.type = JSON_STRING,
+				.str = json + i + 1,
+				.len = slen,
+			};
 		}
-		return (struct json_val){
-			.type = JSON_STRING,
-			.str = json + i + 1,
-			.len = slen,
-		};
+		break;
 	}
 	case '{':
-		return (struct json_val){ .type = JSON_OBJECT, .iter = i + 1 };
-	case '[':
-		return (struct json_val){ .type = JSON_ARRAY, .iter = i + 1 };
-	default: {
-		const size_t nlen = scan_number(json + i, len - i);
-		if (nlen == 0) {
-			LOGE_F("jsonutil: unexpected character '%c'", (char)c);
-			return err;
-		}
+		*len = i + 1;
 		return (struct json_val){
-			.type = JSON_NUMBER,
-			.str = json + i,
-			.len = nlen,
+			.type = JSON_OBJECT,
+			.iter = i + 1,
 		};
+	case '[':
+		*len = i + 1;
+		return (struct json_val){
+			.type = JSON_ARRAY,
+			.iter = i + 1,
+		};
+	default: {
+		const size_t nlen = scan_number(json + i, buflen - i);
+		if (nlen > 0) {
+			*len = i + nlen;
+			return (struct json_val){
+				.type = JSON_NUMBER,
+				.str = json + i,
+				.len = nlen,
+			};
+		}
+		LOGE_F("jsonutil: unexpected character '%c'", (char)c);
+		break;
 	}
 	}
+	*len = i;
+	return (struct json_val){ .type = JSON_ERROR };
 }
 
-bool json_parse_string(char *val, const size_t vlen, char **out, size_t *outlen)
+/* Maximum size of the stack buffer used to NUL-terminate a number token before
+ * handing it to the strto*() family.  A token longer than this is necessarily
+ * out of range for any supported integer type. */
+#define JSON_NUM_BUFSIZE 64
+
+/* num_to_buf: copy a non-NUL-terminated number token into a NUL-terminated
+ * stack buffer so the strto*() family can be used without reading past the
+ * fragment.  Returns false if the token is empty or does not fit. */
+static bool num_to_buf(
+	char *restrict dst, const size_t dstsz, const char *restrict src,
+	const size_t srclen)
 {
-	const struct json_val sv = json_parse(val, vlen);
-	if (sv.type != JSON_STRING) {
+	if (srclen == 0 || srclen >= dstsz) {
+		return false;
+	}
+	memcpy(dst, src, srclen);
+	dst[srclen] = '\0';
+	return true;
+}
+
+/* json_rest_is_ws: return true if every byte in val[pos..vlen-1] is JSON
+ * whitespace.  Used by json_parse_* helpers for the "whole fragment" check. */
+static bool
+json_rest_is_ws(const char *restrict val, size_t pos, const size_t vlen)
+{
+	while (pos < vlen && json_iswhitespace((unsigned char)val[pos])) {
+		pos++;
+	}
+	return pos == vlen;
+}
+
+bool json_parse_string(char *val, size_t vlen, char **out, size_t *outlen)
+{
+	size_t pos = vlen;
+	const struct json_val sv = json_parse(val, &pos);
+	if (sv.type != JSON_STRING || !json_rest_is_ws(val, pos, vlen)) {
 		return false;
 	}
 	*out = sv.str;
@@ -312,89 +365,235 @@ bool json_parse_string(char *val, const size_t vlen, char **out, size_t *outlen)
 	return true;
 }
 
-bool json_parse_bool(char *val, const size_t vlen, bool *out)
+bool json_parse_bool(char *val, size_t vlen, bool *out)
 {
-	const struct json_val bv = json_parse(val, vlen);
-	if (bv.type != JSON_BOOL) {
+	size_t pos = vlen;
+	const struct json_val bv = json_parse(val, &pos);
+	if (bv.type != JSON_BOOL || !json_rest_is_ws(val, pos, vlen)) {
 		return false;
 	}
 	*out = bv.b;
 	return true;
 }
 
-bool json_parse_int(char *val, const size_t vlen, int *out)
+bool json_parse_int(char *val, size_t vlen, int *out)
 {
-	const struct json_val nv = json_parse(val, vlen);
-	if (nv.type != JSON_NUMBER) {
+	size_t pos = vlen;
+	const struct json_val nv = json_parse(val, &pos);
+	if (nv.type != JSON_NUMBER || !json_rest_is_ws(val, pos, vlen)) {
+		return false;
+	}
+	char buf[JSON_NUM_BUFSIZE];
+	if (!num_to_buf(buf, sizeof(buf), nv.str, nv.len)) {
 		return false;
 	}
 	char *ep;
-	const intmax_t n = strtoimax(nv.str, &ep, 10);
-	if (ep == nv.str || n < INT_MIN || n > INT_MAX) {
+	errno = 0;
+	const intmax_t n = strtoimax(buf, &ep, 10);
+	if (*ep != '\0' || errno == ERANGE || n < INT_MIN || n > INT_MAX) {
 		return false;
 	}
 	*out = (int)n;
 	return true;
 }
 
-bool json_parse_imax(char *val, const size_t vlen, intmax_t *out)
+bool json_parse_imax(char *val, size_t vlen, intmax_t *out)
 {
-	const struct json_val nv = json_parse(val, vlen);
-	if (nv.type != JSON_NUMBER) {
+	size_t pos = vlen;
+	const struct json_val nv = json_parse(val, &pos);
+	if (nv.type != JSON_NUMBER || !json_rest_is_ws(val, pos, vlen)) {
+		return false;
+	}
+	char buf[JSON_NUM_BUFSIZE];
+	if (!num_to_buf(buf, sizeof(buf), nv.str, nv.len)) {
 		return false;
 	}
 	char *ep;
-	const intmax_t n = strtoimax(nv.str, &ep, 10);
-	if (ep == nv.str) {
+	errno = 0;
+	const intmax_t n = strtoimax(buf, &ep, 10);
+	if (*ep != '\0' || errno == ERANGE) {
 		return false;
 	}
 	*out = n;
 	return true;
 }
 
-bool json_parse_uint(char *val, const size_t vlen, unsigned *out)
+bool json_parse_uint(char *val, size_t vlen, unsigned *out)
 {
-	const struct json_val nv = json_parse(val, vlen);
-	if (nv.type != JSON_NUMBER) {
+	size_t pos = vlen;
+	const struct json_val nv = json_parse(val, &pos);
+	if (nv.type != JSON_NUMBER || !json_rest_is_ws(val, pos, vlen)) {
+		return false;
+	}
+	if (nv.len > 0 && nv.str[0] == '-') {
+		return false;
+	}
+	char buf[JSON_NUM_BUFSIZE];
+	if (!num_to_buf(buf, sizeof(buf), nv.str, nv.len)) {
 		return false;
 	}
 	char *ep;
-	const uintmax_t n = strtoumax(nv.str, &ep, 10);
-	if (ep == nv.str || n > UINT_MAX) {
+	errno = 0;
+	const uintmax_t n = strtoumax(buf, &ep, 10);
+	if (*ep != '\0' || errno == ERANGE || n > UINT_MAX) {
 		return false;
 	}
 	*out = (unsigned)n;
 	return true;
 }
 
-bool json_parse_umax(char *val, const size_t vlen, uintmax_t *out)
+bool json_parse_umax(char *val, size_t vlen, uintmax_t *out)
 {
-	const struct json_val nv = json_parse(val, vlen);
-	if (nv.type != JSON_NUMBER) {
+	size_t pos = vlen;
+	const struct json_val nv = json_parse(val, &pos);
+	if (nv.type != JSON_NUMBER || !json_rest_is_ws(val, pos, vlen)) {
+		return false;
+	}
+	if (nv.len > 0 && nv.str[0] == '-') {
+		return false;
+	}
+	char buf[JSON_NUM_BUFSIZE];
+	if (!num_to_buf(buf, sizeof(buf), nv.str, nv.len)) {
 		return false;
 	}
 	char *ep;
-	const uintmax_t n = strtoumax(nv.str, &ep, 10);
-	if (ep == nv.str) {
+	errno = 0;
+	const uintmax_t n = strtoumax(buf, &ep, 10);
+	if (*ep != '\0' || errno == ERANGE) {
 		return false;
 	}
 	*out = n;
 	return true;
 }
 
-bool json_parse_double(char *val, const size_t vlen, double *out)
+/* Exact powers of ten representable as double (10^0 .. 10^22). */
+static const double json_pow10[] = {
+	1e0,  1e1,  1e2,  1e3,	1e4,  1e5,  1e6,  1e7,	1e8,  1e9,  1e10, 1e11,
+	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+};
+
+/* json_scale10: multiply m by 10^exp using exact powers of ten, saturating to
+ * +/-inf on overflow and to +/-0 on underflow.  No libm dependency. */
+static double json_scale10(double m, int exp)
 {
-	const struct json_val nv = json_parse(val, vlen);
-	if (nv.type != JSON_NUMBER) {
+	enum {
+		max_step = (int)(sizeof(json_pow10) / sizeof(json_pow10[0])) - 1
+	};
+	while (exp > 0) {
+		const int step = exp < max_step ? exp : max_step;
+		m *= json_pow10[step];
+		if (m > DBL_MAX || m < -DBL_MAX) {
+			return m; /* saturated to +/-inf */
+		}
+		exp -= step;
+	}
+	while (exp < 0) {
+		const int step = -exp < max_step ? -exp : max_step;
+		m /= json_pow10[step];
+		if (m == 0.0) {
+			return m; /* underflow to +/-0 */
+		}
+		exp += step;
+	}
+	return m;
+}
+
+/* json_strtod: locale-independent conversion of a JSON number token (as
+ * produced by scan_number) into a double.  s[0..len-1] need not be
+ * NUL-terminated.  Returns false if the token is not a valid number.
+ * Up to 19 significant decimal digits are accumulated into a 64-bit mantissa;
+ * any excess digits adjust the base-10 exponent instead. */
+static bool
+json_strtod(const char *restrict s, const size_t len, double *restrict out)
+{
+	size_t i = 0;
+	bool neg = false;
+	if (i < len && s[i] == '-') {
+		neg = true;
+		i++;
+	}
+	if (i >= len || !isdigit((unsigned char)s[i])) {
 		return false;
 	}
-	char *ep;
-	const double n = strtod(nv.str, &ep);
-	if (ep == nv.str) {
+	uint_fast64_t mant = 0;
+	int sig = 0; /* significant digits captured in mant (max 19) */
+	int exp10 = 0; /* base-10 exponent of mant, clamped to ±100000 */
+	bool seen_nonzero = false;
+	/* integer part */
+	while (i < len && isdigit((unsigned char)s[i])) {
+		const unsigned d = (unsigned)(s[i] - '0');
+		i++;
+		if (d == 0 && !seen_nonzero) {
+			continue; /* skip leading zeros */
+		}
+		seen_nonzero = true;
+		if (sig < 19) {
+			mant = mant * 10 + d;
+			sig++;
+		} else if (exp10 < 100000) {
+			exp10++; /* digit too significant to keep */
+		}
+	}
+	/* fractional part */
+	if (i < len && s[i] == '.') {
+		i++;
+		if (i >= len || !isdigit((unsigned char)s[i])) {
+			return false;
+		}
+		while (i < len && isdigit((unsigned char)s[i])) {
+			const unsigned d = (unsigned)(s[i] - '0');
+			i++;
+			if (d == 0 && !seen_nonzero) {
+				if (exp10 > -100000) {
+					exp10--; /* leading fractional zero */
+				}
+				continue;
+			}
+			seen_nonzero = true;
+			if (sig < 19) {
+				mant = mant * 10 + d;
+				sig++;
+				exp10--;
+			}
+			/* else: drop insignificant fractional digit */
+		}
+	}
+	/* exponent part */
+	if (i < len && (s[i] == 'e' || s[i] == 'E')) {
+		i++;
+		bool eneg = false;
+		if (i < len && (s[i] == '+' || s[i] == '-')) {
+			eneg = (s[i] == '-');
+			i++;
+		}
+		if (i >= len || !isdigit((unsigned char)s[i])) {
+			return false;
+		}
+		int e = 0;
+		while (i < len && isdigit((unsigned char)s[i])) {
+			if (e < 100000) {
+				e = e * 10 + (int)(s[i] - '0');
+			}
+			i++;
+		}
+		exp10 += eneg ? -e : e;
+	}
+	if (i != len) {
 		return false;
 	}
-	*out = n;
+	const double m = json_scale10((double)mant, exp10);
+	*out = neg ? -m : m;
 	return true;
+}
+
+bool json_parse_double(char *val, size_t vlen, double *out)
+{
+	size_t pos = vlen;
+	const struct json_val nv = json_parse(val, &pos);
+	if (nv.type != JSON_NUMBER || !json_rest_is_ws(val, pos, vlen)) {
+		return false;
+	}
+	return json_strtod(nv.str, nv.len, out);
 }
 
 /* -------------------------------------------------------------------------
@@ -421,7 +620,7 @@ int json_marshal_string(
 	need += 1; /* NUL terminator */
 
 	if (buf == NULL) {
-		return (int)need;
+		return (int)need - 1; /* snprintf semantics: exclude NUL */
 	}
 
 	size_t pos = 0;
@@ -474,7 +673,7 @@ int json_marshal_string(
 			}
 			pos += 2;
 		} else if (c < 0x20) {
-			if (pos + 6 <= bufsz) {
+			if (pos + 7 <= bufsz) {
 				const int n = snprintf(
 					buf + pos, bufsz - pos, "\\u%04x",
 					(unsigned)c);
@@ -494,8 +693,8 @@ int json_marshal_string(
 		buf[pos] = '"';
 	}
 	pos++;
-	if (pos < bufsz) {
-		buf[pos] = '\0';
+	if (bufsz > 0) {
+		buf[pos < bufsz ? pos : bufsz - 1] = '\0';
 	}
 	pos++;
 	return (int)pos - 1; /* snprintf semantics: exclude NUL */
@@ -504,6 +703,27 @@ int json_marshal_string(
 /* -------------------------------------------------------------------------
  * Object and array iterators
  * ---------------------------------------------------------------------- */
+
+/* Advance past whitespace and an optional ',' separator.
+ * Returns 0 if buffer exhausted, 1 if content follows without a comma,
+ * 2 if a comma was consumed.  json[*i] is ready when non-zero. */
+static int skip_delim(const char *restrict json, size_t len, size_t *restrict i)
+{
+	while (*i < len && json_iswhitespace(json[*i])) {
+		(*i)++;
+	}
+	if (*i >= len) {
+		return 0;
+	}
+	if (json[*i] == ',') {
+		(*i)++;
+		while (*i < len && json_iswhitespace(json[*i])) {
+			(*i)++;
+		}
+		return 2;
+	}
+	return 1;
+}
 
 /* Scan one JSON value starting at buf[0] without decoding.
  * Returns the byte length of the value, or -1 on syntax error. */
@@ -577,127 +797,108 @@ static ptrdiff_t skip_raw_value(const char *restrict buf, const size_t len)
 		break;
 	}
 	/* number */
-	size_t i = 0;
-	if (buf[i] == '-') {
-		i++;
+	{
+		const size_t nlen = scan_number(buf, len);
+		return nlen ? (ptrdiff_t)nlen : -1;
 	}
-	if (i >= len || !isdigit((unsigned char)buf[i])) {
-		return -1;
-	}
-	while (i < len && isdigit((unsigned char)buf[i])) {
-		i++;
-	}
-	if (i < len && buf[i] == '.') {
-		i++;
-		while (i < len && isdigit((unsigned char)buf[i])) {
-			i++;
-		}
-	}
-	if (i < len && (buf[i] == 'e' || buf[i] == 'E')) {
-		i++;
-		if (i < len && (buf[i] == '+' || buf[i] == '-')) {
-			i++;
-		}
-		while (i < len && isdigit((unsigned char)buf[i])) {
-			i++;
-		}
-	}
-	return (ptrdiff_t)i;
 }
 
-bool json_obj_next(
-	char *restrict json, const size_t len, json_iter *restrict iter,
+int json_obj_next(
+	char *restrict json, const size_t *len, json_iter *restrict iter,
 	char **restrict key, size_t *restrict key_len, char **restrict val,
 	size_t *restrict val_len)
 {
+	const size_t buflen = *len;
 	size_t i = *iter;
-	while (i < len && json_isws(json[i])) {
-		i++;
-	}
-	if (i >= len) {
+	const int delim = skip_delim(json, buflen, &i);
+	if (delim == 0) {
 		LOGE("jsonutil: unterminated object");
-		return false;
+		return JSON_NEXT_ERROR;
+	}
+	if (i >= buflen) {
+		LOGE("jsonutil: unterminated object");
+		return JSON_NEXT_ERROR;
 	}
 	if (json[i] == '}') {
-		*iter = i + 1;
-		return false;
-	}
-	if (json[i] == ',') {
-		i++;
-		while (i < len && json_isws(json[i])) {
-			i++;
+		if (delim == 2) {
+			LOGE("jsonutil: trailing comma in object");
+			return JSON_NEXT_ERROR;
 		}
+		*iter = i + 1;
+		return JSON_NEXT_END;
 	}
-	if (i >= len || json[i] != '"') {
+	if (i >= buflen || json[i] != '"') {
 		LOGE("jsonutil: expected object key string");
-		return false;
+		return JSON_NEXT_ERROR;
 	}
 	size_t slen, consumed;
-	if (!scan_string_inplace(json + i + 1, len - i - 1, &slen, &consumed)) {
-		return false;
+	if (!scan_string_inplace(
+		    json + i + 1, buflen - i - 1, &slen, &consumed)) {
+		return JSON_NEXT_ERROR;
 	}
 	*key = json + i + 1;
 	*key_len = slen;
 	i += 1 + consumed;
-	while (i < len && json_isws(json[i])) {
+	while (i < buflen && json_iswhitespace(json[i])) {
 		i++;
 	}
-	if (i >= len || json[i] != ':') {
+	if (i >= buflen || json[i] != ':') {
 		LOGE("jsonutil: expected ':' after object key");
-		return false;
+		return JSON_NEXT_ERROR;
 	}
 	i++;
-	while (i < len && json_isws(json[i])) {
+	while (i < buflen && json_iswhitespace(json[i])) {
 		i++;
 	}
-	if (i >= len) {
+	if (i >= buflen) {
 		LOGE("jsonutil: expected value after ':'");
-		return false;
+		return JSON_NEXT_ERROR;
 	}
-	const ptrdiff_t vlen = skip_raw_value(json + i, len - i);
+	const ptrdiff_t vlen = skip_raw_value(json + i, buflen - i);
 	if (vlen < 0) {
 		LOGE("jsonutil: invalid JSON value");
-		return false;
+		return JSON_NEXT_ERROR;
 	}
 	*val = json + i;
 	*val_len = (size_t)vlen;
 	*iter = i + (size_t)vlen;
-	return true;
+	return JSON_NEXT_ITEM;
 }
 
-bool json_arr_next(
-	char *restrict json, const size_t len, json_iter *restrict iter,
+int json_arr_next(
+	char *restrict json, const size_t *len, json_iter *restrict iter,
 	char **restrict val, size_t *restrict val_len)
 {
+	const size_t buflen = *len;
 	size_t i = *iter;
-	while (i < len && json_isws(json[i])) {
-		i++;
-	}
-	if (i >= len) {
+	const int delim = skip_delim(json, buflen, &i);
+	if (delim == 0) {
 		LOGE("jsonutil: unterminated array");
-		return false;
+		return JSON_NEXT_ERROR;
+	}
+	if (i >= buflen) {
+		LOGE("jsonutil: unterminated array");
+		return JSON_NEXT_ERROR;
 	}
 	if (json[i] == ']') {
-		*iter = i + 1;
-		return false;
-	}
-	if (json[i] == ',') {
-		i++;
-		while (i < len && json_isws(json[i])) {
-			i++;
+		if (delim == 2) {
+			LOGE("jsonutil: trailing comma in array");
+			return JSON_NEXT_ERROR;
 		}
+		*iter = i + 1;
+		return JSON_NEXT_END;
 	}
-	if (i >= len) {
+	if (i >= buflen) {
 		LOGE("jsonutil: expected array element");
-		return false;
+		return JSON_NEXT_ERROR;
 	}
-	const ptrdiff_t vlen = skip_raw_value(json + i, len - i);
+	const ptrdiff_t vlen = skip_raw_value(json + i, buflen - i);
 	if (vlen < 0) {
 		LOGE("jsonutil: invalid JSON value in array");
-		return false;
+		return JSON_NEXT_ERROR;
 	}
 	*val = json + i;
 	*val_len = (size_t)vlen;
 	*iter = i + (size_t)vlen;
-	return true;
+	return JSON_NEXT_ITEM;
 }

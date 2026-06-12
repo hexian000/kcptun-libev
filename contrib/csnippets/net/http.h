@@ -74,7 +74,7 @@ struct http_message {
  * @return The start position of next parsing, or NULL when parsing failed.
  * If the position is not moved, wait for more data.
  */
-char *http_parse(char *buf, struct http_message *restrict msg);
+char *http_parse(char *restrict buf, struct http_message *restrict msg);
 
 /**
  * @brief Parse a HTTP header line.

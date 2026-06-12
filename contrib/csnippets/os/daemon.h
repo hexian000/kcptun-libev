@@ -28,14 +28,14 @@ void drop_privileges(const char *identity);
  */
 void daemonize(const char *identity, bool nochdir, bool noclose);
 
-#define SYSTEMD_STATE_READY "READY=1"
-#define SYSTEMD_STATE_STOPPING "STOPPING=1"
-#define SYSTEMD_STATE_RELOADING "RELOADING=1"
-#define SYSTEMD_STATE_WATCHDOG "WATCHDOG=1"
+#define DAEMON_SYSTEMD_STATE_READY "READY=1"
+#define DAEMON_SYSTEMD_STATE_STOPPING "STOPPING=1"
+#define DAEMON_SYSTEMD_STATE_RELOADING "RELOADING=1"
+#define DAEMON_SYSTEMD_STATE_WATCHDOG "WATCHDOG=1"
 
 /**
  * @brief Send a state notification to systemd.
- * @param state The state string to notify, e.g., SYSTEMD_STATE_READY.
+ * @param state The state string to notify, e.g., DAEMON_SYSTEMD_STATE_READY.
  * @return >0 on successfully notified, 0 if systemd is not running, <0 on error.
  */
 int systemd_notify(const char *state);

@@ -4,10 +4,9 @@
 #ifndef OS_CLOCK_H
 #define OS_CLOCK_H
 
-#include <time.h>
-
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 /**
  * @brief Get current Unix timestamp.
@@ -93,22 +92,23 @@ static inline bool clock_boot(struct timespec *restrict tp)
  * @brief Convert timespec to nanoseconds.
  */
 #define TIMESPEC_NANO(ts)                                                      \
-	((intmax_t)(ts).tv_sec * INTMAX_C(1000000000) + (intmax_t)(ts).tv_nsec)
+	((int_fast64_t)(ts).tv_sec * INT64_C(1000000000) +                     \
+	 (int_fast64_t)(ts).tv_nsec)
 
 /**
  * @brief Calculate the difference between two timespecs in nanoseconds.
  */
 #define TIMESPEC_DIFF(ts0, ts1)                                                \
-	((intmax_t)(ts0).tv_sec * INTMAX_C(1000000000) +                       \
-	 (intmax_t)(ts0).tv_nsec -                                             \
-	 (intmax_t)(ts1).tv_sec * INTMAX_C(1000000000) -                       \
-	 (intmax_t)(ts1).tv_nsec)
+	((int_fast64_t)(ts0).tv_sec * INT64_C(1000000000) +                    \
+	 (int_fast64_t)(ts0).tv_nsec -                                         \
+	 (int_fast64_t)(ts1).tv_sec * INT64_C(1000000000) -                    \
+	 (int_fast64_t)(ts1).tv_nsec)
 
 /**
  * @brief Get current Unix timestamp.
  * @return Timestamp in nanoseconds.
  */
-static inline intmax_t clock_unix_ns(void)
+static inline int_fast64_t clock_unix_ns(void)
 {
 	struct timespec ts;
 	if (!clock_unix(&ts)) {
@@ -121,7 +121,7 @@ static inline intmax_t clock_unix_ns(void)
  * @brief Get current monotonic timestamp.
  * @return Timestamp in nanoseconds.
  */
-static inline intmax_t clock_monotonic_ns(void)
+static inline int_fast64_t clock_monotonic_ns(void)
 {
 	struct timespec ts;
 	if (!clock_monotonic(&ts)) {

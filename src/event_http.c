@@ -56,7 +56,7 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 	ev_io_stop(loop, w_read);
 	ev_io *restrict w_write = &ctx->w_write;
 	ev_io_stop(loop, w_write);
-	CLOSE_FD(ctx->fd);
+	SOCKET_CLOSE_FD(ctx->fd);
 	ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_stop(loop, w_timeout);
 	UTIL_SAFE_FREE(ctx->wbuf);
@@ -90,13 +90,13 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		return;
 	}
 	if (socket_set_nonblock(fd) != 0) {
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return;
 	}
 	struct http_ctx *restrict ctx = malloc(sizeof(struct http_ctx));
 	if (ctx == NULL) {
 		LOGOOM();
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return;
 	}
 	ctx->loop = loop;

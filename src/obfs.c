@@ -956,7 +956,7 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		ev_io_stop(loop, w_read);
 		ev_io *restrict w_write = &ctx->w_write;
 		ev_io_stop(loop, w_write);
-		CLOSE_FD(ctx->fd);
+		SOCKET_CLOSE_FD(ctx->fd);
 		ctx->fd = -1;
 	}
 	free(ctx);
@@ -1237,7 +1237,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			return false;
 		}
 		if (socket_set_nonblock(fd) != 0) {
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
@@ -1248,7 +1248,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			if (err != EINTR && err != EINPROGRESS) {
 				LOGE_F("obfs tcp connect: (%d) %s", err,
 				       strerror(err));
-				CLOSE_FD(fd);
+				SOCKET_CLOSE_FD(fd);
 				obfs_ctx_free(loop, ctx);
 				return false;
 			}
@@ -1256,7 +1256,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		socklen_t len = sizeof(ctx->laddr);
 		if (getsockname(fd, &ctx->laddr.sa, &len)) {
 			LOG_PERROR("client getsockname");
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
@@ -1265,7 +1265,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 		obfs_bind(obfs, &ctx->laddr.sa);
 		if (!obfs_ctx_start(obfs, ctx, fd)) {
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
@@ -1722,18 +1722,18 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 	ev_timer_stop(loop, &obfs->w_timeout);
 	if (obfs->fd != -1) {
 		ev_io_stop(loop, &obfs->w_accept);
-		CLOSE_FD(obfs->fd);
+		SOCKET_CLOSE_FD(obfs->fd);
 		obfs->fd = -1;
 	}
 	struct pktconn *restrict pkt = &s->pkt;
 	if (obfs->cap_fd != -1) {
 		ev_io_stop(loop, &pkt->w_read);
-		CLOSE_FD(obfs->cap_fd);
+		SOCKET_CLOSE_FD(obfs->cap_fd);
 		obfs->cap_fd = -1;
 	}
 	if (obfs->raw_fd != -1) {
 		ev_io_stop(loop, &pkt->w_write);
-		CLOSE_FD(obfs->raw_fd);
+		SOCKET_CLOSE_FD(obfs->raw_fd);
 		obfs->raw_fd = -1;
 	}
 }
@@ -2186,14 +2186,14 @@ static void obfs_accept_one(
 	struct obfs_ctx *restrict ctx = obfs_ctx_new(obfs);
 	if (ctx == NULL) {
 		LOGOOM();
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return;
 	}
 	memcpy(&ctx->raddr.sa, sa, len);
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		LOG_PERROR("server getsockname");
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
@@ -2255,11 +2255,11 @@ void obfs_accept_cb(
 			LOG_RATELIMITED(
 				ERROR, ev_now(loop), 1.0,
 				"* obfs: context limit exceeded, new connections refused");
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			return;
 		}
 		if (socket_set_nonblock(fd) != 0) {
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			return;
 		}
 

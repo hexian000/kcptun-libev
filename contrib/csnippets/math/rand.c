@@ -5,6 +5,7 @@
 
 #include <float.h>
 #include <stdint.h>
+#include <threads.h>
 
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
 
@@ -16,7 +17,7 @@ static inline uint_fast64_t splitmix64(uint_fast64_t *restrict state)
 	return result ^ (result >> 31u);
 }
 
-static _Thread_local uint_fast64_t xoshiro256ss[4] = {
+static thread_local uint_fast64_t xoshiro256ss[4] = {
 	UINT64_C(0x910A2DEC89025CC1),
 	UINT64_C(0xBEEB8DA1658EEC67),
 	UINT64_C(0xF893A2EEFB32555E),

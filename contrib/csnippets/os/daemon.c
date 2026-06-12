@@ -7,23 +7,23 @@
 #include "utils/intcast.h"
 #include "utils/slog.h"
 
-#include <grp.h>
-#include <pwd.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #if WITH_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
 
 #include <assert.h>
 #include <errno.h>
+#include <grp.h>
 #include <inttypes.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 void drop_privileges(const char *identity)
 {
@@ -107,15 +107,15 @@ void drop_privileges(const char *identity)
 #if _BSD_SOURCE || _GNU_SOURCE
 	if (setgroups(0, NULL) != 0) {
 		const int err = errno;
-		LOGW_F("unable to drop supplementary group privileges: %s",
-		       strerror(err));
+		LOGW_F("unable to drop supplementary group privileges: (%d) %s",
+		       err, strerror(err));
 	}
 #endif
 	if (gid != (gid_t)-1) {
 		LOGD_F("setgid: %jd", (intmax_t)gid);
 		if (setgid(gid) != 0 || setegid(gid) != 0) {
 			const int err = errno;
-			LOGW_F("unable to drop group privileges: %s",
+			LOGW_F("unable to drop group privileges: (%d) %s", err,
 			       strerror(err));
 		}
 	}
@@ -123,7 +123,7 @@ void drop_privileges(const char *identity)
 		LOGD_F("setuid: %jd", (intmax_t)uid);
 		if (setuid(uid) != 0 || seteuid(uid) != 0) {
 			const int err = errno;
-			LOGW_F("unable to drop user privileges: %s",
+			LOGW_F("unable to drop user privileges: (%d) %s", err,
 			       strerror(err));
 		}
 	}
@@ -159,7 +159,7 @@ void daemonize(const char *identity, const bool nochdir, const bool noclose)
 	/* In the child, call setsid(). */
 	if (setsid() < 0) {
 		const int err = errno;
-		LOGW_F("setsid: %s", strerror(err));
+		LOGW_F("setsid: (%d) %s", err, strerror(err));
 	}
 	/* In the child, call fork() again. */
 	{
@@ -191,7 +191,7 @@ void daemonize(const char *identity, const bool nochdir, const bool noclose)
 	if (!nochdir) {
 		if (chdir("/") != 0) {
 			const int err = errno;
-			LOGW_F("chdir: %s", strerror(err));
+			LOGW_F("chdir: (%d) %s", err, strerror(err));
 		}
 	}
 	/* In the daemon process, drop privileges */

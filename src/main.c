@@ -257,7 +257,7 @@ int main(int argc, char **argv)
 	}
 
 #if WITH_SYSTEMD
-	(void)systemd_notify(SYSTEMD_STATE_READY);
+	(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
 #endif
 	/* Start the main event loop - this blocks until shutdown */
 	LOGN_F("%s start", conf_modestr(conf));
@@ -283,7 +283,7 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 	switch (watcher->signum) {
 	case SIGHUP: {
 #if WITH_SYSTEMD
-		(void)systemd_notify(SYSTEMD_STATE_RELOADING);
+		(void)systemd_notify(DAEMON_SYSTEMD_STATE_RELOADING);
 #endif
 		/* Attempt to reload configuration file */
 		struct config *conf = conf_read(args.conf_path);
@@ -307,14 +307,14 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 		/* Re-resolve any hostnames in case DNS changed */
 		(void)server_resolve(s);
 #if WITH_SYSTEMD
-		(void)systemd_notify(SYSTEMD_STATE_READY);
+		(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
 #endif
 	} break;
 	case SIGINT:
 	case SIGTERM: {
 		LOGD_F("signal %d received, breaking", watcher->signum);
 #if WITH_SYSTEMD
-		(void)systemd_notify(SYSTEMD_STATE_STOPPING);
+		(void)systemd_notify(DAEMON_SYSTEMD_STATE_STOPPING);
 #endif
 		/* Break out of the main event loop */
 		ev_break(loop, EVBREAK_ALL);

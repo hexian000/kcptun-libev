@@ -44,7 +44,7 @@ struct duration make_duration(double seconds);
  * @param nanos Nanoseconds. If struct duration cannot represent the value,
  * the behavior is undefined.
  */
-struct duration make_duration_nanos(intmax_t nanos);
+struct duration make_duration_nanos(int_fast64_t nanos);
 
 /**
  * @brief Format duration in seconds.

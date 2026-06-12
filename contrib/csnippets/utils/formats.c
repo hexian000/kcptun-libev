@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "formats.h"
+
 #include "utils/arraysize.h"
 #include "utils/minmax.h"
 
@@ -115,16 +116,16 @@ struct duration make_duration(const double seconds)
 	return d;
 }
 
-struct duration make_duration_nanos(const intmax_t nanos)
+struct duration make_duration_nanos(const int_fast64_t nanos)
 {
-	uintmax_t value;
+	uint_fast64_t value;
 	struct duration d;
-	if (nanos < INTMAX_C(0)) {
+	if (nanos < 0) {
 		d.sign = -1;
-		value = -(uintmax_t)nanos;
+		value = -(uint_fast64_t)nanos;
 	} else {
 		d.sign = 1;
-		value = (uintmax_t)nanos;
+		value = (uint_fast64_t)nanos;
 	}
 	d.nano = (unsigned int)(value % 1000);
 	value /= 1000;

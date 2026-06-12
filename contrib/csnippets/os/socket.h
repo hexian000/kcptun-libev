@@ -1,19 +1,18 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef OS_SOCKUTIL_H
-#define OS_SOCKUTIL_H
+#ifndef OS_SOCKET_H
+#define OS_SOCKET_H
 
 #include "utils/slog.h"
 
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 /**
  * @defgroup sockutil
@@ -22,12 +21,12 @@
  */
 
 /**
- * @def SHUTDOWN_FD(fd, dir)
+ * @def SOCKET_SHUTDOWN_FD(fd, dir)
  * @brief Shuts down the write end of the socket and logs any errors.
  * @param fd The socket file descriptor.
  * @param dir The shutdown direction (RD, WR, RDWR).
  */
-#define SHUTDOWN_FD(fd, dir)                                                   \
+#define SOCKET_SHUTDOWN_FD(fd, dir)                                            \
 	do {                                                                   \
 		if (shutdown((fd), SHUT_##dir) != 0) {                         \
 			const int err = errno;                                 \
@@ -37,11 +36,11 @@
 	} while (0)
 
 /**
- * @def CLOSE_FD(fd)
+ * @def SOCKET_CLOSE_FD(fd)
  * @brief Closes the file descriptor and logs any errors.
  * @param fd The file descriptor.
  */
-#define CLOSE_FD(fd)                                                           \
+#define SOCKET_CLOSE_FD(fd)                                                    \
 	do {                                                                   \
 		if (close((fd)) != 0) {                                        \
 			const int err = errno;                                 \
@@ -278,4 +277,4 @@ bool sa_resolve_bind(
 
 /** @} */
 
-#endif /* OS_SOCKUTIL_H */
+#endif /* OS_SOCKET_H */

@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "url.h"
+
 #include "utils/ascii.h"
 
 #include <stdbool.h>
@@ -12,19 +13,22 @@
 #define APPEND_STR(str)                                                        \
 	do {                                                                   \
 		size_t n = strlen(str);                                        \
-		size_t copy_n =                                                \
-			(written + n <= maxlen) ?                              \
-				n :                                            \
-				(maxlen > written ? maxlen - written : 0);     \
-		for (size_t i = 0; i < copy_n; i++) {                          \
-			buf[written + i] = (str)[i];                           \
+		if (buf != NULL) {                                             \
+			size_t copy_n =                                        \
+				(written + n <= maxlen) ?                      \
+					n :                                    \
+					(maxlen > written ? maxlen - written : \
+							    0);                \
+			for (size_t i = 0; i < copy_n; i++) {                  \
+				buf[written + i] = (str)[i];                   \
+			}                                                      \
 		}                                                              \
 		written += n;                                                  \
 	} while (0)
 
 #define APPEND_CHAR(ch)                                                        \
 	do {                                                                   \
-		if (written < maxlen) {                                        \
+		if (buf != NULL && written < maxlen) {                         \
 			buf[written] = ch;                                     \
 		}                                                              \
 		written++;                                                     \

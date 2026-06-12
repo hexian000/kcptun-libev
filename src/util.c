@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 #include <time.h>
 
 bool check_rate_limit(
@@ -139,7 +140,7 @@ void genpsk(const char *method)
 
 double thread_load(void)
 {
-	static _Thread_local struct {
+	static thread_local struct {
 		struct timespec monotime, cputime;
 		bool set;
 	} last = { .set = false };
@@ -152,8 +153,9 @@ double thread_load(void)
 		return load;
 	}
 	if (last.set) {
-		const intmax_t total = TIMESPEC_DIFF(monotime, last.monotime);
-		const intmax_t busy = TIMESPEC_DIFF(cputime, last.cputime);
+		const int_fast64_t total =
+			TIMESPEC_DIFF(monotime, last.monotime);
+		const int_fast64_t busy = TIMESPEC_DIFF(cputime, last.cputime);
 		if (busy > 0 && total > 0 && busy <= total) {
 			load = (double)busy / (double)total;
 		}
@@ -192,7 +194,7 @@ bool resolve_addr(
 	char buf[addrlen + 1];
 	memcpy(buf, addrstr, addrlen + 1);
 	char *hoststr, *portstr;
-	if (!splithostport(buf, &hoststr, &portstr)) {
+	if (!addr_splithostport(buf, &hoststr, &portstr)) {
 		return false;
 	}
 	return sa_resolve(addr, hoststr, portstr, type, PF_UNSPEC);
@@ -207,7 +209,7 @@ bool resolve_bindaddr(
 	char buf[addrlen + 1];
 	memcpy(buf, addrstr, addrlen + 1);
 	char *hoststr, *portstr;
-	if (!splithostport(buf, &hoststr, &portstr)) {
+	if (!addr_splithostport(buf, &hoststr, &portstr)) {
 		return false;
 	}
 	return sa_resolve_bind(addr, hoststr, portstr, type);

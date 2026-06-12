@@ -6,21 +6,20 @@
 #include "utils/slog.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include <errno.h>
-#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 int socket_set_cloexec(const int fd)
 {
@@ -168,13 +167,13 @@ void socket_set_fastopen_connect(const int fd, const bool enabled)
 #else
 	(void)fd;
 	(void)enabled;
-#endif
+#endif /* TCP_FASTOPEN_CONNECT */
 }
 
 void socket_rcvlowat(const int fd, const int bytes)
 {
 	if (bytes > 0) {
-		socklen_t len = sizeof(bytes);
+		socklen_t len = (socklen_t)sizeof(bytes);
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVLOWAT, &bytes, len)) {
 			const int err = errno;
 			LOGE_F("setsockopt [fd:%d]: SO_RCVLOWAT (%d) %s", fd,
@@ -186,7 +185,7 @@ void socket_rcvlowat(const int fd, const int bytes)
 int socket_get_error(const int fd)
 {
 	int err = 0;
-	socklen_t len = sizeof(err);
+	socklen_t len = (socklen_t)sizeof(err);
 	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) {
 		err = errno;
 	}

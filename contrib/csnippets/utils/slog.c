@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "slog.h"
+
 #include "buffer.h"
 
 #if HAVE_SYSLOG
@@ -10,15 +11,15 @@
 
 #include <assert.h>
 #include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <time.h>
-
 #if SLOG_MT_SAFE
 #include <stdatomic.h>
 #include <threads.h>
 #endif
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <threads.h>
+#include <time.h>
 
 #define SLOG_BUFSIZE 4096
 
@@ -68,7 +69,7 @@ static _Atomic(const char *) slog_fileprefix;
 	atomic_store_explicit(object, desired, memory_order_release)
 #define ATOMIC_LOAD(object) atomic_load_explicit(object, memory_order_acquire)
 
-static _Thread_local struct {
+static thread_local struct {
 	BUFFER_HDR;
 	unsigned char data[SLOG_BUFSIZE];
 } slog_buffer;

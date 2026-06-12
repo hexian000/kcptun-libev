@@ -88,7 +88,7 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 		return false;
 	}
 	if (socket_set_nonblock(fd) != 0) {
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return false;
 	}
 	{
@@ -299,7 +299,7 @@ void session_tcp_stop(struct session *restrict ss)
 	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: stop", ss->conv,
 	       w_socket->fd);
 	ev_io_stop(ss->server->loop, w_socket);
-	CLOSE_FD(ss->w_socket.fd);
+	SOCKET_CLOSE_FD(ss->w_socket.fd);
 	ev_io_set(w_socket, -1, EV_NONE);
 }
 

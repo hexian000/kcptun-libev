@@ -61,14 +61,14 @@ static void accept_one(
 	struct session *restrict ss = session_new(s, &s->pkt.kcp_connect, conv);
 	if (ss == NULL) {
 		LOGOOM();
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return;
 	}
 	ss->kcp_state = KCP_STATE_CONNECT;
 	ss->tcp_state = TCP_STATE_ESTABLISHED;
 	if (!kcp_sendmsg(ss, SMSG_DIAL)) {
 		LOGOOM();
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		session_free(ss);
 		return;
 	}
@@ -117,11 +117,11 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			LOG_RATELIMITED(
 				ERROR, ev_now(loop), 1.0,
 				"* max session count exceeded, new connections refused");
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			return;
 		}
 		if (socket_set_nonblock(fd) != 0) {
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			return;
 		}
 		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
@@ -129,7 +129,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 
 		if (!s->pkt.connected) {
 			LOGE("packet connection is not ready, refusing");
-			CLOSE_FD(fd);
+			SOCKET_CLOSE_FD(fd);
 			return;
 		}
 		accept_one(s, fd, &addr.sa);

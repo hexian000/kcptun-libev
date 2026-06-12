@@ -54,7 +54,8 @@ def ensure_tool(name: str) -> str:
 def ensure_project_root(root: Path) -> None:
     if not (root / "CMakeLists.txt").exists():
         sys.exit(
-            f"error: working directory does not look like the project root: {root}"
+            f"error: working directory does not look like the project root: {
+                root}"
         )
 
 
@@ -214,7 +215,8 @@ def _resolve_linked_dirs(build_dir: Path, target: str) -> set[str]:
         p = Path(token)
         if p.suffix != ".a":
             continue
-        resolved = (run_dir / p).resolve() if not p.is_absolute() else p.resolve()
+        resolved = (
+            run_dir / p).resolve() if not p.is_absolute() else p.resolve()
         if not resolved.exists():
             continue
         stem = resolved.stem
@@ -235,7 +237,8 @@ def _find_obj_files(build_dir: Path, target: str | None = None) -> dict[str, Pat
         sys.exit(f"error: {db_path} not found — run cmake configure first")
     db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
 
-    target_dirs = _resolve_linked_dirs(build_dir, target) if target is not None else None
+    target_dirs = _resolve_linked_dirs(
+        build_dir, target) if target is not None else None
     best: dict[str, tuple[Path, int]] = {}
     for entry in db:
         src_abs = Path(entry["file"])
@@ -437,9 +440,11 @@ def main() -> int:
     symbols = collect_symbols(build_dir, target=args.target)
 
     elapsed = time.monotonic() - t0
-    log(f"{len(rows)} file(s), {sum(sl for _, _, sl in rows):,} SLOC, total {_human(sum(sz for _, sz, _ in rows))}, {elapsed:.1f} s")
+    log(f"{len(rows)} file(s), {sum(sl for _, _, sl in rows):,} SLOC, total {
+        _human(sum(sz for _, sz, _ in rows))}, {elapsed:.1f} s")
     if symbols:
-        log(f"{len(symbols):,} symbols, {_human(sum(sz for _, sz, _, _ in symbols))} total")
+        log(f"{len(symbols):,} symbols, {
+            _human(sum(sz for _, sz, _, _ in symbols))} total")
 
     write_report(rows, symbols, output, elapsed, args.config)
     return 0

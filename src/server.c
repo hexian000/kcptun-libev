@@ -45,7 +45,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 		return -1;
 	}
 	if (socket_set_nonblock(fd) != 0) {
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return -1;
 	}
 	socket_set_reuseport(fd, conf->tcp_reuseport);
@@ -54,13 +54,13 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	/* Bind socket to address */
 	if (bind(fd, sa, sa_len(sa)) != 0) {
 		LOG_PERROR("tcp bind");
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return -1;
 	}
 	/* Start listening on the socket */
 	if (listen(fd, SOMAXCONN)) {
 		LOG_PERROR("tcp listen");
-		CLOSE_FD(fd);
+		SOCKET_CLOSE_FD(fd);
 		return -1;
 	}
 	return fd;
@@ -181,7 +181,7 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 		LOGW_F("getsockname: (%d) %s", err, strerror(err));
 		return false;
 	}
-	CLOSE_FD(fd);
+	SOCKET_CLOSE_FD(fd);
 	return true;
 }
 
@@ -550,7 +550,7 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	conn->services = table_filter(conn->services, svc_shutdown_filt, NULL);
 	ev_io_stop(loop, &conn->w_read);
 	ev_io_stop(loop, &conn->w_write);
-	CLOSE_FD(conn->fd);
+	SOCKET_CLOSE_FD(conn->fd);
 	conn->fd = -1;
 }
 
@@ -575,14 +575,14 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 		LOGD_F("listener [fd:%d] close", l->fd);
 		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
-		CLOSE_FD(l->fd);
+		SOCKET_CLOSE_FD(l->fd);
 		l->fd = -1;
 	}
 	if (l->fd_http != -1) {
 		LOGD_F("http listener [fd:%d] close", l->fd_http);
 		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
-		CLOSE_FD(l->fd_http);
+		SOCKET_CLOSE_FD(l->fd_http);
 		l->fd_http = -1;
 	}
 	ev_timer_stop(loop, &l->w_timer);

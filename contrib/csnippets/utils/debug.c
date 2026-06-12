@@ -2,6 +2,7 @@
  * This code is licensed under MIT license (see LICENSE for details) */
 
 #include "debug.h"
+
 #include "utils/ascii.h"
 #include "utils/buffer.h"
 
@@ -20,6 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <threads.h>
 #include <wchar.h>
 #include <wctype.h>
 
@@ -134,7 +136,7 @@ void slog_extra_bin(FILE *restrict f, void *restrict data)
 		BUF_APPENDF(buf, INDENT "%p: ", (void *)(b + i));
 		for (size_t j = 0; j < binwrap; j++) {
 			if ((i + j) < n) {
-				BUF_APPENDF(buf, "%02" PRIX8 " ", b[i + j]);
+				BUF_APPENDF(buf, "%02hhX ", b[i + j]);
 			} else {
 				BUF_APPENDSTR(buf, "   ");
 			}
@@ -225,7 +227,7 @@ static int backtrace_cb(void *data, const uintptr_t pc)
 static struct backtrace_state *bt_state(void)
 {
 #if SLOG_MT_SAFE
-	static _Thread_local struct backtrace_state *state = NULL;
+	static thread_local struct backtrace_state *state = NULL;
 #else
 	static struct backtrace_state *state = NULL;
 #endif

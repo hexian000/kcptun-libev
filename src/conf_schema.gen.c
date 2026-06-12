@@ -11,116 +11,116 @@
  *  @{ */
 
 /* --- json_conf --- */
-typedef struct { const char *name; size_t len; int idx; } json_conf_entry_;
-static const json_conf_entry_ json_conf_keys_[] = {
-    {"kcp", 3, 2},
-    {"psk", 3, 13},
-    {"tcp", 3, 16},
-    {"udp", 3, 19},
-    {"obfs", 4, 11},
-    {"user", 4, 20},
-    {"linger", 6, 6},
-    {"listen", 6, 7},
-    {"method", 6, 9},
-    {"netdev", 6, 10},
-    {"connect", 7, 0},
-    {"timeout", 7, 18},
-    {"kcp_bind", 8, 3},
-    {"loglevel", 8, 8},
-    {"password", 8, 12},
-    {"keepalive", 9, 5},
-    {"time_wait", 9, 17},
-    {"service_id", 10, 15},
-    {"http_listen", 11, 1},
-    {"kcp_connect", 11, 4},
-    {"rendezvous_server", 17, 14},
+typedef struct { const char *name; size_t len; int idx; } json_lookup_conf_entry_;
+static const json_lookup_conf_entry_ json_lookup_conf_keys_[] = {
+	{"kcp", 3, 2},
+	{"psk", 3, 13},
+	{"tcp", 3, 16},
+	{"udp", 3, 19},
+	{"obfs", 4, 11},
+	{"user", 4, 20},
+	{"linger", 6, 6},
+	{"listen", 6, 7},
+	{"method", 6, 9},
+	{"netdev", 6, 10},
+	{"connect", 7, 0},
+	{"timeout", 7, 18},
+	{"kcp_bind", 8, 3},
+	{"loglevel", 8, 8},
+	{"password", 8, 12},
+	{"keepalive", 9, 5},
+	{"time_wait", 9, 17},
+	{"service_id", 10, 15},
+	{"http_listen", 11, 1},
+	{"kcp_connect", 11, 4},
+	{"rendezvous_server", 17, 14},
 };
-static int json_conf_cmp_(const void *key_, const void *entry_)
+static int json_lookup_conf_cmp_(const void *key_, const void *entry_)
 {
-    const json_conf_entry_ *k_ = (const json_conf_entry_ *)key_;
-    const json_conf_entry_ *e_ = (const json_conf_entry_ *)entry_;
-    if (k_->len < e_->len) { return -1; }
-    if (k_->len > e_->len) { return  1; }
-    return memcmp(k_->name, e_->name, k_->len);
+	const json_lookup_conf_entry_ *k_ = (const json_lookup_conf_entry_ *)key_;
+	const json_lookup_conf_entry_ *e_ = (const json_lookup_conf_entry_ *)entry_;
+	if (k_->len < e_->len) { return -1; }
+	if (k_->len > e_->len) { return  1; }
+	return memcmp(k_->name, e_->name, k_->len);
 }
 static int
-json_conf_lookup(const char *str, size_t len)
+json_lookup_conf(const char *str, size_t len)
 {
-    const json_conf_entry_ key_ = {str, len, 0};
-    const json_conf_entry_ *e_ =
-        bsearch(&key_, json_conf_keys_, 21, sizeof(*json_conf_keys_), json_conf_cmp_);
-    return e_ ? e_->idx : -1;
+	const json_lookup_conf_entry_ key_ = {str, len, 0};
+	const json_lookup_conf_entry_ *e_ =
+		bsearch(&key_, json_lookup_conf_keys_, 21, sizeof(*json_lookup_conf_keys_), json_lookup_conf_cmp_);
+	return e_ ? e_->idx : -1;
 }
 
 /* --- json_conf_kcp --- */
-typedef struct { const char *name; size_t len; int idx; } json_conf_kcp_entry_;
-static const json_conf_kcp_entry_ json_conf_kcp_keys_[] = {
-    {"nc", 2, 3},
-    {"mtu", 3, 2},
-    {"flush", 5, 0},
-    {"rcvwnd", 6, 5},
-    {"resend", 6, 6},
-    {"sndwnd", 6, 7},
-    {"nodelay", 7, 4},
-    {"interval", 8, 1},
+typedef struct { const char *name; size_t len; int idx; } json_lookup_conf_kcp_entry_;
+static const json_lookup_conf_kcp_entry_ json_lookup_conf_kcp_keys_[] = {
+	{"nc", 2, 3},
+	{"mtu", 3, 2},
+	{"flush", 5, 0},
+	{"rcvwnd", 6, 5},
+	{"resend", 6, 6},
+	{"sndwnd", 6, 7},
+	{"nodelay", 7, 4},
+	{"interval", 8, 1},
 };
-static int json_conf_kcp_cmp_(const void *key_, const void *entry_)
+static int json_lookup_conf_kcp_cmp_(const void *key_, const void *entry_)
 {
-    const json_conf_kcp_entry_ *k_ = (const json_conf_kcp_entry_ *)key_;
-    const json_conf_kcp_entry_ *e_ = (const json_conf_kcp_entry_ *)entry_;
-    if (k_->len < e_->len) { return -1; }
-    if (k_->len > e_->len) { return  1; }
-    return memcmp(k_->name, e_->name, k_->len);
+	const json_lookup_conf_kcp_entry_ *k_ = (const json_lookup_conf_kcp_entry_ *)key_;
+	const json_lookup_conf_kcp_entry_ *e_ = (const json_lookup_conf_kcp_entry_ *)entry_;
+	if (k_->len < e_->len) { return -1; }
+	if (k_->len > e_->len) { return  1; }
+	return memcmp(k_->name, e_->name, k_->len);
 }
 static int
-json_conf_kcp_lookup(const char *str, size_t len)
+json_lookup_conf_kcp(const char *str, size_t len)
 {
-    const json_conf_kcp_entry_ key_ = {str, len, 0};
-    const json_conf_kcp_entry_ *e_ =
-        bsearch(&key_, json_conf_kcp_keys_, 8, sizeof(*json_conf_kcp_keys_), json_conf_kcp_cmp_);
-    return e_ ? e_->idx : -1;
+	const json_lookup_conf_kcp_entry_ key_ = {str, len, 0};
+	const json_lookup_conf_kcp_entry_ *e_ =
+		bsearch(&key_, json_lookup_conf_kcp_keys_, 8, sizeof(*json_lookup_conf_kcp_keys_), json_lookup_conf_kcp_cmp_);
+	return e_ ? e_->idx : -1;
 }
 
 /* --- json_conf_tcp --- */
-typedef struct { const char *name; size_t len; int idx; } json_conf_tcp_entry_;
-static const json_conf_tcp_entry_ json_conf_tcp_keys_[] = {
-    {"rcvbuf", 6, 2},
-    {"sndbuf", 6, 4},
-    {"nodelay", 7, 1},
-    {"keepalive", 9, 0},
-    {"reuseport", 9, 3},
+typedef struct { const char *name; size_t len; int idx; } json_lookup_conf_tcp_entry_;
+static const json_lookup_conf_tcp_entry_ json_lookup_conf_tcp_keys_[] = {
+	{"rcvbuf", 6, 2},
+	{"sndbuf", 6, 4},
+	{"nodelay", 7, 1},
+	{"keepalive", 9, 0},
+	{"reuseport", 9, 3},
 };
-static int json_conf_tcp_cmp_(const void *key_, const void *entry_)
+static int json_lookup_conf_tcp_cmp_(const void *key_, const void *entry_)
 {
-    const json_conf_tcp_entry_ *k_ = (const json_conf_tcp_entry_ *)key_;
-    const json_conf_tcp_entry_ *e_ = (const json_conf_tcp_entry_ *)entry_;
-    if (k_->len < e_->len) { return -1; }
-    if (k_->len > e_->len) { return  1; }
-    return memcmp(k_->name, e_->name, k_->len);
+	const json_lookup_conf_tcp_entry_ *k_ = (const json_lookup_conf_tcp_entry_ *)key_;
+	const json_lookup_conf_tcp_entry_ *e_ = (const json_lookup_conf_tcp_entry_ *)entry_;
+	if (k_->len < e_->len) { return -1; }
+	if (k_->len > e_->len) { return  1; }
+	return memcmp(k_->name, e_->name, k_->len);
 }
 static int
-json_conf_tcp_lookup(const char *str, size_t len)
+json_lookup_conf_tcp(const char *str, size_t len)
 {
-    const json_conf_tcp_entry_ key_ = {str, len, 0};
-    const json_conf_tcp_entry_ *e_ =
-        bsearch(&key_, json_conf_tcp_keys_, 5, sizeof(*json_conf_tcp_keys_), json_conf_tcp_cmp_);
-    return e_ ? e_->idx : -1;
+	const json_lookup_conf_tcp_entry_ key_ = {str, len, 0};
+	const json_lookup_conf_tcp_entry_ *e_ =
+		bsearch(&key_, json_lookup_conf_tcp_keys_, 5, sizeof(*json_lookup_conf_tcp_keys_), json_lookup_conf_tcp_cmp_);
+	return e_ ? e_->idx : -1;
 }
 
 /* --- json_conf_udp --- */
 static int
-json_conf_udp_lookup(const char *str, size_t len)
+json_lookup_conf_udp(const char *str, size_t len)
 {
-    if (len < 2) { return -1; }
-    switch ((unsigned char)str[1]) {
-    case 'c':
-        return len == 6 && memcmp(str, "rcvbuf", 6) == 0 ? 0 : -1;
-    case 'e':
-        return len == 9 && memcmp(str, "reuseport", 9) == 0 ? 1 : -1;
-    case 'n':
-        return len == 6 && memcmp(str, "sndbuf", 6) == 0 ? 2 : -1;
-    default: return -1;
-    }
+	if (len < 2) { return -1; }
+	switch ((unsigned char)str[1]) {
+	case 'c':
+		return len == 6 && memcmp(str, "rcvbuf", 6) == 0 ? 0 : -1;
+	case 'e':
+		return len == 9 && memcmp(str, "reuseport", 9) == 0 ? 1 : -1;
+	case 'n':
+		return len == 6 && memcmp(str, "sndbuf", 6) == 0 ? 2 : -1;
+	default: return -1;
+	}
 }
 
 /** @} */
@@ -129,52 +129,52 @@ json_conf_udp_lookup(const char *str, size_t len)
  *  @{ */
 
 enum json_conf_key {
-    JSON_CONF_CONNECT = 0,
-    JSON_CONF_HTTP_LISTEN = 1,
-    JSON_CONF_KCP = 2,
-    JSON_CONF_KCP_BIND = 3,
-    JSON_CONF_KCP_CONNECT = 4,
-    JSON_CONF_KEEPALIVE = 5,
-    JSON_CONF_LINGER = 6,
-    JSON_CONF_LISTEN = 7,
-    JSON_CONF_LOGLEVEL = 8,
-    JSON_CONF_METHOD = 9,
-    JSON_CONF_NETDEV = 10,
-    JSON_CONF_OBFS = 11,
-    JSON_CONF_PASSWORD = 12,
-    JSON_CONF_PSK = 13,
-    JSON_CONF_RENDEZVOUS_SERVER = 14,
-    JSON_CONF_SERVICE_ID = 15,
-    JSON_CONF_TCP = 16,
-    JSON_CONF_TIME_WAIT = 17,
-    JSON_CONF_TIMEOUT = 18,
-    JSON_CONF_UDP = 19,
-    JSON_CONF_USER = 20,
+	JSON_CONF_CONNECT = 0,
+	JSON_CONF_HTTP_LISTEN = 1,
+	JSON_CONF_KCP = 2,
+	JSON_CONF_KCP_BIND = 3,
+	JSON_CONF_KCP_CONNECT = 4,
+	JSON_CONF_KEEPALIVE = 5,
+	JSON_CONF_LINGER = 6,
+	JSON_CONF_LISTEN = 7,
+	JSON_CONF_LOGLEVEL = 8,
+	JSON_CONF_METHOD = 9,
+	JSON_CONF_NETDEV = 10,
+	JSON_CONF_OBFS = 11,
+	JSON_CONF_PASSWORD = 12,
+	JSON_CONF_PSK = 13,
+	JSON_CONF_RENDEZVOUS_SERVER = 14,
+	JSON_CONF_SERVICE_ID = 15,
+	JSON_CONF_TCP = 16,
+	JSON_CONF_TIME_WAIT = 17,
+	JSON_CONF_TIMEOUT = 18,
+	JSON_CONF_UDP = 19,
+	JSON_CONF_USER = 20,
 };
 
 enum json_conf_kcp_key {
-    JSON_CONF_KCP_FLUSH = 0,
-    JSON_CONF_KCP_INTERVAL = 1,
-    JSON_CONF_KCP_MTU = 2,
-    JSON_CONF_KCP_NC = 3,
-    JSON_CONF_KCP_NODELAY = 4,
-    JSON_CONF_KCP_RCVWND = 5,
-    JSON_CONF_KCP_RESEND = 6,
-    JSON_CONF_KCP_SNDWND = 7,
+	JSON_CONF_KCP_FLUSH = 0,
+	JSON_CONF_KCP_INTERVAL = 1,
+	JSON_CONF_KCP_MTU = 2,
+	JSON_CONF_KCP_NC = 3,
+	JSON_CONF_KCP_NODELAY = 4,
+	JSON_CONF_KCP_RCVWND = 5,
+	JSON_CONF_KCP_RESEND = 6,
+	JSON_CONF_KCP_SNDWND = 7,
 };
 
 enum json_conf_tcp_key {
-    JSON_CONF_TCP_KEEPALIVE = 0,
-    JSON_CONF_TCP_NODELAY = 1,
-    JSON_CONF_TCP_RCVBUF = 2,
-    JSON_CONF_TCP_REUSEPORT = 3,
-    JSON_CONF_TCP_SNDBUF = 4,
+	JSON_CONF_TCP_KEEPALIVE = 0,
+	JSON_CONF_TCP_NODELAY = 1,
+	JSON_CONF_TCP_RCVBUF = 2,
+	JSON_CONF_TCP_REUSEPORT = 3,
+	JSON_CONF_TCP_SNDBUF = 4,
 };
 
 enum json_conf_udp_key {
-    JSON_CONF_UDP_RCVBUF = 0,
-    JSON_CONF_UDP_REUSEPORT = 1,
-    JSON_CONF_UDP_SNDBUF = 2,
+	JSON_CONF_UDP_RCVBUF = 0,
+	JSON_CONF_UDP_REUSEPORT = 1,
+	JSON_CONF_UDP_SNDBUF = 2,
 };
 
 /** @} */
@@ -182,26 +182,26 @@ enum json_conf_udp_key {
 /** @name Free
  *  @{ */
 
-static void json_conf_udp_free(struct json_conf_udp *obj)
+static void json_free_conf_udp(struct json_conf_udp *obj)
 {
-    (void)obj;
+	(void)obj;
 }
 
-static void json_conf_tcp_free(struct json_conf_tcp *obj)
+static void json_free_conf_tcp(struct json_conf_tcp *obj)
 {
-    (void)obj;
+	(void)obj;
 }
 
-static void json_conf_kcp_free(struct json_conf_kcp *obj)
+static void json_free_conf_kcp(struct json_conf_kcp *obj)
 {
-    (void)obj;
+	(void)obj;
 }
 
-void json_conf_free(struct json_conf *obj)
+void json_free_conf(struct json_conf *obj)
 {
-    json_conf_kcp_free(&obj->kcp);
-    json_conf_tcp_free(&obj->tcp);
-    json_conf_udp_free(&obj->udp);
+	json_free_conf_kcp(&obj->kcp);
+	json_free_conf_tcp(&obj->tcp);
+	json_free_conf_udp(&obj->udp);
 }
 
 /** @} */
@@ -209,301 +209,347 @@ void json_conf_free(struct json_conf *obj)
 /** @name Unmarshal
  *  @{ */
 
-static bool json_conf_udp_unmarshal(
-    struct json_conf_udp *obj, char *json, size_t length)
+static bool json_unmarshal_conf_udp(
+	struct json_conf_udp *obj, char *json, size_t length)
 {
-    const struct json_val root_ = json_parse(json, length);
-    if (root_.type != JSON_OBJECT) { return false; }
-    json_iter iter_ = root_.iter;
-    char *key_; size_t key_len_; char *val_; size_t val_len_;
-    *obj = (struct json_conf_udp){
-        .reuseport = false,
-    };
+	*obj = (struct json_conf_udp){
+		.reuseport = false,
+	};
+	const struct json_val root_ = json_parse(json, &(size_t){ length });
+	if (root_.type != JSON_OBJECT) { return false; }
+	json_iter iter_ = root_.iter;
+	char *key_; size_t key_len_; char *val_; size_t val_len_;
+	int next_;
 
-    while (json_obj_next(json, length, &iter_,
-            &key_, &key_len_, &val_, &val_len_)) {
-        const int k_ = json_conf_udp_lookup(key_, key_len_);
-        switch (k_) {
-        case JSON_CONF_UDP_RCVBUF: {
-            if (!json_parse_uint(val_, val_len_, &obj->rcvbuf)) { return false; }
-            if (obj->rcvbuf > 33554432u) { return false; }
-            break;
-        }
-        case JSON_CONF_UDP_REUSEPORT: {
-            if (!json_parse_bool(val_, val_len_, &obj->reuseport)) { return false; }
-            break;
-        }
-        case JSON_CONF_UDP_SNDBUF: {
-            if (!json_parse_uint(val_, val_len_, &obj->sndbuf)) { return false; }
-            if (obj->sndbuf > 33554432u) { return false; }
-            break;
-        }
-        default:
-            break;
-        }
-    }
-    return true;
+	while ((next_ = json_obj_next(json, &length, &iter_,
+			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
+		const int k_ = json_lookup_conf_udp(key_, key_len_);
+		switch (k_) {
+		case JSON_CONF_UDP_RCVBUF: {
+			if (!json_parse_uint(val_, val_len_, &obj->rcvbuf)) { goto fail_; }
+			if (obj->rcvbuf > 33554432u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_UDP_REUSEPORT: {
+			if (!json_parse_bool(val_, val_len_, &obj->reuseport)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_UDP_SNDBUF: {
+			if (!json_parse_uint(val_, val_len_, &obj->sndbuf)) { goto fail_; }
+			if (obj->sndbuf > 33554432u) { goto fail_; }
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	if (next_ != JSON_NEXT_END) { goto fail_; }
+	for (; iter_ < length; iter_++) {
+		if (!json_iswhitespace(json[iter_])) { goto fail_; }
+	}
+	return true;
+
+fail_:
+	json_free_conf_udp(obj);
+	*obj = (struct json_conf_udp){ 0 };
+	return false;
 }
 
-static bool json_conf_tcp_unmarshal(
-    struct json_conf_tcp *obj, char *json, size_t length)
+static bool json_unmarshal_conf_tcp(
+	struct json_conf_tcp *obj, char *json, size_t length)
 {
-    const struct json_val root_ = json_parse(json, length);
-    if (root_.type != JSON_OBJECT) { return false; }
-    json_iter iter_ = root_.iter;
-    char *key_; size_t key_len_; char *val_; size_t val_len_;
-    *obj = (struct json_conf_tcp){
-        .keepalive = false,
-        .nodelay = true,
-        .reuseport = false,
-    };
+	*obj = (struct json_conf_tcp){
+		.keepalive = false,
+		.nodelay = true,
+		.reuseport = false,
+	};
+	const struct json_val root_ = json_parse(json, &(size_t){ length });
+	if (root_.type != JSON_OBJECT) { return false; }
+	json_iter iter_ = root_.iter;
+	char *key_; size_t key_len_; char *val_; size_t val_len_;
+	int next_;
 
-    while (json_obj_next(json, length, &iter_,
-            &key_, &key_len_, &val_, &val_len_)) {
-        const int k_ = json_conf_tcp_lookup(key_, key_len_);
-        switch (k_) {
-        case JSON_CONF_TCP_KEEPALIVE: {
-            if (!json_parse_bool(val_, val_len_, &obj->keepalive)) { return false; }
-            break;
-        }
-        case JSON_CONF_TCP_NODELAY: {
-            if (!json_parse_bool(val_, val_len_, &obj->nodelay)) { return false; }
-            break;
-        }
-        case JSON_CONF_TCP_RCVBUF: {
-            if (!json_parse_uint(val_, val_len_, &obj->rcvbuf)) { return false; }
-            if (obj->rcvbuf > 33554432u) { return false; }
-            break;
-        }
-        case JSON_CONF_TCP_REUSEPORT: {
-            if (!json_parse_bool(val_, val_len_, &obj->reuseport)) { return false; }
-            break;
-        }
-        case JSON_CONF_TCP_SNDBUF: {
-            if (!json_parse_uint(val_, val_len_, &obj->sndbuf)) { return false; }
-            if (obj->sndbuf > 33554432u) { return false; }
-            break;
-        }
-        default:
-            break;
-        }
-    }
-    return true;
+	while ((next_ = json_obj_next(json, &length, &iter_,
+			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
+		const int k_ = json_lookup_conf_tcp(key_, key_len_);
+		switch (k_) {
+		case JSON_CONF_TCP_KEEPALIVE: {
+			if (!json_parse_bool(val_, val_len_, &obj->keepalive)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_TCP_NODELAY: {
+			if (!json_parse_bool(val_, val_len_, &obj->nodelay)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_TCP_RCVBUF: {
+			if (!json_parse_uint(val_, val_len_, &obj->rcvbuf)) { goto fail_; }
+			if (obj->rcvbuf > 33554432u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_TCP_REUSEPORT: {
+			if (!json_parse_bool(val_, val_len_, &obj->reuseport)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_TCP_SNDBUF: {
+			if (!json_parse_uint(val_, val_len_, &obj->sndbuf)) { goto fail_; }
+			if (obj->sndbuf > 33554432u) { goto fail_; }
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	if (next_ != JSON_NEXT_END) { goto fail_; }
+	for (; iter_ < length; iter_++) {
+		if (!json_iswhitespace(json[iter_])) { goto fail_; }
+	}
+	return true;
+
+fail_:
+	json_free_conf_tcp(obj);
+	*obj = (struct json_conf_tcp){ 0 };
+	return false;
 }
 
-static bool json_conf_kcp_unmarshal(
-    struct json_conf_kcp *obj, char *json, size_t length)
+static bool json_unmarshal_conf_kcp(
+	struct json_conf_kcp *obj, char *json, size_t length)
 {
-    const struct json_val root_ = json_parse(json, length);
-    if (root_.type != JSON_OBJECT) { return false; }
-    json_iter iter_ = root_.iter;
-    char *key_; size_t key_len_; char *val_; size_t val_len_;
-    *obj = (struct json_conf_kcp){
-        .flush = 1u,
-        .interval = 100u,
-        .mtu = 1400u,
-        .nc = 1u,
-        .nodelay = 1u,
-        .rcvwnd = 256u,
-        .resend = 0u,
-        .sndwnd = 256u,
-    };
+	*obj = (struct json_conf_kcp){
+		.flush = 1u,
+		.interval = 100u,
+		.mtu = 1400u,
+		.nc = 1u,
+		.nodelay = 1u,
+		.rcvwnd = 256u,
+		.resend = 0u,
+		.sndwnd = 256u,
+	};
+	const struct json_val root_ = json_parse(json, &(size_t){ length });
+	if (root_.type != JSON_OBJECT) { return false; }
+	json_iter iter_ = root_.iter;
+	char *key_; size_t key_len_; char *val_; size_t val_len_;
+	int next_;
 
-    while (json_obj_next(json, length, &iter_,
-            &key_, &key_len_, &val_, &val_len_)) {
-        const int k_ = json_conf_kcp_lookup(key_, key_len_);
-        switch (k_) {
-        case JSON_CONF_KCP_FLUSH: {
-            if (!json_parse_uint(val_, val_len_, &obj->flush)) { return false; }
-            if (obj->flush > 2u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_INTERVAL: {
-            if (!json_parse_uint(val_, val_len_, &obj->interval)) { return false; }
-            if (obj->interval < 10u) { return false; }
-            if (obj->interval > 500u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_MTU: {
-            if (!json_parse_uint(val_, val_len_, &obj->mtu)) { return false; }
-            if (obj->mtu < 300u) { return false; }
-            if (obj->mtu > 1500u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_NC: {
-            if (!json_parse_uint(val_, val_len_, &obj->nc)) { return false; }
-            if (obj->nc > 1u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_NODELAY: {
-            if (!json_parse_uint(val_, val_len_, &obj->nodelay)) { return false; }
-            if (obj->nodelay > 2u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_RCVWND: {
-            if (!json_parse_uint(val_, val_len_, &obj->rcvwnd)) { return false; }
-            if (obj->rcvwnd < 16u) { return false; }
-            if (obj->rcvwnd > 65536u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_RESEND: {
-            if (!json_parse_uint(val_, val_len_, &obj->resend)) { return false; }
-            if (obj->resend > 100u) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_SNDWND: {
-            if (!json_parse_uint(val_, val_len_, &obj->sndwnd)) { return false; }
-            if (obj->sndwnd < 16u) { return false; }
-            if (obj->sndwnd > 65536u) { return false; }
-            break;
-        }
-        default:
-            break;
-        }
-    }
-    return true;
+	while ((next_ = json_obj_next(json, &length, &iter_,
+			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
+		const int k_ = json_lookup_conf_kcp(key_, key_len_);
+		switch (k_) {
+		case JSON_CONF_KCP_FLUSH: {
+			if (!json_parse_uint(val_, val_len_, &obj->flush)) { goto fail_; }
+			if (obj->flush > 2u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_INTERVAL: {
+			if (!json_parse_uint(val_, val_len_, &obj->interval)) { goto fail_; }
+			if (obj->interval < 10u) { goto fail_; }
+			if (obj->interval > 500u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_MTU: {
+			if (!json_parse_uint(val_, val_len_, &obj->mtu)) { goto fail_; }
+			if (obj->mtu < 300u) { goto fail_; }
+			if (obj->mtu > 1500u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_NC: {
+			if (!json_parse_uint(val_, val_len_, &obj->nc)) { goto fail_; }
+			if (obj->nc > 1u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_NODELAY: {
+			if (!json_parse_uint(val_, val_len_, &obj->nodelay)) { goto fail_; }
+			if (obj->nodelay > 2u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_RCVWND: {
+			if (!json_parse_uint(val_, val_len_, &obj->rcvwnd)) { goto fail_; }
+			if (obj->rcvwnd < 16u) { goto fail_; }
+			if (obj->rcvwnd > 65536u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_RESEND: {
+			if (!json_parse_uint(val_, val_len_, &obj->resend)) { goto fail_; }
+			if (obj->resend > 100u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_SNDWND: {
+			if (!json_parse_uint(val_, val_len_, &obj->sndwnd)) { goto fail_; }
+			if (obj->sndwnd < 16u) { goto fail_; }
+			if (obj->sndwnd > 65536u) { goto fail_; }
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	if (next_ != JSON_NEXT_END) { goto fail_; }
+	for (; iter_ < length; iter_++) {
+		if (!json_iswhitespace(json[iter_])) { goto fail_; }
+	}
+	return true;
+
+fail_:
+	json_free_conf_kcp(obj);
+	*obj = (struct json_conf_kcp){ 0 };
+	return false;
 }
 
-bool json_conf_unmarshal(
-    struct json_conf *obj, char *json, size_t length)
+bool json_unmarshal_conf(
+	struct json_conf *obj, char *json, size_t length)
 {
-    const struct json_val root_ = json_parse(json, length);
-    if (root_.type != JSON_OBJECT) { return false; }
-    json_iter iter_ = root_.iter;
-    char *key_; size_t key_len_; char *val_; size_t val_len_;
-    *obj = (struct json_conf){
-        .kcp = {
-            .flush = 1u,
-            .interval = 100u,
-            .mtu = 1400u,
-            .nc = 1u,
-            .nodelay = 1u,
-            .rcvwnd = 256u,
-            .resend = 0u,
-            .sndwnd = 256u,
-        },
-        .keepalive = 25u,
-        .linger = 30u,
-        .loglevel = 4u,
-        .tcp = {
-            .keepalive = false,
-            .nodelay = true,
-            .reuseport = false,
-        },
-        .time_wait = 120u,
-        .timeout = 600u,
-        .udp = {
-            .reuseport = false,
-        },
-    };
+	*obj = (struct json_conf){
+		.kcp = {
+			.flush = 1u,
+			.interval = 100u,
+			.mtu = 1400u,
+			.nc = 1u,
+			.nodelay = 1u,
+			.rcvwnd = 256u,
+			.resend = 0u,
+			.sndwnd = 256u,
+		},
+		.keepalive = 25u,
+		.linger = 30u,
+		.loglevel = 4u,
+		.tcp = {
+			.keepalive = false,
+			.nodelay = true,
+			.reuseport = false,
+		},
+		.time_wait = 120u,
+		.timeout = 600u,
+		.udp = {
+			.reuseport = false,
+		},
+	};
+	const struct json_val root_ = json_parse(json, &(size_t){ length });
+	if (root_.type != JSON_OBJECT) { return false; }
+	json_iter iter_ = root_.iter;
+	char *key_; size_t key_len_; char *val_; size_t val_len_;
+	int next_;
 
-    while (json_obj_next(json, length, &iter_,
-            &key_, &key_len_, &val_, &val_len_)) {
-        const int k_ = json_conf_lookup(key_, key_len_);
-        switch (k_) {
-        case JSON_CONF_CONNECT: {
-            if (!json_parse_string(val_, val_len_, &obj->connect.str, &obj->connect.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_HTTP_LISTEN: {
-            if (!json_parse_string(val_, val_len_, &obj->http_listen.str, &obj->http_listen.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP: {
-            if (!json_conf_kcp_unmarshal(&obj->kcp, val_, val_len_)) {
-                return false;
-            }
-            break;
-        }
-        case JSON_CONF_KCP_BIND: {
-            if (!json_parse_string(val_, val_len_, &obj->kcp_bind.str, &obj->kcp_bind.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_KCP_CONNECT: {
-            if (!json_parse_string(val_, val_len_, &obj->kcp_connect.str, &obj->kcp_connect.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_KEEPALIVE: {
-            if (!json_parse_uint(val_, val_len_, &obj->keepalive)) { return false; }
-            if (obj->keepalive > 600u) { return false; }
-            break;
-        }
-        case JSON_CONF_LINGER: {
-            if (!json_parse_uint(val_, val_len_, &obj->linger)) { return false; }
-            if (obj->linger < 5u) { return false; }
-            if (obj->linger > 600u) { return false; }
-            break;
-        }
-        case JSON_CONF_LISTEN: {
-            if (!json_parse_string(val_, val_len_, &obj->listen.str, &obj->listen.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_LOGLEVEL: {
-            if (!json_parse_uint(val_, val_len_, &obj->loglevel)) { return false; }
-            if (obj->loglevel > 8u) { return false; }
-            break;
-        }
-        case JSON_CONF_METHOD: {
-            if (!json_parse_string(val_, val_len_, &obj->method.str, &obj->method.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_NETDEV: {
-            if (!json_parse_string(val_, val_len_, &obj->netdev.str, &obj->netdev.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_OBFS: {
-            if (!json_parse_string(val_, val_len_, &obj->obfs.str, &obj->obfs.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_PASSWORD: {
-            if (!json_parse_string(val_, val_len_, &obj->password.str, &obj->password.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_PSK: {
-            if (!json_parse_string(val_, val_len_, &obj->psk.str, &obj->psk.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_RENDEZVOUS_SERVER: {
-            if (!json_parse_string(val_, val_len_, &obj->rendezvous_server.str, &obj->rendezvous_server.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_SERVICE_ID: {
-            if (!json_parse_string(val_, val_len_, &obj->service_id.str, &obj->service_id.len)) { return false; }
-            break;
-        }
-        case JSON_CONF_TCP: {
-            if (!json_conf_tcp_unmarshal(&obj->tcp, val_, val_len_)) {
-                return false;
-            }
-            break;
-        }
-        case JSON_CONF_TIME_WAIT: {
-            if (!json_parse_uint(val_, val_len_, &obj->time_wait)) { return false; }
-            if (obj->time_wait < 5u) { return false; }
-            if (obj->time_wait > 3600u) { return false; }
-            break;
-        }
-        case JSON_CONF_TIMEOUT: {
-            if (!json_parse_uint(val_, val_len_, &obj->timeout)) { return false; }
-            if (obj->timeout < 60u) { return false; }
-            if (obj->timeout > 86400u) { return false; }
-            break;
-        }
-        case JSON_CONF_UDP: {
-            if (!json_conf_udp_unmarshal(&obj->udp, val_, val_len_)) {
-                return false;
-            }
-            break;
-        }
-        case JSON_CONF_USER: {
-            if (!json_parse_string(val_, val_len_, &obj->user.str, &obj->user.len)) { return false; }
-            break;
-        }
-        default:
-            break;
-        }
-    }
-    return true;
+	while ((next_ = json_obj_next(json, &length, &iter_,
+			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
+		const int k_ = json_lookup_conf(key_, key_len_);
+		switch (k_) {
+		case JSON_CONF_CONNECT: {
+			if (!json_parse_string(val_, val_len_, &obj->connect.str, &obj->connect.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_HTTP_LISTEN: {
+			if (!json_parse_string(val_, val_len_, &obj->http_listen.str, &obj->http_listen.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP: {
+			/* duplicate key: release the previous value first */
+			json_free_conf_kcp(&obj->kcp);
+			if (!json_unmarshal_conf_kcp(&obj->kcp, val_, val_len_)) {
+				goto fail_;
+			}
+			break;
+		}
+		case JSON_CONF_KCP_BIND: {
+			if (!json_parse_string(val_, val_len_, &obj->kcp_bind.str, &obj->kcp_bind.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KCP_CONNECT: {
+			if (!json_parse_string(val_, val_len_, &obj->kcp_connect.str, &obj->kcp_connect.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_KEEPALIVE: {
+			if (!json_parse_uint(val_, val_len_, &obj->keepalive)) { goto fail_; }
+			if (obj->keepalive > 600u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_LINGER: {
+			if (!json_parse_uint(val_, val_len_, &obj->linger)) { goto fail_; }
+			if (obj->linger < 5u) { goto fail_; }
+			if (obj->linger > 600u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_LISTEN: {
+			if (!json_parse_string(val_, val_len_, &obj->listen.str, &obj->listen.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_LOGLEVEL: {
+			if (!json_parse_uint(val_, val_len_, &obj->loglevel)) { goto fail_; }
+			if (obj->loglevel > 8u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_METHOD: {
+			if (!json_parse_string(val_, val_len_, &obj->method.str, &obj->method.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_NETDEV: {
+			if (!json_parse_string(val_, val_len_, &obj->netdev.str, &obj->netdev.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_OBFS: {
+			if (!json_parse_string(val_, val_len_, &obj->obfs.str, &obj->obfs.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_PASSWORD: {
+			if (!json_parse_string(val_, val_len_, &obj->password.str, &obj->password.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_PSK: {
+			if (!json_parse_string(val_, val_len_, &obj->psk.str, &obj->psk.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_RENDEZVOUS_SERVER: {
+			if (!json_parse_string(val_, val_len_, &obj->rendezvous_server.str, &obj->rendezvous_server.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_SERVICE_ID: {
+			if (!json_parse_string(val_, val_len_, &obj->service_id.str, &obj->service_id.len)) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_TCP: {
+			/* duplicate key: release the previous value first */
+			json_free_conf_tcp(&obj->tcp);
+			if (!json_unmarshal_conf_tcp(&obj->tcp, val_, val_len_)) {
+				goto fail_;
+			}
+			break;
+		}
+		case JSON_CONF_TIME_WAIT: {
+			if (!json_parse_uint(val_, val_len_, &obj->time_wait)) { goto fail_; }
+			if (obj->time_wait < 5u) { goto fail_; }
+			if (obj->time_wait > 3600u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_TIMEOUT: {
+			if (!json_parse_uint(val_, val_len_, &obj->timeout)) { goto fail_; }
+			if (obj->timeout < 60u) { goto fail_; }
+			if (obj->timeout > 86400u) { goto fail_; }
+			break;
+		}
+		case JSON_CONF_UDP: {
+			/* duplicate key: release the previous value first */
+			json_free_conf_udp(&obj->udp);
+			if (!json_unmarshal_conf_udp(&obj->udp, val_, val_len_)) {
+				goto fail_;
+			}
+			break;
+		}
+		case JSON_CONF_USER: {
+			if (!json_parse_string(val_, val_len_, &obj->user.str, &obj->user.len)) { goto fail_; }
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	if (next_ != JSON_NEXT_END) { goto fail_; }
+	for (; iter_ < length; iter_++) {
+		if (!json_iswhitespace(json[iter_])) { goto fail_; }
+	}
+	return true;
+
+fail_:
+	json_free_conf(obj);
+	*obj = (struct json_conf){ 0 };
+	return false;
 }
 
 /** @} */
