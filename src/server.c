@@ -131,15 +131,18 @@ static bool udp_socket(
 	const int udp_af)
 {
 	/* Setup a udp socket. */
-	if ((udp->fd = socket(udp_af, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+	const int fd = socket(udp_af, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd < 0) {
 		LOG_PERROR("udp socket");
 		return false;
 	}
-	if (socket_set_nonblock(udp->fd) != 0) {
+	if (socket_set_nonblock(fd) != 0) {
+		SOCKET_CLOSE_FD(fd);
 		return false;
 	}
-	socket_set_reuseport(udp->fd, conf->udp_reuseport);
-	socket_set_buffer(udp->fd, conf->udp_sndbuf, conf->udp_rcvbuf);
+	socket_set_reuseport(fd, conf->udp_reuseport);
+	socket_set_buffer(fd, conf->udp_sndbuf, conf->udp_rcvbuf);
+	udp->fd = fd;
 	return true;
 }
 
@@ -302,6 +305,30 @@ static size_t server_mss(const struct server *restrict s)
 	return mss;
 }
 
+static bool udp_restart(struct server *restrict s)
+{
+	struct pktconn *restrict udp = &s->pkt;
+	if (udp->fd != -1) {
+		LOGN("udp socket restart");
+		ev_io_stop(s->loop, &udp->w_read);
+		ev_io_stop(s->loop, &udp->w_write);
+		SOCKET_CLOSE_FD(udp->fd);
+		udp->fd = -1;
+		udp->connected = false;
+	}
+	if (!udp_bind(udp, s->conf)) {
+		return false;
+	}
+	ev_io *restrict w_read = &udp->w_read;
+	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
+	w_read->data = s;
+	ev_io_start(s->loop, w_read);
+	ev_io *restrict w_write = &udp->w_write;
+	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
+	w_write->data = s;
+	return true;
+}
+
 bool server_resolve(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
@@ -321,8 +348,7 @@ bool server_resolve(struct server *restrict s)
 		return true;
 	}
 #endif
-	s->pkt.connected = false;
-	if (!udp_bind(&s->pkt, conf)) {
+	if (!udp_restart(s)) {
 		return false;
 	}
 	q->mss = (uint16_t)server_mss(s);
@@ -493,8 +519,8 @@ bool server_start(struct server *restrict s)
 	ev_timer_start(loop, &s->w_kcp_update);
 	if (s->keepalive > 0.0) {
 		ev_timer_start(loop, &s->w_keepalive);
-		ev_timer_start(loop, &s->w_resolve);
 	}
+	ev_timer_start(loop, &s->w_resolve);
 	ev_timer_start(loop, &s->w_timeout);
 
 	struct pktqueue *restrict q = s->pkt.queue;

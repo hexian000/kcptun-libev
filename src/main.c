@@ -306,6 +306,7 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 		LOGN("config successfully reloaded");
 		/* Re-resolve any hostnames in case DNS changed */
 		(void)server_resolve(s);
+		s->last_resolve_time = ev_now(s->loop);
 #if WITH_SYSTEMD
 		(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
 #endif

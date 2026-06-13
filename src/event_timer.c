@@ -120,7 +120,7 @@ void resolve_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 #endif
 	s->last_resolve_time = now;
 
-	watcher->repeat = s->timeout;
+	watcher->repeat = (s->pkt.fd == -1) ? 5.0 : s->timeout;
 	ev_timer_again(loop, watcher);
 }
 
