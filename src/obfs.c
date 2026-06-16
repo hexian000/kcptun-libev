@@ -88,6 +88,11 @@ struct obfs {
 
 #define OBFS_MAX_REQUEST 4096
 #define OBFS_MAX_CONTEXTS 4095
+
+/* the HTTP cover presents itself as a self-hosted server; keep the identity
+ * (Server header + error page signature) consistent across every response */
+#define OBFS_HTTP_SERVER "nginx"
+
 #define OBFS_STARTUP_LIMIT_START 10
 #define OBFS_STARTUP_LIMIT_RATE 30
 #define OBFS_STARTUP_LIMIT_FULL 60
@@ -1271,7 +1276,10 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		}
 		obfs->client = ctx;
 
-		/* send the request */
+		/* send the request, mimicking an Android captive portal
+		 * connectivity check (NetworkStack HTTP probe) pointed at a
+		 * self-hosted check URL; the Host is our own server address,
+		 * not Google's, so the flow looks like a private portal */
 		char addr_str[64];
 		sa_format(addr_str, sizeof(addr_str), &ctx->raddr.sa);
 		char *b = (char *)ctx->wbuf.data;
@@ -1279,8 +1287,11 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			b, ctx->wbuf.cap,
 			"GET /generate_204 HTTP/1.1\r\n"
 			"Host: %s\r\n"
-			"User-Agent: curl/7.81.0\r\n"
-			"Accept: */*\r\n\r\n",
+			"User-Agent: Mozilla/5.0 (X11; Linux x86_64) "
+			"AppleWebKit/537.36 (KHTML, like Gecko) "
+			"Chrome/60.0.3112.32 Safari/537.36\r\n"
+			"Accept-Encoding: gzip\r\n"
+			"Connection: keep-alive\r\n\r\n",
 			addr_str);
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
@@ -1592,6 +1603,13 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 			}
 			obfs_bind(obfs, &addr.sa);
 			LOGI("obfs dpi/tcp server listening on raw socket");
+			LOGN_F("obfs dpi/tcp: the kernel has no real socket "
+			       "for `%s' and will reset the simulated "
+			       "connection; drop those packets before the TCP "
+			       "stack, e.g. `iptables -I INPUT -p tcp --dport "
+			       "<port> -j DROP' or `nft add rule inet filter "
+			       "input tcp dport <port> drop'",
+			       conf->kcp_bind);
 		}
 		if (conf->mode & MODE_CLIENT) {
 			union sockaddr_max addr;
@@ -1624,6 +1642,13 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 				return false;
 			}
 			sa_copy(&s->pkt.kcp_connect.sa, &addr.sa);
+			LOGN_F("obfs dpi/tcp: the kernel has no real socket "
+			       "for `%s' and will reset the simulated "
+			       "connection; drop those packets before the TCP "
+			       "stack, e.g. `iptables -I INPUT -p tcp --sport "
+			       "<port> -j DROP' or `nft add rule inet filter "
+			       "input tcp sport <port> drop'",
+			       conf->kcp_connect);
 		}
 		break;
 	case OBFS_TCP_WND:
@@ -2330,6 +2355,38 @@ static void obfs_on_ready(struct obfs_ctx *restrict ctx)
 	server_ping(s);
 }
 
+/* build a self-hosted-server style error response (matches nginx's built-in
+ * error page) so success and error paths share one consistent identity */
+static int obfs_http_error(
+	char *restrict buf, const size_t cap, const int code,
+	const char *restrict reason)
+{
+	char page[256];
+	const int plen = snprintf(
+		page, sizeof(page),
+		"<html>\r\n"
+		"<head><title>%d %s</title></head>\r\n"
+		"<body>\r\n"
+		"<center><h1>%d %s</h1></center>\r\n"
+		"<hr><center>" OBFS_HTTP_SERVER "</center>\r\n"
+		"</body>\r\n"
+		"</html>\r\n",
+		code, reason, code, reason);
+	CHECK(plen > 0);
+	char date_str[32];
+	const size_t date_len = http_date(date_str, sizeof(date_str));
+	return snprintf(
+		buf, cap,
+		"HTTP/1.1 %d %s\r\n"
+		"Server: " OBFS_HTTP_SERVER "\r\n"
+		"Date: %.*s\r\n"
+		"Content-Type: text/html\r\n"
+		"Content-Length: %d\r\n"
+		"Connection: close\r\n\r\n"
+		"%s",
+		code, reason, (int)date_len, date_str, plen, page);
+}
+
 void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
@@ -2398,9 +2455,9 @@ void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 		return;
 	}
 	if (strcmp(msg->req.method, "GET") != 0) {
-		ret = http_error(
-			(char *)ctx->wbuf.data, ctx->wbuf.cap,
-			HTTP_BAD_REQUEST);
+		ret = obfs_http_error(
+			(char *)ctx->wbuf.data, ctx->wbuf.cap, HTTP_BAD_REQUEST,
+			"Bad Request");
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
 		OBFS_CTX_LOG_F(
@@ -2411,8 +2468,9 @@ void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 	}
 	char *url = msg->req.url;
 	if (strcmp(url, "/generate_204") != 0) {
-		ret = http_error(
-			(char *)ctx->wbuf.data, ctx->wbuf.cap, HTTP_NOT_FOUND);
+		ret = obfs_http_error(
+			(char *)ctx->wbuf.data, ctx->wbuf.cap, HTTP_NOT_FOUND,
+			"Not Found");
 		CHECK(ret > 0);
 		ctx->wbuf.len = (size_t)ret;
 		OBFS_CTX_LOG_F(
@@ -2426,11 +2484,14 @@ void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 	{
 		char date_str[32];
 		const size_t date_len = http_date(date_str, sizeof(date_str));
+		/* same server identity as the error paths; a 204 carries no
+		 * body, so no Content-Length/Content-Type (matches nginx's
+		 * `return 204') and the connection is kept alive */
 		ret = snprintf(
 			(char *)ctx->wbuf.data, ctx->wbuf.cap,
 			"HTTP/1.1 204 No Content\r\n"
+			"Server: " OBFS_HTTP_SERVER "\r\n"
 			"Date: %.*s\r\n"
-			"Content-Length: 0\r\n"
 			"Connection: keep-alive\r\n\r\n",
 			(int)date_len, date_str);
 		CHECK(ret > 0);

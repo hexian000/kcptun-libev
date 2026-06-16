@@ -32,6 +32,7 @@
 
 #include "cityhash.h"
 
+#include "utils/bswap.h"
 #include "utils/likely.h"
 #include "utils/serialize.h"
 
@@ -43,93 +44,67 @@ static const uint_least64_t k0 = UINT64_C(0xc3a5c85c97cb3127);
 static const uint_least64_t k1 = UINT64_C(0xb492b66fbe98f273);
 static const uint_least64_t k2 = UINT64_C(0x9ae16a3b2f90404f);
 
-#ifndef INTSWAP
-#define INTSWAP(a, b)                                                          \
-	do {                                                                   \
-		(a) ^= (b), (b) ^= (a), (a) ^= (b);                            \
-	} while (0)
-#endif
+/* Confine values to 64 bits using only the C11-mandated UINT64_C macro, so
+ * the code never depends on the optional uint64_t type while still doing
+ * exact mod-2^64 arithmetic where it matters: the rotate and the
+ * murmur-style mixes below (the only places a value is shifted right), plus
+ * BSWAP64() which masks its own input. Plain +, *, ^ and << preserve the
+ * low 64 bits, and write_uint64_le() emits exactly those, so nothing else
+ * needs a mask. */
+#define M64(x) ((x) & UINT64_C(0xffffffffffffffff))
 
-#define PERMUTE3(a, b, c)                                                      \
-	do {                                                                   \
-		INTSWAP(a, c);                                                 \
-		INTSWAP(b, c);                                                 \
-	} while (0)
-
-#ifdef __has_builtin
-#if __has_builtin(__builtin_bswap64)
-#define BSWAP64 __builtin_bswap64
-#endif
-#endif
-
-#ifndef BSWAP64
-static inline uint64_t bswap64(uint64_t x)
+/* Bitwise right rotate within 64 bits. */
+static inline uint_fast64_t rotr64(const uint_fast64_t x, const unsigned int r)
 {
-	uint8_t *restrict b = (uint8_t *)&(x);
-	INTSWAP(b[0], b[7]);
-	INTSWAP(b[1], b[6]);
-	INTSWAP(b[2], b[5]);
-	INTSWAP(b[3], b[4]);
-	return x;
+	const uint_fast64_t v = M64(x);
+	return M64((v >> r) | (v << (64u - r)));
 }
 
-#define BSWAP64 bswap64
-#endif
-
-/* Bitwise right rotate. Normally this will compile to a single
- * instruction, especially if the shift is a manifest constant. */
-#define ROTR(x, r) (((x) >> (r)) | ((x) << ((sizeof(x) * 8) - (r))))
-
-static inline uint64_t shift_mix(const uint64_t v)
+static inline uint_fast64_t shift_mix(uint_fast64_t v)
 {
-	return v ^ (v >> 47);
+	v = M64(v);
+	return v ^ (v >> 47u);
 }
 
-/* Hash 128 input bits down to 64 bits of output.
- * This is intended to be a reasonably good hash function. */
-static inline uint64_t Hash128to64(const uint64_t x[restrict 2])
+/* Murmur-inspired 128->64 bit mix. */
+static inline uint_fast64_t
+hash16mul(const uint_fast64_t u, const uint_fast64_t v, const uint_fast64_t mul)
 {
-	/* Murmur-inspired hashing. */
-	const uint64_t kMul = 0x9ddfea08eb382d69ULL;
-	uint64_t a = (x[0] ^ x[1]) * kMul;
-	a ^= (a >> 47);
-	uint64_t b = (x[1] ^ a) * kMul;
-	b ^= (b >> 47);
-	b *= kMul;
+	uint_fast64_t a = M64((u ^ v) * mul);
+	a ^= a >> 47u;
+	uint_fast64_t b = M64((v ^ a) * mul);
+	b ^= b >> 47u;
+	b = M64(b * mul);
 	return b;
 }
 
-static inline uint64_t HashLen16(uint64_t u, uint64_t v)
+static inline uint_fast64_t
+HashLen16(const uint_fast64_t u, const uint_fast64_t v)
 {
-	return Hash128to64((uint64_t[]){ u, v });
+	return hash16mul(u, v, UINT64_C(0x9ddfea08eb382d69));
 }
 
-static inline uint64_t HashLen16mul(uint64_t u, uint64_t v, uint64_t mul)
+static inline uint_fast64_t HashLen16mul(
+	const uint_fast64_t u, const uint_fast64_t v, const uint_fast64_t mul)
 {
-	/* Murmur-inspired hashing. */
-	uint64_t a = (u ^ v) * mul;
-	a ^= (a >> 47);
-	uint64_t b = (v ^ a) * mul;
-	b ^= (b >> 47);
-	b *= mul;
-	return b;
+	return hash16mul(u, v, mul);
 }
 
-static uint64_t HashLen0to16(const unsigned char *restrict s, size_t len)
+static uint_fast64_t HashLen0to16(const unsigned char *restrict s, size_t len)
 {
 	if (len >= 8) {
-		uint64_t mul = k2 + len * 2;
-		uint64_t a = read_uint64(s) + k2;
-		uint64_t b = read_uint64(s + len - 8);
-		uint64_t c = ROTR(b, 37) * mul + a;
-		uint64_t d = (ROTR(a, 25) + b) * mul;
+		uint_fast64_t mul = k2 + len * 2;
+		uint_fast64_t a = read_uint64_le(s) + k2;
+		uint_fast64_t b = read_uint64_le(s + len - 8);
+		uint_fast64_t c = rotr64(b, 37) * mul + a;
+		uint_fast64_t d = (rotr64(a, 25) + b) * mul;
 		return HashLen16mul(c, d, mul);
 	}
 	if (len >= 4) {
-		uint64_t mul = k2 + len * 2;
-		uint64_t a = read_uint32(s);
+		uint_fast64_t mul = k2 + len * 2;
+		uint_fast64_t a = read_uint32_le(s);
 		return HashLen16mul(
-			len + (a << 3), read_uint32(s + len - 4), mul);
+			len + (a << 3), read_uint32_le(s + len - 4), mul);
 	}
 	if (len > 0) {
 		uint_fast8_t a = (uint_fast8_t)(s[0]);
@@ -146,31 +121,31 @@ static uint64_t HashLen0to16(const unsigned char *restrict s, size_t len)
 
 /* This probably works well for 16-byte strings as well, but it may be overkill
  * in that case. */
-static inline uint64_t
+static inline uint_fast64_t
 HashLen17to32(const unsigned char *restrict s, size_t len)
 {
-	uint64_t mul = k2 + len * 2;
-	uint64_t a = read_uint64(s) * k1;
-	uint64_t b = read_uint64(s + 8);
-	uint64_t c = read_uint64(s + len - 8) * mul;
-	uint64_t d = read_uint64(s + len - 16) * k2;
+	uint_fast64_t mul = k2 + len * 2;
+	uint_fast64_t a = read_uint64_le(s) * k1;
+	uint_fast64_t b = read_uint64_le(s + 8);
+	uint_fast64_t c = read_uint64_le(s + len - 8) * mul;
+	uint_fast64_t d = read_uint64_le(s + len - 16) * k2;
 	return HashLen16mul(
-		ROTR(a + b, 43) + ROTR(c, 30) + d, a + ROTR(b + k2, 18) + c,
-		mul);
+		rotr64(a + b, 43) + rotr64(c, 30) + d,
+		a + rotr64(b + k2, 18) + c, mul);
 }
 
 /* Return a 16-byte hash for 48 bytes. Quick and dirty.
  * Callers do best to use "random-looking" values for a and b. */
 static inline void WeakHashLen32WithSeeds(
-	uint64_t *restrict hash, uint64_t w, uint64_t x, uint64_t y, uint64_t z,
-	uint64_t a, uint64_t b)
+	uint_fast64_t *restrict hash, uint_fast64_t w, uint_fast64_t x,
+	uint_fast64_t y, uint_fast64_t z, uint_fast64_t a, uint_fast64_t b)
 {
 	a += w;
-	b = ROTR(b + a + z, 21);
-	const uint64_t c = a;
+	b = rotr64(b + a + z, 21);
+	const uint_fast64_t c = a;
 	a += x;
 	a += y;
-	b += ROTR(a, 44);
+	b += rotr64(a, 44);
 
 	hash[0] = a + z;
 	hash[1] = b + c;
@@ -178,38 +153,39 @@ static inline void WeakHashLen32WithSeeds(
 
 /* Return a 16-byte hash for s[0] ... s[31], a, and b. Quick and dirty. */
 static inline void WeakHashLen32WithSeedsStr(
-	uint64_t *restrict hash, const unsigned char *s, uint64_t a, uint64_t b)
+	uint_fast64_t *restrict hash, const unsigned char *s, uint_fast64_t a,
+	uint_fast64_t b)
 {
 	WeakHashLen32WithSeeds(
-		hash, read_uint64(s), read_uint64(s + 8), read_uint64(s + 16),
-		read_uint64(s + 24), a, b);
+		hash, read_uint64_le(s), read_uint64_le(s + 8),
+		read_uint64_le(s + 16), read_uint64_le(s + 24), a, b);
 }
 
 /* Return an 8-byte hash for 33 to 64 bytes. */
-static inline uint64_t
+static inline uint_fast64_t
 HashLen33to64(const unsigned char *restrict s, size_t len)
 {
-	uint64_t mul = k2 + len * 2;
-	uint64_t a = read_uint64(s) * k2;
-	uint64_t b = read_uint64(s + 8);
-	uint64_t c = read_uint64(s + len - 24);
-	uint64_t d = read_uint64(s + len - 32);
-	uint64_t e = read_uint64(s + 16) * k2;
-	uint64_t f = read_uint64(s + 24) * 9;
-	uint64_t g = read_uint64(s + len - 8);
-	uint64_t h = read_uint64(s + len - 16) * mul;
-	uint64_t u = ROTR(a + g, 43) + (ROTR(b, 30) + c) * 9;
-	uint64_t v = ((a + g) ^ d) + f + 1;
-	uint64_t w = BSWAP64((u + v) * mul) + h;
-	uint64_t x = ROTR(e + f, 42) + c;
-	uint64_t y = (BSWAP64((v + w) * mul) + g) * mul;
-	uint64_t z = e + f + c;
+	uint_fast64_t mul = k2 + len * 2;
+	uint_fast64_t a = read_uint64_le(s) * k2;
+	uint_fast64_t b = read_uint64_le(s + 8);
+	uint_fast64_t c = read_uint64_le(s + len - 24);
+	uint_fast64_t d = read_uint64_le(s + len - 32);
+	uint_fast64_t e = read_uint64_le(s + 16) * k2;
+	uint_fast64_t f = read_uint64_le(s + 24) * 9;
+	uint_fast64_t g = read_uint64_le(s + len - 8);
+	uint_fast64_t h = read_uint64_le(s + len - 16) * mul;
+	uint_fast64_t u = rotr64(a + g, 43) + (rotr64(b, 30) + c) * 9;
+	uint_fast64_t v = ((a + g) ^ d) + f + 1;
+	uint_fast64_t w = BSWAP64((u + v) * mul) + h;
+	uint_fast64_t x = rotr64(e + f, 42) + c;
+	uint_fast64_t y = (BSWAP64((v + w) * mul) + g) * mul;
+	uint_fast64_t z = e + f + c;
 	a = BSWAP64((x + z) * mul + y) + b;
 	b = shift_mix((z + a) * mul + d + h) * mul;
 	return b + x;
 }
 
-static uint64_t CityHash64(const void *restrict ptr, size_t len)
+static uint_fast64_t CityHash64(const void *restrict ptr, size_t len)
 {
 	const unsigned char *s = ptr;
 	if (len <= 32) {
@@ -224,27 +200,29 @@ static uint64_t CityHash64(const void *restrict ptr, size_t len)
 
 	/* For strings over 64 bytes we hash the end first, and then as we
 	 * loop we keep 56 bytes of state: v, w, x, y, and z. */
-	uint64_t x = read_uint64(s + len - 40);
-	uint64_t y = read_uint64(s + len - 16) + read_uint64(s + len - 56);
-	uint64_t z = HashLen16(
-		read_uint64(s + len - 48) + len, read_uint64(s + len - 24));
-	uint64_t v[2];
+	uint_fast64_t x = read_uint64_le(s + len - 40);
+	uint_fast64_t y =
+		read_uint64_le(s + len - 16) + read_uint64_le(s + len - 56);
+	uint_fast64_t z = HashLen16(
+		read_uint64_le(s + len - 48) + len,
+		read_uint64_le(s + len - 24));
+	uint_fast64_t v[2];
 	WeakHashLen32WithSeedsStr(v, s + len - 64, len, z);
-	uint64_t w[2];
+	uint_fast64_t w[2];
 	WeakHashLen32WithSeedsStr(w, s + len - 32, y + k1, x);
-	x = x * k1 + read_uint64(s);
+	x = x * k1 + read_uint64_le(s);
 
 	/* Decrease len to the nearest multiple of 64, and operate on 64-byte chunks. */
 	len = (len - 1) & ~(size_t)(63);
 	do {
-		x = ROTR(x + y + v[0] + read_uint64(s + 8), 37) * k1;
-		y = ROTR(y + v[1] + read_uint64(s + 48), 42) * k1;
+		x = rotr64(x + y + v[0] + read_uint64_le(s + 8), 37) * k1;
+		y = rotr64(y + v[1] + read_uint64_le(s + 48), 42) * k1;
 		x ^= w[1];
-		y += v[0] + read_uint64(s + 40);
-		z = ROTR(z + w[0], 33) * k1;
+		y += v[0] + read_uint64_le(s + 40);
+		z = rotr64(z + w[0], 33) * k1;
 		WeakHashLen32WithSeedsStr(v, s, v[1] * k1, x + w[0]);
 		WeakHashLen32WithSeedsStr(
-			w, s + 32, z + w[1], y + read_uint64(s + 16));
+			w, s + 32, z + w[1], y + read_uint64_le(s + 16));
 		INTSWAP(z, x);
 		s += 64;
 		len -= 64;
@@ -254,14 +232,15 @@ static uint64_t CityHash64(const void *restrict ptr, size_t len)
 		HashLen16(v[1], w[1]) + x);
 }
 
-static uint64_t CityHash64WithSeeds(
-	const void *restrict ptr, size_t len, uint64_t seed0, uint64_t seed1)
+static uint_fast64_t CityHash64WithSeeds(
+	const void *restrict ptr, size_t len, uint_fast64_t seed0,
+	uint_fast64_t seed1)
 {
 	return HashLen16(CityHash64(ptr, len) - seed0, seed1);
 }
 
-static uint64_t
-CityHash64WithSeed(const void *restrict ptr, size_t len, uint64_t seed)
+static uint_fast64_t
+CityHash64WithSeed(const void *restrict ptr, size_t len, uint_fast64_t seed)
 {
 	return CityHash64WithSeeds(ptr, len, k2, seed);
 }
@@ -272,24 +251,24 @@ static void CityMurmur(
 	unsigned char hash[16], const unsigned char *s, size_t len,
 	const unsigned char seed[16])
 {
-	uint64_t a = read_uint64(seed);
-	uint64_t b = read_uint64(seed + sizeof(uint64_t));
-	uint64_t c = 0;
-	uint64_t d = 0;
+	uint_fast64_t a = read_uint64_le(seed);
+	uint_fast64_t b = read_uint64_le(seed + 8u);
+	uint_fast64_t c = 0;
+	uint_fast64_t d = 0;
 	if (len <= 16) {
 		a = shift_mix(a * k1) * k1;
 		c = b * k1 + HashLen0to16(s, len);
-		d = shift_mix(a + (len >= 8 ? read_uint64(s) : c));
+		d = shift_mix(a + (len >= 8 ? read_uint64_le(s) : c));
 	} else {
-		c = HashLen16(read_uint64(s + len - 8) + k1, a);
-		d = HashLen16(b + len, c + read_uint64(s + len - 16));
+		c = HashLen16(read_uint64_le(s + len - 8) + k1, a);
+		d = HashLen16(b + len, c + read_uint64_le(s + len - 16));
 		a += d;
 		/* len > 16 here, so do...while is safe */
 		do {
-			a ^= shift_mix(read_uint64(s) * k1) * k1;
+			a ^= shift_mix(read_uint64_le(s) * k1) * k1;
 			a *= k1;
 			b ^= a;
-			c ^= shift_mix(read_uint64(s + 8) * k1) * k1;
+			c ^= shift_mix(read_uint64_le(s + 8) * k1) * k1;
 			c *= k1;
 			d ^= c;
 			s += 16;
@@ -299,8 +278,8 @@ static void CityMurmur(
 	a = HashLen16(a, c);
 	b = HashLen16(d, b);
 
-	write_uint64(hash, a ^ b);
-	write_uint64(hash + sizeof(uint64_t), HashLen16(b, a));
+	write_uint64_le(hash, a ^ b);
+	write_uint64_le(hash + 8u, HashLen16(b, a));
 }
 
 static void CityHash128WithSeed(
@@ -315,51 +294,51 @@ static void CityHash128WithSeed(
 
 	/* We expect len >= 128 to be the common case.  Keep 56 bytes of state:
 	 * v, w, x, y, and z. */
-	uint64_t v[2], w[2];
-	uint64_t x = read_uint64(seed);
-	uint64_t y = read_uint64(seed + sizeof(uint64_t));
-	uint64_t z = len * k1;
-	v[0] = ROTR(y ^ k1, 49) * k1 + read_uint64(s);
-	v[1] = ROTR(v[0], 42) * k1 + read_uint64(s + 8);
-	w[0] = ROTR(y + z, 35) * k1 + x;
-	w[1] = ROTR(x + read_uint64(s + 88), 53) * k1;
+	uint_fast64_t v[2], w[2];
+	uint_fast64_t x = read_uint64_le(seed);
+	uint_fast64_t y = read_uint64_le(seed + 8u);
+	uint_fast64_t z = len * k1;
+	v[0] = rotr64(y ^ k1, 49) * k1 + read_uint64_le(s);
+	v[1] = rotr64(v[0], 42) * k1 + read_uint64_le(s + 8);
+	w[0] = rotr64(y + z, 35) * k1 + x;
+	w[1] = rotr64(x + read_uint64_le(s + 88), 53) * k1;
 
 	/* This is the same inner loop as CityHash64(), manually unrolled. */
 	do {
-		x = ROTR(x + y + v[0] + read_uint64(s + 8), 37) * k1;
-		y = ROTR(y + v[1] + read_uint64(s + 48), 42) * k1;
+		x = rotr64(x + y + v[0] + read_uint64_le(s + 8), 37) * k1;
+		y = rotr64(y + v[1] + read_uint64_le(s + 48), 42) * k1;
 		x ^= w[1];
-		y += v[0] + read_uint64(s + 40);
-		z = ROTR(z + w[0], 33) * k1;
+		y += v[0] + read_uint64_le(s + 40);
+		z = rotr64(z + w[0], 33) * k1;
 		WeakHashLen32WithSeedsStr(v, s, v[1] * k1, x + w[0]);
 		WeakHashLen32WithSeedsStr(
-			w, s + 32, z + w[1], y + read_uint64(s + 16));
+			w, s + 32, z + w[1], y + read_uint64_le(s + 16));
 		INTSWAP(z, x);
 		s += 64;
-		x = ROTR(x + y + v[0] + read_uint64(s + 8), 37) * k1;
-		y = ROTR(y + v[1] + read_uint64(s + 48), 42) * k1;
+		x = rotr64(x + y + v[0] + read_uint64_le(s + 8), 37) * k1;
+		y = rotr64(y + v[1] + read_uint64_le(s + 48), 42) * k1;
 		x ^= w[1];
-		y += v[0] + read_uint64(s + 40);
-		z = ROTR(z + w[0], 33) * k1;
+		y += v[0] + read_uint64_le(s + 40);
+		z = rotr64(z + w[0], 33) * k1;
 		WeakHashLen32WithSeedsStr(v, s, v[1] * k1, x + w[0]);
 		WeakHashLen32WithSeedsStr(
-			w, s + 32, z + w[1], y + read_uint64(s + 16));
+			w, s + 32, z + w[1], y + read_uint64_le(s + 16));
 		INTSWAP(z, x);
 		s += 64;
 		len -= 128;
 	} while (LIKELY(len >= 128));
-	x += ROTR(v[0] + z, 49) * k0;
-	y = y * k0 + ROTR(w[1], 37);
-	z = z * k0 + ROTR(w[0], 27);
+	x += rotr64(v[0] + z, 49) * k0;
+	y = y * k0 + rotr64(w[1], 37);
+	z = z * k0 + rotr64(w[0], 27);
 	w[0] *= 9;
 	v[0] *= k0;
 	/* If 0 < len < 128, hash up to 4 chunks of 32 bytes each from the end of s. */
 	for (size_t tail_done = 0; tail_done < len;) {
 		tail_done += 32;
-		y = ROTR(x + y, 42) * k0 + v[1];
-		w[0] += read_uint64(s + len - tail_done + 16);
+		y = rotr64(x + y, 42) * k0 + v[1];
+		w[0] += read_uint64_le(s + len - tail_done + 16);
 		x = x * k0 + w[0];
-		z += w[1] + read_uint64(s + len - tail_done);
+		z += w[1] + read_uint64_le(s + len - tail_done);
 		w[1] += v[0];
 		WeakHashLen32WithSeedsStr(
 			v, s + len - tail_done, v[0] + z, v[1]);
@@ -371,8 +350,8 @@ static void CityHash128WithSeed(
 	x = HashLen16(x, v[0]);
 	y = HashLen16(y + z, w[0]);
 
-	write_uint64(hash, HashLen16(x + v[1], w[1]) + y);
-	write_uint64(hash + sizeof(uint64_t), HashLen16(x + w[1], y + v[1]));
+	write_uint64_le(hash, HashLen16(x + v[1], w[1]) + y);
+	write_uint64_le(hash + 8u, HashLen16(x + w[1], y + v[1]));
 }
 
 /*
@@ -380,14 +359,14 @@ static void CityHash128(unsigned char hash[16], const void *ptr, size_t len)
 {
 	unsigned char seed[16];
 	if (len < 16) {
-		write_uint64(seed, k0);
-		write_uint64(seed + sizeof(uint64_t), k1);
+		write_uint64_le(seed, k0);
+		write_uint64_le(seed + 8u, k1);
 		CityHash128WithSeed(hash, ptr, len, seed);
 		return;
 	}
 	const unsigned char *s = ptr;
-	write_uint64(seed, read_uint64(s));
-	write_uint64(seed + sizeof(uint64_t), read_uint64(s + 8) + k0);
+	write_uint64_le(seed, read_uint64_le(s));
+	write_uint64_le(seed + 8u, read_uint64_le(s + 8) + k0);
 	CityHash128WithSeed(hash, s + 16, len - 16, seed);
 }
 */
@@ -402,7 +381,7 @@ uint_fast32_t cityhash64low_32(
 	const void *restrict ptr, const size_t len, const uint_fast32_t seed)
 {
 	/* Explicit truncation to 32 bits; name implies low-32 output. */
-	return (uint_fast32_t)(uint32_t)CityHash64WithSeed(ptr, len, seed);
+	return CityHash64WithSeed(ptr, len, seed) & UINT32_C(0xffffffff);
 }
 
 void cityhash128_128(

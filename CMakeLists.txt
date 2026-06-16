@@ -117,5 +117,19 @@ else()
     list(APPEND CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
 endif()
 
+# find systemd
+# Detected at the top level so that both the application (src) and the
+# vendored csnippets library observe a consistent WITH_SYSTEMD.
+if(ENABLE_SYSTEMD)
+    find_path(SYSTEMD_INCLUDE_DIR NAMES systemd/sd-daemon.h)
+    find_library(SYSTEMD_LIBRARY NAMES systemd)
+    if((EXISTS ${SYSTEMD_INCLUDE_DIR}) AND (EXISTS ${SYSTEMD_LIBRARY}))
+        set(WITH_SYSTEMD TRUE)
+        message(STATUS "systemd: ${SYSTEMD_LIBRARY}")
+    else()
+        message(WARNING "systemd not found")
+    endif()
+endif()
+
 add_subdirectory(contrib)
 add_subdirectory(src)

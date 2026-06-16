@@ -40,6 +40,9 @@ size_t crypto_open(
 	const unsigned char *nonce, const unsigned char *cipher,
 	size_t cipher_size);
 
+/* append npad bytes of padding after data[0..len), each byte equal to npad */
+bool crypto_pad(unsigned char *data, size_t len, size_t npad);
+
 void crypto_list_methods(void);
 
 #endif /* CRYPTO_H */

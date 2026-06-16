@@ -65,18 +65,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInf
     endif()
 endif()
 
-# find systemd
-if(ENABLE_SYSTEMD)
-    find_path(SYSTEMD_INCLUDE_DIR NAMES systemd/sd-daemon.h)
-    find_library(SYSTEMD_LIBRARY NAMES systemd)
-    if((EXISTS ${SYSTEMD_INCLUDE_DIR}) AND (EXISTS ${SYSTEMD_LIBRARY}))
-        set(WITH_SYSTEMD TRUE)
-        message(STATUS "systemd: ${SYSTEMD_LIBRARY}")
-        target_include_directories(csnippets PRIVATE ${SYSTEMD_INCLUDE_DIR})
-        target_link_libraries(csnippets PUBLIC ${SYSTEMD_LIBRARY})
-    else()
-        message(WARNING "systemd not found")
-    endif()
+# systemd integration (WITH_SYSTEMD is detected by the parent project)
+if(WITH_SYSTEMD)
+    target_include_directories(csnippets PRIVATE ${SYSTEMD_INCLUDE_DIR})
+    target_link_libraries(csnippets PUBLIC ${SYSTEMD_LIBRARY})
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")

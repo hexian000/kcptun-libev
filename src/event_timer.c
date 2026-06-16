@@ -10,6 +10,7 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "math/rand.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
 #include "utils/slog.h"
@@ -34,6 +35,14 @@ void listener_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	if (l->fd_http != -1 && !ev_is_active(w_accept_http)) {
 		ev_io_start(loop, w_accept_http);
 	}
+}
+
+/* keepalive interval with jitter to desynchronize pings; the jitter
+ * coefficient is uniformly distributed in [0.8, 1.0], applied as a divisor so
+ * the actual interval is never shorter than the configured keepalive */
+static double keepalive_jitter(const double keepalive)
+{
+	return keepalive / (1.0 - 0.2 * frand());
 }
 
 void keepalive_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
@@ -69,7 +78,8 @@ void keepalive_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	}
 
 	if (s->pkt.last_send_time != TSTAMP_NIL) {
-		const double next = s->pkt.last_send_time + s->keepalive;
+		const double next =
+			s->pkt.last_send_time + keepalive_jitter(s->keepalive);
 		if (now < next) {
 			watcher->repeat = next - now;
 			ev_timer_again(loop, watcher);

@@ -1529,7 +1529,7 @@ def generate_unmarshal_c(
             f"{_INDENT}char *key_; size_t key_len_; char *val_; size_t val_len_;",
         ]
         if validate and n_required:
-            lines.append(f"{_INDENT}uint64_t required_ = 0;")
+            lines.append(f"{_INDENT}uint_fast64_t required_ = 0;")
         lines += [
             f"{_INDENT}int next_;",
             "",
@@ -2361,7 +2361,7 @@ def main():
         default=False,
         help=(
             "Omit schema-constraint validation from the generated unmarshal "
-            "functions.  By default a uint64_t presence bitmask verifies "
+            "functions.  By default a uint_fast64_t presence bitmask verifies "
             "that every required field appeared in the JSON input (robust "
             "against duplicate keys), and constraint keywords (minimum, "
             "maximum, minLength, enum, const, minItems, maxItems, ...) are "

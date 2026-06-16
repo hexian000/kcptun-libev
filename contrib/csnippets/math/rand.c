@@ -75,7 +75,7 @@ uint_fast64_t rand64n(const uint_fast64_t n)
 
 float frandf(void)
 {
-	return (float)(((uint_fast32_t)rand64n(UINT32_MAX)) >>
+	return (float)(((uint_fast32_t)rand64n(UINT32_C(0xFFFFFFFF))) >>
 		       (32 - FLT_MANT_DIG)) *
 	       (0.5f / ((uint_fast32_t)1 << (FLT_MANT_DIG - 1)));
 }

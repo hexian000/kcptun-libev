@@ -13,6 +13,7 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "math/rand.h"
 #include "utils/debug.h"
 #include "utils/minmax.h"
 #include "utils/slog.h"
@@ -75,13 +76,18 @@ static bool crypto_open_inplace(
 /* caller should ensure the buffer is large enough */
 static bool crypto_seal_inplace(
 	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
-	const size_t size)
+	const size_t size, const size_t pad)
 {
 	const struct crypto *restrict crypto = q->crypto;
-	const size_t plain_len = *len;
+	const size_t src_len = *len;
 	const size_t nonce_size = crypto->nonce_size;
 	const size_t overhead = crypto->overhead;
-	ASSERT(size >= plain_len + overhead + nonce_size);
+	ASSERT(size >= src_len + pad + overhead + nonce_size);
+	if (!crypto_pad(data, src_len, pad)) {
+		LOGE("failed to pad packet");
+		return false;
+	}
+	const size_t plain_len = src_len + pad;
 	const unsigned char *nonce = noncegen_next(q->noncegen);
 	const size_t dst_size = size - nonce_size;
 	size_t dst_len =
@@ -247,7 +253,11 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
 		size_t len = msg->len;
 		ASSERT(len <= cap);
-		if (!crypto_seal_inplace(q, msg->buf + msg->off, &len, cap)) {
+		/* random padding to obscure the plaintext length; pad stays
+		 * below IKCP_OVERHEAD so the peer's KCP ignores the tail */
+		const size_t pad = rand64n(MIN((size_t)q->mss - len, 15));
+		if (!crypto_seal_inplace(
+			    q, msg->buf + msg->off, &len, cap, pad)) {
 			return false;
 		}
 		msg->len = len;
@@ -311,6 +321,14 @@ static bool queue_new_crypto(
 	if (q->noncegen == NULL) {
 		crypto_free(q->crypto);
 		return false;
+	}
+	if (q->crypto->noncegen_method == noncegen_counter) {
+		LOGW_F("crypto method `%s' uses a counter nonce sent in "
+		       "cleartext; the trailing %zu bytes increment "
+		       "monotonically per packet and may be fingerprinted by "
+		       "DPI; prefer xchacha20poly1305_ietf or xsalsa20poly1305 "
+		       "for traffic analysis resistance",
+		       conf->method, q->crypto->nonce_size);
 	}
 	return true;
 }

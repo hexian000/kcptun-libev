@@ -47,8 +47,8 @@ static const size_t capacity_list[] = {
 
 #define INITIAL_CAPACITY (capacity_list[0])
 #define LAST_CAPACITY (capacity_list[ARRAY_SIZE(capacity_list) - 1])
-/* element ids are 32-bit; UINT32_MAX is odd and reserved for ID_NIL */
-#define MAX_CAPACITY ((size_t)UINT32_MAX)
+/* element ids are 32-bit; 0xFFFFFFFF is odd and reserved for ID_NIL */
+#define MAX_CAPACITY ((size_t)UINT32_C(0xFFFFFFFF))
 
 static inline size_t ceil_capacity(const size_t x)
 {
@@ -66,7 +66,7 @@ static inline size_t ceil_capacity(const size_t x)
 /* 32-bit ids keep struct hash_element compact; valid ids never reach
  * ID_NIL because capacity is bounded by MAX_CAPACITY */
 typedef uint_least32_t elemid_type;
-#define ID_NIL ((elemid_type)UINT32_MAX)
+#define ID_NIL ((elemid_type)UINT32_C(0xFFFFFFFF))
 
 struct hash_element {
 	elemid_type bucket, next;
@@ -217,7 +217,7 @@ static inline void table_rehash(struct hashtable *restrict table)
 	const uint_fast32_t seed = table->seed;
 	for (size_t i = 0; i < size; i++) {
 		struct hash_element *restrict p = &table->p[i];
-		p->hash = table->hash_fn(p->key, seed) & UINT32_MAX;
+		p->hash = table->hash_fn(p->key, seed) & UINT32_C(0xFFFFFFFF);
 	}
 	table_reindex(table);
 }
@@ -279,7 +279,7 @@ static inline struct hashtable *table_grow(struct hashtable *restrict table)
 
 static inline void table_reseed(struct hashtable *restrict table)
 {
-	table->seed = (uint_least32_t)rand64n(UINT32_MAX);
+	table->seed = (uint_least32_t)rand64n(UINT32_C(0xFFFFFFFF));
 #if HASHTABLE_LOG
 	(void)fprintf(
 		stderr, "table reseed: size=%zu new_seed=%" PRIXLEAST32 "\n",
@@ -303,7 +303,7 @@ struct hashtable *table_new(const struct table_opts *opts)
 	*table = (struct hashtable){
 		.size = 0,
 		.freelist = ID_NIL,
-		.seed = (uint_least32_t)rand64n(UINT32_MAX),
+		.seed = (uint_least32_t)rand64n(UINT32_C(0xFFFFFFFF)),
 		.flags = opts->flags,
 		.hash_fn = opts->hash != NULL ? opts->hash : default_hash,
 		.eq_fn = opts->eq != NULL ? opts->eq : default_eq,
@@ -365,7 +365,7 @@ table_set(struct hashtable *restrict table, const void *key, void **element)
 	}
 	assert(element != NULL);
 	const uint_fast32_t hash =
-		table->hash_fn(key, table->seed) & UINT32_MAX;
+		table->hash_fn(key, table->seed) & UINT32_C(0xFFFFFFFF);
 	size_t bucket = bucket_index(table, hash);
 	size_t collision = 0;
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
@@ -433,7 +433,7 @@ table_del(struct hashtable *restrict table, const void *key, void **element)
 		return NULL;
 	}
 	const uint_fast32_t hash =
-		table->hash_fn(key, table->seed) & UINT32_MAX;
+		table->hash_fn(key, table->seed) & UINT32_C(0xFFFFFFFF);
 	const size_t bucket = bucket_index(table, hash);
 	elemid_type *last_next = &table->p[bucket].bucket;
 	for (elemid_type i = *last_next; i != ID_NIL; i = *last_next) {
@@ -468,7 +468,7 @@ bool table_find(
 		return false;
 	}
 	const uint_fast32_t hash =
-		table->hash_fn(key, table->seed) & UINT32_MAX;
+		table->hash_fn(key, table->seed) & UINT32_C(0xFFFFFFFF);
 	const size_t bucket = bucket_index(table, hash);
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
 	     i = table->p[i].next) {
