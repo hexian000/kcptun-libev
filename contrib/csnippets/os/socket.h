@@ -168,7 +168,20 @@ socklen_t socket_get_peer(int fd, union sockaddr_max *sa);
  * @return 0 on success; errno on failure (e.g. EAGAIN/EWOULDBLOCK).
  * @note POSIX version: POSIX.1-2001
  */
-int socket_send(int fd, const void *restrict buf, size_t *restrict len);
+static inline int
+socket_send(const int fd, const void *restrict buf, size_t *restrict len)
+{
+	ssize_t nsend;
+	do {
+		nsend = send(fd, buf, *len, 0);
+	} while (nsend < 0 && errno == EINTR);
+	if (nsend < 0) {
+		*len = 0;
+		return errno;
+	}
+	*len = (size_t)nsend;
+	return 0;
+}
 
 /**
  * @brief Receives data from a socket, retrying on EINTR.
@@ -179,7 +192,21 @@ int socket_send(int fd, const void *restrict buf, size_t *restrict len);
  *         EOF is indicated by a return value of 0 with @p len set to 0.
  * @note POSIX version: POSIX.1-2001
  */
-int socket_recv(int fd, void *restrict buf, size_t *restrict len);
+static inline int
+socket_recv(const int fd, void *restrict buf, size_t *restrict len)
+{
+	ssize_t nrecv;
+	do {
+		nrecv = recv(fd, buf, *len, 0);
+	} while (nrecv < 0 && errno == EINTR);
+	if (nrecv < 0) {
+		*len = 0;
+		return errno;
+	}
+	/* nrecv == 0: EOF */
+	*len = (size_t)nrecv;
+	return 0;
+}
 
 /**
  * @brief Returns the length of the sockaddr structure based on its family.

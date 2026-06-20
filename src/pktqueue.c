@@ -124,7 +124,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			if (LOGLEVEL(WARNING)) {
 				LOG_RATELIMITED_F(
 					WARNING, ev_now(s->loop), 1.0,
-					"* session %08" PRIX32 " not found",
+					"[session:%08" PRIX32 "] not found",
 					conv);
 			}
 			ss0_reset(s, sa, conv);
@@ -278,8 +278,7 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 		if (LOGLEVEL(WARNING)) {
 			LOG_RATELIMITED_F(
 				WARNING, now, 1.0,
-				"* mq_send is full, %" PRIu16
-				" bytes discarded",
+				"send queue full, %" PRIu16 " bytes discarded",
 				msg->len);
 		}
 		msgframe_delete(q, msg);
@@ -323,11 +322,9 @@ static bool queue_new_crypto(
 		return false;
 	}
 	if (q->crypto->noncegen_method == noncegen_counter) {
-		LOGW_F("crypto method `%s' uses a counter nonce sent in "
-		       "cleartext; the trailing %zu bytes increment "
-		       "monotonically per packet and may be fingerprinted by "
-		       "DPI; prefer xchacha20poly1305_ietf or xsalsa20poly1305 "
-		       "for traffic analysis resistance",
+		LOGW_F("crypto method `%s' sends a %zu-byte counter nonce in "
+		       "cleartext that DPI may fingerprint; prefer "
+		       "xchacha20poly1305_ietf or xsalsa20poly1305",
 		       conf->method, q->crypto->nonce_size);
 	}
 	return true;
@@ -345,9 +342,11 @@ struct pktqueue *queue_new(struct server *restrict s)
 	const size_t send_cap = MAX(conf->kcp_sndwnd * 4, MMSG_BATCH_SIZE * 2);
 	const size_t recv_cap = MAX(conf->kcp_rcvwnd, MMSG_BATCH_SIZE);
 	*q = (struct pktqueue){
-		.mq_send = malloc(send_cap * sizeof(struct msgframe *)),
+		.mq_send = (struct msgframe **)malloc(
+			send_cap * sizeof(struct msgframe *)),
 		.mq_send_cap = send_cap,
-		.mq_recv = malloc(recv_cap * sizeof(struct msgframe *)),
+		.mq_recv = (struct msgframe **)malloc(
+			recv_cap * sizeof(struct msgframe *)),
 		.mq_recv_cap = recv_cap,
 		.msg_offset = 0,
 	};
@@ -380,7 +379,7 @@ struct pktqueue *queue_new(struct server *restrict s)
 		}
 		q->obfs = obfs_new(s);
 		if (q->obfs == NULL) {
-			LOGW_F("obfs init failed: %s", conf->obfs);
+			LOGW_F("obfs `%s' init failed", conf->obfs);
 		}
 	}
 #endif
@@ -393,14 +392,14 @@ void queue_free(struct pktqueue *restrict q)
 		for (; q->mq_send_len > 0; q->mq_send_len--) {
 			msgframe_delete(q, q->mq_send[q->mq_send_len]);
 		}
-		free(q->mq_send);
+		free((void *)q->mq_send);
 		q->mq_send = NULL;
 	}
 	if (q->mq_recv != NULL) {
 		for (; q->mq_recv_len > 0; q->mq_recv_len--) {
 			msgframe_delete(q, q->mq_recv[q->mq_recv_len]);
 		}
-		free(q->mq_recv);
+		free((void *)q->mq_recv);
 		q->mq_recv = NULL;
 	}
 #if WITH_CRYPTO

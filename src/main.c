@@ -46,7 +46,6 @@ static void print_usage(char *argv0)
 		stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
 		"  -c, --config <file>        specify json config\n"
-		"  -C, --color                colorized log output using ANSI escape sequences\n"
 		"  -d, --daemonize            run in background and write logs to syslog\n"
 		"  -u, --user [user][:[group]]\n"
 		"                             run as the specified identity, e.g. `nobody:nogroup'\n"
@@ -73,12 +72,14 @@ static void set_log_config(const struct config *restrict conf, const int level)
 		slog_setoutput(SLOG_OUTPUT_FILE, stdout);
 	} else if (strcmp(log, "stderr") == 0) {
 		slog_setoutput(SLOG_OUTPUT_FILE, stderr);
+	} else if (strcmp(log, "terminal") == 0) {
+		slog_setoutput(SLOG_OUTPUT_TERMINAL, stderr);
 	} else if (strcmp(log, "syslog") == 0) {
 		slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
 	} else if (strcmp(log, "discard") == 0) {
 		slog_setoutput(SLOG_OUTPUT_DISCARD);
 	} else {
-		LOGW_F("unknown log output: \"%s\"", conf->log);
+		LOGW_F("unknown log output: `%s'", conf->log);
 	}
 }
 
@@ -103,11 +104,6 @@ static void parse_args(int argc, char **argv)
 		    strcmp(argv[i], "--config") == 0) {
 			OPT_REQUIRE_ARG(argc, argv, i);
 			args.conf_path = argv[++i];
-			continue;
-		}
-		if (strcmp(argv[i], "-C") == 0 ||
-		    strcmp(argv[i], "--color") == 0) {
-			slog_setoutput(SLOG_OUTPUT_TERMINAL, stdout);
 			continue;
 		}
 		if (strcmp(argv[i], "-u") == 0 ||
@@ -182,13 +178,13 @@ int main(int argc, char **argv)
 
 	struct server *restrict s = server_new(loop, conf);
 	if (s == NULL) {
-		LOGE_F("failed to init %s", conf_modestr(conf));
+		LOGF_F("failed to init %s", conf_modestr(conf));
 		conf_free(conf);
 		return EXIT_FAILURE;
 	}
 	bool ok = server_start(s);
 	if (!ok) {
-		LOGE_F("failed to start %s", conf_modestr(conf));
+		LOGF_F("failed to start %s", conf_modestr(conf));
 		server_free(s);
 		conf_free(conf);
 		return EXIT_FAILURE;
@@ -254,7 +250,7 @@ void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 #endif
 		struct config *conf = conf_read(args.conf_path);
 		if (conf == NULL) {
-			LOGE_F("failed to read config: %s", args.conf_path);
+			LOGE_F("failed to read config `%s'", args.conf_path);
 			return;
 		}
 		if (s->conf->mode != conf->mode) {

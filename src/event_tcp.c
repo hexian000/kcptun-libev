@@ -116,7 +116,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
 			LOG_RATELIMITED(
 				ERROR, ev_now(loop), 1.0,
-				"* max session count exceeded, new connections refused");
+				"max sessions reached, refusing new connection");
 			SOCKET_CLOSE_FD(fd);
 			return;
 		}
@@ -128,7 +128,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
 
 		if (!s->pkt.connected) {
-			LOGE("packet connection is not ready, refusing");
+			LOGE("packet connection not ready, refusing");
 			SOCKET_CLOSE_FD(fd);
 			return;
 		}
@@ -226,8 +226,8 @@ static int tcp_recv(struct session *restrict ss)
 	if (len > 0) {
 		ss->stats.tcp_rx += len;
 		ss->server->stats.tcp_rx += len;
-		LOGV_F("[session:%08" PRIX32 "] "
-		       "tcp fd=%d: recv %zu bytes, cap: %zu bytes",
+		LOGV_F("[session:%08" PRIX32 "] tcp [fd:%d]: "
+		       "recv %zu bytes, cap: %zu bytes",
 		       ss->conv, fd, len, cap);
 	}
 	return 0;
@@ -315,7 +315,8 @@ static void connected_cb(struct session *restrict ss)
 	const int fd = ss->w_socket.fd;
 	const int sockerr = socket_get_error(fd);
 	if (sockerr != 0) {
-		LOGE_F("connect: (%d) %s", sockerr, strerror(sockerr));
+		LOGE_F("[session:%08" PRIX32 "] tcp connect: (%d) %s", ss->conv,
+		       sockerr, strerror(sockerr));
 		session_tcp_stop(ss);
 		session_kcp_close(ss);
 		return;

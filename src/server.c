@@ -115,7 +115,7 @@ static bool listener_start(struct server *restrict s)
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
 			sa_format(addr_str, sizeof(addr_str), &addr.sa);
-			LOG_F(NOTICE, "http listen at %s", addr_str);
+			LOG_F(NOTICE, "http listen: %s", addr_str);
 		}
 	}
 
@@ -473,7 +473,7 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 	}
 	s->pkt.queue = queue_new(s);
 	if (s->pkt.queue == NULL) {
-		LOGE("failed creating packet queue");
+		LOGE("failed to create packet queue");
 		server_free(s);
 		return NULL;
 	}

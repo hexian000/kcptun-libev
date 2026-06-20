@@ -3,11 +3,15 @@
 cd "$(dirname "$0")"
 set -ex
 
+gen_schema() {
+    # conf: parsed once at startup — optimize for binary size
+    python3 scripts/gen_schema.py --prefix json_ --optimize size --generate unmarshal src/conf_schema.json
+}
+
 case "$1" in
 "gen")
     # generate code from schemas
-    # conf: parsed once at startup — optimize for binary size
-    python3 scripts/gen_schema.py --prefix json_ --optimize size --generate unmarshal src/conf_schema.json
+    gen_schema
     ;;
 "c")
     # clean artifacts
@@ -141,6 +145,7 @@ case "$1" in
     ;;
 "d")
     # rebuild for debug
+    gen_schema
     if command -v clang-format >/dev/null; then
         find src -type f -regex '.*\.[hc]' -not -regex '.*\.gen\.[hc]' -exec clang-format -i {} +
     fi

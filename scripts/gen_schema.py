@@ -30,8 +30,9 @@ Options:
     --optimize MODE      fast (default): gperf perfect-hash for O(1) lookup.
                          size: sorted table + memcmp binary search;
                          smaller binary, no gperf dependency.
-                         Keys that cannot be embedded in gperf input fall
-                         back to the binary search automatically.
+                         Keys are emitted as quoted literals, so gperf
+                         handles arbitrary bytes; an empty key (the one
+                         keyword gperf rejects) falls back to binary search.
     --strict             Reject unknown keys in unmarshal
                          (additionalProperties: false semantics).
     --no-validate        Omit schema-constraint validation from unmarshal.
@@ -41,6 +42,8 @@ Semantics notes:
       reset to all-zero with partial allocations released.
     * marshal: snprintf semantics (returns required length excluding NUL,
       NUL-terminates whenever bufsz > 0); returns -1 for non-finite doubles.
+      The trailing `indent` argument selects pretty output: a per-level
+      indentation string (e.g. "  " or "\t"), or NULL for compact output.
     * minLength/maxLength compare UTF-8 byte lengths, not code points.
     * $ref, union types, and other unsupported constructs degrade to raw
       JSON fragment fields; a warning is printed for each.
@@ -87,7 +90,12 @@ _UINT64_MAX = 2**64 - 1
 
 def to_c_ident(s: str) -> str:
     ident = re.sub(r"[^A-Za-z0-9_]", "_", s)
-    if ident and ident[0].isdigit():
+    if not ident:
+        # The empty string is a legal JSON key but not a legal C identifier;
+        # map it to "_".  _make_field_map still resolves any collision this
+        # creates (e.g. with a key like ",") by appending a numeric suffix.
+        return "_"
+    if ident[0].isdigit():
         ident = "_" + ident
     return ident
 
@@ -375,10 +383,42 @@ def _lookup_root(pfx: str, scope_name: str) -> str:
 
 
 def _make_gperf_input(lookup_name: str, keys: list) -> str:
+    """Build the complete gperf input for a scope's keys.
+
+    Every option is embedded as a ``%`` declaration so the input file is the
+    single source of truth; gperf is then invoked with no command-line
+    options (see _run_gperf).  Each declaration is the documented equivalent
+    of a former command-line flag:
+
+        %compare-lengths    (-l)  binary comparison: the generated lookup
+                                  compares by length + memcmp instead of
+                                  assuming NUL-terminated input, and keys may
+                                  contain NUL bytes.  Mandatory here.
+        %enum               (-E)  emit constants as a local enum, not #define.
+        %pic                (-P)  string-pool layout for shared libraries.
+        %null-strings             NULL (not "") for empty table slots.
+        %define string-pool-name  (-Q) name the %pic string pool.
+        %define initializer-suffix  (-F) zero the idx field of empty slots.
+
+    (%compare-strncmp / -c is intentionally omitted: gperf documents it as
+    ignored whenever %compare-lengths is in effect, which it always is here.)
+
+    Keys are emitted as double-quoted C-string literals with backslash
+    escapes -- gperf's quoted-keyword syntax -- so any byte is representable:
+    delimiters, quotes, '%'/'#', control characters, non-ASCII, and (because
+    of %compare-lengths) NUL.  gperf rejects only the empty keyword, which
+    _gperf_safe_keys screens out before we get here.
+    """
     header_lines = [
         "%language=ANSI-C",
         "%struct-type",
         "%readonly-tables",
+        "%compare-lengths",
+        "%enum",
+        "%pic",
+        "%null-strings",
+        f"%define string-pool-name {lookup_name}_stringpool",
+        "%define initializer-suffix ,0",
         f"%define hash-function-name {lookup_name}_hash",
         f"%define lookup-function-name {lookup_name}_kv_lookup_",
         "%define slot-name name",
@@ -388,34 +428,32 @@ def _make_gperf_input(lookup_name: str, keys: list) -> str:
         "struct " + lookup_name + "_kv { int name; int idx; };",
         "%%",
     ]
-    keyword_lines = [f"{key}, {i}" for i, key in enumerate(keys)]
+    keyword_lines = [
+        f'"{_c_string_literal(key)[0]}", {i}' for i, key in enumerate(keys)
+    ]
     return "\n".join(header_lines) + "\n" + "\n".join(keyword_lines) + "\n%%\n"
 
 
 def _gperf_safe_keys(keys: list) -> bool:
-    """True when every key is safe to embed verbatim in gperf input.
+    """True when gperf can build a lookup table for these keys.
 
-    gperf keyword lines are not escaped by this generator, so keys must be
-    printable ASCII without the characters that have meaning in the gperf
-    input grammar (field separator, quoting, comments, escapes).  Unsafe
-    keys fall back to the bsearch lookup, which handles arbitrary bytes.
+    Keys are emitted as quoted C-string literals (see _make_gperf_input), so
+    every byte is representable -- delimiters, quotes, control characters,
+    non-ASCII, and (under %compare-lengths) NUL.  The only keyword gperf
+    refuses is the empty string ("Empty input keyword is not allowed"), so an
+    empty key is the sole case that must fall back to the bsearch lookup.
     """
-    unsafe = set(',"\\\'%#')
-    for key in keys:
-        for ch in key:
-            o = ord(ch)
-            if o <= 0x20 or o >= 0x7F or ch in unsafe:
-                return False
-    return True
+    return all(len(key) > 0 for key in keys)
 
 
 def _run_gperf(lookup_name: str, keys: list) -> str:
+    # All options are embedded as %-declarations in the input (see
+    # _make_gperf_input), so gperf is invoked with no argv options and the
+    # input is fed on stdin.
     src = _make_gperf_input(lookup_name, keys)
     try:
         r = subprocess.run(
-            ["gperf", "-l", "-c", "-E", "-P",
-             f"-Q{lookup_name}_stringpool", "--null-strings",
-             "--initializer-suffix=,0"],
+            ["gperf"],
             input=src,
             capture_output=True,
             text=True,
@@ -890,7 +928,7 @@ def generate_free_h(scopes: list, pfx: str, sub_schema: bool = False) -> list:
             continue
         ename = _ext(scope_name, pfx)
         lines += [
-            f"/* Free heap-allocated fields inside *obj (arrays). */",
+            f"/** @brief Free heap-allocated fields inside *obj (arrays). */",
             f"void {make_fn_name('free', scope_name, pfx)}(struct {ename} *obj);",
             "",
         ]
@@ -1212,13 +1250,13 @@ def generate_unmarshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> li
             continue
         ename = _ext(scope_name, pfx)
         lines += [
-            f"/* Unmarshal json (length bytes) into *obj; the buffer is modified in-place. */",
-            f"/* Zero-initializes *obj and applies schema defaults before parsing; pointer",
-            f"   fields of set keys then point into the json buffer (keep it valid while",
-            f"   *obj is in use).  Raw-fragment fields (dynamic objects) are stored without",
-            f"   validation.  Duplicate keys: last value wins.  Returns true on success.",
-            f"   On failure returns false; partial allocations are released and *obj is",
-            f"   reset to all-zero (calling the free function afterwards is harmless). */",
+            f"/**",
+            f" * @brief Unmarshal JSON into *obj; modifies @p json in place.",
+            f" * @param obj Output; zeroed and given schema defaults before parsing.",
+            f" * @param json Mutable JSON; @p obj aliases it, so keep it valid in use.",
+            f" * @param length Length of @p json in bytes.",
+            f" * @return true on success; on failure, false and *obj reset to all-zero.",
+            f" */",
             f"bool {make_fn_name('unmarshal', scope_name, pfx)}(",
             f"{_INDENT}struct {ename} *obj, char *json, size_t length);",
             "",
@@ -1704,12 +1742,16 @@ def generate_marshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> list
             continue
         ename = _ext(scope_name, pfx)
         lines += [
-            f"/* Marshal *obj into buf as JSON text (snprintf semantics): returns the length",
-            f"   required to encode *obj, excluding the terminating NUL, regardless of bufsz.",
-            f"   The output is NUL-terminated whenever buf != NULL and bufsz > 0, and is",
-            f"   truncated when the return value >= bufsz (pass buf = NULL to query the size).",
-            f"   Returns -1 on error (e.g. a non-finite number field). */",
-            f"int {make_fn_name('marshal', scope_name, pfx)}(char *buf, size_t bufsz, const struct {ename} *obj);",
+            f"/**",
+            f" * @brief Marshal *obj into @p buf as JSON (snprintf semantics).",
+            f" * @param buf Output buffer, or NULL to only compute the size.",
+            f" * @param bufsz Size of @p buf in bytes.",
+            f" * @param obj Object to encode.",
+            f" * @param indent Per-level indent for pretty output, or NULL for compact.",
+            f" * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error.",
+            f" */",
+            f"int {make_fn_name('marshal', scope_name, pfx)}(",
+            f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj, const char *indent);",
             "",
         ]
     return lines
@@ -1748,9 +1790,9 @@ def generate_marshal_c(
         f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
         f"{_INDENT}n_ += r_; \\",
         "} while (0)",
-        "#define EMIT_SUB(fn, arg) do { \\",
+        "#define EMIT_SUB(fn, arg, d) do { \\",
         f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL; \\",
-        f"{_INDENT}r_ = (fn)(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, (arg)); \\",
+        f"{_INDENT}r_ = (fn)(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, (arg), indent, (d)); \\",
         f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
         f"{_INDENT}n_ += r_; \\",
         "} while (0)",
@@ -1763,6 +1805,29 @@ def generate_marshal_c(
         f"{_INDENT}}} \\",
         f"{_INDENT}n_ += (int)l_; \\",
         "} while (0)",
+        # EMIT_RAW writes a run of literal bytes (the indent string) verbatim,
+        # without JSON escaping; used only for pretty-print whitespace.
+        "#define EMIT_RAW(s, len) do { \\",
+        f"{_INDENT}const size_t rl_ = (len); \\",
+        f"{_INDENT}if (buf != NULL && (size_t)n_ < bufsz) {{ \\",
+        f"{_INDENT * 2}const size_t cap_ = bufsz - (size_t)n_; \\",
+        f"{_INDENT * 2}memcpy(buf + n_, (s), rl_ < cap_ ? rl_ : cap_); \\",
+        f"{_INDENT}}} \\",
+        f"{_INDENT}n_ += (int)rl_; \\",
+        "} while (0)",
+        # EMIT_INDENT writes a newline followed by (d) copies of the indent
+        # string.  A NULL indent selects compact output: nothing is emitted.
+        "#define EMIT_INDENT(d) do { \\",
+        f"{_INDENT}if (indent != NULL) {{ \\",
+        f"{_INDENT * 2}EMIT('\\n'); \\",
+        f"{_INDENT * 2}for (int id_ = 0; id_ < (d); id_++) {{ EMIT_RAW(indent, ind_len_); }} \\",
+        f"{_INDENT}}} \\",
+        "} while (0)",
+        # EMIT_COLON writes the key/value separator: ':' compact, ': ' pretty.
+        "#define EMIT_COLON() do { \\",
+        f"{_INDENT}EMIT(':'); \\",
+        f"{_INDENT}if (indent != NULL) {{ EMIT(' '); }} \\",
+        "} while (0)",
         "",
     ]
     root_scope = scopes[0][0]
@@ -1772,8 +1837,9 @@ def generate_marshal_c(
     for scope_name, keys, node in reversed(scopes):
         ename = _ext(scope_name, pfx)
         required = _required_set(node)
-        storage = "" if sub_schema or scope_name == root_scope else "static "
+        is_public = sub_schema or scope_name == root_scope
         fname_map = _make_field_map(keys, node)
+        impl_name = make_fn_name("marshal", scope_name, pfx, suffix="impl")
 
         # Collect the fields that actually emit output, so we can insert
         # commas between them correctly.
@@ -1800,12 +1866,16 @@ def generate_marshal_c(
                 emit_fields.append((kind, fname, key, is_req))
 
         lines += [
-            f"{storage}int {make_fn_name('marshal', scope_name, pfx)}(",
-            f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj)",
+            f"static int {impl_name}(",
+            f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj,",
+            f"{_INDENT}const char *indent, int depth)",
             f"{{",
             f"{_INDENT}int n_ = 0;",
             f"{_INDENT}int r_ = 0;",
             f"{_INDENT}(void)r_;",
+            f"{_INDENT}const size_t ind_len_ = (indent != NULL) ? strlen(indent) : 0;",
+            f"{_INDENT}(void)ind_len_;",
+            f"{_INDENT}(void)depth;",
             "",
         ]
 
@@ -1867,15 +1937,22 @@ def generate_marshal_c(
             # Build the block that emits this field using EMIT / EMIT_STR /
             # EMIT_SUB macros defined at the top of the marshal section.
             # Every path appends a trailing ','; the closing-brace block
-            # strips the last one before emitting '}'.
+            # strips the last one before emitting '}'.  Each field begins on
+            # its own indented line (EMIT_INDENT, a no-op in compact mode) and
+            # uses EMIT_COLON for the key/value separator (': ' when pretty).
             field_lines = []
 
+            # Shared "<newline+indent>"key":<sep>" prefix for the field.
+            key_prefix = [
+                f"{_INDENT * 2}EMIT_INDENT(depth + 1);",
+                f"{_INDENT * 2}EMIT('\"');",
+                f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
+                f"{_INDENT * 2}EMIT('\"');",
+                f"{_INDENT * 2}EMIT_COLON();",
+            ]
+
             if kind == "string":
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     f"{_INDENT * 2}EMIT_STR(obj->{fname}.str, obj->{fname}.len);",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
@@ -1885,11 +1962,7 @@ def generate_marshal_c(
                     emitf_line = f"{_INDENT * 2}EMITF(\"%d\", obj->{fname});"
                 else:
                     emitf_line = f"{_INDENT * 2}EMITF(\"%jd\", (intmax_t)obj->{fname});"
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     emitf_line,
                     f"{_INDENT * 2}EMIT(',');",
                 ]
@@ -1899,11 +1972,7 @@ def generate_marshal_c(
                     emitf_line = f"{_INDENT * 2}EMITF(\"%u\", obj->{fname});"
                 else:
                     emitf_line = f"{_INDENT * 2}EMITF(\"%ju\", (uintmax_t)obj->{fname});"
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     emitf_line,
                     f"{_INDENT * 2}EMIT(',');",
                 ]
@@ -1911,19 +1980,12 @@ def generate_marshal_c(
                 field_lines += [
                     f"{_INDENT * 2}/* NaN/Inf have no JSON representation */",
                     f"{_INDENT * 2}if (!isfinite(obj->{fname})) {{ return -1; }}",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                ] + key_prefix + [
                     f"{_INDENT * 2}EMITF(\"%.17g\", obj->{fname});",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "bool":
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     f"{_INDENT * 2}if (obj->{fname}) {{",
                     f"{_INDENT * 3}EMIT_LIT(\"true\");",
                     f"{_INDENT * 2}}} else {{",
@@ -1934,50 +1996,42 @@ def generate_marshal_c(
             elif kind == "object":
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), json_key, schema_pfx)
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
-                    f"{_INDENT * 2}EMIT_SUB({make_fn_name('marshal', child_scope, pfx)}, &obj->{fname});",
+                child_impl = make_fn_name(
+                    "marshal", child_scope, pfx, suffix="impl")
+                field_lines += key_prefix + [
+                    f"{_INDENT * 2}EMIT_SUB({child_impl}, &obj->{fname}, depth + 1);",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "dynamic":
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     f"{_INDENT * 2}EMITF(\"%.*s\", (int)obj->{fname}_json.len, obj->{fname}_json.str);",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "array_string":
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     f"{_INDENT * 2}EMIT('[');",
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
                     f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
+                    f"{_INDENT * 3}EMIT_INDENT(depth + 2);",
                     f"{_INDENT * 3}EMIT_STR(obj->{fname}[i_].str, obj->{fname}[i_].len);",
                     f"{_INDENT * 2}}}",
+                    f"{_INDENT * 2}if (obj->{fname}_count > 0) {{ EMIT_INDENT(depth + 1); }}",
                     f"{_INDENT * 2}EMIT(']');",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "array_object":
                 child_scope = _scope_of_child(
                     _path_from_scope(scope_name, schema_pfx), json_key, schema_pfx)
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                child_impl = make_fn_name(
+                    "marshal", child_scope, pfx, suffix="impl")
+                field_lines += key_prefix + [
                     f"{_INDENT * 2}EMIT('[');",
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
                     f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
-                    f"{_INDENT * 3}EMIT_SUB({make_fn_name('marshal', child_scope, pfx)}, &obj->{fname}[i_]);",
+                    f"{_INDENT * 3}EMIT_INDENT(depth + 2);",
+                    f"{_INDENT * 3}EMIT_SUB({child_impl}, &obj->{fname}[i_], depth + 2);",
                     f"{_INDENT * 2}}}",
+                    f"{_INDENT * 2}if (obj->{fname}_count > 0) {{ EMIT_INDENT(depth + 1); }}",
                     f"{_INDENT * 2}EMIT(']');",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
@@ -1988,6 +2042,7 @@ def generate_marshal_c(
                 if c_base == "bool":
                     elem_lines = [
                         f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
+                        f"{_INDENT * 3}EMIT_INDENT(depth + 2);",
                         f"{_INDENT * 3}if (obj->{fname}[i_]) {{",
                         f"{_INDENT * 4}EMIT_LIT(\"true\");",
                         f"{_INDENT * 3}}} else {{",
@@ -1999,6 +2054,7 @@ def generate_marshal_c(
                            "unsigned": "%u", "uintmax_t": "%ju"}.get(c_base, "%.17g")
                     elem_lines = [
                         f"{_INDENT * 3}if (i_ > 0) EMIT(',');",
+                        f"{_INDENT * 3}EMIT_INDENT(depth + 2);",
                     ]
                     if c_base == "double":
                         elem_lines += [
@@ -2008,15 +2064,12 @@ def generate_marshal_c(
                     elem_lines += [
                         f"{_INDENT * 3}EMITF(\"{fmt}\", obj->{fname}[i_]);",
                     ]
-                field_lines += [
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT_LIT(\"{esc_key}\");",
-                    f"{_INDENT * 2}EMIT('\"');",
-                    f"{_INDENT * 2}EMIT(':');",
+                field_lines += key_prefix + [
                     f"{_INDENT * 2}EMIT('[');",
                     f"{_INDENT * 2}for (size_t i_ = 0; i_ < obj->{fname}_count; i_++) {{",
                 ] + elem_lines + [
                     f"{_INDENT * 2}}}",
+                    f"{_INDENT * 2}if (obj->{fname}_count > 0) {{ EMIT_INDENT(depth + 1); }}",
                     f"{_INDENT * 2}EMIT(']');",
                     f"{_INDENT * 2}EMIT(',');",
                 ]
@@ -2037,9 +2090,15 @@ def generate_marshal_c(
         # Finally NUL-terminate (snprintf semantics).  Nested EMIT_SUB calls
         # also write a NUL, but the parent's next EMIT overwrites it, so the
         # outermost terminator always lands last.
+        # When any field was emitted, strip its trailing comma and break the
+        # closing brace onto its own line aligned with this object's level
+        # (EMIT_INDENT is a no-op in compact mode).  An empty object stays "{}".
         lines += [
             "",
-            f"{_INDENT}if (n_ > n_start_) {{ n_--; }}",
+            f"{_INDENT}if (n_ > n_start_) {{",
+            f"{_INDENT * 2}n_--;",
+            f"{_INDENT * 2}EMIT_INDENT(depth);",
+            f"{_INDENT}}}",
             f"{_INDENT}EMIT('}}');",
             f"{_INDENT}if (buf != NULL && bufsz > 0) {{",
             f"{_INDENT * 2}buf[(size_t)n_ < bufsz ? (size_t)n_ : bufsz - 1] = '\\0';",
@@ -2049,6 +2108,21 @@ def generate_marshal_c(
             f"}}",
             "",
         ]
+
+        # Public entry point: a thin wrapper that starts recursion at depth 0.
+        # The depth/recursion bookkeeping is kept out of the public signature,
+        # which exposes only the indent string (NULL selects compact output).
+        if is_public:
+            storage = "" if sub_schema or scope_name == root_scope else "static "
+            lines += [
+                f"{storage}int {make_fn_name('marshal', scope_name, pfx)}(",
+                f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj,",
+                f"{_INDENT}const char *indent)",
+                f"{{",
+                f"{_INDENT}return {impl_name}(buf, bufsz, obj, indent, 0);",
+                f"}}",
+                "",
+            ]
     lines += [
         "",
         "#undef EMIT",
@@ -2056,6 +2130,9 @@ def generate_marshal_c(
         "#undef EMIT_STR",
         "#undef EMIT_SUB",
         "#undef EMIT_LIT",
+        "#undef EMIT_RAW",
+        "#undef EMIT_INDENT",
+        "#undef EMIT_COLON",
         "",
     ]
     return lines
@@ -2186,7 +2263,7 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
     if do_unmarshal or do_lookup:
         c_sys_includes.add("#include <string.h>")
     # stdlib.h: free/realloc (structs/unmarshal) and bsearch (size mode, or
-    # the bsearch fallback for keys that are not gperf-safe).
+    # the empty-key fallback in fast mode).
     if do_structs or do_unmarshal or do_lookup:
         c_sys_includes.add("#include <stdlib.h>")
     if do_marshal:
@@ -2227,9 +2304,9 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
                 use_bsearch = opts.optimize == "size"
                 if not use_bsearch and not _gperf_safe_keys(keys):
                     print(
-                        f"  note: keys of {ename} contain characters that "
-                        "cannot be embedded in gperf input; using the "
-                        "bsearch lookup instead", file=sys.stderr)
+                        f"  note: {ename} has an empty key, which gperf "
+                        "cannot index; using the bsearch lookup instead",
+                        file=sys.stderr)
                     use_bsearch = True
                 if use_bsearch:
                     c_src = _generate_bsearch_lookup_c(
@@ -2331,8 +2408,8 @@ def main():
         help=(
             "fast (default): gperf perfect-hash for O(1) lookup; "
             "size: sorted table + memcmp binary search, no gperf dependency. "
-            "Keys that cannot be embedded in gperf input fall back to the "
-            "binary search automatically."
+            "Keys are emitted as quoted literals, so gperf handles arbitrary "
+            "bytes; an empty key falls back to binary search."
         ),
     )
     parser.add_argument(

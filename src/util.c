@@ -107,7 +107,7 @@ void loadlibs(void)
 	const size_t size =
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
-	msgpool = mcache_new(MMSG_BATCH_SIZE * 2, size);
+	msgpool = mcache_new((size_t)MMSG_BATCH_SIZE * 2, size);
 	CHECKOOM(msgpool);
 	ikcp_segment_pool = msgpool;
 }
@@ -180,7 +180,7 @@ void socket_bind_netdev(const int fd, const char *restrict netdev)
 #else
 	(void)fd;
 	if (netdev[0] != '\0') {
-		LOGW_F("SO_BINDTODEVICE: %s", "not supported in current build");
+		LOGW("SO_BINDTODEVICE: not supported in current build");
 	}
 #endif
 }

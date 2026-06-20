@@ -178,7 +178,7 @@ static bool session_on_msg(
 	}
 	default:;
 	}
-	LOGE_F("[session:%08" PRIX32 "] msg: error "
+	LOGE_F("[session:%08" PRIX32 "] unknown message: "
 	       "msg=%04" PRIX16 ", len=%04" PRIX16,
 	       ss->conv, hdr->msg, hdr->len);
 	return false;
@@ -202,7 +202,9 @@ static int ss_process(struct session *restrict ss)
 	}
 	const struct tlv_header hdr = tlv_header_read(ss->wbuf->data);
 	if (hdr.len < TLV_HEADER_SIZE || hdr.len > TLV_MAX_LENGTH) {
-		LOGE_F("unexpected message length: %" PRIu16, hdr.len);
+		LOGE_F("[session:%08" PRIX32
+		       "] invalid message length: %" PRIu16,
+		       ss->conv, hdr.len);
 		return -1;
 	}
 	if (ss->wbuf->len < hdr.len) {
@@ -513,7 +515,7 @@ size_t inetaddr_write(void *b, const size_t n, const struct sockaddr *sa)
 
 void ss0_reset(struct server *s, const struct sockaddr *sa, const uint32_t conv)
 {
-	LOGD_F("session0: reset conv [%08" PRIX32 "]", conv);
+	LOGD_F("session0: reset conv=%08" PRIX32, conv);
 	unsigned char b[sizeof(uint32_t)];
 	write_uint32(b, conv);
 	ss0_send(s, sa, S0MSG_RESET, b, sizeof(b));
@@ -678,7 +680,9 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			return true;
 		}
 		svc->idlen = key.len;
-		memcpy(svc->id, key.data, key.len);
+		if (key.len > 0) {
+			memcpy(svc->id, key.data, key.len);
+		}
 		svc->hkey =
 			(struct hashkey){ .data = svc->id, .len = svc->idlen };
 		void *element = svc;
@@ -734,7 +738,8 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	if (!table_find(s->pkt.services, &key, (void **)&svc)) {
 		char addr_str[64];
 		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
-		LOGE_F("failed connecting %s: no server available", addr_str);
+		LOGW_F("rendezvous connect from %s: no matching service",
+		       addr_str);
 		return true;
 	}
 	if (LOGLEVEL(INFO)) {
@@ -857,7 +862,7 @@ static const ss0_handler_type ss0_handler[] = {
 void session0(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE) {
-		LOGW_F("short session 0 message: %" PRIu16 " bytes", msg->len);
+		LOGW_F("session0: short message, %" PRIu16 " bytes", msg->len);
 		return;
 	}
 	const unsigned char *packet = msg->buf + msg->off;
@@ -870,6 +875,6 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	LOG_BIN_F(
 		WARNING, msg->buf + msg->off, msg->len, 0,
-		"invalid session 0 message: %04" PRIX16 ", len=%04" PRIX16,
-		header.what, msg->len - SESSION0_HEADER_SIZE);
+		"session0: invalid message: what=%04" PRIX16 ", len=%zu",
+		header.what, (size_t)(msg->len - SESSION0_HEADER_SIZE));
 }

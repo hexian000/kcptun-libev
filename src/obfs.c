@@ -520,7 +520,7 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 	if (scope_id != 0 && ifindex != scope_id) {
 		if (ifindex != 0) {
-			LOGW("obfs bind: netdev that differs from the address scope is ignored");
+			LOGW("obfs bind: netdev differs from address scope, ignored");
 		}
 		ifindex = scope_id;
 	}
@@ -783,7 +783,7 @@ static struct obfs_ctx *obfs_tcp_raw_new_ctx(
 	if (table_size(obfs->contexts) >= OBFS_MAX_CONTEXTS) {
 		LOG_RATELIMITED(
 			ERROR, ev_now(s->loop), 1.0,
-			"* obfs: context limit exceeded");
+			"obfs: context limit reached, refusing connection");
 		free(ctx);
 		return NULL;
 	}
@@ -1904,7 +1904,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				DEBUG, now, 1.0,
-				"* obfs: unrelated %" PRIu16 " bytes from %s",
+				"obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
 		return NULL;
@@ -1916,7 +1916,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITED_F(
-			DEBUG, now, 1.0, "* obfs: rst from %s", addr_str);
+			DEBUG, now, 1.0, "obfs: rst from %s", addr_str);
 		return NULL;
 	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
@@ -2024,7 +2024,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				DEBUG, now, 1.0,
-				"* obfs: unrelated %" PRIu16 " bytes from %s",
+				"obfs: unrelated %" PRIu16 " bytes from %s",
 				msg->len, addr_str);
 		}
 		return NULL;
@@ -2036,7 +2036,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 		const ev_tstamp now = ev_now(obfs->server->loop);
 		LOG_RATELIMITED_F(
-			DEBUG, now, 1.0, "* obfs: rst from %s", addr_str);
+			DEBUG, now, 1.0, "obfs: rst from %s", addr_str);
 		return NULL;
 	}
 	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
@@ -2065,6 +2065,8 @@ obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		break;
 	case AF_INET6:
 		ctx = obfs_open_ipv6(obfs, msg);
+		break;
+	default:
 		break;
 	}
 	if (ctx == NULL) {
@@ -2154,13 +2156,13 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 {
 	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &msg->addr.sa);
 	if (ctx == NULL) {
-		if (LOGLEVEL(DEBUG)) {
+		if (LOGLEVEL(WARNING)) {
 			char addr_str[64];
 			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
 			const ev_tstamp now = ev_now(obfs->server->loop);
 			LOG_RATELIMITED_F(
 				WARNING, now, 1.0,
-				"* obfs: can't send %" PRIu16
+				"obfs: can't send %" PRIu16
 				" bytes to unrelated %s",
 				msg->len, addr_str);
 		}
@@ -2279,7 +2281,7 @@ void obfs_accept_cb(
 		if (is_startup_limited(obfs)) {
 			LOG_RATELIMITED(
 				ERROR, ev_now(loop), 1.0,
-				"* obfs: context limit exceeded, new connections refused");
+				"obfs: context limit reached, refusing connection");
 			SOCKET_CLOSE_FD(fd);
 			return;
 		}

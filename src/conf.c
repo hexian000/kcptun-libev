@@ -67,7 +67,8 @@ static bool range_check_int(
 	const char *key, const int value, const int lbound, const int ubound)
 {
 	if (value < lbound || value > ubound) {
-		LOGE_F("%s is out of range (%d - %d)", key, lbound, ubound);
+		LOGE_F("config: %s=%d is out of range [%d, %d]", key, value,
+		       lbound, ubound);
 		return false;
 	}
 	return true;
@@ -124,7 +125,7 @@ static bool conf_check(struct config *restrict conf)
 #if WITH_CRYPTO
 	/* 2. crypto check */
 	if (conf->psk != NULL && conf->password != NULL) {
-		LOGF("config: psk and password cannot be specified at the same time");
+		LOGE("config: psk and password cannot be specified at the same time");
 		return false;
 	}
 #endif
@@ -185,14 +186,14 @@ struct config *conf_read(const char *path)
 	size_t buflen = 0;
 	char *buf = read_alloc(path, &buflen);
 	if (buf == NULL) {
-		LOGE_F("conf: failed to read \"%s\"", path);
+		LOGE_F("config: failed to read `%s'", path);
 		conf_free(conf);
 		return NULL;
 	}
 
 	struct json_conf parsed = { 0 };
 	if (!json_unmarshal_conf(&parsed, buf, buflen)) {
-		LOGE_F("conf: failed to parse \"%s\"", path);
+		LOGE_F("config: failed to parse `%s'", path);
 		free(buf);
 		conf_free(conf);
 		return NULL;

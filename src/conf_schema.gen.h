@@ -71,13 +71,13 @@ struct json_conf {
 /** @name Unmarshal
  *  @{ */
 
-/* Unmarshal json (length bytes) into *obj; the buffer is modified in-place. */
-/* Zero-initializes *obj and applies schema defaults before parsing; pointer
-   fields of set keys then point into the json buffer (keep it valid while
-   *obj is in use).  Raw-fragment fields (dynamic objects) are stored without
-   validation.  Duplicate keys: last value wins.  Returns true on success.
-   On failure returns false; partial allocations are released and *obj is
-   reset to all-zero (calling the free function afterwards is harmless). */
+/**
+ * @brief Unmarshal JSON into *obj; modifies @p json in place.
+ * @param obj Output; zeroed and given schema defaults before parsing.
+ * @param json Mutable JSON; @p obj aliases it, so keep it valid in use.
+ * @param length Length of @p json in bytes.
+ * @return true on success; on failure, false and *obj reset to all-zero.
+ */
 bool json_unmarshal_conf(
 	struct json_conf *obj, char *json, size_t length);
 
@@ -86,7 +86,7 @@ bool json_unmarshal_conf(
 /** @name Free
  *  @{ */
 
-/* Free heap-allocated fields inside *obj (arrays). */
+/** @brief Free heap-allocated fields inside *obj (arrays). */
 void json_free_conf(struct json_conf *obj);
 
 /** @} */

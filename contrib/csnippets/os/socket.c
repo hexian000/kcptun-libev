@@ -214,35 +214,6 @@ socklen_t socket_get_peer(const int fd, union sockaddr_max *const sa)
 	return len;
 }
 
-int socket_send(const int fd, const void *restrict buf, size_t *restrict len)
-{
-	ssize_t nsend;
-	do {
-		nsend = send(fd, buf, *len, 0);
-	} while (nsend < 0 && errno == EINTR);
-	if (nsend < 0) {
-		*len = 0;
-		return errno;
-	}
-	*len = (size_t)nsend;
-	return 0;
-}
-
-int socket_recv(const int fd, void *restrict buf, size_t *restrict len)
-{
-	ssize_t nrecv;
-	do {
-		nrecv = recv(fd, buf, *len, 0);
-	} while (nrecv < 0 && errno == EINTR);
-	if (nrecv < 0) {
-		*len = 0;
-		return errno;
-	}
-	/* nrecv == 0: EOF */
-	*len = (size_t)nrecv;
-	return 0;
-}
-
 socklen_t sa_len(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {

@@ -127,7 +127,7 @@ size_t crypto_open(
 	const unsigned char *restrict cipher, const size_t cipher_size)
 {
 	if (dst_size + crypto->overhead < cipher_size) {
-		LOGW("crypto_seal: insufficient crypto buffer");
+		LOGW("crypto_open: insufficient crypto buffer");
 		return 0;
 	}
 	const struct crypto_impl *restrict impl = crypto->impl;
@@ -228,7 +228,7 @@ struct crypto *crypto_new(const char *method)
 		overhead = crypto_aead_aes256gcm_abytes();
 		key_size = crypto_aead_aes256gcm_keybytes();
 	} else {
-		LOGW_F("unsupported crypto method: %s", method);
+		LOGE_F("unsupported crypto method: %s", method);
 		crypto_list_methods();
 		return NULL;
 	}
@@ -246,14 +246,15 @@ struct crypto *crypto_new(const char *method)
 		crypto_free(crypto);
 		return NULL;
 	}
+	*crypto->impl = (struct crypto_impl){ 0 };
 	unsigned char *key = sodium_malloc(key_size);
 	if (key == NULL) {
-		LOGE("failed allocating secure memory");
+		LOGE("crypto: failed to allocate secure memory");
 		crypto_free(crypto);
 		return NULL;
 	}
 	if (sodium_mlock(key, key_size)) {
-		LOGW("failed locking secure memory");
+		LOGW("crypto: failed to lock secure memory");
 	}
 	switch (m) {
 	case method_xchacha20poly1305_ietf: {
@@ -299,7 +300,7 @@ struct crypto *crypto_new(const char *method)
 		};
 	} break;
 	default:
-		FAILMSGF("invalid crypto method: %d", method);
+		FAILMSGF("invalid crypto method: %s", method);
 	}
 	return crypto;
 }
@@ -323,11 +324,11 @@ bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
 		crypto->impl->key, crypto->key_size, psk, b64_len, NULL, &len,
 		&b64_end, sodium_base64_VARIANT_ORIGINAL);
 	if (ret != 0) {
-		LOGE_F("base64 decode failed: %d", ret);
+		LOGE_F("crypto: psk base64 decode failed: %d", ret);
 		return false;
 	}
 	if ((ptrdiff_t)b64_len != (b64_end - psk) || len != crypto->key_size) {
-		LOGE("psk length error");
+		LOGE("crypto: invalid psk length");
 		return false;
 	}
 	sodium_memzero(psk, b64_len);

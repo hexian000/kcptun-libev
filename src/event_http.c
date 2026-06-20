@@ -165,13 +165,13 @@ void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	if (hdr->any.field1 == NULL) {
 		next = http_parse(next, hdr);
 		if (next == NULL) {
-			LOGE("http: invalid request");
+			LOGW("http: invalid request");
 			http_ctx_free(ctx);
 			return;
 		}
 		if (next == ctx->http_nxt) {
 			if (cap == 0) {
-				LOGE("http: request too large");
+				LOGW("http: request too large");
 				http_ctx_free(ctx);
 				return;
 			}
@@ -179,7 +179,7 @@ void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		}
 		const char http1[] = "HTTP/1.";
 		if (strncmp(hdr->req.version, http1, sizeof(http1) - 1) != 0) {
-			LOGE_F("http: unsupported protocol %s",
+			LOGW_F("http: unsupported protocol %s",
 			       hdr->req.version);
 			http_ctx_free(ctx);
 			return;
@@ -192,7 +192,7 @@ void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		char *key, *value;
 		next = http_parsehdr(next, &key, &value);
 		if (next == NULL) {
-			LOGE("http: invalid header");
+			LOGW("http: invalid header");
 			http_ctx_free(ctx);
 			return;
 		}
@@ -376,6 +376,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		RESPHDR_POST(buf, HTTP_OK);
 		stateless = false;
 	} else {
+		VBUF_FREE(buf);
 		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
 		return;
 	}
