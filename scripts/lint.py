@@ -8,12 +8,16 @@ Usage:
   scripts/lint.py -o PATH                    # custom output file
   scripts/lint.py -j N                       # parallel jobs (default: nproc)
   scripts/lint.py --build DIR                # custom build directory
+  scripts/lint.py --tests                    # also lint *_test.c files
+  scripts/lint.py --generated                # also lint *.gen.c files
 
 The CHECK argument is forwarded verbatim as the glob in -checks='-*,CHECK'.
 Use a trailing '*' for prefix matching, e.g. "readability-*".
 
 Production code is defined as all C sources under src/ that are not test
-files (*_test.c) and not generated files (*.gen.c).
+files (*_test.c) and not generated files (*.gen.c). The third-party tree
+(contrib/) is always excluded; --tests and --generated opt the respective
+file groups back in.
 """
 
 from __future__ import annotations
@@ -38,15 +42,23 @@ DEFAULT_OUTPUT = DEFAULT_BUILD_DIR / "lint.md"
 # Production-source filter
 # ---------------------------------------------------------------------------
 
-_EXCL = (
-    re.compile(r"(?:^|/)contrib/"),  # third-party tree
-    re.compile(r"_test\.c$"),         # unit-test files
-    re.compile(r"\.gen\.c$"),         # generated files
-)
+_EXCL_CONTRIB = re.compile(r"(?:^|/)contrib/")  # third-party tree
+_EXCL_TEST = re.compile(r"_test\.c$")            # unit-test files
+_EXCL_GEN = re.compile(r"\.gen\.c$")             # generated files
 
 
-def _is_prod(path: str) -> bool:
-    return not any(p.search(path) for p in _EXCL)
+def _make_filter(include_tests: bool, include_generated: bool):
+    """Return a predicate that accepts source paths to be linted.
+
+    contrib/ is always excluded; test and generated files are excluded
+    unless opted back in.
+    """
+    excl = [_EXCL_CONTRIB]
+    if not include_tests:
+        excl.append(_EXCL_TEST)
+    if not include_generated:
+        excl.append(_EXCL_GEN)
+    return lambda path: not any(p.search(path) for p in excl)
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +66,7 @@ def _is_prod(path: str) -> bool:
 # so that prefix-mapped paths like "dispatch.c" are shown as "src/mux/dispatch.c".
 # ---------------------------------------------------------------------------
 
-def _build_name_map(build_dir: Path) -> dict[str, str]:
+def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
     db_path = build_dir / "compile_commands.json"
     if not db_path.exists():
         sys.exit(f"error: {db_path} not found — run cmake first")
@@ -62,7 +74,7 @@ def _build_name_map(build_dir: Path) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for entry in db:
         fpath = entry["file"]
-        if not _is_prod(fpath):
+        if not accept(fpath):
             continue
         pobj = Path(fpath)
         try:
@@ -108,14 +120,14 @@ _WARN_RE = re.compile(
 )
 
 
-def _parse(raw: str, name_map: dict[str, str]) -> list[dict]:
+def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
     result = []
     for text in raw.splitlines():
         m = _WARN_RE.match(text.rstrip())
         if not m:
             continue
         fpath = m.group("file")
-        if not _is_prod(fpath):
+        if not accept(fpath):
             continue
 
         # Resolve the (possibly prefix-mapped) path to a canonical relative path.
@@ -144,9 +156,18 @@ def _parse(raw: str, name_map: dict[str, str]) -> list[dict]:
 # Markdown report
 # ---------------------------------------------------------------------------
 
-def _report(warnings: list[dict], check_filter: str | None, elapsed: float) -> str:
+def _report(
+    warnings: list[dict], check_filter: str | None, elapsed: float,
+    include_tests: bool, include_generated: bool,
+) -> str:
     title = f"`{check_filter}`" if check_filter else "All Checks"
     total = len(warnings)
+
+    excluded = ["`contrib/`"]
+    if not include_tests:
+        excluded.append("`*_test.c`")
+    if not include_generated:
+        excluded.append("`*.gen.c`")
 
     out: list[str] = []
     out += [
@@ -156,8 +177,7 @@ def _report(warnings: list[dict], check_filter: str | None, elapsed: float) -> s
         f" **Elapsed:** {elapsed:.1f} s &ensp;"
         f" **Warnings:** {total}",
         "",
-        "> Source filter: production code only"
-        " (excludes `contrib/`, `*_test.c`, `*.gen.c`)",
+        f"> Source filter: excludes {', '.join(excluded)}",
         "",
     ]
 
@@ -246,26 +266,37 @@ def main() -> int:
         default=str(DEFAULT_BUILD_DIR),
         help="build directory with compile_commands.json (default: %(default)s)",
     )
+    ap.add_argument(
+        "--tests",
+        action="store_true",
+        help="also lint test files (*_test.c)",
+    )
+    ap.add_argument(
+        "--generated",
+        action="store_true",
+        help="also lint generated files (*.gen.c)",
+    )
     args = ap.parse_args()
 
     build_dir = Path(args.build)
     out_path = Path(args.output)
     check_label = args.check or "all checks"
 
-    name_map = _build_name_map(build_dir)
+    accept = _make_filter(args.tests, args.generated)
+    name_map = _build_name_map(build_dir, accept)
 
     print(f"Linting [{check_label}] …", file=sys.stderr, flush=True)
     t0 = time.monotonic()
     raw = _run(build_dir, args.check, args.jobs)
     elapsed = time.monotonic() - t0
 
-    warnings = _parse(raw, name_map)
+    warnings = _parse(raw, name_map, accept)
     print(
         f"{len(warnings)} warning(s) in {elapsed:.1f} s → {out_path}",
         file=sys.stderr,
     )
 
-    md = _report(warnings, args.check, elapsed)
+    md = _report(warnings, args.check, elapsed, args.tests, args.generated)
     out_path.write_text(md, encoding="utf-8")
     return 0
 

@@ -1676,9 +1676,10 @@ def generate_unmarshal_c(
                     if min_items is not None:
                         achks.append(
                             f"{_INDENT * 3}if (obj->{fname}_count < {int(min_items)}u) {{ goto fail_; }}")
+                arr_fn = make_fn_name(
+                    'unmarshal', scope_name, pfx, suffix=f'arr_{fname}')
                 lines += [
-                    f"{_INDENT * 3}if (!{make_fn_name('unmarshal', scope_name, pfx, suffix=f'arr_{fname}')
-                                         }(obj, val_, val_len_)) {{ goto fail_; }}",
+                    f"{_INDENT * 3}if (!{arr_fn}(obj, val_, val_len_)) {{ goto fail_; }}",
                 ] + achks + seen_line + [
                     f"{_INDENT * 3}break;",
                     f"{_INDENT * 2}}}",

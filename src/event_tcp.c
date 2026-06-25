@@ -9,13 +9,13 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 
 #include <ev.h>
 
 #include <sys/socket.h>
-#include <sys/types.h>
 
 #include <errno.h>
 #include <inttypes.h>
@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static void modify_io_events(

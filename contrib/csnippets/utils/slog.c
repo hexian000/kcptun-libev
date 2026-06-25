@@ -46,6 +46,10 @@ static const char *slog_level_color[] = {
 };
 
 FILE *slog_output;
+static slog_writer_fn slog_writer;
+static void *slog_writer_ud;
+static slog_syslog_fn slog_syslog;
+static void *slog_syslog_ident;
 
 #if SLOG_MT_SAFE
 mtx_t slog_output_mu;
@@ -74,6 +78,11 @@ static thread_local struct {
 	unsigned char data[SLOG_BUFSIZE];
 } slog_buffer;
 
+/* guards against a sink (e.g. a writer or syslog backend) that logs through
+ * slog while it is being invoked, which would otherwise re-enter the printer
+ * and deadlock on the non-recursive output mutex */
+static thread_local bool slog_in_printer;
+
 static once_flag slog_init_flag = ONCE_FLAG_INIT;
 static void slog_init(void)
 {
@@ -101,6 +110,9 @@ static struct {
 	BUFFER_HDR;
 	unsigned char data[SLOG_BUFSIZE];
 } slog_buffer;
+
+/* see the SLOG_MT_SAFE definition above */
+static bool slog_in_printer;
 
 #define SLOG_INIT() ((void)(0))
 #endif /* SLOG_MT_SAFE */
@@ -286,18 +298,25 @@ static void slog_print_terminal(
 	va_end(args0);
 }
 
-static void slog_print_file(
-	const int level, const char *restrict file, const int line,
-	const struct slog_extra *restrict extra, const char *restrict format,
-	va_list args)
+/* builds the "<L> <timestamp> <file>:<line> " prefix shared by the plain-file
+ * and writer sinks into slog_buffer */
+static void
+slog_build_prefix(const int level, const char *restrict file, const int line)
 {
 	const unsigned int flags = ATOMIC_LOAD(&slog_flags_);
-
 	BUF_INIT(slog_buffer, 2);
 	slog_buffer.data[0] = slog_level_char[level];
 	slog_buffer.data[1] = ' ';
 	BUF_APPENDTS(slog_buffer, flags);
 	BUF_APPENDF(slog_buffer, " %s:%d ", slog_filename(file), line);
+}
+
+static void slog_print_file(
+	const int level, const char *restrict file, const int line,
+	const struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
+{
+	slog_build_prefix(level, file, line);
 
 	const size_t prefixlen = slog_buffer.len;
 	va_list args0;
@@ -327,32 +346,64 @@ static void slog_print_file(
 	va_end(args0);
 }
 
-#if HAVE_SYSLOG
+static void slog_print_writer(
+	const int level, const char *restrict file, const int line,
+	const struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
+{
+	slog_build_prefix(level, file, line);
+
+	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
+	if (ret < 0) {
+		BUF_APPENDSTR(slog_buffer, "(log format error)");
+	}
+	/* overwritting the null terminator is not an issue */
+	BUF_APPENDSTR(slog_buffer, "\n");
+	/* there is no stream to re-format into, so an overlong line is already
+	 * truncated to the buffer capacity by buf_append */
+	const size_t len = slog_buffer.len;
+
+	MTX_LOCK(&slog_output_mu);
+	if (slog_writer != NULL) {
+		slog_writer(slog_writer_ud, slog_buffer.data, len);
+	}
+	(void)extra;
+	MTX_UNLOCK(&slog_output_mu);
+}
+
 static void slog_print_syslog(
 	const int level, const char *restrict file, const int line,
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
-	static const int slog_level_map[] = {
-		LOG_ALERT, LOG_CRIT,  LOG_ERR,	 LOG_WARNING, LOG_NOTICE,
-		LOG_INFO,  LOG_DEBUG, LOG_DEBUG, LOG_DEBUG,
+	/* RFC 5424 §6.2.1 severities, indexed by slog level; facility USER (1) */
+	static const int slog_severity_map[] = {
+		1, 2, 3, 4, 5, 6, 7, 7, 7,
 	};
+	const int priority = (1 << 3) | slog_severity_map[level];
 
-	file = slog_filename(file);
 	BUF_INIT(slog_buffer, 0);
+	BUF_APPENDF(slog_buffer, "%s:%d ", slog_filename(file), line);
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
 	if (ret < 0) {
 		BUF_APPENDSTR(slog_buffer, "(log format error)");
 	}
 
 	MTX_LOCK(&slog_output_mu);
-	syslog(LOG_USER | slog_level_map[level], "%c %s:%d %.*s",
-	       slog_level_char[level], file, line, (int)slog_buffer.len,
-	       (const char *)slog_buffer.data);
+	if (slog_syslog != NULL) {
+		slog_syslog(
+			slog_syslog_ident, priority,
+			(const char *)slog_buffer.data, slog_buffer.len);
+	}
+#if HAVE_SYSLOG
+	else {
+		syslog(priority, "%.*s", (int)slog_buffer.len,
+		       (const char *)slog_buffer.data);
+	}
+#endif
 	(void)extra;
 	MTX_UNLOCK(&slog_output_mu);
 }
-#endif
 
 void slog_setlevel(const int level)
 {
@@ -389,12 +440,35 @@ void slog_setoutput(const int type, ...)
 		MTX_UNLOCK(&slog_output_mu);
 		ATOMIC_STORE(&slog_printer, slog_print_file);
 	} break;
+	case SLOG_OUTPUT_WRITER: {
+		slog_writer_fn fn = va_arg(args, slog_writer_fn);
+		void *ud = va_arg(args, void *);
+		MTX_LOCK(&slog_output_mu);
+		slog_writer = fn;
+		slog_writer_ud = ud;
+		MTX_UNLOCK(&slog_output_mu);
+		ATOMIC_STORE(&slog_printer, slog_print_writer);
+	} break;
 	case SLOG_OUTPUT_SYSLOG: {
+		void *ident = va_arg(args, void *);
+		slog_syslog_fn fn = va_arg(args, slog_syslog_fn);
+		if (fn != NULL) {
+			MTX_LOCK(&slog_output_mu);
+			slog_syslog = fn;
+			slog_syslog_ident = ident;
+			MTX_UNLOCK(&slog_output_mu);
+			ATOMIC_STORE(&slog_printer, slog_print_syslog);
+			break;
+		}
 #if HAVE_SYSLOG
-		const char *ident = va_arg(args, const char *);
 		openlog(ident, LOG_PID | LOG_NDELAY, LOG_USER);
+		MTX_LOCK(&slog_output_mu);
+		slog_syslog = NULL;
+		slog_syslog_ident = NULL;
+		MTX_UNLOCK(&slog_output_mu);
 		ATOMIC_STORE(&slog_printer, slog_print_syslog);
 #else
+		(void)ident;
 		ATOMIC_STORE(&slog_printer, NULL);
 #endif
 	} break;
@@ -409,16 +483,28 @@ void slog_setfileprefix(const char *prefix)
 	ATOMIC_STORE(&slog_fileprefix, prefix);
 }
 
+static void slog_dispatch(
+	const int level, const char *restrict file, const int line,
+	const struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
+{
+	const slog_printer_fn printer = ATOMIC_LOAD(&slog_printer);
+	/* drop messages emitted by a sink from within its own invocation;
+	 * re-entering the printer here would deadlock on slog_output_mu */
+	if (printer == NULL || slog_in_printer) {
+		return;
+	}
+	slog_in_printer = true;
+	printer(level, file, line, extra, format, args);
+	slog_in_printer = false;
+}
+
 void slog_vprintf(
 	const int level, const char *restrict file, const int line,
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
-	const slog_printer_fn vprintf = ATOMIC_LOAD(&slog_printer);
-	if (vprintf == NULL) {
-		return;
-	}
-	vprintf(level, file, line, extra, format, args);
+	slog_dispatch(level, file, line, extra, format, args);
 }
 
 void slog_printf(
@@ -426,12 +512,8 @@ void slog_printf(
 	const struct slog_extra *restrict extra, const char *restrict format,
 	...)
 {
-	const slog_printer_fn vprintf = ATOMIC_LOAD(&slog_printer);
-	if (vprintf == NULL) {
-		return;
-	}
 	va_list args;
 	va_start(args, format);
-	vprintf(level, file, line, extra, format, args);
+	slog_dispatch(level, file, line, extra, format, args);
 	va_end(args);
 }

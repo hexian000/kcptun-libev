@@ -12,6 +12,7 @@
 
 #include <ev.h>
 
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -33,8 +34,6 @@ static struct {
 	ev_signal w_sigint;
 	ev_signal w_sigterm;
 } app;
-
-void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents);
 
 static void print_usage(char *argv0)
 {
@@ -75,7 +74,7 @@ static void set_log_config(const struct config *restrict conf, const int level)
 	} else if (strcmp(log, "terminal") == 0) {
 		slog_setoutput(SLOG_OUTPUT_TERMINAL, stderr);
 	} else if (strcmp(log, "syslog") == 0) {
-		slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
+		slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME, NULL);
 	} else if (strcmp(log, "discard") == 0) {
 		slog_setoutput(SLOG_OUTPUT_DISCARD);
 	} else {
@@ -150,6 +149,51 @@ static void parse_args(int argc, char **argv)
 	slog_setlevel(LOG_LEVEL_NOTICE + args.verbosity);
 }
 
+static void
+signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
+{
+	CHECK_REVENTS(revents, EV_SIGNAL);
+
+	struct server *restrict s = watcher->data;
+	switch (watcher->signum) {
+	case SIGHUP: {
+#if WITH_SYSTEMD
+		(void)systemd_notify(DAEMON_SYSTEMD_STATE_RELOADING);
+#endif
+		struct config *conf = conf_read(args.conf_path);
+		if (conf == NULL) {
+			LOGE_F("failed to read config `%s'", args.conf_path);
+			return;
+		}
+		if (s->conf->mode != conf->mode) {
+			conf_modestr(conf);
+			LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
+			       conf_modestr(s->conf), s->conf->mode,
+			       conf_modestr(conf), conf->mode);
+			return;
+		}
+		set_log_config(conf, conf->log_level);
+		conf_free((struct config *)s->conf);
+		server_loadconf(s, conf);
+		LOGN("config successfully reloaded");
+		(void)server_resolve(s);
+		s->last_resolve_time = ev_now(s->loop);
+#if WITH_SYSTEMD
+		(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
+#endif
+	} break;
+	case SIGINT:
+	case SIGTERM: {
+		LOGD_F("signal %d received, breaking", watcher->signum);
+#if WITH_SYSTEMD
+		(void)systemd_notify(DAEMON_SYSTEMD_STATE_STOPPING);
+#endif
+		ev_break(loop, EVBREAK_ALL);
+	} break;
+	default:;
+	}
+}
+
 int main(int argc, char **argv)
 {
 	init(argc, argv);
@@ -195,7 +239,7 @@ int main(int argc, char **argv)
 			args.user_name ? args.user_name : conf->user;
 		if (args.daemonize) {
 			daemonize(user_name, true, false);
-			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME);
+			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME, NULL);
 		} else if (user_name != NULL) {
 			drop_privileges(user_name);
 		}
@@ -236,48 +280,4 @@ int main(int argc, char **argv)
 
 	LOGD("program terminated normally");
 	return EXIT_SUCCESS;
-}
-
-void signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
-{
-	CHECK_REVENTS(revents, EV_SIGNAL);
-
-	struct server *restrict s = watcher->data;
-	switch (watcher->signum) {
-	case SIGHUP: {
-#if WITH_SYSTEMD
-		(void)systemd_notify(DAEMON_SYSTEMD_STATE_RELOADING);
-#endif
-		struct config *conf = conf_read(args.conf_path);
-		if (conf == NULL) {
-			LOGE_F("failed to read config `%s'", args.conf_path);
-			return;
-		}
-		if (s->conf->mode != conf->mode) {
-			conf_modestr(conf);
-			LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
-			       conf_modestr(s->conf), s->conf->mode,
-			       conf_modestr(conf), conf->mode);
-			return;
-		}
-		set_log_config(conf, conf->log_level);
-		conf_free((struct config *)s->conf);
-		server_loadconf(s, conf);
-		LOGN("config successfully reloaded");
-		(void)server_resolve(s);
-		s->last_resolve_time = ev_now(s->loop);
-#if WITH_SYSTEMD
-		(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
-#endif
-	} break;
-	case SIGINT:
-	case SIGTERM: {
-		LOGD_F("signal %d received, breaking", watcher->signum);
-#if WITH_SYSTEMD
-		(void)systemd_notify(DAEMON_SYSTEMD_STATE_STOPPING);
-#endif
-		ev_break(loop, EVBREAK_ALL);
-	} break;
-	default:;
-	}
 }

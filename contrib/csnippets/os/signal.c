@@ -3,7 +3,9 @@
 
 #include "signal.h"
 
+#include "utils/arraysize.h"
 #include "utils/debug.h"
+#include "utils/slog.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -26,7 +28,7 @@ static struct {
 	{ SIGSEGV, { .sa_handler = SIG_DFL } },
 	{ SIGSYS, { .sa_handler = SIG_DFL } },
 };
-#define NUM_SIGHANDLERS (sizeof(sighandlers) / sizeof(sighandlers[0]))
+#define NUM_SIGHANDLERS ARRAY_SIZE(sighandlers)
 
 static void sighandler_crash(const int signo)
 {
@@ -114,7 +116,7 @@ const char *os_strsignal(int signo)
 	};
 
 	const struct sigmap_entry *result =
-		bsearch(&signo, sigmap, sizeof(sigmap) / sizeof(sigmap[0]),
-			sizeof(sigmap[0]), compare_signo);
+		bsearch(&signo, sigmap, ARRAY_SIZE(sigmap), sizeof(sigmap[0]),
+			compare_signo);
 	return result ? result->str : NULL;
 }

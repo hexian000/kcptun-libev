@@ -13,9 +13,11 @@
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
+#include "os/socket.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
+#include "utils/minmax.h"
 #include "utils/serialize.h"
 #include "utils/slog.h"
 

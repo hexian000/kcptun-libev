@@ -10,19 +10,20 @@
 
 #include "net/http.h"
 #include "net/url.h"
+#include "os/socket.h"
 #include "utils/buffer.h"
 #include "utils/slog.h"
 
 #include <ev.h>
 
 #include <sys/socket.h>
-#include <sys/types.h>
 
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>

@@ -14,6 +14,7 @@
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
+#include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/minmax.h"
 #include "utils/slog.h"
@@ -389,15 +390,15 @@ struct pktqueue *queue_new(struct server *restrict s)
 void queue_free(struct pktqueue *restrict q)
 {
 	if (q->mq_send != NULL) {
-		for (; q->mq_send_len > 0; q->mq_send_len--) {
-			msgframe_delete(q, q->mq_send[q->mq_send_len]);
+		while (q->mq_send_len > 0) {
+			msgframe_delete(q, q->mq_send[--q->mq_send_len]);
 		}
 		free((void *)q->mq_send);
 		q->mq_send = NULL;
 	}
 	if (q->mq_recv != NULL) {
-		for (; q->mq_recv_len > 0; q->mq_recv_len--) {
-			msgframe_delete(q, q->mq_recv[q->mq_recv_len]);
+		while (q->mq_recv_len > 0) {
+			msgframe_delete(q, q->mq_recv[--q->mq_recv_len]);
 		}
 		free((void *)q->mq_recv);
 		q->mq_recv = NULL;

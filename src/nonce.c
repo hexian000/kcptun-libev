@@ -8,6 +8,7 @@
 
 #include "utils/buffer.h"
 #include "utils/debug.h"
+#include "utils/slog.h"
 
 #include <sodium.h>
 

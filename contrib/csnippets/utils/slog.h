@@ -31,12 +31,37 @@ extern int slog_level_;
 #endif
 void slog_setlevel(int level);
 
+typedef void (*slog_writer_fn)(void *ud, const unsigned char *buf, size_t len);
+
+/* A drop-in replacement for the C library syslog(3). It receives the ident
+ * registered with SLOG_OUTPUT_SYSLOG, the priority (facility | severity), and
+ * the formatted message body. The ident may point into a caller structure so
+ * that fn can recover its context from it. */
+typedef void (*slog_syslog_fn)(
+	const char *ident, int priority, const char *msg, size_t len);
+
 enum {
 	SLOG_OUTPUT_DISCARD,
 	SLOG_OUTPUT_TERMINAL,
 	SLOG_OUTPUT_FILE,
+	SLOG_OUTPUT_WRITER,
 	SLOG_OUTPUT_SYSLOG,
 };
+
+/**
+ * @brief Set the log output sink.
+ * @param type One of the SLOG_OUTPUT_* constants, followed by the matching
+ * variadic arguments:
+ * - SLOG_OUTPUT_DISCARD: drop all messages. No extra arguments.
+ * - SLOG_OUTPUT_TERMINAL, FILE *stream: write to a stream with ANSI colors.
+ * - SLOG_OUTPUT_FILE, FILE *stream: write to a stream without ANSI colors.
+ * - SLOG_OUTPUT_WRITER, slog_writer_fn fn, void *ud: deliver each formatted
+ *   line to fn.
+ * - SLOG_OUTPUT_SYSLOG, void *ident, slog_syslog_fn fn: send messages via fn,
+ *   or the system syslog() when fn is NULL. ident is the syslog identity and is
+ *   passed back to fn as its first argument.
+ * @details The previous sink, if any, is replaced.
+ */
 void slog_setoutput(int type, ...);
 
 void slog_setfileprefix(const char *prefix);

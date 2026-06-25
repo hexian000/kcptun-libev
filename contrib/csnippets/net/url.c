@@ -52,8 +52,15 @@ escape(char *buf, size_t maxlen, const char *str, const size_t len,
 		if (written < maxlen) {
 			buf[written] = '%';
 		}
+		/* tohex() writes two bytes; guard each independently so a
+		 * percent-escape straddling the end of buf never overflows. */
+		char hex[2];
+		tohex(hex, ch);
 		if (written + 1 < maxlen) {
-			tohex(buf + written + 1, ch);
+			buf[written + 1] = hex[0];
+		}
+		if (written + 2 < maxlen) {
+			buf[written + 2] = hex[1];
 		}
 		written += 3;
 	}

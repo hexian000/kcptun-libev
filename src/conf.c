@@ -166,13 +166,87 @@ static bool conf_check(struct config *restrict conf)
  * Returns false and goes to oom on allocation failure. */
 #define COPY_STRING(dst, key)                                                  \
 	do {                                                                   \
-		if ((parsed.key.str) != NULL) {                                \
-			(dst) = strndup(parsed.key.str, parsed.key.len);       \
+		if ((parsed->key.str) != NULL) {                               \
+			(dst) = strndup(parsed->key.str, parsed->key.len);     \
 			if ((dst) == NULL) {                                   \
 				goto oom;                                      \
 			}                                                      \
 		}                                                              \
 	} while (0)
+
+/* Copy the parsed fields into conf. The parsed buffer is freed by the caller,
+ * so strings are duplicated. Returns false on allocation failure. */
+static bool conf_apply(
+	struct config *restrict conf, const struct json_conf *restrict parsed)
+{
+	COPY_STRING(conf->listen, listen);
+	COPY_STRING(conf->connect, connect);
+	COPY_STRING(conf->kcp_bind, kcp_bind);
+	COPY_STRING(conf->kcp_connect, kcp_connect);
+	COPY_STRING(conf->rendezvous_server, rendezvous_server);
+	if (parsed->service_id.str != NULL) {
+		conf->service_id =
+			strndup(parsed->service_id.str, parsed->service_id.len);
+		if (conf->service_id == NULL) {
+			goto oom;
+		}
+		conf->service_idlen = parsed->service_id.len;
+	}
+	COPY_STRING(conf->http_listen, http_listen);
+	COPY_STRING(conf->netdev, netdev);
+	COPY_STRING(conf->log, log);
+	COPY_STRING(conf->user, user);
+#if WITH_CRYPTO
+	COPY_STRING(conf->method, method);
+	COPY_STRING(conf->password, password);
+	COPY_STRING(conf->psk, psk);
+#endif /* WITH_CRYPTO */
+#if WITH_OBFS
+	COPY_STRING(conf->obfs, obfs);
+#endif /* WITH_OBFS */
+
+	/* copy kcp settings */
+	{
+		const struct json_conf_kcp *k = &parsed->kcp;
+		conf->kcp_mtu = (int)k->mtu;
+		conf->kcp_sndwnd = (int)k->sndwnd;
+		conf->kcp_rcvwnd = (int)k->rcvwnd;
+		conf->kcp_nodelay = (int)k->nodelay;
+		conf->kcp_interval = (int)k->interval;
+		conf->kcp_resend = (int)k->resend;
+		conf->kcp_nc = (int)k->nc;
+		conf->kcp_flush = (int)k->flush;
+	}
+
+	/* copy tcp settings */
+	{
+		const struct json_conf_tcp *t = &parsed->tcp;
+		conf->tcp_reuseport = t->reuseport;
+		conf->tcp_keepalive = t->keepalive;
+		conf->tcp_nodelay = t->nodelay;
+		conf->tcp_sndbuf = (int)t->sndbuf;
+		conf->tcp_rcvbuf = (int)t->rcvbuf;
+	}
+
+	/* copy udp settings */
+	{
+		const struct json_conf_udp *u = &parsed->udp;
+		conf->udp_reuseport = u->reuseport;
+		conf->udp_sndbuf = (int)u->sndbuf;
+		conf->udp_rcvbuf = (int)u->rcvbuf;
+	}
+
+	/* copy top-level integer settings */
+	conf->timeout = (int)parsed->timeout;
+	conf->linger = (int)parsed->linger;
+	conf->keepalive = (int)parsed->keepalive;
+	conf->time_wait = (int)parsed->time_wait;
+	conf->log_level = (int)parsed->loglevel;
+	return true;
+oom:
+	LOGOOM();
+	return false;
+}
 
 struct config *conf_read(const char *path)
 {
@@ -199,85 +273,19 @@ struct config *conf_read(const char *path)
 		return NULL;
 	}
 
-	/* copy strings (strndup since the json buffer is freed below) */
-	COPY_STRING(conf->listen, listen);
-	COPY_STRING(conf->connect, connect);
-	COPY_STRING(conf->kcp_bind, kcp_bind);
-	COPY_STRING(conf->kcp_connect, kcp_connect);
-	COPY_STRING(conf->rendezvous_server, rendezvous_server);
-	if (parsed.service_id.str != NULL) {
-		conf->service_id =
-			strndup(parsed.service_id.str, parsed.service_id.len);
-		if (conf->service_id == NULL) {
-			goto oom;
-		}
-		conf->service_idlen = parsed.service_id.len;
-	}
-	COPY_STRING(conf->http_listen, http_listen);
-	COPY_STRING(conf->netdev, netdev);
-	COPY_STRING(conf->log, log);
-	COPY_STRING(conf->user, user);
-#if WITH_CRYPTO
-	COPY_STRING(conf->method, method);
-	COPY_STRING(conf->password, password);
-	COPY_STRING(conf->psk, psk);
-#endif /* WITH_CRYPTO */
-#if WITH_OBFS
-	COPY_STRING(conf->obfs, obfs);
-#endif /* WITH_OBFS */
-
-	/* copy kcp settings */
-	{
-		const struct json_conf_kcp *k = &parsed.kcp;
-		conf->kcp_mtu = (int)k->mtu;
-		conf->kcp_sndwnd = (int)k->sndwnd;
-		conf->kcp_rcvwnd = (int)k->rcvwnd;
-		conf->kcp_nodelay = (int)k->nodelay;
-		conf->kcp_interval = (int)k->interval;
-		conf->kcp_resend = (int)k->resend;
-		conf->kcp_nc = (int)k->nc;
-		conf->kcp_flush = (int)k->flush;
-	}
-
-	/* copy tcp settings */
-	{
-		const struct json_conf_tcp *t = &parsed.tcp;
-		conf->tcp_reuseport = t->reuseport;
-		conf->tcp_keepalive = t->keepalive;
-		conf->tcp_nodelay = t->nodelay;
-		conf->tcp_sndbuf = (int)t->sndbuf;
-		conf->tcp_rcvbuf = (int)t->rcvbuf;
-	}
-
-	/* copy udp settings */
-	{
-		const struct json_conf_udp *u = &parsed.udp;
-		conf->udp_reuseport = u->reuseport;
-		conf->udp_sndbuf = (int)u->sndbuf;
-		conf->udp_rcvbuf = (int)u->rcvbuf;
-	}
-
-	/* copy top-level integer settings */
-	conf->timeout = (int)parsed.timeout;
-	conf->linger = (int)parsed.linger;
-	conf->keepalive = (int)parsed.keepalive;
-	conf->time_wait = (int)parsed.time_wait;
-	conf->log_level = (int)parsed.loglevel;
-
+	const bool ok = conf_apply(conf, &parsed);
 	json_free_conf(&parsed);
 	free(buf);
+	if (!ok) {
+		conf_free(conf);
+		return NULL;
+	}
 
 	if (!conf_check(conf)) {
 		conf_free(conf);
 		return NULL;
 	}
 	return conf;
-oom:
-	LOGOOM();
-	json_free_conf(&parsed);
-	free(buf);
-	conf_free(conf);
-	return NULL;
 }
 
 void conf_free(struct config *conf)

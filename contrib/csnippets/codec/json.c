@@ -3,6 +3,7 @@
 
 #include "json.h"
 
+#include "utils/arraysize.h"
 #include "utils/ascii.h"
 #include "utils/slog.h"
 
@@ -476,9 +477,7 @@ static const double json_pow10[] = {
  * +/-inf on overflow and to +/-0 on underflow.  No libm dependency. */
 static double json_scale10(double m, int exp)
 {
-	enum {
-		max_step = (int)(sizeof(json_pow10) / sizeof(json_pow10[0])) - 1
-	};
+	enum { max_step = (int)ARRAY_SIZE(json_pow10) - 1 };
 	while (exp > 0) {
 		const int step = exp < max_step ? exp : max_step;
 		m *= json_pow10[step];

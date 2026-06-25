@@ -9,6 +9,7 @@
 #include "math/rand.h"
 #include "net/addr.h"
 #include "os/clock.h"
+#include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
 #include "utils/minmax.h"
@@ -18,14 +19,10 @@
 
 #include <ev.h>
 
-#include <arpa/inet.h>
 #include <net/if.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 
 #include <signal.h>
-#include <unistd.h>
 
 #include <errno.h>
 #include <inttypes.h>

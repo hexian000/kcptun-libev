@@ -79,4 +79,10 @@ CheckOptions:
     value:           '8'
   - key:             readability-function-size.BranchThreshold
     value:           '50'
+  # Headers that must not be spelled directly: config.h is force-included by
+  # the build (-include), libsodium and linux/filter.h are umbrella headers
+  # whose symbols clang attributes to internal sub-headers, and the glibc/linux
+  # bits/ and asm*/ headers are never includable on their own.
+  - key:             misc-include-cleaner.IgnoreHeaders
+    value:           'config\.h;sodium\.h;sodium/.*;linux/filter\.h;linux/bpf.*;asm-generic/.*;asm/socket\.h;bits/.*'
 ...

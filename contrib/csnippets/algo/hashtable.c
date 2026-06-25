@@ -116,7 +116,7 @@ static bool str_eq(const void *restrict a, const void *restrict b)
 static uint_fast32_t ptr_hash(const void *key, const uint_fast32_t seed)
 {
 	/* hash the pointer value itself */
-	return fnv1a_32(&key, sizeof(key), seed);
+	return fnv1a_32((const void *)&key, sizeof(key), seed);
 }
 
 static bool ptr_eq(const void *restrict a, const void *restrict b)

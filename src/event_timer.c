@@ -11,6 +11,7 @@
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
+#include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
 #include "utils/slog.h"

@@ -7,8 +7,7 @@
 #include "server.h"
 #include "util.h"
 
-#include "utils/buffer.h"
-#include "utils/debug.h"
+#include "os/socket.h"
 #include "utils/minmax.h"
 #include "utils/slog.h"
 

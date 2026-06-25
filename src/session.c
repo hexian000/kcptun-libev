@@ -10,6 +10,7 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "os/socket.h"
 #include "utils/arraysize.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"

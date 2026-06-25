@@ -22,6 +22,7 @@
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
+#include "utils/minmax.h"
 #include "utils/slog.h"
 
 #include <ev.h>
@@ -34,7 +35,6 @@
 #include <netinet/ip6.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 
 #include <errno.h>
 #include <inttypes.h>
@@ -2334,7 +2334,8 @@ static int obfs_parse_http(struct obfs_ctx *restrict ctx)
 	return 0;
 }
 
-void obfs_fail_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
+static void
+obfs_fail_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 	struct obfs_ctx *restrict ctx = watcher->data;
