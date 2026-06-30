@@ -4,6 +4,9 @@
 
 #include "codec/json.h"
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -126,197 +129,146 @@ json_lookup_conf_udp(const char *str, size_t len)
 
 /** @} */
 
-/** @name Key indices
+/** @name Schema tables
  *  @{ */
 
-enum json_conf_key {
-	JSON_CONF_CONNECT = 0,
-	JSON_CONF_HTTP_LISTEN = 1,
-	JSON_CONF_KCP = 2,
-	JSON_CONF_KCP_BIND = 3,
-	JSON_CONF_KCP_CONNECT = 4,
-	JSON_CONF_KEEPALIVE = 5,
-	JSON_CONF_LINGER = 6,
-	JSON_CONF_LISTEN = 7,
-	JSON_CONF_LOG = 8,
-	JSON_CONF_LOGLEVEL = 9,
-	JSON_CONF_METHOD = 10,
-	JSON_CONF_NETDEV = 11,
-	JSON_CONF_OBFS = 12,
-	JSON_CONF_PASSWORD = 13,
-	JSON_CONF_PSK = 14,
-	JSON_CONF_RENDEZVOUS_SERVER = 15,
-	JSON_CONF_SERVICE_ID = 16,
-	JSON_CONF_TCP = 17,
-	JSON_CONF_TIME_WAIT = 18,
-	JSON_CONF_TIMEOUT = 19,
-	JSON_CONF_UDP = 20,
-	JSON_CONF_USER = 21,
+static const struct json_constraint json_conf_udp_rcvbuf_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(33554432) },
+};
+static const struct json_constraint json_conf_udp_sndbuf_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(33554432) },
+};
+static const struct json_conf_udp json_conf_udp_defaults = {
+	.reuseport = false,
+};
+static const struct json_field json_conf_udp_fields[] = {
+	{ .name = "rcvbuf", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_udp, rcvbuf), .constraint = &json_conf_udp_rcvbuf_c },
+	{ .name = "reuseport", .name_len = 9, .kind = JSON_K_BOOL, .req_bit = -1, .offset = offsetof(struct json_conf_udp, reuseport) },
+	{ .name = "sndbuf", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_udp, sndbuf), .constraint = &json_conf_udp_sndbuf_c },
+};
+static const struct json_schema json_conf_udp_schema = {
+	.fields = json_conf_udp_fields,
+	.n_fields = 3,
+	.obj_size = sizeof(struct json_conf_udp),
+	.lookup = json_lookup_conf_udp,
+	.defaults = &json_conf_udp_defaults,
+	.present_field = -1,
 };
 
-enum json_conf_kcp_key {
-	JSON_CONF_KCP_FLUSH = 0,
-	JSON_CONF_KCP_INTERVAL = 1,
-	JSON_CONF_KCP_MTU = 2,
-	JSON_CONF_KCP_NC = 3,
-	JSON_CONF_KCP_NODELAY = 4,
-	JSON_CONF_KCP_RCVWND = 5,
-	JSON_CONF_KCP_RESEND = 6,
-	JSON_CONF_KCP_SNDWND = 7,
+static const struct json_constraint json_conf_tcp_rcvbuf_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(33554432) },
+};
+static const struct json_constraint json_conf_tcp_sndbuf_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(33554432) },
+};
+static const struct json_conf_tcp json_conf_tcp_defaults = {
+	.keepalive = false,
+	.nodelay = true,
+	.reuseport = false,
+};
+static const struct json_field json_conf_tcp_fields[] = {
+	{ .name = "keepalive", .name_len = 9, .kind = JSON_K_BOOL, .req_bit = -1, .offset = offsetof(struct json_conf_tcp, keepalive) },
+	{ .name = "nodelay", .name_len = 7, .kind = JSON_K_BOOL, .req_bit = -1, .offset = offsetof(struct json_conf_tcp, nodelay) },
+	{ .name = "rcvbuf", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_tcp, rcvbuf), .constraint = &json_conf_tcp_rcvbuf_c },
+	{ .name = "reuseport", .name_len = 9, .kind = JSON_K_BOOL, .req_bit = -1, .offset = offsetof(struct json_conf_tcp, reuseport) },
+	{ .name = "sndbuf", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_tcp, sndbuf), .constraint = &json_conf_tcp_sndbuf_c },
+};
+static const struct json_schema json_conf_tcp_schema = {
+	.fields = json_conf_tcp_fields,
+	.n_fields = 5,
+	.obj_size = sizeof(struct json_conf_tcp),
+	.lookup = json_lookup_conf_tcp,
+	.defaults = &json_conf_tcp_defaults,
+	.present_field = -1,
 };
 
-enum json_conf_tcp_key {
-	JSON_CONF_TCP_KEEPALIVE = 0,
-	JSON_CONF_TCP_NODELAY = 1,
-	JSON_CONF_TCP_RCVBUF = 2,
-	JSON_CONF_TCP_REUSEPORT = 3,
-	JSON_CONF_TCP_SNDBUF = 4,
+static const struct json_constraint json_conf_kcp_flush_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(2) },
+};
+static const struct json_constraint json_conf_kcp_interval_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(10), .max = UINTMAX_C(500) },
+};
+static const struct json_constraint json_conf_kcp_mtu_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(300), .max = UINTMAX_C(1500) },
+};
+static const struct json_constraint json_conf_kcp_nc_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(1) },
+};
+static const struct json_constraint json_conf_kcp_nodelay_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(2) },
+};
+static const struct json_constraint json_conf_kcp_rcvwnd_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(16), .max = UINTMAX_C(65536) },
+};
+static const struct json_constraint json_conf_kcp_resend_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(100) },
+};
+static const struct json_constraint json_conf_kcp_sndwnd_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(16), .max = UINTMAX_C(65536) },
+};
+static const struct json_conf_kcp json_conf_kcp_defaults = {
+	.flush = 1u,
+	.interval = 100u,
+	.mtu = 1400u,
+	.nc = 1u,
+	.nodelay = 1u,
+	.rcvwnd = 256u,
+	.resend = 0u,
+	.sndwnd = 256u,
+};
+static const struct json_field json_conf_kcp_fields[] = {
+	{ .name = "flush", .name_len = 5, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, flush), .constraint = &json_conf_kcp_flush_c },
+	{ .name = "interval", .name_len = 8, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, interval), .constraint = &json_conf_kcp_interval_c },
+	{ .name = "mtu", .name_len = 3, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, mtu), .constraint = &json_conf_kcp_mtu_c },
+	{ .name = "nc", .name_len = 2, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, nc), .constraint = &json_conf_kcp_nc_c },
+	{ .name = "nodelay", .name_len = 7, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, nodelay), .constraint = &json_conf_kcp_nodelay_c },
+	{ .name = "rcvwnd", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, rcvwnd), .constraint = &json_conf_kcp_rcvwnd_c },
+	{ .name = "resend", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, resend), .constraint = &json_conf_kcp_resend_c },
+	{ .name = "sndwnd", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf_kcp, sndwnd), .constraint = &json_conf_kcp_sndwnd_c },
+};
+static const struct json_schema json_conf_kcp_schema = {
+	.fields = json_conf_kcp_fields,
+	.n_fields = 8,
+	.obj_size = sizeof(struct json_conf_kcp),
+	.lookup = json_lookup_conf_kcp,
+	.defaults = &json_conf_kcp_defaults,
+	.present_field = -1,
 };
 
-enum json_conf_udp_key {
-	JSON_CONF_UDP_RCVBUF = 0,
-	JSON_CONF_UDP_REUSEPORT = 1,
-	JSON_CONF_UDP_SNDBUF = 2,
+static const struct json_constraint json_conf_keepalive_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(600) },
 };
-
-/** @} */
-
-/** @name Free
- *  @{ */
-
-static void json_free_conf_udp(struct json_conf_udp *obj)
-{
-	(void)obj;
-}
-
-static void json_free_conf_tcp(struct json_conf_tcp *obj)
-{
-	(void)obj;
-}
-
-static void json_free_conf_kcp(struct json_conf_kcp *obj)
-{
-	(void)obj;
-}
-
-void json_free_conf(struct json_conf *obj)
-{
-	json_free_conf_kcp(&obj->kcp);
-	json_free_conf_tcp(&obj->tcp);
-	json_free_conf_udp(&obj->udp);
-}
-
-/** @} */
-
-/** @name Unmarshal
- *  @{ */
-
-static bool json_unmarshal_conf_udp(
-	struct json_conf_udp *obj, char *json, size_t length)
-{
-	*obj = (struct json_conf_udp){
-		.reuseport = false,
-	};
-	const struct json_val root_ = json_parse(json, &(size_t){ length });
-	if (root_.type != JSON_OBJECT) { return false; }
-	json_iter iter_ = root_.iter;
-	char *key_; size_t key_len_; char *val_; size_t val_len_;
-	int next_;
-
-	while ((next_ = json_obj_next(json, &length, &iter_,
-			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
-		const int k_ = json_lookup_conf_udp(key_, key_len_);
-		switch (k_) {
-		case JSON_CONF_UDP_RCVBUF: {
-			if (!json_parse_uint(val_, val_len_, &obj->rcvbuf)) { goto fail_; }
-			if (obj->rcvbuf > 33554432u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_UDP_REUSEPORT: {
-			if (!json_parse_bool(val_, val_len_, &obj->reuseport)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_UDP_SNDBUF: {
-			if (!json_parse_uint(val_, val_len_, &obj->sndbuf)) { goto fail_; }
-			if (obj->sndbuf > 33554432u) { goto fail_; }
-			break;
-		}
-		default:
-			break;
-		}
-	}
-	if (next_ != JSON_NEXT_END) { goto fail_; }
-	for (; iter_ < length; iter_++) {
-		if (!json_iswhitespace(json[iter_])) { goto fail_; }
-	}
-	return true;
-
-fail_:
-	json_free_conf_udp(obj);
-	*obj = (struct json_conf_udp){ 0 };
-	return false;
-}
-
-static bool json_unmarshal_conf_tcp(
-	struct json_conf_tcp *obj, char *json, size_t length)
-{
-	*obj = (struct json_conf_tcp){
-		.keepalive = false,
-		.nodelay = true,
-		.reuseport = false,
-	};
-	const struct json_val root_ = json_parse(json, &(size_t){ length });
-	if (root_.type != JSON_OBJECT) { return false; }
-	json_iter iter_ = root_.iter;
-	char *key_; size_t key_len_; char *val_; size_t val_len_;
-	int next_;
-
-	while ((next_ = json_obj_next(json, &length, &iter_,
-			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
-		const int k_ = json_lookup_conf_tcp(key_, key_len_);
-		switch (k_) {
-		case JSON_CONF_TCP_KEEPALIVE: {
-			if (!json_parse_bool(val_, val_len_, &obj->keepalive)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_TCP_NODELAY: {
-			if (!json_parse_bool(val_, val_len_, &obj->nodelay)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_TCP_RCVBUF: {
-			if (!json_parse_uint(val_, val_len_, &obj->rcvbuf)) { goto fail_; }
-			if (obj->rcvbuf > 33554432u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_TCP_REUSEPORT: {
-			if (!json_parse_bool(val_, val_len_, &obj->reuseport)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_TCP_SNDBUF: {
-			if (!json_parse_uint(val_, val_len_, &obj->sndbuf)) { goto fail_; }
-			if (obj->sndbuf > 33554432u) { goto fail_; }
-			break;
-		}
-		default:
-			break;
-		}
-	}
-	if (next_ != JSON_NEXT_END) { goto fail_; }
-	for (; iter_ < length; iter_++) {
-		if (!json_iswhitespace(json[iter_])) { goto fail_; }
-	}
-	return true;
-
-fail_:
-	json_free_conf_tcp(obj);
-	*obj = (struct json_conf_tcp){ 0 };
-	return false;
-}
-
-static bool json_unmarshal_conf_kcp(
-	struct json_conf_kcp *obj, char *json, size_t length)
-{
-	*obj = (struct json_conf_kcp){
+static const struct json_constraint json_conf_linger_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(5), .max = UINTMAX_C(600) },
+};
+static const struct json_constraint json_conf_loglevel_c = {
+	.flags = JSON_C_MAX,
+	.u = { .max = UINTMAX_C(8) },
+};
+static const struct json_constraint json_conf_time_wait_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(5), .max = UINTMAX_C(3600) },
+};
+static const struct json_constraint json_conf_timeout_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(60), .max = UINTMAX_C(86400) },
+};
+static const struct json_conf json_conf_defaults = {
+	.kcp = {
 		.flush = 1u,
 		.interval = 100u,
 		.mtu = 1400u,
@@ -325,237 +277,68 @@ static bool json_unmarshal_conf_kcp(
 		.rcvwnd = 256u,
 		.resend = 0u,
 		.sndwnd = 256u,
-	};
-	const struct json_val root_ = json_parse(json, &(size_t){ length });
-	if (root_.type != JSON_OBJECT) { return false; }
-	json_iter iter_ = root_.iter;
-	char *key_; size_t key_len_; char *val_; size_t val_len_;
-	int next_;
+	},
+	.keepalive = 25u,
+	.linger = 30u,
+	.loglevel = 4u,
+	.tcp = {
+		.keepalive = false,
+		.nodelay = true,
+		.reuseport = false,
+	},
+	.time_wait = 120u,
+	.timeout = 600u,
+	.udp = {
+		.reuseport = false,
+	},
+};
+static const struct json_field json_conf_fields[] = {
+	{ .name = "connect", .name_len = 7, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, connect) },
+	{ .name = "http_listen", .name_len = 11, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, http_listen) },
+	{ .name = "kcp", .name_len = 3, .kind = JSON_K_OBJECT, .req_bit = -1, .offset = offsetof(struct json_conf, kcp), .child = &json_conf_kcp_schema },
+	{ .name = "kcp_bind", .name_len = 8, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, kcp_bind) },
+	{ .name = "kcp_connect", .name_len = 11, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, kcp_connect) },
+	{ .name = "keepalive", .name_len = 9, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, keepalive), .constraint = &json_conf_keepalive_c },
+	{ .name = "linger", .name_len = 6, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, linger), .constraint = &json_conf_linger_c },
+	{ .name = "listen", .name_len = 6, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, listen) },
+	{ .name = "log", .name_len = 3, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, log) },
+	{ .name = "loglevel", .name_len = 8, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, loglevel), .constraint = &json_conf_loglevel_c },
+	{ .name = "method", .name_len = 6, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, method) },
+	{ .name = "netdev", .name_len = 6, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, netdev) },
+	{ .name = "obfs", .name_len = 4, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, obfs) },
+	{ .name = "password", .name_len = 8, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, password) },
+	{ .name = "psk", .name_len = 3, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, psk) },
+	{ .name = "rendezvous_server", .name_len = 17, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, rendezvous_server) },
+	{ .name = "service_id", .name_len = 10, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, service_id) },
+	{ .name = "tcp", .name_len = 3, .kind = JSON_K_OBJECT, .req_bit = -1, .offset = offsetof(struct json_conf, tcp), .child = &json_conf_tcp_schema },
+	{ .name = "time_wait", .name_len = 9, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, time_wait), .constraint = &json_conf_time_wait_c },
+	{ .name = "timeout", .name_len = 7, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, timeout), .constraint = &json_conf_timeout_c },
+	{ .name = "udp", .name_len = 3, .kind = JSON_K_OBJECT, .req_bit = -1, .offset = offsetof(struct json_conf, udp), .child = &json_conf_udp_schema },
+	{ .name = "user", .name_len = 4, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, user) },
+};
+static const struct json_schema json_conf_schema = {
+	.fields = json_conf_fields,
+	.n_fields = 22,
+	.obj_size = sizeof(struct json_conf),
+	.lookup = json_lookup_conf,
+	.defaults = &json_conf_defaults,
+	.present_field = -1,
+};
 
-	while ((next_ = json_obj_next(json, &length, &iter_,
-			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
-		const int k_ = json_lookup_conf_kcp(key_, key_len_);
-		switch (k_) {
-		case JSON_CONF_KCP_FLUSH: {
-			if (!json_parse_uint(val_, val_len_, &obj->flush)) { goto fail_; }
-			if (obj->flush > 2u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_INTERVAL: {
-			if (!json_parse_uint(val_, val_len_, &obj->interval)) { goto fail_; }
-			if (obj->interval < 10u) { goto fail_; }
-			if (obj->interval > 500u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_MTU: {
-			if (!json_parse_uint(val_, val_len_, &obj->mtu)) { goto fail_; }
-			if (obj->mtu < 300u) { goto fail_; }
-			if (obj->mtu > 1500u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_NC: {
-			if (!json_parse_uint(val_, val_len_, &obj->nc)) { goto fail_; }
-			if (obj->nc > 1u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_NODELAY: {
-			if (!json_parse_uint(val_, val_len_, &obj->nodelay)) { goto fail_; }
-			if (obj->nodelay > 2u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_RCVWND: {
-			if (!json_parse_uint(val_, val_len_, &obj->rcvwnd)) { goto fail_; }
-			if (obj->rcvwnd < 16u) { goto fail_; }
-			if (obj->rcvwnd > 65536u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_RESEND: {
-			if (!json_parse_uint(val_, val_len_, &obj->resend)) { goto fail_; }
-			if (obj->resend > 100u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_SNDWND: {
-			if (!json_parse_uint(val_, val_len_, &obj->sndwnd)) { goto fail_; }
-			if (obj->sndwnd < 16u) { goto fail_; }
-			if (obj->sndwnd > 65536u) { goto fail_; }
-			break;
-		}
-		default:
-			break;
-		}
-	}
-	if (next_ != JSON_NEXT_END) { goto fail_; }
-	for (; iter_ < length; iter_++) {
-		if (!json_iswhitespace(json[iter_])) { goto fail_; }
-	}
-	return true;
+/** @} */
 
-fail_:
-	json_free_conf_kcp(obj);
-	*obj = (struct json_conf_kcp){ 0 };
-	return false;
+/** @name Codec functions
+ *  @{ */
+
+void json_free_conf(struct json_conf *obj)
+{
+	json_free(&json_conf_schema, obj);
 }
 
 bool json_unmarshal_conf(
 	struct json_conf *obj, char *json, size_t length)
 {
-	*obj = (struct json_conf){
-		.kcp = {
-			.flush = 1u,
-			.interval = 100u,
-			.mtu = 1400u,
-			.nc = 1u,
-			.nodelay = 1u,
-			.rcvwnd = 256u,
-			.resend = 0u,
-			.sndwnd = 256u,
-		},
-		.keepalive = 25u,
-		.linger = 30u,
-		.loglevel = 4u,
-		.tcp = {
-			.keepalive = false,
-			.nodelay = true,
-			.reuseport = false,
-		},
-		.time_wait = 120u,
-		.timeout = 600u,
-		.udp = {
-			.reuseport = false,
-		},
-	};
-	const struct json_val root_ = json_parse(json, &(size_t){ length });
-	if (root_.type != JSON_OBJECT) { return false; }
-	json_iter iter_ = root_.iter;
-	char *key_; size_t key_len_; char *val_; size_t val_len_;
-	int next_;
-
-	while ((next_ = json_obj_next(json, &length, &iter_,
-			&key_, &key_len_, &val_, &val_len_)) == JSON_NEXT_ITEM) {
-		const int k_ = json_lookup_conf(key_, key_len_);
-		switch (k_) {
-		case JSON_CONF_CONNECT: {
-			if (!json_parse_string(val_, val_len_, &obj->connect.str, &obj->connect.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_HTTP_LISTEN: {
-			if (!json_parse_string(val_, val_len_, &obj->http_listen.str, &obj->http_listen.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP: {
-			/* duplicate key: release the previous value first */
-			json_free_conf_kcp(&obj->kcp);
-			if (!json_unmarshal_conf_kcp(&obj->kcp, val_, val_len_)) {
-				goto fail_;
-			}
-			break;
-		}
-		case JSON_CONF_KCP_BIND: {
-			if (!json_parse_string(val_, val_len_, &obj->kcp_bind.str, &obj->kcp_bind.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KCP_CONNECT: {
-			if (!json_parse_string(val_, val_len_, &obj->kcp_connect.str, &obj->kcp_connect.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_KEEPALIVE: {
-			if (!json_parse_uint(val_, val_len_, &obj->keepalive)) { goto fail_; }
-			if (obj->keepalive > 600u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_LINGER: {
-			if (!json_parse_uint(val_, val_len_, &obj->linger)) { goto fail_; }
-			if (obj->linger < 5u) { goto fail_; }
-			if (obj->linger > 600u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_LISTEN: {
-			if (!json_parse_string(val_, val_len_, &obj->listen.str, &obj->listen.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_LOG: {
-			if (!json_parse_string(val_, val_len_, &obj->log.str, &obj->log.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_LOGLEVEL: {
-			if (!json_parse_uint(val_, val_len_, &obj->loglevel)) { goto fail_; }
-			if (obj->loglevel > 8u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_METHOD: {
-			if (!json_parse_string(val_, val_len_, &obj->method.str, &obj->method.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_NETDEV: {
-			if (!json_parse_string(val_, val_len_, &obj->netdev.str, &obj->netdev.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_OBFS: {
-			if (!json_parse_string(val_, val_len_, &obj->obfs.str, &obj->obfs.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_PASSWORD: {
-			if (!json_parse_string(val_, val_len_, &obj->password.str, &obj->password.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_PSK: {
-			if (!json_parse_string(val_, val_len_, &obj->psk.str, &obj->psk.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_RENDEZVOUS_SERVER: {
-			if (!json_parse_string(val_, val_len_, &obj->rendezvous_server.str, &obj->rendezvous_server.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_SERVICE_ID: {
-			if (!json_parse_string(val_, val_len_, &obj->service_id.str, &obj->service_id.len)) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_TCP: {
-			/* duplicate key: release the previous value first */
-			json_free_conf_tcp(&obj->tcp);
-			if (!json_unmarshal_conf_tcp(&obj->tcp, val_, val_len_)) {
-				goto fail_;
-			}
-			break;
-		}
-		case JSON_CONF_TIME_WAIT: {
-			if (!json_parse_uint(val_, val_len_, &obj->time_wait)) { goto fail_; }
-			if (obj->time_wait < 5u) { goto fail_; }
-			if (obj->time_wait > 3600u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_TIMEOUT: {
-			if (!json_parse_uint(val_, val_len_, &obj->timeout)) { goto fail_; }
-			if (obj->timeout < 60u) { goto fail_; }
-			if (obj->timeout > 86400u) { goto fail_; }
-			break;
-		}
-		case JSON_CONF_UDP: {
-			/* duplicate key: release the previous value first */
-			json_free_conf_udp(&obj->udp);
-			if (!json_unmarshal_conf_udp(&obj->udp, val_, val_len_)) {
-				goto fail_;
-			}
-			break;
-		}
-		case JSON_CONF_USER: {
-			if (!json_parse_string(val_, val_len_, &obj->user.str, &obj->user.len)) { goto fail_; }
-			break;
-		}
-		default:
-			break;
-		}
-	}
-	if (next_ != JSON_NEXT_END) { goto fail_; }
-	for (; iter_ < length; iter_++) {
-		if (!json_iswhitespace(json[iter_])) { goto fail_; }
-	}
-	return true;
-
-fail_:
-	json_free_conf(obj);
-	*obj = (struct json_conf){ 0 };
-	return false;
+	return json_unmarshal(&json_conf_schema, obj, json, length);
 }
 
 /** @} */

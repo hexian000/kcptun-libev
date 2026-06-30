@@ -285,4 +285,137 @@ int json_arr_next(
 
 /** @} */
 
+/**
+ * @defgroup json_codec
+ * @brief Table-driven JSON (un)marshalling, driven by descriptor tables.
+ *
+ * The tables are produced by scripts/gen_schema.py from a JSON Schema; the
+ * generic interpreters below consume them so the generated code stays small.
+ * @{
+ */
+
+/** Element type of a struct field described by a json_field. */
+enum json_type_kind {
+	JSON_K_STRING, /* struct json_string */
+	JSON_K_INT, /* int */
+	JSON_K_IMAX, /* intmax_t */
+	JSON_K_UINT, /* unsigned */
+	JSON_K_UMAX, /* uintmax_t */
+	JSON_K_DOUBLE, /* double */
+	JSON_K_BOOL, /* bool */
+	JSON_K_OBJECT, /* nested struct, described by json_field.child */
+	JSON_K_DYNAMIC, /* raw JSON fragment stored as a struct json_string */
+};
+
+/** Presence bits for json_constraint.flags. */
+enum {
+	JSON_C_MIN = 1 << 0,
+	JSON_C_MAX = 1 << 1,
+	JSON_C_EXCL_MIN = 1 << 2,
+	JSON_C_EXCL_MAX = 1 << 3,
+	JSON_C_MULT = 1 << 4,
+	JSON_C_CONST = 1 << 5,
+	JSON_C_ENUM = 1 << 6,
+	JSON_C_MIN_LEN = 1 << 7,
+	JSON_C_MAX_LEN = 1 << 8,
+	JSON_C_MIN_ITEMS = 1 << 9,
+	JSON_C_MAX_ITEMS = 1 << 10,
+};
+
+/** Schema constraints attached to a field (or, for arrays, to its items plus
+ * the array length).  The active union member is selected by the field kind;
+ * the flags bitmask records which constraints are present. */
+struct json_constraint {
+	uint32_t flags;
+	/* array length (orthogonal to the element kind) */
+	size_t min_items, max_items;
+	union {
+		struct {
+			size_t min_len, max_len;
+			const struct json_string *enums;
+			size_t n_enum;
+			struct json_string konst;
+		} str;
+		struct {
+			intmax_t min, max, excl_min, excl_max, mult, konst;
+			const intmax_t *enums;
+			size_t n_enum;
+		} i;
+		struct {
+			uintmax_t min, max, excl_min, excl_max, mult, konst;
+			const uintmax_t *enums;
+			size_t n_enum;
+		} u;
+		struct {
+			double min, max, excl_min, excl_max, mult, konst;
+			const double *enums;
+			size_t n_enum;
+		} d;
+		struct {
+			int konst; /* 0 false, 1 true (JSON_C_CONST gates use) */
+		} b;
+	};
+};
+
+/** Description of one struct field, addressed by byte offset. */
+struct json_field {
+	const char *name;
+	size_t name_len;
+	enum json_type_kind kind;
+	bool is_array;
+	/* presence-bit index for a required field, or -1 if optional */
+	int8_t req_bit;
+	size_t offset; /* offsetof(struct, field) */
+	size_t count_offset; /* arrays: offsetof(struct, field_count) */
+	const struct json_schema *child; /* object / array-of-object element */
+	const struct json_constraint *constraint; /* NULL when unconstrained */
+};
+
+/** Description of one JSON object scope (a generated struct type). */
+struct json_schema {
+	const struct json_field *fields;
+	size_t n_fields; /* fields are in lookup-index order */
+	size_t obj_size; /* sizeof(struct); also the array element size */
+	/* key -> field index, or -1; matches the fields[] order */
+	int (*lookup)(const char *str, size_t len);
+	const void *defaults; /* static image to copy in, or NULL == all-zero */
+	uint_fast64_t required_mask; /* OR of (1 << req_bit) over required */
+	int present_field; /* sentinel field index for optional nested
+			      objects, or -1 to always emit */
+	bool strict; /* reject unknown keys (additionalProperties: false) */
+};
+
+/**
+ * @brief Unmarshal JSON into *obj using a schema table; modifies @p json.
+ * @param schema Descriptor table for the target struct type.
+ * @param obj Output; given the schema defaults (or zeroed) before parsing.
+ * @param json Mutable JSON; @p obj aliases it, so keep it valid while in use.
+ * @param length Length of @p json in bytes.
+ * @return true on success; on failure, false and *obj reset to all-zero.
+ */
+bool json_unmarshal(
+	const struct json_schema *schema, void *obj, char *json, size_t length);
+
+/**
+ * @brief Marshal *obj into @p buf as JSON (snprintf semantics).
+ * @param schema Descriptor table for the source struct type.
+ * @param buf Output buffer, or NULL to only compute the size.
+ * @param bufsz Size of @p buf in bytes.
+ * @param obj Object to encode.
+ * @param indent Per-level indent for pretty output, or NULL for compact.
+ * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error.
+ */
+int json_marshal(
+	const struct json_schema *schema, char *buf, size_t bufsz,
+	const void *obj, const char *indent);
+
+/**
+ * @brief Free heap-allocated fields (arrays, nested objects) inside *obj.
+ * @param schema Descriptor table for the struct type.
+ * @param obj Object whose owned allocations are released.
+ */
+void json_free(const struct json_schema *schema, void *obj);
+
+/** @} */
+
 #endif /* CODEC_JSON_H */

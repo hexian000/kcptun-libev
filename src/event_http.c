@@ -460,12 +460,18 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 			http_resp_errpage(ctx, HTTP_NOT_FOUND);
 			return;
 		}
+		const struct server *restrict s = ctx->data;
+		char status[64];
+		const bool healthy = server_healthy(s, status, sizeof(status));
+		const uint16_t code =
+			healthy ? HTTP_OK : HTTP_SERVICE_UNAVAILABLE;
 		struct vbuffer *restrict buf = VBUF_NEW(512);
 		if (buf == NULL) {
 			LOGOOM();
 			return;
 		}
-		RESPHDR_CODE(buf, HTTP_OK);
+		RESPHDR_GET(buf, code);
+		VBUF_APPENDF(buf, "%s\n", status);
 		http_set_wbuf(ctx, buf);
 		return;
 	}

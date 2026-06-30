@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static bool parse_hex4(const char *restrict s, uint_fast32_t *restrict out)
@@ -900,4 +901,683 @@ int json_arr_next(
 	*val_len = (size_t)vlen;
 	*iter = i + (size_t)vlen;
 	return JSON_NEXT_ITEM;
+}
+
+/* -------------------------------------------------------------------------
+ * Table-driven codec
+ * ---------------------------------------------------------------------- */
+
+/* json_isfinite: libm-free finite test, matching the <float.h> style used by
+ * json_scale10 so codec/json.c needs no <math.h> / libm dependency. */
+static bool json_isfinite(double v)
+{
+	return v == v && v <= DBL_MAX && v >= -DBL_MAX;
+}
+
+/* json_fmod: libm-free remainder of x divided by y for finite x and finite
+ * y > 0; returns a value with the sign of x and magnitude < y.  Exact in
+ * IEEE-754 (classic shift-and-subtract), used only for multipleOf on doubles. */
+static double json_fmod(double x, double y)
+{
+	bool neg = false;
+	if (x < 0) {
+		x = -x;
+		neg = true;
+	}
+	if (x < y) {
+		return neg ? -x : x;
+	}
+	double yy = y;
+	while (yy <= x / 2.0) {
+		yy *= 2.0;
+	}
+	while (yy >= y) {
+		if (x >= yy) {
+			x -= yy;
+		}
+		yy /= 2.0;
+	}
+	return neg ? -x : x;
+}
+
+/* json_elem_size: size of one array element for a field of the given kind. */
+static size_t json_elem_size(const struct json_field *restrict f)
+{
+	switch (f->kind) {
+	case JSON_K_STRING:
+	case JSON_K_DYNAMIC:
+		return sizeof(struct json_string);
+	case JSON_K_INT:
+		return sizeof(int);
+	case JSON_K_IMAX:
+		return sizeof(intmax_t);
+	case JSON_K_UINT:
+		return sizeof(unsigned);
+	case JSON_K_UMAX:
+		return sizeof(uintmax_t);
+	case JSON_K_DOUBLE:
+		return sizeof(double);
+	case JSON_K_BOOL:
+		return sizeof(bool);
+	case JSON_K_OBJECT:
+		return f->child->obj_size;
+	}
+	return 0;
+}
+
+/* json_free_array: release the heap owned by array elements (object elements
+ * recurse; primitive and string elements own nothing). */
+static void
+json_free_array(const struct json_field *restrict f, void *base, size_t count)
+{
+	if (f->kind != JSON_K_OBJECT || base == NULL) {
+		return;
+	}
+	char *const p = base;
+	const size_t sz = f->child->obj_size;
+	for (size_t i = 0; i < count; i++) {
+		json_free(f->child, p + i * sz);
+	}
+}
+
+void json_free(const struct json_schema *restrict schema, void *obj)
+{
+	char *const base = obj;
+	for (size_t fi = 0; fi < schema->n_fields; fi++) {
+		const struct json_field *const f = &schema->fields[fi];
+		if (f->is_array) {
+			void **const pp = (void **)(base + f->offset);
+			size_t *const pc = (size_t *)(base + f->count_offset);
+			json_free_array(f, *pp, *pc);
+			free(*pp);
+			*pp = NULL;
+			*pc = 0;
+		} else if (f->kind == JSON_K_OBJECT) {
+			json_free(f->child, base + f->offset);
+		}
+	}
+}
+
+/* --- constraint checks ------------------------------------------------- */
+
+static bool json_in_imax(const intmax_t *a, size_t n, intmax_t v)
+{
+	for (size_t i = 0; i < n; i++) {
+		if (a[i] == v) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool json_in_umax(const uintmax_t *a, size_t n, uintmax_t v)
+{
+	for (size_t i = 0; i < n; i++) {
+		if (a[i] == v) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool json_in_double(const double *a, size_t n, double v)
+{
+	for (size_t i = 0; i < n; i++) {
+		if (a[i] == v) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool
+json_check_str(const struct json_constraint *c, const char *s, size_t len)
+{
+	if ((c->flags & JSON_C_MIN_LEN) && len < c->str.min_len) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MAX_LEN) && len > c->str.max_len) {
+		return false;
+	}
+	if ((c->flags & JSON_C_CONST) &&
+	    (len != c->str.konst.len ||
+	     memcmp(s, c->str.konst.str, len) != 0)) {
+		return false;
+	}
+	if (c->flags & JSON_C_ENUM) {
+		bool ok = false;
+		for (size_t i = 0; i < c->str.n_enum; i++) {
+			if (len == c->str.enums[i].len &&
+			    memcmp(s, c->str.enums[i].str, len) == 0) {
+				ok = true;
+				break;
+			}
+		}
+		if (!ok) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool json_check_int(const struct json_constraint *c, intmax_t v)
+{
+	if ((c->flags & JSON_C_MIN) && v < c->i.min) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MAX) && v > c->i.max) {
+		return false;
+	}
+	if ((c->flags & JSON_C_EXCL_MIN) && v <= c->i.excl_min) {
+		return false;
+	}
+	if ((c->flags & JSON_C_EXCL_MAX) && v >= c->i.excl_max) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MULT) && (v % c->i.mult) != 0) {
+		return false;
+	}
+	if ((c->flags & JSON_C_CONST) && v != c->i.konst) {
+		return false;
+	}
+	if ((c->flags & JSON_C_ENUM) &&
+	    !json_in_imax(c->i.enums, c->i.n_enum, v)) {
+		return false;
+	}
+	return true;
+}
+
+static bool json_check_uint(const struct json_constraint *c, uintmax_t v)
+{
+	if ((c->flags & JSON_C_MIN) && v < c->u.min) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MAX) && v > c->u.max) {
+		return false;
+	}
+	if ((c->flags & JSON_C_EXCL_MIN) && v <= c->u.excl_min) {
+		return false;
+	}
+	if ((c->flags & JSON_C_EXCL_MAX) && v >= c->u.excl_max) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MULT) && (v % c->u.mult) != 0) {
+		return false;
+	}
+	if ((c->flags & JSON_C_CONST) && v != c->u.konst) {
+		return false;
+	}
+	if ((c->flags & JSON_C_ENUM) &&
+	    !json_in_umax(c->u.enums, c->u.n_enum, v)) {
+		return false;
+	}
+	return true;
+}
+
+static bool json_check_double(const struct json_constraint *c, double v)
+{
+	if ((c->flags & JSON_C_MIN) && v < c->d.min) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MAX) && v > c->d.max) {
+		return false;
+	}
+	if ((c->flags & JSON_C_EXCL_MIN) && v <= c->d.excl_min) {
+		return false;
+	}
+	if ((c->flags & JSON_C_EXCL_MAX) && v >= c->d.excl_max) {
+		return false;
+	}
+	if ((c->flags & JSON_C_MULT) && json_fmod(v, c->d.mult) != 0.0) {
+		return false;
+	}
+	if ((c->flags & JSON_C_CONST) && v != c->d.konst) {
+		return false;
+	}
+	if ((c->flags & JSON_C_ENUM) &&
+	    !json_in_double(c->d.enums, c->d.n_enum, v)) {
+		return false;
+	}
+	return true;
+}
+
+static bool json_check_bool(const struct json_constraint *c, bool v)
+{
+	if ((c->flags & JSON_C_CONST) && v != (c->b.konst != 0)) {
+		return false;
+	}
+	return true;
+}
+
+/* json_parse_scalar: parse one scalar JSON fragment into *slot per the field
+ * kind, then validate it against the field's constraint (if any). */
+static bool json_parse_scalar(
+	const struct json_field *restrict f, void *slot, char *val, size_t vlen)
+{
+	const struct json_constraint *const c = f->constraint;
+	switch (f->kind) {
+	case JSON_K_STRING: {
+		struct json_string *const js = slot;
+		if (!json_parse_string(val, vlen, &js->str, &js->len)) {
+			return false;
+		}
+		return c == NULL || json_check_str(c, js->str, js->len);
+	}
+	case JSON_K_INT: {
+		int *const p = slot;
+		if (!json_parse_int(val, vlen, p)) {
+			return false;
+		}
+		return c == NULL || json_check_int(c, *p);
+	}
+	case JSON_K_IMAX: {
+		intmax_t *const p = slot;
+		if (!json_parse_imax(val, vlen, p)) {
+			return false;
+		}
+		return c == NULL || json_check_int(c, *p);
+	}
+	case JSON_K_UINT: {
+		unsigned *const p = slot;
+		if (!json_parse_uint(val, vlen, p)) {
+			return false;
+		}
+		return c == NULL || json_check_uint(c, *p);
+	}
+	case JSON_K_UMAX: {
+		uintmax_t *const p = slot;
+		if (!json_parse_umax(val, vlen, p)) {
+			return false;
+		}
+		return c == NULL || json_check_uint(c, *p);
+	}
+	case JSON_K_DOUBLE: {
+		double *const p = slot;
+		if (!json_parse_double(val, vlen, p)) {
+			return false;
+		}
+		return c == NULL || json_check_double(c, *p);
+	}
+	case JSON_K_BOOL: {
+		bool *const p = slot;
+		if (!json_parse_bool(val, vlen, p)) {
+			return false;
+		}
+		return c == NULL || json_check_bool(c, *p);
+	}
+	case JSON_K_OBJECT:
+	case JSON_K_DYNAMIC:
+		break;
+	}
+	return false;
+}
+
+/* json_unmarshal_array: parse a JSON array fragment into a freshly allocated
+ * buffer (element pointer/count returned via out params).  Enforces
+ * minItems/maxItems and per-item constraints; cleans up on any failure. */
+static bool json_unmarshal_array(
+	const struct json_field *restrict f, char *val, size_t vlen,
+	void **out_buf, size_t *out_count)
+{
+	size_t buflen = vlen;
+	const struct json_val arr = json_parse(val, &buflen);
+	if (arr.type != JSON_ARRAY) {
+		return false;
+	}
+	const struct json_constraint *const c = f->constraint;
+	const size_t esz = json_elem_size(f);
+	char *buf = NULL;
+	size_t count = 0, cap = 0;
+	json_iter it = arr.iter;
+	char *av;
+	size_t alen;
+	int next;
+	while ((next = json_arr_next(val, &vlen, &it, &av, &alen)) ==
+	       JSON_NEXT_ITEM) {
+		if (c != NULL && (c->flags & JSON_C_MAX_ITEMS) &&
+		    count >= c->max_items) {
+			goto fail;
+		}
+		if (count >= cap) {
+			const size_t nc = cap ? cap * 2 : 4;
+			char *const nb = realloc(buf, nc * esz);
+			if (nb == NULL) {
+				goto fail;
+			}
+			buf = nb;
+			cap = nc;
+		}
+		void *const slot = buf + count * esz;
+		memset(slot, 0, esz);
+		if (f->kind == JSON_K_OBJECT) {
+			if (!json_unmarshal(f->child, slot, av, alen)) {
+				goto fail;
+			}
+		} else if (!json_parse_scalar(f, slot, av, alen)) {
+			goto fail;
+		}
+		count++;
+	}
+	if (next != JSON_NEXT_END) {
+		goto fail;
+	}
+	for (; it < vlen; it++) {
+		if (!json_iswhitespace((unsigned char)val[it])) {
+			goto fail;
+		}
+	}
+	if (c != NULL && (c->flags & JSON_C_MIN_ITEMS) &&
+	    count < c->min_items) {
+		goto fail;
+	}
+	*out_buf = buf;
+	*out_count = count;
+	return true;
+
+fail:
+	json_free_array(f, buf, count);
+	free(buf);
+	return false;
+}
+
+bool json_unmarshal(
+	const struct json_schema *restrict schema, void *obj, char *json,
+	size_t length)
+{
+	char *const base = obj;
+	if (schema->defaults != NULL) {
+		memcpy(base, schema->defaults, schema->obj_size);
+	} else {
+		memset(base, 0, schema->obj_size);
+	}
+	size_t buflen = length;
+	const struct json_val root = json_parse(json, &buflen);
+	if (root.type != JSON_OBJECT) {
+		return false;
+	}
+	json_iter iter = root.iter;
+	char *key;
+	char *val;
+	size_t key_len;
+	size_t val_len;
+	uint_fast64_t required = 0;
+	int next;
+	while ((next = json_obj_next(
+			json, &length, &iter, &key, &key_len, &val,
+			&val_len)) == JSON_NEXT_ITEM) {
+		const int k = schema->lookup(key, key_len);
+		if (k < 0 || (size_t)k >= schema->n_fields) {
+			if (schema->strict) {
+				goto fail;
+			}
+			continue;
+		}
+		const struct json_field *const f = &schema->fields[k];
+		void *const slot = base + f->offset;
+		if (f->is_array) {
+			void *nbuf;
+			size_t ncount;
+			if (!json_unmarshal_array(
+				    f, val, val_len, &nbuf, &ncount)) {
+				goto fail;
+			}
+			/* duplicate key: release any previous allocation */
+			void **const pp = (void **)slot;
+			size_t *const pc = (size_t *)(base + f->count_offset);
+			json_free_array(f, *pp, *pc);
+			free(*pp);
+			*pp = nbuf;
+			*pc = ncount;
+		} else if (f->kind == JSON_K_OBJECT) {
+			/* duplicate key: release the previous value first */
+			json_free(f->child, slot);
+			if (!json_unmarshal(f->child, slot, val, val_len)) {
+				goto fail;
+			}
+		} else if (f->kind == JSON_K_DYNAMIC) {
+			struct json_string *const js = slot;
+			js->str = val;
+			js->len = val_len;
+		} else if (!json_parse_scalar(f, slot, val, val_len)) {
+			goto fail;
+		}
+		if (f->req_bit >= 0) {
+			required |= (uint_fast64_t)1 << f->req_bit;
+		}
+	}
+	if (next != JSON_NEXT_END) {
+		goto fail;
+	}
+	if (required != schema->required_mask) {
+		goto fail;
+	}
+	for (; iter < length; iter++) {
+		if (!json_iswhitespace((unsigned char)json[iter])) {
+			goto fail;
+		}
+	}
+	return true;
+
+fail:
+	json_free(schema, obj);
+	memset(base, 0, schema->obj_size);
+	return false;
+}
+
+/* --- marshal ----------------------------------------------------------- */
+
+static int json_emit_ch(char *buf, size_t bufsz, int n, char c)
+{
+	if (buf != NULL && (size_t)n < bufsz) {
+		buf[n] = c;
+	}
+	return n + 1;
+}
+
+static int
+json_emit_raw(char *buf, size_t bufsz, int n, const char *s, size_t len)
+{
+	if (buf != NULL && (size_t)n < bufsz) {
+		const size_t cap = bufsz - (size_t)n;
+		memcpy(buf + n, s, len < cap ? len : cap);
+	}
+	return n + (int)len;
+}
+
+static int
+json_emit_str(char *buf, size_t bufsz, int n, const char *s, size_t len)
+{
+	char *const dst = (buf != NULL && (size_t)n < bufsz) ? buf + n : NULL;
+	const int r = json_marshal_string(
+		dst, dst != NULL ? bufsz - (size_t)n : 0, s, len);
+	if (r < 0) {
+		return -1;
+	}
+	return n + r;
+}
+
+static int json_emit_indent(
+	char *buf, size_t bufsz, int n, const char *indent, size_t ind_len,
+	int d)
+{
+	if (indent == NULL) {
+		return n;
+	}
+	n = json_emit_ch(buf, bufsz, n, '\n');
+	for (int i = 0; i < d; i++) {
+		n = json_emit_raw(buf, bufsz, n, indent, ind_len);
+	}
+	return n;
+}
+
+static int json_marshal_impl(
+	const struct json_schema *restrict schema, char *buf, size_t bufsz,
+	const void *obj, const char *indent, size_t ind_len, int depth);
+
+/* json_emit_value: emit one field value (no key, no array brackets) of the
+ * field's element kind.  Returns the new length, or -1 on error. */
+static int json_emit_value(
+	const struct json_field *restrict f, char *buf, size_t bufsz, int n,
+	const void *slot, const char *indent, size_t ind_len, int depth)
+{
+	char tmp[32];
+	int r;
+	switch (f->kind) {
+	case JSON_K_STRING: {
+		const struct json_string *const js = slot;
+		return json_emit_str(buf, bufsz, n, js->str, js->len);
+	}
+	case JSON_K_DYNAMIC: {
+		const struct json_string *const js = slot;
+		return json_emit_raw(buf, bufsz, n, js->str, js->len);
+	}
+	case JSON_K_INT:
+		r = snprintf(tmp, sizeof(tmp), "%d", *(const int *)slot);
+		break;
+	case JSON_K_IMAX:
+		r = snprintf(tmp, sizeof(tmp), "%jd", *(const intmax_t *)slot);
+		break;
+	case JSON_K_UINT:
+		r = snprintf(tmp, sizeof(tmp), "%u", *(const unsigned *)slot);
+		break;
+	case JSON_K_UMAX:
+		r = snprintf(tmp, sizeof(tmp), "%ju", *(const uintmax_t *)slot);
+		break;
+	case JSON_K_DOUBLE: {
+		const double v = *(const double *)slot;
+		/* NaN/Inf have no JSON representation */
+		if (!json_isfinite(v)) {
+			return -1;
+		}
+		r = snprintf(tmp, sizeof(tmp), "%.17g", v);
+		break;
+	}
+	case JSON_K_BOOL:
+		return *(const bool *)slot ?
+			       json_emit_raw(buf, bufsz, n, "true", 4) :
+			       json_emit_raw(buf, bufsz, n, "false", 5);
+	case JSON_K_OBJECT: {
+		char *const dst =
+			(buf != NULL && (size_t)n < bufsz) ? buf + n : NULL;
+		r = json_marshal_impl(
+			f->child, dst, dst != NULL ? bufsz - (size_t)n : 0,
+			slot, indent, ind_len, depth);
+		if (r < 0) {
+			return -1;
+		}
+		return n + r;
+	}
+	default:
+		return -1;
+	}
+	if (r < 0) {
+		return -1;
+	}
+	return json_emit_raw(buf, bufsz, n, tmp, (size_t)r);
+}
+
+static int json_marshal_impl(
+	const struct json_schema *restrict schema, char *buf, size_t bufsz,
+	const void *obj, const char *indent, size_t ind_len, int depth)
+{
+	const char *const base = obj;
+	int n = 0;
+	n = json_emit_ch(buf, bufsz, n, '{');
+	const int n_start = n;
+	for (size_t fi = 0; fi < schema->n_fields; fi++) {
+		const struct json_field *const f = &schema->fields[fi];
+		const void *const slot = base + f->offset;
+
+		/* presence: scalars always emit; NULL marks an absent string,
+		 * array, dynamic fragment, or optional nested object (via its
+		 * sentinel sub-field). */
+		bool emit = true;
+		if (f->is_array) {
+			emit = f->req_bit >= 0 ||
+			       *(const void *const *)slot != NULL;
+		} else if (f->kind == JSON_K_STRING || f->kind == JSON_K_DYNAMIC) {
+			emit = ((const struct json_string *)slot)->str != NULL;
+		} else if (f->kind == JSON_K_OBJECT && f->req_bit < 0) {
+			const int pf = f->child->present_field;
+			if (pf >= 0) {
+				const struct json_field *const sf =
+					&f->child->fields[pf];
+				const struct json_string *const js =
+					(const struct json_string
+						 *)((const char *)slot +
+						    sf->offset);
+				emit = js->str != NULL;
+			}
+		}
+		if (!emit) {
+			continue;
+		}
+
+		/* key prefix: <newline+indent>"key":<sep> */
+		n = json_emit_indent(buf, bufsz, n, indent, ind_len, depth + 1);
+		n = json_emit_ch(buf, bufsz, n, '"');
+		n = json_emit_raw(buf, bufsz, n, f->name, f->name_len);
+		n = json_emit_ch(buf, bufsz, n, '"');
+		n = json_emit_ch(buf, bufsz, n, ':');
+		if (indent != NULL) {
+			n = json_emit_ch(buf, bufsz, n, ' ');
+		}
+
+		if (f->is_array) {
+			const void *const arr = *(const void *const *)slot;
+			const size_t cnt =
+				*(const size_t *)(base + f->count_offset);
+			const size_t esz = json_elem_size(f);
+			n = json_emit_ch(buf, bufsz, n, '[');
+			for (size_t i = 0; i < cnt; i++) {
+				if (i > 0) {
+					n = json_emit_ch(buf, bufsz, n, ',');
+				}
+				n = json_emit_indent(
+					buf, bufsz, n, indent, ind_len,
+					depth + 2);
+				n = json_emit_value(
+					f, buf, bufsz, n,
+					(const char *)arr + i * esz, indent,
+					ind_len, depth + 2);
+				if (n < 0) {
+					return -1;
+				}
+			}
+			if (cnt > 0) {
+				n = json_emit_indent(
+					buf, bufsz, n, indent, ind_len,
+					depth + 1);
+			}
+			n = json_emit_ch(buf, bufsz, n, ']');
+		} else {
+			n = json_emit_value(
+				f, buf, bufsz, n, slot, indent, ind_len,
+				depth + 1);
+			if (n < 0) {
+				return -1;
+			}
+		}
+		n = json_emit_ch(buf, bufsz, n, ',');
+	}
+
+	/* strip the trailing comma of the last emitted field, then close on
+	 * its own line aligned with this object's level (compact: no-op). */
+	if (n > n_start) {
+		n--;
+		n = json_emit_indent(buf, bufsz, n, indent, ind_len, depth);
+	}
+	n = json_emit_ch(buf, bufsz, n, '}');
+	if (buf != NULL && bufsz > 0) {
+		buf[(size_t)n < bufsz ? (size_t)n : bufsz - 1] = '\0';
+	}
+	return n;
+}
+
+int json_marshal(
+	const struct json_schema *restrict schema, char *buf, size_t bufsz,
+	const void *obj, const char *indent)
+{
+	const size_t ind_len = (indent != NULL) ? strlen(indent) : 0;
+	return json_marshal_impl(schema, buf, bufsz, obj, indent, ind_len, 0);
 }

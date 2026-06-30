@@ -191,7 +191,7 @@ bool resolve_addr(
 	char buf[addrlen + 1];
 	memcpy(buf, addrstr, addrlen + 1);
 	char *hoststr, *portstr;
-	if (!addr_splithostport(buf, &hoststr, &portstr)) {
+	if (!splithostport(buf, &hoststr, &portstr)) {
 		return false;
 	}
 	return sa_resolve(addr, hoststr, portstr, type, PF_UNSPEC);
@@ -206,7 +206,7 @@ bool resolve_bindaddr(
 	char buf[addrlen + 1];
 	memcpy(buf, addrstr, addrlen + 1);
 	char *hoststr, *portstr;
-	if (!addr_splithostport(buf, &hoststr, &portstr)) {
+	if (!splithostport(buf, &hoststr, &portstr)) {
 		return false;
 	}
 	return sa_resolve_bind(addr, hoststr, portstr, type);

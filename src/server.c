@@ -558,6 +558,35 @@ void server_ping(struct server *restrict s)
 	s->pkt.inflight_ping = now;
 }
 
+bool server_healthy(
+	const struct server *restrict s, char *buf, const size_t bufsize)
+{
+	const int mode = s->conf->mode;
+	/* a pure server has no upstream peer to monitor */
+	if ((mode & MODE_CLIENT) == 0) {
+		(void)snprintf(buf, bufsize, "healthy");
+		return true;
+	}
+	/* a rendezvous client must have located its peer first */
+	if ((mode & MODE_RENDEZVOUS) != 0 && !s->pkt.connected) {
+		(void)snprintf(buf, bufsize, "rendezvous pending");
+		return false;
+	}
+	const ev_tstamp last = s->pkt.last_recv_time;
+	if (last == TSTAMP_NIL) {
+		(void)snprintf(buf, bufsize, "peer unreachable");
+		return false;
+	}
+	const double idle = ev_now(s->loop) - last;
+	if (idle > s->timeout) {
+		(void)snprintf(
+			buf, bufsize, "peer not responding (%.0fs)", idle);
+		return false;
+	}
+	(void)snprintf(buf, bufsize, "healthy (peer seen %.0fs ago)", idle);
+	return true;
+}
+
 static bool svc_shutdown_filt(
 	const struct hashtable *t, const void *key, void *element, void *user)
 {

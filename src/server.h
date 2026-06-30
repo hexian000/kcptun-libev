@@ -95,6 +95,9 @@ void server_ping(struct server *s);
 struct vbuffer *
 server_stats_const(const struct server *s, struct vbuffer *buf, int level);
 struct vbuffer *server_stats(struct server *s, struct vbuffer *buf, int level);
+/* server_healthy: report client peer reachability.
+ * Returns true if healthy; writes a one-line status into buf. */
+bool server_healthy(const struct server *s, char *buf, size_t bufsize);
 bool server_resolve(struct server *s);
 void udp_rendezvous(struct server *s, uint16_t what);
 void server_stop(struct server *s);

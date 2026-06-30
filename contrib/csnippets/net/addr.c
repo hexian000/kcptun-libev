@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-bool addr_splithostport(char *str, char **restrict host, char **restrict port)
+bool splithostport(char *str, char **restrict host, char **restrict port)
 {
 	char *service = strrchr(str, ':');
 	if (service == NULL) {
