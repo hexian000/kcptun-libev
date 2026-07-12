@@ -476,7 +476,9 @@ def maybe_reexec_in_netns(netem_delay: Optional[str]) -> None:
         "--",
         "env",
         "%s=1" % BENCH_NETNS_ENV,
-        *sys.argv,
+        sys.executable,
+        os.path.abspath(__file__),
+        *sys.argv[1:],
     ]
     os.execvp(command[0], command)
 
