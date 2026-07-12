@@ -32,9 +32,9 @@
 
 #include "cityhash.h"
 
-#include "utils/bswap.h"
-#include "utils/likely.h"
-#include "utils/serialize.h"
+#include "binary/bswap.h"
+#include "binary/serialize.h"
+#include "meta/likely.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -44,13 +44,9 @@ static const uint_least64_t k0 = UINT64_C(0xc3a5c85c97cb3127);
 static const uint_least64_t k1 = UINT64_C(0xb492b66fbe98f273);
 static const uint_least64_t k2 = UINT64_C(0x9ae16a3b2f90404f);
 
-/* Confine values to 64 bits using only the C11-mandated UINT64_C macro, so
- * the code never depends on the optional uint64_t type while still doing
- * exact mod-2^64 arithmetic where it matters: the rotate and the
- * murmur-style mixes below (the only places a value is shifted right), plus
- * BSWAP64() which masks its own input. Plain +, *, ^ and << preserve the
- * low 64 bits, and write_uint64_le() emits exactly those, so nothing else
- * needs a mask. */
+/* uint_fast64_t may exceed 64 bits, so mask after a right shift (rotate,
+ * the mixes below) and inside BSWAP64(); +, *, ^, << and write_uint64_le()
+ * already keep/emit only the low 64 bits. */
 #define M64(x) ((x) & UINT64_C(0xffffffffffffffff))
 
 /* Bitwise right rotate within 64 bits. */
@@ -153,8 +149,8 @@ static inline void WeakHashLen32WithSeeds(
 
 /* Return a 16-byte hash for s[0] ... s[31], a, and b. Quick and dirty. */
 static inline void WeakHashLen32WithSeedsStr(
-	uint_fast64_t *restrict hash, const unsigned char *s, uint_fast64_t a,
-	uint_fast64_t b)
+	uint_fast64_t *restrict hash, const unsigned char *restrict s,
+	uint_fast64_t a, uint_fast64_t b)
 {
 	WeakHashLen32WithSeeds(
 		hash, read_uint64_le(s), read_uint64_le(s + 8),
@@ -248,8 +244,8 @@ CityHash64WithSeed(const void *restrict ptr, size_t len, uint_fast64_t seed)
 /* A subroutine for CityHash128().  Returns a decent 128-bit hash for strings
  * of any length representable in signed long.  Based on City and Murmur. */
 static void CityMurmur(
-	unsigned char hash[16], const unsigned char *s, size_t len,
-	const unsigned char seed[16])
+	unsigned char hash[restrict 16], const unsigned char *restrict s,
+	size_t len, const unsigned char seed[restrict 16])
 {
 	uint_fast64_t a = read_uint64_le(seed);
 	uint_fast64_t b = read_uint64_le(seed + 8u);
@@ -353,23 +349,6 @@ static void CityHash128WithSeed(
 	write_uint64_le(hash, HashLen16(x + v[1], w[1]) + y);
 	write_uint64_le(hash + 8u, HashLen16(x + w[1], y + v[1]));
 }
-
-/*
-static void CityHash128(unsigned char hash[16], const void *ptr, size_t len)
-{
-	unsigned char seed[16];
-	if (len < 16) {
-		write_uint64_le(seed, k0);
-		write_uint64_le(seed + 8u, k1);
-		CityHash128WithSeed(hash, ptr, len, seed);
-		return;
-	}
-	const unsigned char *s = ptr;
-	write_uint64_le(seed, read_uint64_le(s));
-	write_uint64_le(seed + 8u, read_uint64_le(s + 8) + k0);
-	CityHash128WithSeed(hash, s + 16, len - 16, seed);
-}
-*/
 
 uint_fast64_t cityhash64_64(
 	const void *restrict ptr, const size_t len, const uint_fast64_t seed)

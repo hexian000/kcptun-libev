@@ -11,6 +11,7 @@
 
 #include "algo/hashtable.h"
 #include "math/rand.h"
+#include "meta/minmax.h"
 #include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
@@ -26,7 +27,7 @@
 void listener_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
-	struct listener *l = watcher->data;
+	struct listener *restrict l = watcher->data;
 	/* check & restart accept watchers */
 	ev_io *w_accept = &l->w_accept;
 	if (l->fd != -1 && !ev_is_active(w_accept)) {
@@ -151,9 +152,10 @@ static bool timeout_filt(
 		if (not_seen > s->dial_timeout) {
 			LOGW_F("[session:%08" PRIX32 "] timeout: kcp connect",
 			       ss->conv);
-			session_tcp_stop(ss);
-			session_kcp_close(ss);
-			break;
+			/* peer never responded, so a graceful EOF handshake
+			 * can't complete either; reclaim immediately instead
+			 * of leaving the session stuck in KCP_STATE_CONNECT */
+			session_kcp_stop(ss);
 		}
 		break;
 	case KCP_STATE_ESTABLISHED:
@@ -166,7 +168,6 @@ static bool timeout_filt(
 				LOGD_F("[session:%08" PRIX32 "] "
 				       "timeout: half-close linger",
 				       ss->conv);
-				session_tcp_stop(ss);
 				session_kcp_stop(ss);
 			}
 			break;
@@ -175,7 +176,6 @@ static bool timeout_filt(
 			LOGW_F("[session:%08" PRIX32 "] "
 			       "timeout: not seen in %.01fs",
 			       ss->conv, not_seen);
-			session_tcp_stop(ss);
 			session_kcp_stop(ss);
 			break;
 		}
@@ -223,10 +223,10 @@ static bool svc_timeout_filt(
 		return true;
 	}
 	if (LOGLEVEL(INFO)) {
-		char addr1_str[64], addr2_str[64];
-		sa_format(
+		char addr1_str[64] = "<unknown>", addr2_str[64] = "<unknown>";
+		(void)sa_format(
 			addr1_str, sizeof(addr1_str), &svc->server_addr[0].sa);
-		sa_format(
+		(void)sa_format(
 			addr2_str, sizeof(addr2_str), &svc->server_addr[1].sa);
 		LOG_BIN_F(
 			INFO, svc->id, svc->idlen, 0,
@@ -248,6 +248,8 @@ void timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	/* rendezvous server: services timeout */
 	s->pkt.services = table_filter(s->pkt.services, svc_timeout_filt, s);
 
-	/* mcache maintenance */
-	mcache_shrink(msgpool, 1);
+	/* mcache maintenance: reclaim half the idle entries each tick (at
+	 * least 1), so a burst-inflated pool drains in O(log n) ticks
+	 * instead of O(n) */
+	mcache_shrink(msgpool, MAX(msgpool->num_elem / 2, 1));
 }

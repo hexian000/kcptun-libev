@@ -6,6 +6,7 @@
 #include "server.h"
 #include "util.h"
 
+#include "meta/minmax.h"
 #include "os/daemon.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
@@ -26,7 +27,7 @@ static struct {
 	const char *genpsk;
 #endif
 	int verbosity;
-	bool daemonize : 1;
+	bool daemonize;
 } args = { 0 };
 
 static struct {
@@ -35,12 +36,12 @@ static struct {
 	ev_signal w_sigterm;
 } app;
 
-static void print_usage(char *argv0)
+static void print_usage(const char *argv0)
 {
 	(void)fprintf(
 		stderr, "%s %s\n  %s\n\n", PROJECT_NAME, PROJECT_VER,
 		PROJECT_HOMEPAGE);
-	(void)fprintf(stderr, "usage: %s <option>... \n", argv0);
+	(void)fprintf(stderr, "usage: %s <option>...\n", argv0);
 	(void)fprintf(
 		stderr, "%s",
 		"  -h, --help                 show usage and exit\n"
@@ -62,7 +63,7 @@ static void print_usage(char *argv0)
 
 static void set_log_config(const struct config *restrict conf, const int level)
 {
-	slog_setlevel(level);
+	slog_setlevel(CLAMP(level, LOG_LEVEL_SILENCE, LOG_LEVEL_VERYVERBOSE));
 	if (conf->log == NULL) {
 		return;
 	}
@@ -97,7 +98,7 @@ static void parse_args(int argc, char **argv)
 		if (strcmp(argv[i], "-h") == 0 ||
 		    strcmp(argv[i], "--help") == 0) {
 			print_usage(argv[0]);
-			exit(EXIT_FAILURE);
+			exit(EXIT_SUCCESS);
 		}
 		if (strcmp(argv[i], "-c") == 0 ||
 		    strcmp(argv[i], "--config") == 0) {
@@ -114,14 +115,14 @@ static void parse_args(int argc, char **argv)
 #if WITH_CRYPTO
 		if (strcmp(argv[i], "--list-methods") == 0) {
 			crypto_list_methods();
-			exit(EXIT_FAILURE);
+			exit(EXIT_SUCCESS);
 		}
 		if (strcmp(argv[i], "--genpsk") == 0) {
 			OPT_REQUIRE_ARG(argc, argv, i);
 			args.genpsk = argv[++i];
 			continue;
 		}
-#endif
+#endif /* WITH_CRYPTO */
 		if (strcmp(argv[i], "-v") == 0 ||
 		    strcmp(argv[i], "--verbose") == 0) {
 			args.verbosity++;
@@ -146,7 +147,9 @@ static void parse_args(int argc, char **argv)
 	}
 
 #undef OPT_REQUIRE_ARG
-	slog_setlevel(LOG_LEVEL_NOTICE + args.verbosity);
+	slog_setlevel(
+		CLAMP(LOG_LEVEL_NOTICE + args.verbosity, LOG_LEVEL_SILENCE,
+		      LOG_LEVEL_VERYVERBOSE));
 }
 
 static void
@@ -166,18 +169,21 @@ signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 			return;
 		}
 		if (s->conf->mode != conf->mode) {
-			conf_modestr(conf);
 			LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
 			       conf_modestr(s->conf), s->conf->mode,
 			       conf_modestr(conf), conf->mode);
+			conf_free(conf);
 			return;
 		}
-		set_log_config(conf, conf->log_level);
+		set_log_config(conf, conf->log_level + args.verbosity);
 		conf_free((struct config *)s->conf);
 		server_loadconf(s, conf);
-		LOGN("config successfully reloaded");
-		(void)server_resolve(s);
-		s->last_resolve_time = ev_now(s->loop);
+		if (server_resolve(s)) {
+			s->last_resolve_time = ev_now(s->loop);
+			LOGN("config successfully reloaded");
+		} else {
+			LOGW("config reloaded, but failed to resolve server address");
+		}
 #if WITH_SYSTEMD
 		(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
 #endif
@@ -194,12 +200,22 @@ signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 	}
 }
 
+static void start_signal(
+	struct ev_loop *restrict loop, ev_signal *restrict w, const int signum,
+	struct server *restrict s)
+{
+	ev_signal_init(w, signal_cb, signum);
+	ev_set_priority(w, EV_MAXPRI);
+	w->data = s;
+	ev_signal_start(loop, w);
+}
+
 int main(int argc, char **argv)
 {
-	init(argc, argv);
+	init();
 	parse_args(argc, argv);
 #if WITH_CRYPTO
-	if (args.genpsk) {
+	if (args.genpsk != NULL) {
 		genpsk(args.genpsk);
 		return EXIT_SUCCESS;
 	}
@@ -236,34 +252,24 @@ int main(int argc, char **argv)
 
 	{
 		const char *user_name =
-			args.user_name ? args.user_name : conf->user;
+			args.user_name != NULL ? args.user_name : conf->user;
 		if (args.daemonize) {
 			daemonize(user_name, true, false);
+			/* the double-fork in daemonize() leaves the loop's
+			 * backend state from the pre-fork process; libev
+			 * requires this call in the child before reusing an
+			 * inherited loop (e.g. kqueue fds are not inherited
+			 * across fork) */
+			ev_loop_fork(loop);
 			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME, NULL);
 		} else if (user_name != NULL) {
 			drop_privileges(user_name);
 		}
 	}
 
-	{
-		ev_signal *w_sighup = &app.w_sighup;
-		ev_signal_init(w_sighup, signal_cb, SIGHUP);
-		ev_set_priority(w_sighup, EV_MAXPRI);
-		w_sighup->data = s;
-		ev_signal_start(loop, w_sighup);
-
-		ev_signal *w_sigint = &app.w_sigint;
-		ev_signal_init(w_sigint, signal_cb, SIGINT);
-		ev_set_priority(w_sigint, EV_MAXPRI);
-		w_sigint->data = s;
-		ev_signal_start(loop, w_sigint);
-
-		ev_signal *w_sigterm = &app.w_sigterm;
-		ev_signal_init(w_sigterm, signal_cb, SIGTERM);
-		ev_set_priority(w_sigterm, EV_MAXPRI);
-		w_sigterm->data = s;
-		ev_signal_start(loop, w_sigterm);
-	}
+	start_signal(loop, &app.w_sighup, SIGHUP, s);
+	start_signal(loop, &app.w_sigint, SIGINT, s);
+	start_signal(loop, &app.w_sigterm, SIGTERM, s);
 
 #if WITH_SYSTEMD
 	(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
@@ -272,6 +278,7 @@ int main(int argc, char **argv)
 	ev_run(loop, 0);
 
 	server_stop(s);
+	conf = (struct config *)s->conf;
 	server_free(s);
 	LOGN_F("%s shutdown gracefully", conf_modestr(conf));
 	ev_loop_destroy(loop);

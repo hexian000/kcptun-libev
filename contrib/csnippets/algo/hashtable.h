@@ -122,11 +122,9 @@ bool table_find(const struct hashtable *table, const void *key, void **element);
  * @param[out] key If not NULL, returns the key pointer of the current element.
  * @param[out] element If not NULL, returns the current element.
  * @return true if an element was found, false if iteration is complete.
- * @warning The iterator may be invalidated by any operation that modifies the
- * table (table_set, table_del, table_reserve, table_filter, table_clear).
- * Using an invalidated iterator is safe but may cause elements to be skipped
- * or visited multiple times. Use table_iterate for reliable iteration, or
- * ensure no modifications occur during the loop.
+ * @warning table_set/table_del/table_reserve/table_filter/table_clear may
+ * invalidate the iterator; continuing with it is safe but may skip or
+ * revisit elements. Prefer table_iterate, or avoid modifying mid-loop.
  */
 bool table_next(
 	const struct hashtable *table, size_t *iter, const void **key,

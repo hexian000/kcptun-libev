@@ -3,18 +3,16 @@
 
 #include "hashtable.h"
 
-#include "algo/cityhash.h"
-#include "algo/fnv1a.h"
-#include "algo/luahash.h"
+#include "hash/cityhash.h"
+#include "hash/fnv1a.h"
+#include "hash/luahash.h"
 #include "math/rand.h"
-#include "utils/arraysize.h"
-#include "utils/minmax.h"
+#include "meta/arraysize.h"
+#include "meta/minmax.h"
+#include "utils/slog.h"
 
 #include <assert.h>
-#if HASHTABLE_LOG
 #include <inttypes.h>
-#include <stdio.h>
-#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,20 +20,58 @@
 #include <string.h>
 
 /* start from 2^4 */
-/* clang-format off */
-#define CAPACITY_LIST(X) \
-	X(13)         X(31)         X(61)         X(127)        X(251) \
-	X(509)        X(1021)       X(2039)       X(4093)       X(8191) \
-	X(16381)      X(32749)      X(65521)      X(87359)      X(116507) \
-	X(155333)     X(207127)     X(276173)     X(368233)     X(490969) \
-	X(654629)     X(872843)     X(1163791)    X(1551733)    X(2068973) \
-	X(2758633)    X(3678179)    X(4904233)    X(6539003)    X(8718673) \
-	X(11624887)   X(15499843)   X(20666453)   X(27555337)   X(36740443) \
-	X(48987283)   X(65316371)   X(87088531)   X(116118031)  X(154824023) \
-	X(206431987)  X(275242757)  X(366990361)  X(489320479)  X(652427287) \
-	X(869903063)  X(1159870741) X(1546494359) X(2061992483) X(2749323301) \
+#define CAPACITY_LIST(X)                                                       \
+	X(13)                                                                  \
+	X(31)                                                                  \
+	X(61)                                                                  \
+	X(127)                                                                 \
+	X(251)                                                                 \
+	X(509)                                                                 \
+	X(1021)                                                                \
+	X(2039)                                                                \
+	X(4093)                                                                \
+	X(8191)                                                                \
+	X(16381)                                                               \
+	X(32749)                                                               \
+	X(65521)                                                               \
+	X(87359)                                                               \
+	X(116507)                                                              \
+	X(155333)                                                              \
+	X(207127)                                                              \
+	X(276173)                                                              \
+	X(368233)                                                              \
+	X(490969)                                                              \
+	X(654629)                                                              \
+	X(872843)                                                              \
+	X(1163791)                                                             \
+	X(1551733)                                                             \
+	X(2068973)                                                             \
+	X(2758633)                                                             \
+	X(3678179)                                                             \
+	X(4904233)                                                             \
+	X(6539003)                                                             \
+	X(8718673)                                                             \
+	X(11624887)                                                            \
+	X(15499843)                                                            \
+	X(20666453)                                                            \
+	X(27555337)                                                            \
+	X(36740443)                                                            \
+	X(48987283)                                                            \
+	X(65316371)                                                            \
+	X(87088531)                                                            \
+	X(116118031)                                                           \
+	X(154824023)                                                           \
+	X(206431987)                                                           \
+	X(275242757)                                                           \
+	X(366990361)                                                           \
+	X(489320479)                                                           \
+	X(652427287)                                                           \
+	X(869903063)                                                           \
+	X(1159870741)                                                          \
+	X(1546494359)                                                          \
+	X(2061992483)                                                          \
+	X(2749323301)                                                          \
 	X(3665764391)
-/* clang-format on */
 
 static const size_t capacity_list[] = {
 #define X(c) (c),
@@ -47,7 +83,7 @@ static const size_t capacity_list[] = {
 
 #define INITIAL_CAPACITY (capacity_list[0])
 #define LAST_CAPACITY (capacity_list[ARRAY_SIZE(capacity_list) - 1])
-/* element ids are 32-bit; 0xFFFFFFFF is odd and reserved for ID_NIL */
+/* capacity is capped so a valid element id never equals ID_NIL (0xFFFFFFFF) */
 #define MAX_CAPACITY ((size_t)UINT32_C(0xFFFFFFFF))
 
 static inline size_t ceil_capacity(const size_t x)
@@ -57,8 +93,7 @@ static inline size_t ceil_capacity(const size_t x)
 		return MIN(x | 1, MAX_CAPACITY);
 	}
 	size_t idx = 0;
-	while (x > capacity_list[idx]) {
-		idx++;
+	for (; x > capacity_list[idx]; idx++) {
 	}
 	return capacity_list[idx];
 }
@@ -199,7 +234,7 @@ static inline void table_compact(struct hashtable *restrict table)
 /* rebuild all buckets from the stored hash values */
 static inline void table_reindex(struct hashtable *restrict table)
 {
-	/*  table must be compacted */
+	/* table must be compacted */
 	assert(table->freelist == ID_NIL);
 	const size_t size = table->size;
 	for (size_t i = 0; i < size; i++) {
@@ -262,6 +297,7 @@ table_realloc(struct hashtable *restrict table, const size_t new_capacity)
 	return m;
 }
 
+/* double under ~2 MiB of elements, then grow by 1/3 to bound copy cost */
 static inline struct hashtable *table_grow(struct hashtable *restrict table)
 {
 	static const size_t threshold =
@@ -280,11 +316,8 @@ static inline struct hashtable *table_grow(struct hashtable *restrict table)
 static inline void table_reseed(struct hashtable *restrict table)
 {
 	table->seed = (uint_least32_t)rand64n(UINT32_C(0xFFFFFFFF));
-#if HASHTABLE_LOG
-	(void)fprintf(
-		stderr, "table reseed: size=%zu new_seed=%" PRIXLEAST32 "\n",
-		table->size, table->seed);
-#endif
+	LOGD_F("table reseed: size=%zu new_seed=%" PRIXLEAST32, table->size,
+	       table->seed);
 	table_compact(table);
 	table_rehash(table);
 }
@@ -321,6 +354,16 @@ void table_free(struct hashtable *restrict table)
 	free(table);
 }
 
+/* bumps the debug-only modification counter checked by iterators */
+static inline void bump_version(struct hashtable *restrict table)
+{
+#ifndef NDEBUG
+	table->version++;
+#else
+	(void)table;
+#endif
+}
+
 struct hashtable *
 table_reserve(struct hashtable *restrict table, const size_t new_size)
 {
@@ -341,15 +384,9 @@ table_reserve(struct hashtable *restrict table, const size_t new_size)
 	if (table->capacity == new_capacity) {
 		return table;
 	}
-#if HASHTABLE_LOG
-	(void)fprintf(
-		stderr,
-		"table resize: size=%zu capacity=%zu new_capacity=%zu\n",
-		table->size, table->capacity, new_capacity);
-#endif
-#ifndef NDEBUG
-	table->version++;
-#endif
+	LOGD_F("table resize: size=%zu capacity=%zu new_capacity=%zu",
+	       table->size, table->capacity, new_capacity);
+	bump_version(table);
 	table_compact(table);
 	table = table_realloc(table, new_capacity);
 	/* the seed is unchanged, reuse the stored hash values */
@@ -376,9 +413,7 @@ table_set(struct hashtable *restrict table, const void *key, void **element)
 			void *old_elem = p->element;
 			p->key = key;
 			p->element = *element;
-#ifndef NDEBUG
-			table->version++;
-#endif
+			bump_version(table);
 			if (collision > COLLISION_THRESHOLD) {
 				table_reseed(table);
 			}
@@ -415,9 +450,7 @@ table_set(struct hashtable *restrict table, const void *key, void **element)
 	elemid_type *old_bucket = &table->p[bucket].bucket;
 	p->next = *old_bucket;
 	*old_bucket = index;
-#ifndef NDEBUG
-	table->version++;
-#endif
+	bump_version(table);
 
 	if (collision > COLLISION_THRESHOLD) {
 		table_reseed(table);
@@ -444,9 +477,7 @@ table_del(struct hashtable *restrict table, const void *key, void **element)
 			p->next = table->freelist;
 			table->freelist = i;
 			table->size--;
-#ifndef NDEBUG
-			table->version++;
-#endif
+			bump_version(table);
 			if (element != NULL) {
 				*element = p->element;
 			}
@@ -563,9 +594,7 @@ struct hashtable *table_filter(
 			table->size--;
 		}
 	}
-#ifndef NDEBUG
-	table->version++;
-#endif
+	bump_version(table);
 	return table;
 }
 
@@ -586,8 +615,6 @@ struct hashtable *table_clear(struct hashtable *restrict table)
 	init_elements(table, 0);
 	table->size = 0;
 	table->freelist = ID_NIL;
-#ifndef NDEBUG
-	table->version++;
-#endif
+	bump_version(table);
 	return table;
 }

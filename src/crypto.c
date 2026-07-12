@@ -6,7 +6,7 @@
 #include "nonce.h"
 #include "util.h"
 
-#include "utils/arraysize.h"
+#include "meta/arraysize.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 
@@ -21,41 +21,13 @@
 
 #include <sodium.h>
 
-static const char crypto_tag[] = "kcptun-libev";
-#define CRYPTO_TAG_SIZE (sizeof crypto_tag)
-
 void crypto_init(void)
 {
 	const int ret = sodium_init();
-	if (ret != 0) {
+	if (ret < 0) {
 		FAILMSGF("sodium_init failed: %d", ret);
 	}
 	LOGD_F("libsodium: %s", sodium_version_string());
-}
-
-uint32_t crypto_rand32(void)
-{
-	return randombytes_random();
-}
-
-static int
-kdf(const size_t key_size, unsigned char *restrict key,
-    const char *restrict password)
-{
-	static const char salt_str[] = "kcptun-libev";
-	unsigned char salt[crypto_pwhash_argon2id_SALTBYTES];
-	int r = crypto_generichash(
-		salt, crypto_pwhash_argon2id_SALTBYTES,
-		(unsigned char *)salt_str, sizeof(salt_str) - 1, NULL, 0);
-	if (r != 0) {
-		return r;
-	}
-	r = crypto_pwhash_argon2id(
-		key, key_size, password, strlen(password), salt,
-		crypto_pwhash_argon2id_OPSLIMIT_INTERACTIVE,
-		crypto_pwhash_argon2id_MEMLIMIT_MIN,
-		crypto_pwhash_argon2id_ALG_ARGON2ID13);
-	return r;
 }
 
 struct crypto_impl {
@@ -88,10 +60,227 @@ struct crypto_impl {
 	unsigned char *key;
 };
 
+struct crypto_method {
+	const char *name;
+	enum noncegen_method noncegen_method;
+	size_t (*nonce_size)(void);
+	size_t (*overhead)(void);
+	size_t (*key_size)(void);
+	int (*is_available)(void); /* NULL if always available */
+	struct crypto_impl impl; /* .key is NULL; filled in by crypto_new */
+};
+
+static const struct crypto_method methods[] = {
+	{
+		.name = "xchacha20poly1305_ietf",
+		.noncegen_method = noncegen_random,
+		.nonce_size = &crypto_aead_xchacha20poly1305_ietf_npubbytes,
+		.overhead = &crypto_aead_xchacha20poly1305_ietf_abytes,
+		.key_size = &crypto_aead_xchacha20poly1305_ietf_keybytes,
+		.impl = {
+			.keygen = &crypto_aead_xchacha20poly1305_ietf_keygen,
+			.aead_seal =
+				&crypto_aead_xchacha20poly1305_ietf_encrypt,
+			.aead_open =
+				&crypto_aead_xchacha20poly1305_ietf_decrypt,
+		},
+	},
+	{
+		.name = "xsalsa20poly1305",
+		.noncegen_method = noncegen_random,
+		.nonce_size = &crypto_secretbox_xsalsa20poly1305_noncebytes,
+		.overhead = &crypto_secretbox_xsalsa20poly1305_macbytes,
+		.key_size = &crypto_secretbox_xsalsa20poly1305_keybytes,
+		.impl = {
+			.keygen = &crypto_secretbox_xsalsa20poly1305_keygen,
+			.seal = &crypto_secretbox_detached,
+			.open = &crypto_secretbox_open_detached,
+		},
+	},
+	{
+		.name = "chacha20poly1305_ietf",
+		.noncegen_method = noncegen_counter,
+		.nonce_size = &crypto_aead_chacha20poly1305_ietf_npubbytes,
+		.overhead = &crypto_aead_chacha20poly1305_ietf_abytes,
+		.key_size = &crypto_aead_chacha20poly1305_ietf_keybytes,
+		.impl = {
+			.keygen = &crypto_aead_chacha20poly1305_ietf_keygen,
+			.aead_seal = &crypto_aead_chacha20poly1305_ietf_encrypt,
+			.aead_open = &crypto_aead_chacha20poly1305_ietf_decrypt,
+		},
+	},
+	{
+		.name = "aes256gcm",
+		.noncegen_method = noncegen_counter,
+		.nonce_size = &crypto_aead_aes256gcm_npubbytes,
+		.overhead = &crypto_aead_aes256gcm_abytes,
+		.key_size = &crypto_aead_aes256gcm_keybytes,
+		.is_available = &crypto_aead_aes256gcm_is_available,
+		.impl = {
+			.keygen = &crypto_aead_aes256gcm_keygen,
+			.aead_seal = &crypto_aead_aes256gcm_encrypt,
+			.aead_open = &crypto_aead_aes256gcm_decrypt,
+		},
+	},
+};
+
+struct crypto *crypto_new(const char *method)
+{
+	const struct crypto_method *m = NULL;
+	for (size_t i = 0; i < ARRAY_SIZE(methods); i++) {
+		if (strcmp(method, methods[i].name) == 0) {
+			m = &methods[i];
+			break;
+		}
+	}
+	if (m == NULL) {
+		LOGE_F("unsupported crypto method: %s", method);
+		crypto_list_methods();
+		return NULL;
+	}
+	if (m->is_available != NULL && !m->is_available()) {
+		LOGE_F("%s is not supported by current hardware", m->name);
+		return NULL;
+	}
+	const size_t nonce_size = m->nonce_size();
+	const size_t overhead = m->overhead();
+	const size_t key_size = m->key_size();
+	struct crypto *crypto = malloc(sizeof(struct crypto));
+	if (crypto == NULL) {
+		LOGOOM();
+		return NULL;
+	}
+	const struct crypto init = {
+		.noncegen_method = m->noncegen_method,
+		.nonce_size = nonce_size,
+		.overhead = overhead,
+		.key_size = key_size,
+		.impl = NULL,
+	};
+	memcpy(crypto, &init, sizeof(init));
+	crypto->impl = malloc(sizeof(struct crypto_impl));
+	if (crypto->impl == NULL) {
+		LOGOOM();
+		crypto_free(crypto);
+		return NULL;
+	}
+	*crypto->impl = (struct crypto_impl){ 0 };
+	unsigned char *key = sodium_malloc(key_size);
+	if (key == NULL) {
+		LOGE("crypto: failed to allocate secure memory");
+		crypto_free(crypto);
+		return NULL;
+	}
+	if (sodium_mlock(key, key_size)) {
+		LOGW("crypto: failed to lock secure memory");
+	}
+	*crypto->impl = m->impl;
+	crypto->impl->key = key;
+	return crypto;
+}
+
+static int
+kdf(const size_t key_size, unsigned char *restrict key,
+    const char *restrict password)
+{
+	static const char salt_str[] = "kcptun-libev";
+	unsigned char salt[crypto_pwhash_argon2id_SALTBYTES];
+	int r = crypto_generichash(
+		salt, crypto_pwhash_argon2id_SALTBYTES,
+		(const unsigned char *)salt_str, sizeof(salt_str) - 1, NULL, 0);
+	if (r != 0) {
+		return r;
+	}
+	r = crypto_pwhash_argon2id(
+		key, key_size, password, strlen(password), salt,
+		crypto_pwhash_argon2id_OPSLIMIT_INTERACTIVE,
+		crypto_pwhash_argon2id_MEMLIMIT_MIN,
+		crypto_pwhash_argon2id_ALG_ARGON2ID13);
+	return r;
+}
+
+bool crypto_password(struct crypto *restrict crypto, char *password)
+{
+	const int ret = kdf(crypto->key_size, crypto->impl->key, password);
+	sodium_memzero(password, strlen(password));
+	if (ret != 0) {
+		LOGOOM();
+		return false;
+	}
+	return true;
+}
+
+bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
+{
+	const char *b64_end = NULL;
+	const size_t b64_len = strlen(psk);
+	size_t len;
+	const int ret = sodium_base642bin(
+		crypto->impl->key, crypto->key_size, psk, b64_len, NULL, &len,
+		&b64_end, sodium_base64_VARIANT_ORIGINAL);
+	if (ret != 0) {
+		LOGE_F("crypto: psk base64 decode failed: %d", ret);
+		sodium_memzero(psk, b64_len);
+		return false;
+	}
+	if ((ptrdiff_t)b64_len != (b64_end - psk) || len != crypto->key_size) {
+		LOGE("crypto: invalid psk length");
+		sodium_memzero(psk, b64_len);
+		return false;
+	}
+	sodium_memzero(psk, b64_len);
+	return true;
+}
+
+static void free_impl(struct crypto *restrict crypto)
+{
+	struct crypto_impl *restrict impl = crypto->impl;
+	if (impl == NULL) {
+		return;
+	}
+	if (impl->key != NULL) {
+		sodium_free(impl->key);
+		impl->key = NULL;
+	}
+	UTIL_SAFE_FREE(crypto->impl);
+}
+
+void crypto_free(struct crypto *restrict crypto)
+{
+	if (crypto == NULL) {
+		return;
+	}
+	free_impl(crypto);
+	free(crypto);
+}
+
+uint32_t crypto_rand32(void)
+{
+	return randombytes_random();
+}
+
+bool crypto_keygen(
+	const struct crypto *restrict crypto, char *b64, const size_t b64_len)
+{
+	unsigned char *key = crypto->impl->key;
+	const size_t key_size = crypto->key_size;
+	if (b64_len < sodium_base64_encoded_len(
+			      key_size, sodium_base64_VARIANT_ORIGINAL)) {
+		return false;
+	}
+	crypto->impl->keygen(key);
+	(void)sodium_bin2base64(
+		b64, b64_len, key, key_size, sodium_base64_VARIANT_ORIGINAL);
+	return true;
+}
+
+static const char crypto_tag[] = "kcptun-libev";
+#define CRYPTO_TAG_SIZE (sizeof crypto_tag)
+
 size_t crypto_seal(
-	const struct crypto *restrict crypto, unsigned char *restrict dst,
+	const struct crypto *restrict crypto, unsigned char *dst,
 	const size_t dst_size, const unsigned char *restrict nonce,
-	const unsigned char *restrict plain, const size_t plain_size)
+	const unsigned char *plain, const size_t plain_size)
 {
 	if (dst_size < plain_size + crypto->overhead) {
 		LOGW_F("crypto_seal: insufficient crypto buffer %zu < %zu",
@@ -109,7 +298,9 @@ size_t crypto_seal(
 		}
 		return plain_size + crypto->overhead;
 	}
-	unsigned long long r_len = dst_size;
+	/* r_len is purely an output parameter; the size check above already
+	 * bounds the write */
+	unsigned long long r_len = 0;
 	const int r = impl->aead_seal(
 		dst, &r_len, plain, plain_size,
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, NULL, nonce,
@@ -122,21 +313,22 @@ size_t crypto_seal(
 }
 
 size_t crypto_open(
-	const struct crypto *restrict crypto, unsigned char *restrict dst,
+	const struct crypto *restrict crypto, unsigned char *dst,
 	const size_t dst_size, const unsigned char *restrict nonce,
-	const unsigned char *restrict cipher, const size_t cipher_size)
+	const unsigned char *cipher, const size_t cipher_size)
 {
 	if (dst_size + crypto->overhead < cipher_size) {
-		LOGW("crypto_open: insufficient crypto buffer");
+		LOGW_F("crypto_open: insufficient crypto buffer %zu + %zu < %zu",
+		       dst_size, crypto->overhead, cipher_size);
+		return 0;
+	}
+	if (cipher_size <= crypto->overhead) {
+		LOGV_F("crypto_open: short cipher %zu, overhead %zu",
+		       cipher_size, crypto->overhead);
 		return 0;
 	}
 	const struct crypto_impl *restrict impl = crypto->impl;
 	if (impl->open != NULL) {
-		if (cipher_size < crypto->overhead) {
-			LOGV_F("crypto_open: short cipher %zu, overhead %zu",
-			       cipher_size, crypto->overhead);
-			return 0;
-		}
 		const size_t plain_size = cipher_size - crypto->overhead;
 		const unsigned char *mac = cipher + plain_size;
 		const int r = impl->open(
@@ -149,7 +341,9 @@ size_t crypto_open(
 		}
 		return plain_size;
 	}
-	unsigned long long r_len = dst_size;
+	/* r_len is purely an output parameter; the size checks above already
+	 * bound the write */
+	unsigned long long r_len = 0;
 	const int r = impl->aead_open(
 		dst, &r_len, NULL, cipher, cipher_size,
 		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, nonce,
@@ -175,202 +369,13 @@ bool crypto_pad(unsigned char *data, const size_t len, const size_t npad)
 	return true;
 }
 
-enum crypto_methods {
-	method_xchacha20poly1305_ietf,
-	method_xsalsa20poly1305,
-	method_chacha20poly1305_ietf,
-	method_aes256gcm,
-};
-
-static const char *method_names[] = {
-	[method_xchacha20poly1305_ietf] = "xchacha20poly1305_ietf",
-	[method_xsalsa20poly1305] = "xsalsa20poly1305",
-	[method_chacha20poly1305_ietf] = "chacha20poly1305_ietf",
-	[method_aes256gcm] = "aes256gcm",
-};
-
 void crypto_list_methods(void)
 {
 	(void)fprintf(stderr, "  supported methods:\n");
-	for (size_t i = 0; i < ARRAY_SIZE(method_names); i++) {
-		(void)fprintf(stderr, "  - %s\n", method_names[i]);
+	for (size_t i = 0; i < ARRAY_SIZE(methods); i++) {
+		(void)fprintf(stderr, "  - %s\n", methods[i].name);
 	}
 	(void)fflush(stderr);
 }
 
-struct crypto *crypto_new(const char *method)
-{
-	enum crypto_methods m;
-	size_t nonce_size, overhead, key_size;
-	if (strcmp(method, method_names[method_xchacha20poly1305_ietf]) == 0) {
-		m = method_xchacha20poly1305_ietf;
-		nonce_size = crypto_aead_xchacha20poly1305_ietf_npubbytes();
-		overhead = crypto_aead_xchacha20poly1305_ietf_abytes();
-		key_size = crypto_aead_xchacha20poly1305_ietf_keybytes();
-	} else if (strcmp(method, method_names[method_xsalsa20poly1305]) == 0) {
-		m = method_xsalsa20poly1305;
-		nonce_size = crypto_secretbox_xsalsa20poly1305_noncebytes();
-		overhead = crypto_secretbox_xsalsa20poly1305_macbytes();
-		key_size = crypto_secretbox_xsalsa20poly1305_keybytes();
-	} else if (strcmp(method, method_names[method_chacha20poly1305_ietf]) == 0) {
-		m = method_chacha20poly1305_ietf;
-		nonce_size = crypto_aead_chacha20poly1305_ietf_npubbytes();
-		overhead = crypto_aead_chacha20poly1305_ietf_abytes();
-		key_size = crypto_aead_chacha20poly1305_ietf_keybytes();
-	} else if (strcmp(method, method_names[method_aes256gcm]) == 0) {
-		m = method_aes256gcm;
-		if (!crypto_aead_aes256gcm_is_available()) {
-			LOGE_F("%s is not supported by current hardware",
-			       method_names[m]);
-			return NULL;
-		}
-		nonce_size = crypto_aead_aes256gcm_npubbytes();
-		overhead = crypto_aead_aes256gcm_abytes();
-		key_size = crypto_aead_aes256gcm_keybytes();
-	} else {
-		LOGE_F("unsupported crypto method: %s", method);
-		crypto_list_methods();
-		return NULL;
-	}
-	struct crypto *crypto = malloc(sizeof(struct crypto));
-	if (crypto == NULL) {
-		LOGOOM();
-		return NULL;
-	}
-	*(size_t *)&crypto->nonce_size = nonce_size;
-	*(size_t *)&crypto->overhead = overhead;
-	*(size_t *)&crypto->key_size = key_size;
-	crypto->impl = malloc(sizeof(struct crypto_impl));
-	if (crypto->impl == NULL) {
-		LOGOOM();
-		crypto_free(crypto);
-		return NULL;
-	}
-	*crypto->impl = (struct crypto_impl){ 0 };
-	unsigned char *key = sodium_malloc(key_size);
-	if (key == NULL) {
-		LOGE("crypto: failed to allocate secure memory");
-		crypto_free(crypto);
-		return NULL;
-	}
-	if (sodium_mlock(key, key_size)) {
-		LOGW("crypto: failed to lock secure memory");
-	}
-	switch (m) {
-	case method_xchacha20poly1305_ietf: {
-		*(enum noncegen_method *)&crypto->noncegen_method =
-			noncegen_random;
-		*crypto->impl = (struct crypto_impl){
-			.key = key,
-			.keygen = &crypto_aead_xchacha20poly1305_ietf_keygen,
-			.aead_seal =
-				&crypto_aead_xchacha20poly1305_ietf_encrypt,
-			.aead_open =
-				&crypto_aead_xchacha20poly1305_ietf_decrypt,
-		};
-	} break;
-	case method_xsalsa20poly1305: {
-		*(enum noncegen_method *)&crypto->noncegen_method =
-			noncegen_random;
-		*crypto->impl = (struct crypto_impl){
-			.key = key,
-			.keygen = &crypto_stream_xsalsa20_keygen,
-			.seal = &crypto_secretbox_detached,
-			.open = &crypto_secretbox_open_detached,
-		};
-	} break;
-	case method_chacha20poly1305_ietf: {
-		*(enum noncegen_method *)&crypto->noncegen_method =
-			noncegen_counter;
-		*crypto->impl = (struct crypto_impl){
-			.key = key,
-			.keygen = &crypto_aead_chacha20poly1305_ietf_keygen,
-			.aead_seal = &crypto_aead_chacha20poly1305_ietf_encrypt,
-			.aead_open = &crypto_aead_chacha20poly1305_ietf_decrypt,
-		};
-	} break;
-	case method_aes256gcm: {
-		*(enum noncegen_method *)&crypto->noncegen_method =
-			noncegen_counter;
-		*crypto->impl = (struct crypto_impl){
-			.key = key,
-			.keygen = &crypto_aead_aes256gcm_keygen,
-			.aead_seal = &crypto_aead_aes256gcm_encrypt,
-			.aead_open = &crypto_aead_aes256gcm_decrypt,
-		};
-	} break;
-	default:
-		FAILMSGF("invalid crypto method: %s", method);
-	}
-	return crypto;
-}
-
-bool crypto_password(struct crypto *restrict crypto, char *password)
-{
-	if (kdf(crypto->key_size, crypto->impl->key, password) != 0) {
-		LOGOOM();
-		return false;
-	}
-	sodium_memzero(password, strlen(password));
-	return true;
-}
-
-bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
-{
-	const char *b64_end = NULL;
-	const size_t b64_len = strlen(psk);
-	size_t len;
-	const int ret = sodium_base642bin(
-		crypto->impl->key, crypto->key_size, psk, b64_len, NULL, &len,
-		&b64_end, sodium_base64_VARIANT_ORIGINAL);
-	if (ret != 0) {
-		LOGE_F("crypto: psk base64 decode failed: %d", ret);
-		return false;
-	}
-	if ((ptrdiff_t)b64_len != (b64_end - psk) || len != crypto->key_size) {
-		LOGE("crypto: invalid psk length");
-		return false;
-	}
-	sodium_memzero(psk, b64_len);
-	return true;
-}
-
-bool crypto_keygen(
-	const struct crypto *restrict crypto, char *b64, const size_t b64_len)
-{
-	unsigned char *key = crypto->impl->key;
-	const size_t key_size = crypto->key_size;
-	if (b64_len < sodium_base64_encoded_len(
-			      key_size, sodium_base64_VARIANT_ORIGINAL)) {
-		return false;
-	}
-	crypto->impl->keygen(key);
-	(void)sodium_bin2base64(
-		b64, b64_len, key, key_size, sodium_base64_VARIANT_ORIGINAL);
-	return true;
-}
-
-static void crypto_impl_free(struct crypto *restrict crypto)
-{
-	struct crypto_impl *restrict impl = crypto->impl;
-	if (impl == NULL) {
-		return;
-	}
-	if (impl->key != NULL) {
-		(void)sodium_munlock(impl->key, crypto->key_size);
-		sodium_free(impl->key);
-		impl->key = NULL;
-	}
-	UTIL_SAFE_FREE(crypto->impl);
-}
-
-void crypto_free(struct crypto *restrict crypto)
-{
-	if (crypto == NULL) {
-		return;
-	}
-	crypto_impl_free(crypto);
-	free(crypto);
-}
-
-#endif
+#endif /* WITH_SODIUM */

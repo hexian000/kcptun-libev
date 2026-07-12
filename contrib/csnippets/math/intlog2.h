@@ -86,7 +86,7 @@ extern const int intlog2_debruijn_bsr32[32];
 /** @brief De Bruijn lookup table for 32-bit BSF (bit scan forward). */
 extern const int intlog2_debruijn_bsf32[32];
 
-/** @brief Calculate base-2 logarithm for uint_fast32_t using De Bruijn sequence. */
+/** @brief Base-2 logarithm for uint_fast32_t via De Bruijn sequence. */
 static inline int log2u32(uint_fast32_t x)
 {
 	assert(x > 0);
@@ -95,8 +95,9 @@ static inline int log2u32(uint_fast32_t x)
 	x |= x >> 4u;
 	x |= x >> 8u;
 	x |= x >> 16u;
-	/* De Bruijn constant for 32-bit BSR; pairs with intlog2_debruijn_bsr32[].
-	 * Mask to 32 bits where uint_fast32_t is wider than 32 bits. */
+	/* De Bruijn constant for 32-bit BSR; pairs with
+	 * intlog2_debruijn_bsr32[]. Mask to 32 bits where
+	 * uint_fast32_t is wider than 32 bits. */
 	return intlog2_debruijn_bsr32
 		[((x * (uint_fast32_t)0x07C4ACDDUL) & UINT32_C(0xFFFFFFFF)) >>
 		 27u];
@@ -106,8 +107,9 @@ static inline int log2u32(uint_fast32_t x)
 static inline int countr_zerou32(uint_fast32_t x)
 {
 	assert(x > 0);
-	/* De Bruijn constant for 32-bit BSF; pairs with intlog2_debruijn_bsf32[].
-	 * Mask to 32 bits where uint_fast32_t is wider than 32 bits. */
+	/* De Bruijn constant for 32-bit BSF; pairs with
+	 * intlog2_debruijn_bsf32[]. Mask to 32 bits where
+	 * uint_fast32_t is wider than 32 bits. */
 	return intlog2_debruijn_bsf32
 		[(((x & -x) * (uint_fast32_t)0x077CB531UL) &
 		  UINT32_C(0xFFFFFFFF)) >>
@@ -123,7 +125,7 @@ static inline int countl_zerou32(uint_fast32_t x)
 /** @brief De Bruijn lookup table for 64-bit BSR (bit scan reverse). */
 extern const int intlog2_debruijn_bsr64[64];
 
-/** @brief Calculate base-2 logarithm for uint_fast64_t using De Bruijn sequence. */
+/** @brief Base-2 logarithm for uint_fast64_t via De Bruijn sequence. */
 static inline int log2u64(uint_fast64_t x)
 {
 	assert(x > 0);
@@ -133,7 +135,8 @@ static inline int log2u64(uint_fast64_t x)
 	x |= x >> 8u;
 	x |= x >> 16u;
 	x |= x >> 32u;
-	/* De Bruijn constant for 64-bit BSR; pairs with intlog2_debruijn_bsr64[] */
+	/* De Bruijn constant for 64-bit BSR; pairs with
+	 * intlog2_debruijn_bsr64[] */
 	return intlog2_debruijn_bsr64
 		[((x * (uint_fast64_t)0x03F79D71B4CB0A89ULL) &
 		  UINT64_C(0xFFFFFFFFFFFFFFFF)) >>
@@ -147,7 +150,8 @@ extern const int intlog2_debruijn_bsf64[64];
 static inline int countr_zerou64(uint_fast64_t x)
 {
 	assert(x > 0);
-	/* De Bruijn constant for 64-bit BSF; pairs with intlog2_debruijn_bsf64[] */
+	/* De Bruijn constant for 64-bit BSF; pairs with
+	 * intlog2_debruijn_bsf64[] */
 	return intlog2_debruijn_bsf64
 		[(((x & -x) * (uint_fast64_t)0x0257EDD4D0F22CE3ULL) &
 		  UINT64_C(0xFFFFFFFFFFFFFFFF)) >>
@@ -196,7 +200,8 @@ static inline int log2ull(unsigned long long x)
 #if defined(__has_builtin) && __has_builtin(__builtin_clzll)
 	return (int)(sizeof(x) << 3u) - 1 - __builtin_clzll(x);
 #else
-	/* unsigned long long must fit in uint_fast64_t for the fallback cast to be lossless. */
+	/* unsigned long long must fit in uint_fast64_t for the
+	 * fallback cast to be lossless. */
 	static_assert(
 		ULLONG_MAX <= UINT_FAST64_MAX,
 		"unsigned long long exceeds uint_fast64_t range: fallback cast would truncate");
@@ -238,7 +243,8 @@ static inline int countr_zeroull(unsigned long long x)
 #if defined(__has_builtin) && __has_builtin(__builtin_ctzll)
 	return __builtin_ctzll(x);
 #else
-	/* unsigned long long must fit in uint_fast64_t for the fallback cast to be lossless. */
+	/* unsigned long long must fit in uint_fast64_t for the
+	 * fallback cast to be lossless. */
 	static_assert(
 		ULLONG_MAX <= UINT_FAST64_MAX,
 		"unsigned long long exceeds uint_fast64_t range: fallback cast would truncate");
@@ -278,7 +284,8 @@ static inline int countl_zeroull(unsigned long long x)
 #if defined(__has_builtin) && __has_builtin(__builtin_clzll)
 	return x == 0 ? (int)(sizeof(x) << 3u) : __builtin_clzll(x);
 #else
-	/* unsigned long long must fit in uint_fast64_t for the fallback cast to be lossless. */
+	/* unsigned long long must fit in uint_fast64_t for the
+	 * fallback cast to be lossless. */
 	static_assert(
 		ULLONG_MAX <= UINT_FAST64_MAX,
 		"unsigned long long exceeds uint_fast64_t range: fallback cast would truncate");

@@ -27,6 +27,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 /**
@@ -68,6 +69,9 @@ struct mcache {
 static inline struct mcache *
 mcache_new(const size_t cache_size, const size_t elem_size)
 {
+	if (cache_size > (SIZE_MAX - sizeof(struct mcache)) / sizeof(void *)) {
+		return NULL;
+	}
 	struct mcache *cache =
 		malloc(sizeof(struct mcache) + sizeof(void *) * cache_size);
 	if (cache != NULL) {
@@ -114,7 +118,8 @@ static inline void mcache_free(struct mcache *restrict cache)
  *
  * @note The returned object is uninitialized - caller must initialize it
  * @note Cache operates as LIFO - most recently returned element is reused first
- * @note Statistics are updated if MCACHE_STATS is defined
+ * @note Statistics are updated if MCACHE_STATS is defined; read them back
+ * with mcache_getstats()
  */
 static inline void *mcache_get(struct mcache *restrict cache)
 {
@@ -179,6 +184,38 @@ mcache_shrink(struct mcache *restrict cache, const size_t count)
 		free(cache->elems[--n]);
 	}
 	cache->num_elem = n;
+}
+
+/**
+ * @brief Read the cache's request/hit counters
+ *
+ * @param cache Pointer to the cache
+ * @param request If non-NULL, set to the total number of mcache_get() calls
+ * @param hit If non-NULL, set to the number of mcache_get() calls served
+ * from the cache instead of malloc()
+ *
+ * @note Both are set to 0 when built without MCACHE_STATS
+ */
+static inline void mcache_getstats(
+	const struct mcache *restrict cache, size_t *restrict request,
+	size_t *restrict hit)
+{
+#if MCACHE_STATS
+	if (request != NULL) {
+		*request = cache->request;
+	}
+	if (hit != NULL) {
+		*hit = cache->hit;
+	}
+#else
+	(void)cache;
+	if (request != NULL) {
+		*request = 0;
+	}
+	if (hit != NULL) {
+		*hit = 0;
+	}
+#endif /* MCACHE_STATS */
 }
 
 /**
@@ -280,10 +317,18 @@ static inline struct mmcache *mmcache_new(
 {
 	assert(min_shift <= max_shift);
 	const size_t nclass = max_shift - min_shift + 1;
+	if (cache_size != 0 && nclass > SIZE_MAX / cache_size) {
+		return NULL;
+	}
 	const size_t nslots = nclass * cache_size;
-	struct mmcache *cache =
-		malloc(sizeof(struct mmcache) + sizeof(void *) * nslots +
-		       sizeof(size_t) * nclass);
+	if (nslots > (SIZE_MAX - sizeof(struct mmcache)) / sizeof(void *)) {
+		return NULL;
+	}
+	const size_t head = sizeof(struct mmcache) + sizeof(void *) * nslots;
+	if (nclass > (SIZE_MAX - head) / sizeof(size_t)) {
+		return NULL;
+	}
+	struct mmcache *cache = malloc(head + sizeof(size_t) * nclass);
 	if (cache == NULL) {
 		return NULL;
 	}
@@ -338,6 +383,8 @@ static inline void mmcache_free(struct mmcache *restrict cache)
  *
  * @note The returned block is uninitialized
  * @note The same size must be passed to mmcache_put() when returning the block
+ * @note Statistics are updated if MCACHE_STATS is defined; read them back
+ * with mmcache_getstats()
  */
 static inline void *
 mmcache_get(struct mmcache *restrict cache, const size_t size)
@@ -422,6 +469,38 @@ mmcache_shrink(struct mmcache *restrict cache, const size_t count)
 		}
 		counts[cls] = n;
 	}
+}
+
+/**
+ * @brief Read the cache's request/hit counters
+ *
+ * @param cache Pointer to the cache
+ * @param request If non-NULL, set to the total number of mmcache_get() calls
+ * @param hit If non-NULL, set to the number of mmcache_get() calls served
+ * from the cache instead of malloc()
+ *
+ * @note Both are set to 0 when built without MCACHE_STATS
+ */
+static inline void mmcache_getstats(
+	const struct mmcache *restrict cache, size_t *restrict request,
+	size_t *restrict hit)
+{
+#if MCACHE_STATS
+	if (request != NULL) {
+		*request = cache->request;
+	}
+	if (hit != NULL) {
+		*hit = cache->hit;
+	}
+#else
+	(void)cache;
+	if (request != NULL) {
+		*request = 0;
+	}
+	if (hit != NULL) {
+		*hit = 0;
+	}
+#endif /* MCACHE_STATS */
 }
 
 #endif /* UTILS_MCACHE_H */

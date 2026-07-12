@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 #include "bloom.h"
-#include "algo/cityhash.h"
+#include "hash/cityhash.h"
 
 #define MAKESTRING(n) STRING(n)
 #define STRING(n) #n

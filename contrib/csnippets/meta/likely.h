@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef UTILS_LIKELY_H
-#define UTILS_LIKELY_H
+#ifndef META_LIKELY_H
+#define META_LIKELY_H
 
 #if defined(__has_builtin)
 #if __has_builtin(__builtin_expect)
@@ -26,4 +26,4 @@
 #define UNLIKELY(x) (x)
 #endif
 
-#endif /* UTILS_LIKELY_H */
+#endif /* META_LIKELY_H */

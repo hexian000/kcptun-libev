@@ -17,22 +17,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-static bool ppbloom_check_add(
-	struct ppbloom *restrict b, const void *buffer, const size_t len)
-{
-	const uint8_t i = b->current & UINT8_C(1);
-	const uint8_t j = i ^ UINT8_C(1);
-	const bool ret = bloom_add(&b->bloom[i], buffer, (int)len) != 0 ||
-			 bloom_check(&b->bloom[j], buffer, (int)len) != 0;
-	b->bloom_count[i]++;
-	if (b->bloom_count[i] >= b->entries) {
-		bloom_reset(&b->bloom[j]);
-		b->bloom_count[j] = 0;
-		b->current = j;
-	}
-	return ret;
-}
-
 struct noncegen *noncegen_new(
 	const enum noncegen_method method, const size_t nonce_len,
 	const bool strict)
@@ -55,10 +39,12 @@ struct noncegen *noncegen_new(
 	CHECKMSG(nonce_len <= g->buf.cap, "nonce too long");
 	g->buf.len = nonce_len;
 	if (bloom_init(&g->ppbloom.bloom[0], (int)entries, error)) {
+		LOGOOM();
 		noncegen_free(g);
 		return NULL;
 	}
 	if (bloom_init(&g->ppbloom.bloom[1], (int)entries, error)) {
+		LOGOOM();
 		noncegen_free(g);
 		return NULL;
 	}
@@ -89,17 +75,9 @@ void noncegen_init(struct noncegen *restrict g)
 	case noncegen_random:
 		g->next_fn = next_random;
 		break;
+	default:
+		FAILMSGF("invalid noncegen method: %d", (int)g->method);
 	}
-}
-
-const unsigned char *noncegen_next(struct noncegen *restrict g)
-{
-	return g->next_fn(g);
-}
-
-bool noncegen_verify(struct noncegen *restrict g, const unsigned char *nonce)
-{
-	return !ppbloom_check_add(&g->ppbloom, nonce, g->buf.len);
 }
 
 void noncegen_free(struct noncegen *g)
@@ -110,6 +88,35 @@ void noncegen_free(struct noncegen *g)
 	bloom_free(&g->ppbloom.bloom[0]);
 	bloom_free(&g->ppbloom.bloom[1]);
 	free(g);
+}
+
+const unsigned char *noncegen_next(struct noncegen *restrict g)
+{
+	return g->next_fn(g);
+}
+
+static bool
+check_add(struct ppbloom *restrict b, const void *buffer, const size_t len)
+{
+	const uint8_t i = b->current & UINT8_C(1);
+	const uint8_t j = i ^ UINT8_C(1);
+	const int added = bloom_add(&b->bloom[i], buffer, (int)len);
+	if (added == 0) {
+		b->bloom_count[i]++;
+		if (b->bloom_count[i] >= b->entries) {
+			const int reset = bloom_reset(&b->bloom[j]);
+			ASSERT(reset == 0);
+			(void)reset;
+			b->bloom_count[j] = 0;
+			b->current = j;
+		}
+	}
+	return added != 0 || bloom_check(&b->bloom[j], buffer, (int)len) != 0;
+}
+
+bool noncegen_verify(struct noncegen *restrict g, const unsigned char *nonce)
+{
+	return !check_add(&g->ppbloom, nonce, g->buf.len);
 }
 
 #endif /* WITH_SODIUM */

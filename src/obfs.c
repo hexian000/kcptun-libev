@@ -18,11 +18,11 @@
 #include "math/rand.h"
 #include "net/http.h"
 #include "os/socket.h"
-#include "utils/arraysize.h"
+#include "meta/arraysize.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
-#include "utils/minmax.h"
+#include "meta/minmax.h"
 #include "utils/slog.h"
 
 #include <ev.h>
@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 struct obfs_stats {
 	uintmax_t pkt_cap, pkt_rx, pkt_tx;
@@ -229,7 +230,7 @@ static uint16_t tcp_checksum(
 	const union sockaddr_max *restrict dst, struct tcphdr *restrict tcp,
 	const void *restrict data, const size_t datalen)
 {
-	const uint16_t plen = sizeof(struct tcphdr) + datalen;
+	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + datalen);
 	uint32_t sum = 0;
 	switch (domain) {
 	case AF_INET: {
@@ -287,7 +288,7 @@ static void ip4_hdr_init(
 		.version = IPVERSION,
 		.ihl = sizeof(struct iphdr) / 4u,
 		.tos = ECN_ECT0,
-		.tot_len = htons(sizeof(struct iphdr) + plen),
+		.tot_len = htons((uint16_t)(sizeof(struct iphdr) + plen)),
 		.id = (uint16_t)rand64(),
 		.frag_off = htons(UINT16_C(0x4000)),
 		.ttl = UINT8_C(64),
@@ -334,8 +335,8 @@ static void socket_tcp_quickack(const int fd, const bool enabled)
 
 static void obfs_tcp_setup(const int fd)
 {
-	socket_set_buffer(fd, 1, 1);
-	socket_set_tcp(fd, true, false);
+	(void)socket_set_buffer(fd, 1, 1);
+	(void)socket_set_tcp(fd, true, false);
 	if (setsockopt(
 		    fd, SOL_TCP, TCP_WINDOW_CLAMP, &(int){ 1 }, sizeof(int))) {
 		const int err = errno;
@@ -568,6 +569,18 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 	}
 }
 
+static void obfs_raw_close(struct obfs *restrict obfs)
+{
+	if (obfs->cap_fd != -1) {
+		socket_close(obfs->cap_fd);
+		obfs->cap_fd = -1;
+	}
+	if (obfs->raw_fd != -1) {
+		socket_close(obfs->raw_fd);
+		obfs->raw_fd = -1;
+	}
+}
+
 static bool obfs_raw_start(struct obfs *restrict obfs)
 {
 	const int domain = obfs->domain;
@@ -588,17 +601,20 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		LOG_PERROR("cap socket");
 		return false;
 	}
-	if (socket_set_nonblock(obfs->cap_fd) != 0) {
+	if (!socket_set_nonblock(obfs->cap_fd)) {
+		obfs_raw_close(obfs);
 		return false;
 	}
-	socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
+	(void)socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
 
 	obfs->raw_fd = socket(domain, SOCK_RAW, IPPROTO_RAW);
 	if (obfs->raw_fd < 0) {
 		LOG_PERROR("raw socket");
+		obfs_raw_close(obfs);
 		return false;
 	}
-	if (socket_set_nonblock(obfs->raw_fd) != 0) {
+	if (!socket_set_nonblock(obfs->raw_fd)) {
+		obfs_raw_close(obfs);
 		return false;
 	}
 	switch (domain) {
@@ -607,6 +623,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 			    obfs->raw_fd, IPPROTO_IP, IP_HDRINCL, &(int){ 1 },
 			    sizeof(int))) {
 			LOG_PERROR("raw setsockopt");
+			obfs_raw_close(obfs);
 			return false;
 		}
 		break;
@@ -615,13 +632,14 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 			    obfs->raw_fd, IPPROTO_IPV6, IPV6_HDRINCL,
 			    &(int){ 1 }, sizeof(int))) {
 			LOG_PERROR("raw setsockopt");
+			obfs_raw_close(obfs);
 			return false;
 		}
 		break;
 	default:
 		FAILMSGF("invalid address family: %d", domain);
 	}
-	socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
+	(void)socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
 	return true;
 }
 
@@ -643,7 +661,7 @@ static bool obfs_tcp_send(
 	const uint8_t flags, const void *data, const size_t datalen)
 {
 	const int domain = obfs->domain;
-	const uint16_t plen = sizeof(struct tcphdr) + datalen;
+	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + datalen);
 	unsigned char pkt[sizeof(struct ip6_hdr) + plen];
 	size_t ip_hdr_len;
 	union sockaddr_max daddr;
@@ -797,34 +815,42 @@ static struct obfs_ctx *obfs_tcp_raw_new_ctx(
 	return ctx;
 }
 
+/* parsed TCP/IP header fields for an incoming dpi/tcp packet, unified
+ * across the IPv4/IPv6 callers of obfs_tcp_input */
+struct obfs_tcp_packet {
+	const union sockaddr_max *restrict local;
+	const union sockaddr_max *restrict remote;
+	struct tcphdr *restrict tcp;
+	uint16_t ihl, plen, doff;
+	uint32_t flow;
+};
+
 /* process incoming TCP packet for dpi/tcp mode (unified IPv4/IPv6) */
 static struct obfs_ctx *obfs_tcp_input(
 	struct obfs *restrict obfs, struct msgframe *restrict msg,
-	const union sockaddr_max *restrict local,
-	const union sockaddr_max *restrict remote, struct tcphdr *restrict tcp,
-	const uint16_t ihl, const uint16_t plen, const uint16_t doff,
-	const uint32_t flow)
+	const struct obfs_tcp_packet *restrict pkt)
 {
 	struct server *restrict s = obfs->server;
 	const bool is_server = !!(s->conf->mode & MODE_SERVER);
 
 	/* find or create context */
-	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &remote->sa);
+	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &pkt->remote->sa);
 
 	if (is_server) {
 		/* server side: handle incoming connections */
-		if (tcp->syn && !tcp->ack) {
+		if (pkt->tcp->syn && !pkt->tcp->ack) {
 			/* new SYN packet - new connection */
 			if (ctx == NULL) {
 				ctx = obfs_tcp_raw_new_ctx(
-					obfs, msg, local, remote, flow);
+					obfs, msg, pkt->local, pkt->remote,
+					pkt->flow);
 				if (ctx == NULL) {
 					return NULL;
 				}
 			}
 
 			/* TFO: respond with SYN-ACK and immediately ready */
-			if (!obfs_tcp_accept(obfs, ctx, ntohl(tcp->seq))) {
+			if (!obfs_tcp_accept(obfs, ctx, ntohl(pkt->tcp->seq))) {
 				return NULL;
 			}
 			/* connection is now established (TFO style) */
@@ -843,9 +869,9 @@ static struct obfs_ctx *obfs_tcp_input(
 		}
 
 		/* SYN-ACK from server - update remote sequence */
-		if (tcp->syn && tcp->ack) {
+		if (pkt->tcp->syn && pkt->tcp->ack) {
 			/* update remote_seq based on server's ISN */
-			ctx->remote_seq = ntohl(tcp->seq) + 1;
+			ctx->remote_seq = ntohl(pkt->tcp->seq) + 1;
 			OBFS_CTX_LOG(DEBUG, ctx, "received SYN-ACK");
 
 			/* mark ready for upper layer */
@@ -861,23 +887,23 @@ static struct obfs_ctx *obfs_tcp_input(
 	}
 
 	/* handle RST - ignore in dpi/tcp mode (kernel sends RST for unknown connections) */
-	if (tcp->rst) {
+	if (pkt->tcp->rst) {
 		OBFS_CTX_LOG(DEBUG, ctx, "ignoring RST (dpi/tcp mode)");
 		return NULL;
 	}
 
 	/* update remote sequence tracking */
-	ctx->remote_seq = ntohl(tcp->seq) + (plen - doff);
+	ctx->remote_seq = ntohl(pkt->tcp->seq) + (pkt->plen - pkt->doff);
 
 	/* data packet */
-	if (!tcp->psh && (plen - doff) == 0) {
+	if (!pkt->tcp->psh && (pkt->plen - pkt->doff) == 0) {
 		return NULL; /* pure ACK */
 	}
 
 	ctx->last_seen = msg->ts;
-	sa_copy(&msg->addr.sa, &remote->sa);
-	msg->off = ihl + doff;
-	msg->len = plen - doff;
+	sa_copy(&msg->addr.sa, &pkt->remote->sa);
+	msg->off = (uint16_t)(pkt->ihl + pkt->doff);
+	msg->len = (uint16_t)(pkt->plen - pkt->doff);
 	return ctx;
 }
 
@@ -887,7 +913,7 @@ static void obfs_tcp_seal(
 	struct msgframe *restrict msg)
 {
 	const int domain = obfs->domain;
-	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
+	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + msg->len);
 	size_t ip_hdr_len;
 	uint16_t sport, dport;
 
@@ -936,7 +962,7 @@ static void obfs_tcp_seal(
 	/* update sequence number */
 	ctx->local_seq += msg->len;
 
-	msg->len += msg->off;
+	msg->len = (uint16_t)(msg->len + msg->off);
 	switch (domain) {
 	case AF_INET:
 		msg->addr.in.sin_port = 0;
@@ -961,7 +987,7 @@ static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx)
 		ev_io_stop(loop, w_read);
 		ev_io *restrict w_write = &ctx->w_write;
 		ev_io_stop(loop, w_write);
-		SOCKET_CLOSE_FD(ctx->fd);
+		socket_close(ctx->fd);
 		ctx->fd = -1;
 	}
 	free(ctx);
@@ -975,6 +1001,12 @@ static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs)
 	}
 	ctx->obfs = obfs;
 	ctx->fd = -1;
+	/* hkey.data points into ctx->key itself: valid the moment ctx is
+	 * allocated, regardless of when a caller fills in the key bytes, so
+	 * every table_set/table_find/table_del sees a consistent hashkey */
+	ctx->hkey =
+		(struct hashkey){ .len = OBFS_CTX_KEY_SIZE, .data = ctx->key };
+	ctx->in_table = false;
 	ctx->http_msg = (struct http_message){ 0 };
 	ctx->http_nxt = NULL;
 	ctx->cap_ecn = false;
@@ -1033,6 +1065,13 @@ obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 
 static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
 {
+	/* dpi/tcp (raw) mode contexts share obfs->raw_fd/cap_fd and never
+	 * get per-context w_read/w_write initialized (see obfs_ctx_free's
+	 * matching guard); stopping them unconditionally would touch
+	 * never-ev_io_init'd watchers */
+	if (ctx->fd == -1) {
+		return;
+	}
 	ev_io_stop(loop, &ctx->w_read);
 	ev_io_stop(loop, &ctx->w_write);
 }
@@ -1090,8 +1129,6 @@ static bool obfs_ctx_start(
 		memcpy(ctx->key, sa, n);
 		memset(ctx->key + n, 0, sizeof(ctx->key) - n);
 	}
-	ctx->hkey =
-		(struct hashkey){ .len = OBFS_CTX_KEY_SIZE, .data = ctx->key };
 	struct server *restrict s = obfs->server;
 
 	if ((s->conf->mode & MODE_SERVER) &&
@@ -1146,17 +1183,23 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 		LOG_PERROR("tcp socket");
 		return false;
 	}
-	if (socket_set_nonblock(obfs->fd) != 0) {
+	if (!socket_set_nonblock(obfs->fd)) {
+		socket_close(obfs->fd);
+		obfs->fd = -1;
 		return false;
 	}
-	socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
+	(void)socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
 	obfs_tcp_setup(obfs->fd);
 	if (bind(obfs->fd, sa, sa_len(sa))) {
 		LOG_PERROR("tcp bind");
+		socket_close(obfs->fd);
+		obfs->fd = -1;
 		return false;
 	}
 	if (listen(obfs->fd, 16)) {
 		LOG_PERROR("tcp listen");
+		socket_close(obfs->fd);
+		obfs->fd = -1;
 		return false;
 	}
 	if (LOGLEVEL(INFO)) {
@@ -1165,6 +1208,14 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 		LOG_F(INFO, "tcp listen: %s", addr_str);
 	}
 	return true;
+}
+
+static bool obfs_tcp_wnd_fail(
+	struct ev_loop *loop, struct obfs_ctx *restrict ctx, const int fd)
+{
+	socket_close(fd);
+	obfs_ctx_free(loop, ctx);
+	return false;
 }
 
 static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
@@ -1214,6 +1265,8 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			struct obfs_ctx *restrict old_ctx = elem;
 			old_ctx->in_table = false;
 			OBFS_CTX_LOG(DEBUG, old_ctx, "context replaced");
+			obfs_ctx_stop(loop, old_ctx);
+			obfs_ctx_del(obfs, old_ctx);
 			obfs_ctx_free(loop, old_ctx);
 		}
 		ctx->in_table = true;
@@ -1228,6 +1281,7 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 
 		/* initiate TCP handshake */
 		if (!obfs_tcp_dial(obfs, ctx)) {
+			obfs_ctx_del(obfs, ctx);
 			obfs_ctx_free(loop, ctx);
 			obfs->client = NULL;
 			return false;
@@ -1241,10 +1295,8 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
-		if (socket_set_nonblock(fd) != 0) {
-			SOCKET_CLOSE_FD(fd);
-			obfs_ctx_free(loop, ctx);
-			return false;
+		if (!socket_set_nonblock(fd)) {
+			return obfs_tcp_wnd_fail(loop, ctx, fd);
 		}
 		obfs_tcp_setup(fd);
 
@@ -1253,26 +1305,20 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			if (err != EINTR && err != EINPROGRESS) {
 				LOGE_F("obfs tcp connect: (%d) %s", err,
 				       strerror(err));
-				SOCKET_CLOSE_FD(fd);
-				obfs_ctx_free(loop, ctx);
-				return false;
+				return obfs_tcp_wnd_fail(loop, ctx, fd);
 			}
 		}
 		socklen_t len = sizeof(ctx->laddr);
 		if (getsockname(fd, &ctx->laddr.sa, &len)) {
 			LOG_PERROR("client getsockname");
-			SOCKET_CLOSE_FD(fd);
-			obfs_ctx_free(loop, ctx);
-			return false;
+			return obfs_tcp_wnd_fail(loop, ctx, fd);
 		}
 		sa_copy(&ctx->raddr.sa, sa);
 		OBFS_CTX_LOG(INFO, ctx, "connect");
 
 		obfs_bind(obfs, &ctx->laddr.sa);
 		if (!obfs_ctx_start(obfs, ctx, fd)) {
-			SOCKET_CLOSE_FD(fd);
-			obfs_ctx_free(loop, ctx);
-			return false;
+			return obfs_tcp_wnd_fail(loop, ctx, fd);
 		}
 		obfs->client = ctx;
 
@@ -1385,9 +1431,11 @@ obfs_redial_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	LOGI_F("obfs: redial #%d to `%s'", redial_count, conf->kcp_connect);
 	union sockaddr_max addr;
 	if (!resolve_addr(&addr, conf->kcp_connect, SA_RESOLVE_TCP)) {
+		obfs_sched_redial(obfs);
 		return;
 	}
 	if (!obfs_ctx_dial(obfs, &addr.sa)) {
+		obfs_sched_redial(obfs);
 		return;
 	}
 	sa_copy(&s->pkt.kcp_connect.sa, &addr.sa);
@@ -1566,8 +1614,17 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
-	const double dpkt_drop = (double)(dstats.pkt_cap - dstats.pkt_rx) / dt;
-	FORMAT_BYTES(dbyt_drop, (double)(dstats.byt_drop) / dt);
+	double dpkt_drop = 0.0;
+	char dbyt_drop[16] = "(unknown)";
+	if (dt > 0) {
+		/* dt is <= 0 when two stats calls land in the same
+		 * event-loop iteration (or the wall clock steps backward);
+		 * skip the division rather than logging Inf/NaN */
+		dpkt_drop = (double)(dstats.pkt_cap - dstats.pkt_rx) / dt;
+		(void)format_iec_bytes(
+			dbyt_drop, sizeof(dbyt_drop),
+			(double)(dstats.byt_drop) / dt);
+	}
 	FORMAT_BYTES(byt_drop, (double)(stats->byt_drop));
 
 #undef FORMAT_BYTES
@@ -1583,10 +1640,61 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	return buf;
 }
 
+/* determine the effective local address the kernel would pick to reach
+ * `sa`, without sending any data: connect a throwaway UDP socket and read
+ * back its bound address via getsockname */
+static bool obfs_resolve_local(
+	union sockaddr_max *restrict addr, const struct sockaddr *restrict sa)
+{
+	const int fd = socket(sa->sa_family, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd < 0) {
+		LOG_PERROR("obfs resolve local: socket");
+		return false;
+	}
+	if (connect(fd, sa, sa_len(sa))) {
+		LOG_PERROR("obfs resolve local: connect");
+		socket_close(fd);
+		return false;
+	}
+	socklen_t len = sizeof(*addr);
+	if (getsockname(fd, &addr->sa, &len)) {
+		LOG_PERROR("obfs resolve local: getsockname");
+		socket_close(fd);
+		return false;
+	}
+	socket_close(fd);
+	/* only the address is meaningful to the caller: this probe socket's
+	 * ephemeral port has nothing to do with the port the raw dial will
+	 * actually use (obfs_ctx_dial always allocates its own via
+	 * obfs_tcp_alloc_port); keeping it would wrongly pin obfs_bind's
+	 * capture filter to this throwaway port instead of matching any
+	 * destination port */
+	switch (addr->sa.sa_family) {
+	case AF_INET:
+		addr->in.sin_port = 0;
+		break;
+	case AF_INET6:
+		addr->in6.sin6_port = 0;
+		break;
+	default:
+		FAILMSGF("invalid address family: %d", addr->sa.sa_family);
+	}
+	return true;
+}
+
 bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 {
 	const struct config *restrict conf = obfs->server->conf;
 	struct pktconn *restrict pkt = &s->pkt;
+
+	/* must be ev_init'd before any dial attempt below: a raw-dial failure
+	 * can reach obfs_sched_redial synchronously through obfs_ctx_dial */
+	{
+		ev_timer *restrict w_redial = &obfs->w_redial;
+		ev_timer_init(w_redial, obfs_redial_cb, 5.0, 0.0);
+		ev_set_priority(w_redial, EV_MINPRI);
+		w_redial->data = obfs;
+	}
 
 	switch (obfs->type) {
 	case OBFS_TCP:
@@ -1627,8 +1735,12 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 					    SA_RESOLVE_TCP)) {
 					return false;
 				}
-			} else {
-				/* use INADDR_ANY with same family as connect address */
+			} else if (!obfs_resolve_local(&bind_addr, &addr.sa)) {
+				/* couldn't determine the effective local address
+				 * (e.g. no route to host); fall back to
+				 * INADDR_ANY with the connect address's family,
+				 * same as before -- the raw dial will likely
+				 * fail for the same underlying reason anyway */
 				memset(&bind_addr, 0, sizeof(bind_addr));
 				bind_addr.sa.sa_family = addr.sa.sa_family;
 			}
@@ -1718,11 +1830,6 @@ bool obfs_start(struct obfs *restrict obfs, struct server *restrict s)
 		ev_set_priority(w_timeout, EV_MINPRI);
 		w_timeout->data = obfs;
 		ev_timer_start(s->loop, w_timeout);
-
-		ev_timer *restrict w_redial = &obfs->w_redial;
-		ev_timer_init(w_redial, obfs_redial_cb, 5.0, 0.0);
-		ev_set_priority(w_redial, EV_MINPRI);
-		w_redial->data = obfs;
 	}
 	return true;
 }
@@ -1745,20 +1852,21 @@ void obfs_stop(struct obfs *restrict obfs, struct server *s)
 	struct ev_loop *loop = obfs->server->loop;
 	ev_timer_stop(loop, &obfs->w_listener);
 	ev_timer_stop(loop, &obfs->w_timeout);
+	ev_timer_stop(loop, &obfs->w_redial);
 	if (obfs->fd != -1) {
 		ev_io_stop(loop, &obfs->w_accept);
-		SOCKET_CLOSE_FD(obfs->fd);
+		socket_close(obfs->fd);
 		obfs->fd = -1;
 	}
 	struct pktconn *restrict pkt = &s->pkt;
 	if (obfs->cap_fd != -1) {
 		ev_io_stop(loop, &pkt->w_read);
-		SOCKET_CLOSE_FD(obfs->cap_fd);
+		socket_close(obfs->cap_fd);
 		obfs->cap_fd = -1;
 	}
 	if (obfs->raw_fd != -1) {
 		ev_io_stop(loop, &pkt->w_write);
-		SOCKET_CLOSE_FD(obfs->raw_fd);
+		socket_close(obfs->raw_fd);
 		obfs->raw_fd = -1;
 	}
 }
@@ -1816,7 +1924,7 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if ((uint8_t)ip.version != IPVERSION || ip.protocol != IPPROTO_TCP) {
 		return NULL;
 	}
-	const uint16_t ihl = (uint16_t)ip.ihl * UINT16_C(4);
+	const uint16_t ihl = (uint16_t)(ip.ihl * UINT16_C(4));
 	if (ihl < sizeof(struct iphdr)) {
 		return NULL;
 	}
@@ -1824,12 +1932,12 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	if (tot_len < ihl || msg->len < tot_len) {
 		return NULL;
 	}
-	const uint16_t plen = tot_len - ihl;
+	const uint16_t plen = (uint16_t)(tot_len - ihl);
 	if (plen < sizeof(struct tcphdr)) {
 		return NULL;
 	}
 	memcpy(&tcp, msg->buf + ihl, sizeof(struct tcphdr));
-	const uint16_t doff = tcp.doff * UINT16_C(4);
+	const uint16_t doff = (uint16_t)(tcp.doff * UINT16_C(4));
 	if (doff < sizeof(struct tcphdr) || plen < doff) {
 		return NULL;
 	}
@@ -1880,8 +1988,16 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 				.sin_port = tcp.source,
 			},
 		};
-		return obfs_tcp_input(
-			obfs, msg, &local, &remote, &tcp, ihl, plen, doff, 0);
+		const struct obfs_tcp_packet pkt = {
+			.local = &local,
+			.remote = &remote,
+			.tcp = &tcp,
+			.ihl = ihl,
+			.plen = plen,
+			.doff = doff,
+			.flow = 0,
+		};
+		return obfs_tcp_input(obfs, msg, &pkt);
 	}
 	case OBFS_TCP_WND:
 		break;
@@ -1926,8 +2042,8 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		return NULL;
 	}
 	ctx->last_seen = msg->ts;
-	msg->off = ihl + doff;
-	msg->len = plen - doff;
+	msg->off = (uint16_t)(ihl + doff);
+	msg->len = (uint16_t)(plen - doff);
 	return ctx;
 }
 
@@ -1947,7 +2063,7 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		return NULL;
 	}
 	memcpy(&tcp, msg->buf + ihl, sizeof(struct tcphdr));
-	const uint16_t doff = tcp.doff * UINT16_C(4);
+	const uint16_t doff = (uint16_t)(tcp.doff * UINT16_C(4));
 	if (doff < sizeof(struct tcphdr) || plen < doff) {
 		return NULL;
 	}
@@ -1999,9 +2115,16 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 				.sin6_addr = ip6.ip6_src,
 			},
 		};
-		return obfs_tcp_input(
-			obfs, msg, &local, &remote, &tcp, ihl, plen, doff,
-			flow);
+		const struct obfs_tcp_packet pkt = {
+			.local = &local,
+			.remote = &remote,
+			.tcp = &tcp,
+			.ihl = ihl,
+			.plen = plen,
+			.doff = doff,
+			.flow = flow,
+		};
+		return obfs_tcp_input(obfs, msg, &pkt);
 	}
 	case OBFS_TCP_WND:
 		break;
@@ -2047,8 +2170,8 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		return NULL;
 	}
 	ctx->last_seen = msg->ts;
-	msg->off = ihl + doff;
-	msg->len = plen - doff;
+	msg->off = (uint16_t)(ihl + doff);
+	msg->len = (uint16_t)(plen - doff);
 	return ctx;
 }
 
@@ -2086,7 +2209,7 @@ static void obfs_seal(
 	struct msgframe *restrict msg)
 {
 	const int domain = obfs->domain;
-	const uint16_t plen = sizeof(struct tcphdr) + msg->len;
+	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + msg->len);
 	size_t ip_hdr_len;
 	uint16_t sport, dport;
 
@@ -2139,7 +2262,7 @@ static void obfs_seal(
 		msg->len);
 	memcpy(msg->buf + ip_hdr_len, &tcp, sizeof(tcp));
 
-	msg->len += msg->off;
+	msg->len = (uint16_t)(msg->len + msg->off);
 	switch (domain) {
 	case AF_INET:
 		msg->addr.in.sin_port = 0;
@@ -2213,14 +2336,14 @@ static void obfs_accept_one(
 	struct obfs_ctx *restrict ctx = obfs_ctx_new(obfs);
 	if (ctx == NULL) {
 		LOGOOM();
-		SOCKET_CLOSE_FD(fd);
+		socket_close(fd);
 		return;
 	}
 	memcpy(&ctx->raddr.sa, sa, len);
 	len = sizeof(ctx->laddr);
 	if (getsockname(fd, &ctx->laddr.sa, &len)) {
 		LOG_PERROR("server getsockname");
-		SOCKET_CLOSE_FD(fd);
+		socket_close(fd);
 		obfs_ctx_free(loop, ctx);
 		return;
 	}
@@ -2229,6 +2352,7 @@ static void obfs_accept_one(
 	w_read->data = ctx;
 	OBFS_CTX_LOG(DEBUG, ctx, "accepted");
 	if (!obfs_ctx_start(obfs, ctx, fd)) {
+		socket_close(fd);
 		obfs_ctx_del(obfs, ctx);
 		obfs_ctx_free(loop, ctx);
 	}
@@ -2282,11 +2406,10 @@ void obfs_accept_cb(
 			LOG_RATELIMITED(
 				ERROR, ev_now(loop), 1.0,
 				"obfs: context limit reached, refusing connection");
-			SOCKET_CLOSE_FD(fd);
+			socket_close(fd);
 			return;
 		}
-		if (socket_set_nonblock(fd) != 0) {
-			SOCKET_CLOSE_FD(fd);
+		if (!socket_nonblock_or_close(fd)) {
 			return;
 		}
 

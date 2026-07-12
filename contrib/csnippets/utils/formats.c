@@ -3,8 +3,8 @@
 
 #include "formats.h"
 
-#include "utils/arraysize.h"
-#include "utils/minmax.h"
+#include "meta/arraysize.h"
+#include "meta/minmax.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -69,7 +69,7 @@ int format_si_prefix(char *restrict s, const size_t maxlen, const double value)
 	return snprintf(s, maxlen, "%.3g%s", v, prefix);
 }
 
-static const char *iec_units[] = {
+static const char *const iec_units[] = {
 	"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB",
 };
 
@@ -203,31 +203,51 @@ int format_duration_nanos(
 
 int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 {
-	if (d.day) {
-		const double seconds = d.second + d.milli * 1e-3 +
-				       d.micro * 1e-6 + d.nano * 1e-9;
-		return snprintf(
-			s, maxlen, SIGNED_STR(d.sign, "%ud%02u:%02u:%02.0f"),
-			d.day, d.hour, d.minute, seconds);
-	}
-	if (d.hour) {
-		const double seconds = d.second + d.milli * 1e-3 +
-				       d.micro * 1e-6 + d.nano * 1e-9;
-		return snprintf(
-			s, maxlen, SIGNED_STR(d.sign, "%u:%02u:%02.0f"), d.hour,
-			d.minute, seconds);
-	}
-	if (d.minute) {
-		const double seconds = d.second + d.milli * 1e-3 +
-				       d.micro * 1e-6 + d.nano * 1e-9;
-		if (d.minute >= 10) {
+	const double frac = d.milli * 1e-3 + d.micro * 1e-6 + d.nano * 1e-9;
+	if (d.day || d.hour || d.minute >= 10) {
+		/* whole-second display: round the seconds field the way "%.0f"
+		 * would, then carry a rounded-up 60 through minute->hour->day so
+		 * no field is ever printed as "60" */
+		struct duration t = d;
+		unsigned int sec = (unsigned int)nearbyint(t.second + frac);
+		if (sec >= 60) {
+			sec -= 60;
+			if (++t.minute >= 60) {
+				t.minute = 0;
+				if (++t.hour >= 24) {
+					t.hour = 0;
+					t.day++;
+				}
+			}
+		}
+		if (t.day) {
 			return snprintf(
-				s, maxlen, SIGNED_STR(d.sign, "%u:%02.0f"),
-				d.minute, seconds);
+				s, maxlen,
+				SIGNED_STR(d.sign, "%ud%02u:%02u:%02u"), t.day,
+				t.hour, t.minute, sec);
+		}
+		if (t.hour) {
+			return snprintf(
+				s, maxlen, SIGNED_STR(d.sign, "%u:%02u:%02u"),
+				t.hour, t.minute, sec);
 		}
 		return snprintf(
-			s, maxlen, SIGNED_STR(d.sign, "%u:%04.1f"), d.minute,
-			seconds);
+			s, maxlen, SIGNED_STR(d.sign, "%u:%02u"), t.minute,
+			sec);
+	}
+	if (d.minute) {
+		/* sub-10-minute display keeps tenth-second precision; carry a
+		 * rounded-up 60.0 into the minute field */
+		struct duration t = d;
+		unsigned int tenths =
+			(unsigned int)nearbyint((t.second + frac) * 10.0);
+		if (tenths >= 600) {
+			tenths -= 600;
+			t.minute++;
+		}
+		return snprintf(
+			s, maxlen, SIGNED_STR(d.sign, "%u:%04.1f"), t.minute,
+			tenths / 10.0);
 	}
 	if (d.second) {
 		if (d.second >= 10) {

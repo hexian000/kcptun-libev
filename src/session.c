@@ -10,27 +10,26 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "binary/serialize.h"
+#include "ikcp.h"
+#include "meta/arraysize.h"
 #include "os/socket.h"
-#include "utils/arraysize.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
-#include "utils/serialize.h"
 #include "utils/slog.h"
 
-#include "ikcp.h"
-
 #include <ev.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 
 #include <errno.h>
 #include <inttypes.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 const char tcp_state_char[TCP_STATE_MAX] = {
 	[TCP_STATE_CLOSED] = 'x',
@@ -88,21 +87,17 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 		LOG_PERROR("tcp socket");
 		return false;
 	}
-	if (socket_set_nonblock(fd) != 0) {
-		SOCKET_CLOSE_FD(fd);
+	if (!socket_nonblock_or_close(fd)) {
 		return false;
 	}
-	{
-		const struct config *restrict conf = ss->server->conf;
-		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
-		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
-	}
+	tcp_apply_conf(fd, ss->server->conf);
 
 	/* Connect to address */
 	if (connect(fd, sa, sa_len(sa)) != 0) {
 		const int err = errno;
 		if (err != EINTR && err != EINPROGRESS) {
 			LOGE_F("connect: (%d) %s", err, strerror(err));
+			socket_close(fd);
 			return false;
 		}
 		ss->tcp_state = TCP_STATE_CONNECT;
@@ -151,6 +146,13 @@ static bool session_on_msg(
 		if (ss->kcp_eof_recv) {
 			/* duplicate EOF, ignore */
 			return true;
+		}
+		if (ss->tcp_state != TCP_STATE_CONNECT &&
+		    ss->tcp_state != TCP_STATE_ESTABLISHED) {
+			/* out-of-order EOF before the session is dialed:
+			 * treat as a protocol error instead of mutating
+			 * tcp_state from CLOSED */
+			break;
 		}
 		LOGI_F("[session:%08" PRIX32 "] kcp: "
 		       "eof received from peer",
@@ -302,12 +304,13 @@ void session_tcp_stop(struct session *restrict ss)
 	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: stop", ss->conv,
 	       w_socket->fd);
 	ev_io_stop(ss->server->loop, w_socket);
-	SOCKET_CLOSE_FD(ss->w_socket.fd);
+	socket_close(ss->w_socket.fd);
 	ev_io_set(w_socket, -1, EV_NONE);
 }
 
 void session_kcp_stop(struct session *restrict ss)
 {
+	session_tcp_stop(ss);
 	ss->kcp_state = KCP_STATE_TIME_WAIT;
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
@@ -315,6 +318,7 @@ void session_kcp_stop(struct session *restrict ss)
 	}
 	VBUF_FREE(ss->rbuf);
 	VBUF_FREE(ss->wbuf);
+	ss->wbuf_flush = ss->wbuf_next = 0;
 }
 
 void session_tcp_start(struct session *restrict ss, const int fd)
@@ -329,7 +333,6 @@ void session_tcp_start(struct session *restrict ss, const int fd)
 
 void session_free(struct session *restrict ss)
 {
-	session_tcp_stop(ss);
 	session_kcp_stop(ss);
 	struct ev_loop *loop = ss->server->loop;
 	ev_idle_stop(loop, &ss->w_flush);
@@ -541,7 +544,7 @@ bool ss0_send(
 	if (n > 0) {
 		memcpy(packet + SESSION0_HEADER_SIZE, b, n);
 	}
-	msg->len = SESSION0_HEADER_SIZE + n;
+	msg->len = (uint16_t)(SESSION0_HEADER_SIZE + n);
 	return queue_send(s, msg);
 }
 
@@ -586,13 +589,17 @@ ss0_on_pong(struct server *restrict s, struct msgframe *restrict msg)
 	/* calculate RTT & estimated bandwidth */
 	const uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	const double rtt = (now_ms - tstamp) * 1e-3;
-	const struct config *restrict conf = s->conf;
-	const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / rtt;
-	const double tx = conf->kcp_sndwnd * conf->kcp_mtu / rtt;
-
-	char bw_rx[16], bw_tx[16];
-	format_iec_bytes(bw_rx, sizeof(bw_rx), rx);
-	format_iec_bytes(bw_tx, sizeof(bw_tx), tx);
+	char bw_rx[16] = "(unknown)", bw_tx[16] = "(unknown)";
+	if (rtt > 0.0) {
+		/* rtt is 0.0 when the roundtrip finishes within the same
+		 * millisecond (common on LAN/loopback); skip the division
+		 * rather than logging Inf */
+		const struct config *restrict conf = s->conf;
+		const double rx = conf->kcp_rcvwnd * conf->kcp_mtu / rtt;
+		const double tx = conf->kcp_sndwnd * conf->kcp_mtu / rtt;
+		format_iec_bytes(bw_rx, sizeof(bw_rx), rx);
+		format_iec_bytes(bw_tx, sizeof(bw_tx), tx);
+	}
 
 	if (LOGLEVEL(DEBUG)) {
 		char addr_str[64];
@@ -629,7 +636,6 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 		return true;
 	}
 	LOGI_F("[session:%08" PRIX32 "] kcp: reset by peer", conv);
-	session_tcp_stop(ss);
 	session_kcp_stop(ss);
 	return true;
 }

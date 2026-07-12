@@ -7,8 +7,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-struct sockaddr;
-
 enum runmode {
 	MODE_SERVER = 1 << 0,
 	MODE_CLIENT = 1 << 1,
@@ -54,7 +52,7 @@ struct config {
 };
 
 struct config *conf_read(const char *path);
-const char *conf_modestr(const struct config *conf);
+const char *conf_modestr(const struct config *restrict conf);
 void conf_free(struct config *conf);
 
 #endif /* CONF_H */

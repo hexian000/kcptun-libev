@@ -16,8 +16,6 @@
 
 #include <ev.h>
 
-#include <sys/socket.h>
-
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -26,6 +24,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 
 static void http_read_cb(struct ev_loop *loop, ev_io *watcher, int revents);
@@ -57,7 +57,7 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 	ev_io_stop(loop, w_read);
 	ev_io *restrict w_write = &ctx->w_write;
 	ev_io_stop(loop, w_write);
-	SOCKET_CLOSE_FD(ctx->fd);
+	socket_close(ctx->fd);
 	ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_stop(loop, w_timeout);
 	UTIL_SAFE_FREE(ctx->wbuf);
@@ -90,14 +90,13 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		}
 		return;
 	}
-	if (socket_set_nonblock(fd) != 0) {
-		SOCKET_CLOSE_FD(fd);
+	if (!socket_nonblock_or_close(fd)) {
 		return;
 	}
 	struct http_ctx *restrict ctx = malloc(sizeof(struct http_ctx));
 	if (ctx == NULL) {
 		LOGOOM();
-		SOCKET_CLOSE_FD(fd);
+		socket_close(fd);
 		return;
 	}
 	ctx->loop = loop;
@@ -235,7 +234,6 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 		len -= nsend;
 		nbsend += nsend;
 	}
-	wbuf->len -= nbsend;
 	if (len > 0) {
 		VBUF_CONSUME(wbuf, nbsend);
 		ev_io *restrict w_write = &ctx->w_write;
@@ -321,6 +319,11 @@ http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 
 static bool parse_bool(const char *s)
 {
+	if (s == NULL) {
+		/* RFC 3986: a bare, value-less query flag (e.g. "?nobanner")
+		 * has a NULL value; treat presence as asserting the flag */
+		return true;
+	}
 	return strcmp(s, "1") == 0 || strcmp(s, "y") == 0 ||
 	       strcmp(s, "yes") == 0 || strcmp(s, "on") == 0 ||
 	       strcmp(s, "t") == 0 || strcmp(s, "true") == 0;
@@ -345,8 +348,14 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		if (strcmp(comp.key, "nobanner") == 0) {
 			nobanner = parse_bool(comp.value);
 		} else if (strcmp(comp.key, "sessions") == 0) {
-			if (strcmp(comp.value, "0") == 0 ||
-			    strcmp(comp.value, "none") == 0) {
+			/* a bare "?sessions" flag has a NULL value (RFC 3986);
+			 * treat it the same as an unrecognized value below --
+			 * ignore and keep state_level as-is */
+			if (comp.value == NULL) {
+				/* no-op */
+			} else if (
+				strcmp(comp.value, "0") == 0 ||
+				strcmp(comp.value, "none") == 0) {
 				state_level = -1;
 			} else if (
 				strcmp(comp.value, "1") == 0 ||
@@ -413,25 +422,25 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 			buf = obfs_stats(obfs, buf);
 		}
 	}
-#endif
+#endif /* WITH_OBFS */
 #if MCACHE_STATS
 	if (msgpool != NULL) {
 		static size_t last_hit = 0;
-		static size_t last_query = 0;
+		static size_t last_request = 0;
 		const size_t hit = msgpool->hit - last_hit;
-		const size_t query = msgpool->query - last_query;
+		const size_t request = msgpool->request - last_request;
 		VBUF_APPENDF(
 			buf,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
 			msgpool->num_elem, msgpool->cache_size, hit,
-			query - hit, (double)hit / ((double)query) * 100.0,
-			msgpool->hit, msgpool->query - msgpool->hit,
-			(double)msgpool->hit / ((double)msgpool->query) *
+			request - hit, (double)hit / ((double)request) * 100.0,
+			msgpool->hit, msgpool->request - msgpool->hit,
+			(double)msgpool->hit / ((double)msgpool->request) *
 				100.0);
 		last_hit = msgpool->hit;
-		last_query = msgpool->query;
+		last_request = msgpool->request;
 	}
-#endif
+#endif /* MCACHE_STATS */
 
 	http_set_wbuf(ctx, buf);
 }

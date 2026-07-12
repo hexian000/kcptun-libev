@@ -3,7 +3,7 @@
 
 #include "http.h"
 
-#include "utils/arraysize.h"
+#include "meta/arraysize.h"
 
 #include <inttypes.h>
 #include <stddef.h>
@@ -13,13 +13,13 @@
 #include <string.h>
 #include <time.h>
 
-/* sorted by code for binary search, keep this order */
 struct http_status_info {
 	uint_least16_t code;
 	const char *name;
 	const char *desc;
 };
 
+/* sorted by code for binary search, keep this order */
 static const struct http_status_info http_resp[] = {
 	{ HTTP_CONTINUE, "Continue", NULL },
 
@@ -70,15 +70,7 @@ static const struct http_status_info http_resp[] = {
 	  "The gateway did not receive a timely response from the upstream server or application." },
 };
 
-static char *skip_whitespace(char *restrict s)
-{
-	while (*s == ' ' || *s == '\t') {
-		++s;
-	}
-	return s;
-}
-
-char *http_parse(char *buf, struct http_message *restrict msg)
+char *http_parse(char *restrict buf, struct http_message *restrict msg)
 {
 	char *next = strstr(buf, "\r\n");
 	if (next == NULL) {
@@ -109,6 +101,14 @@ char *http_parse(char *buf, struct http_message *restrict msg)
 	return next;
 }
 
+static char *skip_whitespace(char *restrict s)
+{
+	while (*s == ' ' || *s == '\t') {
+		++s;
+	}
+	return s;
+}
+
 char *
 http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 {
@@ -129,6 +129,12 @@ http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 	if (v == NULL) {
 		return NULL;
 	}
+	if (v > buf && (v[-1] == ' ' || v[-1] == '\t')) {
+		/* RFC 7230 Section 3.2.4: a server MUST reject a header
+		 * field with whitespace between the field-name and colon;
+		 * allowing it creates a request-smuggling ambiguity. */
+		return NULL;
+	}
 	*v = '\0';
 	v = skip_whitespace(v + 1);
 	/* RFC 7230 Section 3.2: trim trailing OWS from field value */
@@ -139,6 +145,30 @@ http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 	*end = '\0';
 	*key = buf, *value = v;
 	return next;
+}
+
+static int code_cmp(const void *key, const void *elem)
+{
+	const uint_fast16_t code = *(const uint_least16_t *)key;
+	const struct http_status_info *info = elem;
+	return (code > info->code) - (code < info->code);
+}
+
+static const struct http_status_info *find_status(const uint_fast16_t code)
+{
+	const uint_least16_t code_key = code;
+	return bsearch(
+		&code_key, http_resp, ARRAY_SIZE(http_resp),
+		sizeof(http_resp[0]), code_cmp);
+}
+
+const char *http_status(const uint_fast16_t code)
+{
+	const struct http_status_info *info = find_status(code);
+	if (info != NULL) {
+		return info->name;
+	}
+	return NULL;
 }
 
 #if defined(HAVE_GMTIME_R)
@@ -156,32 +186,10 @@ size_t http_date(char *restrict buf, const size_t buf_size)
 	return strftime(buf, buf_size, fmt, gmt);
 }
 
-static int http_resp_comp(const void *key, const void *elem)
-{
-	const uint_fast16_t code = *(const uint_least16_t *)key;
-	const struct http_status_info *info = elem;
-	return (code > info->code) - (code < info->code);
-}
-
-const char *http_status(const uint_fast16_t code)
-{
-	const uint_least16_t code_key = code;
-	const struct http_status_info *info =
-		bsearch(&code_key, http_resp, ARRAY_SIZE(http_resp),
-			sizeof(http_resp[0]), http_resp_comp);
-	if (info != NULL) {
-		return info->name;
-	}
-	return NULL;
-}
-
 int http_error(
 	char *restrict buf, const size_t buf_size, const uint_fast16_t code)
 {
-	const uint_least16_t code_key = code;
-	const struct http_status_info *info =
-		bsearch(&code_key, http_resp, ARRAY_SIZE(http_resp),
-			sizeof(http_resp[0]), http_resp_comp);
+	const struct http_status_info *info = find_status(code);
 	if (info == NULL) {
 		return 0;
 	}

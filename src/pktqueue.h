@@ -1,8 +1,8 @@
 /* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef PACKET_H
-#define PACKET_H
+#ifndef PKTQUEUE_H
+#define PKTQUEUE_H
 
 #include "util.h"
 
@@ -47,13 +47,14 @@ struct server;
 struct pktqueue *queue_new(struct server *s);
 void queue_free(struct pktqueue *q);
 
-static inline struct msgframe *msgframe_new(struct pktqueue *restrict q)
+static inline struct msgframe *msgframe_new(const struct pktqueue *restrict q)
 {
 	struct msgframe *restrict msg = mcache_get(msgpool);
 	if (msg == NULL) {
 		return NULL;
 	}
 	msg->off = q->msg_offset;
+	ASSERT(msg->off <= MAX_PACKET_SIZE);
 	return msg;
 }
 
@@ -69,4 +70,4 @@ size_t queue_dispatch(struct server *s);
 /* send a plain packet */
 bool queue_send(struct server *s, struct msgframe *msg);
 
-#endif /* PACKET_H */
+#endif /* PKTQUEUE_H */

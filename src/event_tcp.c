@@ -15,8 +15,6 @@
 
 #include <ev.h>
 
-#include <sys/socket.h>
-
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -25,6 +23,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 static void modify_io_events(
 	struct ev_loop *loop, ev_io *restrict watcher, const int events)
@@ -62,14 +62,14 @@ static void accept_one(
 	struct session *restrict ss = session_new(s, &s->pkt.kcp_connect, conv);
 	if (ss == NULL) {
 		LOGOOM();
-		SOCKET_CLOSE_FD(fd);
+		socket_close(fd);
 		return;
 	}
 	ss->kcp_state = KCP_STATE_CONNECT;
 	ss->tcp_state = TCP_STATE_ESTABLISHED;
 	if (!kcp_sendmsg(ss, SMSG_DIAL)) {
-		LOGOOM();
-		SOCKET_CLOSE_FD(fd);
+		/* kcp_send already logs the actual failure reason */
+		socket_close(fd);
 		session_free(ss);
 		return;
 	}
@@ -118,19 +118,17 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			LOG_RATELIMITED(
 				ERROR, ev_now(loop), 1.0,
 				"max sessions reached, refusing new connection");
-			SOCKET_CLOSE_FD(fd);
+			socket_close(fd);
 			return;
 		}
-		if (socket_set_nonblock(fd) != 0) {
-			SOCKET_CLOSE_FD(fd);
+		if (!socket_nonblock_or_close(fd)) {
 			return;
 		}
-		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
-		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
+		tcp_apply_conf(fd, conf);
 
 		if (!s->pkt.connected) {
 			LOGE("packet connection not ready, refusing");
-			SOCKET_CLOSE_FD(fd);
+			socket_close(fd);
 			return;
 		}
 		accept_one(s, fd, &addr.sa);
@@ -200,7 +198,6 @@ static int tcp_recv(struct session *restrict ss)
 
 	const int fd = ss->w_socket.fd;
 	unsigned char *buf = ss->rbuf->data + TLV_HEADER_SIZE + ss->rbuf->len;
-	size_t len = 0;
 	/* Receive message from client socket */
 	ssize_t nread;
 	do {
@@ -221,16 +218,14 @@ static int tcp_recv(struct session *restrict ss)
 		       ss->conv);
 		return -1;
 	}
-	cap -= nread, len += nread;
-	ss->rbuf->len += len;
+	cap -= (size_t)nread;
+	ss->rbuf->len += (size_t)nread;
 
-	if (len > 0) {
-		ss->stats.tcp_rx += len;
-		ss->server->stats.tcp_rx += len;
-		LOGV_F("[session:%08" PRIX32 "] tcp [fd:%d]: "
-		       "recv %zu bytes, cap: %zu bytes",
-		       ss->conv, fd, len, cap);
-	}
+	ss->stats.tcp_rx += (size_t)nread;
+	ss->server->stats.tcp_rx += (size_t)nread;
+	LOGV_F("[session:%08" PRIX32 "] tcp [fd:%d]: "
+	       "recv %zu bytes, cap: %zu bytes",
+	       ss->conv, fd, (size_t)nread, cap);
 	return 0;
 }
 

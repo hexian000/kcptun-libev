@@ -4,9 +4,8 @@
 #ifndef NONCE_H
 #define NONCE_H
 
-#include "utils/buffer.h"
-
 #include "bloom.h"
+#include "utils/buffer.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -41,6 +40,9 @@ noncegen_new(enum noncegen_method method, size_t nonce_len, bool strict);
 void noncegen_init(struct noncegen *g);
 void noncegen_free(struct noncegen *g);
 
+/* returns a pointer into g's own internal buffer, overwritten by the next
+ * noncegen_next() call on the same g; copy it if the value must outlive
+ * that call */
 const unsigned char *noncegen_next(struct noncegen *g);
 bool noncegen_verify(struct noncegen *g, const unsigned char *nonce);
 

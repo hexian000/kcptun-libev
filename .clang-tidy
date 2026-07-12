@@ -7,9 +7,9 @@
 #   performance-*       — C++ move/forward semantics; not applicable to C
 #   portability-*       — C++ std-lib portability; not applicable to C
 # Added:
-#   bugprone-*          — catches real bugs (branch-clone, implicit ptr cast…)
+#   bugprone-*          — catches real bugs (branch-clone, implicit ptr cast...)
 #   misc-*              — const-correctness, unused params, header hygiene
-#   readability-*       — code clarity (braces, else-after-return, simplify…)
+#   readability-*       — code clarity (braces, else-after-return, simplify...)
 Checks: >-
   -*,
   clang-analyzer-*,
@@ -65,6 +65,8 @@ CheckOptions:
   # Windows-specific _s variants are omitted (not used in this POSIX project).
   - key:             cert-err33-c.CheckedFunctions
     value:           '::aligned_alloc;::at_quick_exit;::atexit;::bsearch;::btowc;::c16rtomb;::c32rtomb;::calloc;::clock;::cnd_broadcast;::cnd_init;::cnd_signal;::cnd_timedwait;::cnd_wait;::fclose;::fflush;::fgetc;::fgetpos;::fgets;::fgetwc;::fopen;::fprintf;::fputc;::fputs;::fputwc;::fputws;::fread;::freopen;::fscanf;::fseek;::fsetpos;::ftell;::fwprintf;::fwrite;::fwscanf;::getc;::getchar;::getenv;::getwc;::getwchar;::gmtime;::localtime;::malloc;::mbrtoc16;::mbrtoc32;::mbsrtowcs;::mbstowcs;::memchr;::mktime;::mtx_init;::mtx_lock;::mtx_timedlock;::mtx_trylock;::mtx_unlock;::putc;::putwc;::raise;::realloc;::remove;::rename;::scanf;::setlocale;::setvbuf;::signal;::snprintf;::sprintf;::sscanf;::strchr;::strftime;::strpbrk;::strrchr;::strstr;::strtod;::strtof;::strtoimax;::strtok;::strtol;::strtold;::strtoll;::strtoul;::strtoull;::strtoumax;::strxfrm;::swprintf;::swscanf;::thrd_create;::thrd_detach;::thrd_join;::thrd_sleep;::time;::timespec_get;::tmpfile;::tmpnam;::tss_create;::tss_get;::tss_set;::ungetc;::ungetwc;::vfprintf;::vfscanf;::vfwprintf;::vfwscanf;::vscanf;::vsnprintf;::vsprintf;::vsscanf;::vswprintf;::vswscanf;::wcrtomb;::wcschr;::wcsftime;::wcspbrk;::wcsrchr;::wcsrtombs;::wcsstr;::wcstod;::wcstof;::wcstoimax;::wcstok;::wcstol;::wcstold;::wcstoll;::wcstombs;::wcstoul;::wcstoull;::wcstoumax;::wcsxfrm;::wctob;::wctrans;::wctype;::wmemchr;::accept;::bind;::chdir;::chmod;::close;::connect;::dup;::dup2;::epoll_create;::epoll_create1;::epoll_ctl;::epoll_wait;::eventfd;::fcntl;::fstat;::getaddrinfo;::getnameinfo;::getsockopt;::inotify_add_watch;::inotify_init1;::kill;::listen;::lstat;::mkdir;::mmap;::open;::openat;::pipe;::pipe2;::poll;::posix_memalign;::pthread_cond_broadcast;::pthread_cond_init;::pthread_cond_signal;::pthread_cond_timedwait;::pthread_cond_wait;::pthread_create;::pthread_join;::pthread_mutex_init;::pthread_mutex_lock;::pthread_mutex_timedlock;::pthread_mutex_trylock;::pthread_mutex_unlock;::read;::recv;::recvfrom;::recvmsg;::sem_init;::sem_post;::sem_timedwait;::sem_trywait;::sem_wait;::send;::sendmsg;::sendto;::setsockopt;::shutdown;::sigaction;::signalfd;::socket;::socketpair;::stat;::timerfd_create;::timerfd_settime;::unlink;::waitpid;::write;::writev;'
+  - key:             misc-include-cleaner.IgnoreHeaders
+    value:           'config\.h;utils/ascii\.h;bits/.*;asm/.*;asm-generic/.*;linux/.*;sys/poll\.h;sys/time\.h'
   - key:             misc-const-correctness.AnalyzeValues
     value:           'false'
   - key:             misc-const-correctness.WarnPointersAsValues
@@ -79,10 +81,4 @@ CheckOptions:
     value:           '8'
   - key:             readability-function-size.BranchThreshold
     value:           '50'
-  # Headers that must not be spelled directly: config.h is force-included by
-  # the build (-include), libsodium and linux/filter.h are umbrella headers
-  # whose symbols clang attributes to internal sub-headers, and the glibc/linux
-  # bits/ and asm*/ headers are never includable on their own.
-  - key:             misc-include-cleaner.IgnoreHeaders
-    value:           'config\.h;sodium\.h;sodium/.*;linux/filter\.h;linux/bpf.*;asm-generic/.*;asm/socket\.h;bits/.*'
 ...

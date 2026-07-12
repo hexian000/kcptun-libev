@@ -12,30 +12,28 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "binary/serialize.h"
+#include "ikcp.h"
 #include "math/rand.h"
+#include "meta/minmax.h"
 #include "os/socket.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/formats.h"
-#include "utils/minmax.h"
-#include "utils/serialize.h"
 #include "utils/slog.h"
 
-#include "ikcp.h"
-
 #include <ev.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 
 #include <errno.h>
 #include <inttypes.h>
-#include <limits.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 static int
 tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
@@ -46,23 +44,21 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 		LOG_PERROR("tcp socket");
 		return -1;
 	}
-	if (socket_set_nonblock(fd) != 0) {
-		SOCKET_CLOSE_FD(fd);
+	if (!socket_nonblock_or_close(fd)) {
 		return -1;
 	}
-	socket_set_reuseport(fd, conf->tcp_reuseport);
-	socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
-	socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
+	(void)socket_set_reuseport(fd, conf->tcp_reuseport);
+	tcp_apply_conf(fd, conf);
 	/* Bind socket to address */
 	if (bind(fd, sa, sa_len(sa)) != 0) {
 		LOG_PERROR("tcp bind");
-		SOCKET_CLOSE_FD(fd);
+		socket_close(fd);
 		return -1;
 	}
 	/* Start listening on the socket */
 	if (listen(fd, SOMAXCONN)) {
 		LOG_PERROR("tcp listen");
-		SOCKET_CLOSE_FD(fd);
+		socket_close(fd);
 		return -1;
 	}
 	return fd;
@@ -71,7 +67,7 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 static bool listener_start(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
-	struct listener *restrict l = &(s->listener);
+	struct listener *restrict l = &s->listener;
 
 	if (conf->listen != NULL) {
 		union sockaddr_max addr;
@@ -92,7 +88,7 @@ static bool listener_start(struct server *restrict s)
 		l->fd = fd;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "tcp listen: %s", addr_str);
 		}
 	}
@@ -116,7 +112,7 @@ static bool listener_start(struct server *restrict s)
 		l->fd_http = fd;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "http listen: %s", addr_str);
 		}
 	}
@@ -138,12 +134,11 @@ static bool udp_socket(
 		LOG_PERROR("udp socket");
 		return false;
 	}
-	if (socket_set_nonblock(fd) != 0) {
-		SOCKET_CLOSE_FD(fd);
+	if (!socket_nonblock_or_close(fd)) {
 		return false;
 	}
-	socket_set_reuseport(fd, conf->udp_reuseport);
-	socket_set_buffer(fd, conf->udp_sndbuf, conf->udp_rcvbuf);
+	(void)socket_set_reuseport(fd, conf->udp_reuseport);
+	(void)socket_set_buffer(fd, conf->udp_sndbuf, conf->udp_rcvbuf);
 	udp->fd = fd;
 	return true;
 }
@@ -178,16 +173,28 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 	if (connect(fd, sa, sa_len(sa))) {
 		const int err = errno;
 		LOGW_F("connect: (%d) %s", err, strerror(err));
+		socket_close(fd);
 		return false;
 	}
 	socklen_t len = sizeof(*addr);
 	if (getsockname(fd, &addr->sa, &len)) {
 		const int err = errno;
 		LOGW_F("getsockname: (%d) %s", err, strerror(err));
+		socket_close(fd);
 		return false;
 	}
-	SOCKET_CLOSE_FD(fd);
+	socket_close(fd);
 	return true;
+}
+
+static bool udp_ensure_socket(
+	struct pktconn *restrict udp, const struct config *restrict conf,
+	const int family)
+{
+	if (udp->fd != -1) {
+		return true;
+	}
+	return udp_socket(udp, conf, family);
 }
 
 static bool
@@ -199,18 +206,18 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			return false;
 		}
 		udp->domain = addr.sa.sa_family;
-		if (udp->fd == -1) {
-			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
-				return false;
-			}
+		if (!udp_ensure_socket(udp, conf, addr.sa.sa_family)) {
+			return false;
 		}
+		/* on failure, udp->fd is intentionally left open: the next
+		 * udp_restart() call closes it before retrying */
 		if (bind(udp->fd, &addr.sa, sa_len(&addr.sa))) {
 			LOG_PERROR("udp bind");
 			return false;
 		}
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "udp bind: %s", addr_str);
 		}
 	}
@@ -221,11 +228,11 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		}
 
 		udp->domain = addr.sa.sa_family;
-		if (udp->fd == -1) {
-			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
-				return false;
-			}
+		if (!udp_ensure_socket(udp, conf, addr.sa.sa_family)) {
+			return false;
 		}
+		/* on failure, udp->fd is intentionally left open: the next
+		 * udp_restart() call closes it before retrying */
 		if (connect(udp->fd, &addr.sa, sa_len(&addr.sa))) {
 			LOG_PERROR("udp connect");
 			return false;
@@ -233,7 +240,7 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		sa_copy(&udp->kcp_connect.sa, &addr.sa);
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			LOG_F(NOTICE, "udp connect: %s", addr_str);
 		}
 		udp->connected = true;
@@ -245,10 +252,8 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 			return false;
 		}
 		udp->domain = addr.sa.sa_family;
-		if (udp->fd == -1) {
-			if (!udp_socket(udp, conf, addr.sa.sa_family)) {
-				return false;
-			}
+		if (!udp_ensure_socket(udp, conf, addr.sa.sa_family)) {
+			return false;
 		}
 		udp->rendezvous_server = addr;
 		if (!addr_set_local(&laddr, &addr.sa)) {
@@ -257,8 +262,9 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 		udp->rendezvous_local = laddr;
 		if (LOGLEVEL(INFO)) {
 			char addr_str[64], laddr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &addr.sa);
-			sa_format(laddr_str, sizeof(laddr_str), &laddr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(
+				laddr_str, sizeof(laddr_str), &laddr.sa);
 			LOG_F(INFO, "rendezvous mode: %s -> %s", laddr_str,
 			      addr_str);
 		}
@@ -287,7 +293,8 @@ size_t udp_overhead(const struct pktconn *restrict udp)
 /* calculate max send size */
 static size_t server_mss(const struct server *restrict s)
 {
-	size_t mss = (size_t)s->conf->kcp_mtu;
+	const size_t mtu = (size_t)s->conf->kcp_mtu;
+	size_t mss = mtu;
 #if WITH_OBFS
 	const struct obfs *restrict obfs = s->pkt.queue->obfs;
 	if (obfs != NULL) {
@@ -297,13 +304,16 @@ static size_t server_mss(const struct server *restrict s)
 	}
 #else
 	mss -= udp_overhead(&s->pkt);
-#endif
+#endif /* WITH_OBFS */
 #if WITH_CRYPTO
 	const struct crypto *restrict crypto = s->pkt.queue->crypto;
 	if (crypto != NULL) {
 		mss -= (crypto->overhead + crypto->nonce_size);
 	}
 #endif
+	/* kcp_mtu's conf.c-enforced minimum of 300 keeps this well clear
+	 * of the total overhead; catch it loudly if that ever changes */
+	ASSERT(mss <= mtu);
 	return mss;
 }
 
@@ -314,7 +324,7 @@ static bool udp_restart(struct server *restrict s)
 		LOGN("udp socket restart");
 		ev_io_stop(s->loop, &udp->w_read);
 		ev_io_stop(s->loop, &udp->w_write);
-		SOCKET_CLOSE_FD(udp->fd);
+		socket_close(udp->fd);
 		udp->fd = -1;
 		udp->connected = false;
 	}
@@ -349,7 +359,7 @@ bool server_resolve(struct server *restrict s)
 		q->mss = (uint16_t)server_mss(s);
 		return true;
 	}
-#endif
+#endif /* WITH_OBFS */
 	if (!udp_restart(s)) {
 		return false;
 	}
@@ -395,6 +405,26 @@ static bool udp_start(struct server *restrict s)
 	return true;
 }
 
+/* shared by server_new and server_loadconf, so a SIGHUP reload can never
+ * drift from the invariants established at startup */
+static void
+server_apply_conf(struct server *restrict s, const struct config *restrict conf)
+{
+	const double ping_timeout = 4.0;
+	s->linger = conf->linger;
+	s->dial_timeout = 30.0;
+	s->session_timeout = conf->timeout;
+	s->session_keepalive = conf->timeout - ping_timeout;
+	s->keepalive = conf->keepalive;
+	if ((conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) == 0) {
+		/* server mode: disable keepalive */
+		s->keepalive = 0.0;
+	}
+	s->timeout = CLAMP(conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0);
+	s->ping_timeout = ping_timeout;
+	s->time_wait = conf->time_wait;
+}
+
 struct server *
 server_new(struct ev_loop *loop, const struct config *restrict conf)
 {
@@ -403,12 +433,11 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		LOGOOM();
 		return NULL;
 	}
-	const double ping_timeout = 4.0;
 	*s = (struct server){
 		.loop = loop,
 		.conf = conf,
-		.m_conv = (uint32_t)rand64(),
-		.listener = (struct listener){ .fd = -1 },
+		.conv = (uint32_t)rand64(),
+		.listener = (struct listener){ .fd = -1, .fd_http = -1 },
 		.pkt =
 			(struct pktconn){
 				.fd = -1,
@@ -419,16 +448,8 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		.started = TSTAMP_NIL,
 		.last_resolve_time = TSTAMP_NIL,
 		.last_stats_time = TSTAMP_NIL,
-		.linger = conf->linger,
-		.dial_timeout = 30.0,
-		.session_timeout = conf->timeout,
-		.session_keepalive = conf->timeout - ping_timeout,
-		.keepalive = conf->keepalive,
-		.timeout = CLAMP(
-			conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0),
-		.ping_timeout = ping_timeout,
-		.time_wait = conf->time_wait,
 	};
+	server_apply_conf(s, conf);
 
 	{
 		const double interval = conf->kcp_interval * 1e-3;
@@ -452,10 +473,6 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		w_timeout->data = s;
 	}
 
-	if ((conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) == 0) {
-		/* server mode: disable keepalive and resolve */
-		s->keepalive = 0.0;
-	}
 	int flags = 0;
 	if ((conf->mode & MODE_SERVER) != 0) {
 		flags |= TABLE_FAST;
@@ -485,19 +502,17 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 void server_loadconf(
 	struct server *restrict s, const struct config *restrict conf)
 {
-	const double ping_timeout = 4.0;
-	s->linger = conf->linger;
-	s->dial_timeout = 30.0;
-	s->session_timeout = conf->timeout;
-	s->session_keepalive = conf->timeout - ping_timeout;
-	s->keepalive = conf->keepalive;
-	s->timeout = CLAMP(conf->keepalive * 3.0 + ping_timeout, 10.0, 1800.0);
-	s->ping_timeout = ping_timeout;
-	s->time_wait = conf->time_wait;
+	server_apply_conf(s, conf);
 
 	const double interval = conf->kcp_interval * 1e-3;
 	s->w_kcp_update.repeat = interval;
 	ev_timer_again(s->loop, &s->w_kcp_update);
+
+	s->w_keepalive.repeat = s->keepalive;
+	ev_timer_again(s->loop, &s->w_keepalive);
+
+	s->w_resolve.repeat = s->timeout;
+	ev_timer_again(s->loop, &s->w_resolve);
 
 	s->conf = conf;
 }
@@ -544,7 +559,7 @@ bool server_start(struct server *restrict s)
 void server_ping(struct server *restrict s)
 {
 	const struct sockaddr *sa;
-	if ((s->conf->mode & MODE_CLIENT)) {
+	if ((s->conf->mode & MODE_CLIENT) != 0) {
 		sa = &s->pkt.kcp_connect.sa;
 	} else {
 		return;
@@ -559,7 +574,8 @@ void server_ping(struct server *restrict s)
 }
 
 bool server_healthy(
-	const struct server *restrict s, char *buf, const size_t bufsize)
+	const struct server *restrict s, char *restrict buf,
+	const size_t bufsize)
 {
 	const int mode = s->conf->mode;
 	/* a pure server has no upstream peer to monitor */
@@ -601,13 +617,13 @@ static bool svc_shutdown_filt(
 
 static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 {
+	conn->services = table_filter(conn->services, svc_shutdown_filt, NULL);
 	if (conn->fd == -1) {
 		return;
 	}
-	conn->services = table_filter(conn->services, svc_shutdown_filt, NULL);
 	ev_io_stop(loop, &conn->w_read);
 	ev_io_stop(loop, &conn->w_write);
-	SOCKET_CLOSE_FD(conn->fd);
+	socket_close(conn->fd);
 	conn->fd = -1;
 }
 
@@ -632,14 +648,14 @@ static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
 		LOGD_F("listener [fd:%d] close", l->fd);
 		ev_io *restrict w_accept = &l->w_accept;
 		ev_io_stop(loop, w_accept);
-		SOCKET_CLOSE_FD(l->fd);
+		socket_close(l->fd);
 		l->fd = -1;
 	}
 	if (l->fd_http != -1) {
 		LOGD_F("http listener [fd:%d] close", l->fd_http);
 		ev_io *restrict w_accept_http = &l->w_accept_http;
 		ev_io_stop(loop, w_accept_http);
-		SOCKET_CLOSE_FD(l->fd_http);
+		socket_close(l->fd_http);
 		l->fd_http = -1;
 	}
 	ev_timer_stop(loop, &l->w_timer);
@@ -681,6 +697,25 @@ void server_stop(struct server *restrict s)
 
 void server_free(struct server *restrict s)
 {
+	/* defensively tear down any still-active state: server_start can
+	 * fail after partially starting up, and the caller goes straight to
+	 * server_free without calling server_stop first. Each of these is
+	 * a safe no-op if the corresponding state was never started. */
+	struct ev_loop *loop = s->loop;
+	listener_stop(loop, &s->listener);
+	ev_timer_stop(loop, &s->w_kcp_update);
+	ev_timer_stop(loop, &s->w_keepalive);
+	ev_timer_stop(loop, &s->w_resolve);
+	ev_timer_stop(loop, &s->w_timeout);
+#if WITH_OBFS
+	if (s->pkt.queue != NULL && s->pkt.queue->obfs != NULL) {
+		obfs_stop(s->pkt.queue->obfs, s);
+	} else {
+		udp_stop(s->loop, &s->pkt);
+	}
+#else
+	udp_stop(s->loop, &s->pkt);
+#endif
 	udp_free(&s->pkt);
 	if (s->sessions != NULL) {
 		table_free(s->sessions);
@@ -701,7 +736,7 @@ static uint32_t conv_next(uint32_t conv)
 
 uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 {
-	uint32_t conv = conv_next(s->m_conv);
+	uint32_t conv = conv_next(s->conv);
 	unsigned char key[SESSION_KEY_SIZE];
 	const struct hashkey hkey = {
 		.len = sizeof(key),
@@ -710,7 +745,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 	SESSION_MAKEKEY(key, sa, conv);
 	if (table_find(s->sessions, &hkey, NULL)) {
 		const double usage =
-			(double)table_size(s->sessions) / (double)UINT32_MAX;
+			(double)table_size(s->sessions) / (double)MAX_SESSIONS;
 		do {
 			if (usage < 1e-3) {
 				conv = (uint32_t)rand64();
@@ -719,7 +754,7 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 			SESSION_MAKEKEY(key, sa, conv);
 		} while (table_find(s->sessions, &hkey, NULL));
 	}
-	s->m_conv = conv;
+	s->conv = conv;
 	return conv;
 }
 
@@ -755,7 +790,7 @@ static bool print_session_iter(
 		return true;
 	}
 	char addr_str[64];
-	sa_format(addr_str, sizeof(addr_str), &ss->raddr.sa);
+	(void)sa_format(addr_str, sizeof(addr_str), &ss->raddr.sa);
 	ev_tstamp last_seen = ss->created;
 	if (ss->last_send != TSTAMP_NIL && ss->last_send > last_seen) {
 		last_seen = ss->last_send;
@@ -770,13 +805,16 @@ static bool print_session_iter(
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
 
+	/* intentionally shows tcp_tx/tcp_rx, not kcp_rx/kcp_tx: the local
+	 * TCP peer's own view of this session's traffic, mirroring the
+	 * tcp/kcp-crossing server_stats uses for its efficiency ratio */
 	FORMAT_BYTES(kcp_rx, (double)ss->stats.tcp_tx);
 	FORMAT_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
 
 	int rtt = -1, rto = -1;
 	if (ss->kcp != NULL) {
-		rtt = CLAMP(ss->kcp->rx_srtt, INT_MIN, INT_MAX);
-		rto = CLAMP(ss->kcp->rx_rto, INT_MIN, INT_MAX);
+		rtt = (int)ss->kcp->rx_srtt;
+		rto = (int)ss->kcp->rx_rto;
 	}
 	VBUF_APPENDF(
 		ctx->buf,
@@ -801,7 +839,7 @@ static struct vbuffer *print_session_table(
 	table_iterate(s->sessions, &print_session_iter, &ctx);
 	VBUF_APPENDF(
 		ctx.buf,
-		"  = %d sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; waitsnd=%zu\n\n",
+		"  = %zu sessions: %zu halfopen, %zu connected, %zu linger, %zu time_wait; waitsnd=%zu\n\n",
 		table_size(s->sessions), ctx.num_in_state[KCP_STATE_CONNECT],
 		ctx.num_in_state[KCP_STATE_ESTABLISHED],
 		ctx.num_in_state[KCP_STATE_LINGER],
@@ -830,8 +868,9 @@ static struct vbuffer *append_traffic_stats(
 	return buf;
 }
 
-struct vbuffer *
-server_stats_const(const struct server *s, struct vbuffer *buf, const int level)
+struct vbuffer *server_stats_const(
+	const struct server *restrict s, struct vbuffer *restrict buf,
+	const int level)
 {
 	buf = print_session_table(s, buf, level);
 
@@ -876,15 +915,22 @@ struct vbuffer *server_stats(
 		.pkt_rx = stats->pkt_rx - last_stats->pkt_rx,
 		.pkt_tx = stats->pkt_tx - last_stats->pkt_tx,
 	};
-	{
+	/* two calls within the same event-loop iteration (or a backward
+	 * wall-clock step) would otherwise divide by a zero or negative dt */
+	if (dt > 0) {
 		FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
 		FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
 		FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
 		FORMAT_BYTES(dkcp_tx, dstats.kcp_tx / dt);
-		const double deff_rx =
-			(double)dstats.tcp_tx * 100.0 / (double)dstats.kcp_rx;
-		const double deff_tx =
-			(double)dstats.tcp_rx * 100.0 / (double)dstats.kcp_tx;
+		/* kcp_rx/kcp_tx are legitimately zero on any idle interval */
+		const double deff_rx = dstats.kcp_rx > 0 ?
+					       (double)dstats.tcp_tx * 100.0 /
+						       (double)dstats.kcp_rx :
+					       0.0;
+		const double deff_tx = dstats.kcp_tx > 0 ?
+					       (double)dstats.tcp_rx * 100.0 /
+						       (double)dstats.kcp_tx :
+					       0.0;
 
 		VBUF_APPENDF(
 			buf,
@@ -901,8 +947,13 @@ struct vbuffer *server_stats(
 			load_str, sizeof(load_str), "%.03f%%", load * 100);
 	}
 	FORMAT_DURATION(dt_str, make_duration(dt));
-	FORMAT_BYTES(dpkt_rx, dstats.pkt_rx / dt);
-	FORMAT_BYTES(dpkt_tx, dstats.pkt_tx / dt);
+	char dpkt_rx[16] = "(unknown)", dpkt_tx[16] = "(unknown)";
+	if (dt > 0) {
+		(void)format_iec_bytes(
+			dpkt_rx, sizeof(dpkt_rx), (double)dstats.pkt_rx / dt);
+		(void)format_iec_bytes(
+			dpkt_tx, sizeof(dpkt_tx), (double)dstats.pkt_tx / dt);
+	}
 	VBUF_APPENDF(
 		buf, "  = load: %s (last %s); pkt: %s/s, %s/s; uptime: %s\n",
 		load_str, dt_str, dpkt_rx, dpkt_tx, uptime_str);

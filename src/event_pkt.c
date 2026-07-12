@@ -7,32 +7,33 @@
 #include "server.h"
 #include "util.h"
 
+#include "meta/minmax.h"
 #include "os/socket.h"
-#include "utils/minmax.h"
+#include "utils/debug.h"
 #include "utils/slog.h"
 
 #include <ev.h>
-
-#include <sys/socket.h>
 
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #define PKT_LOGVV(what, msg)                                                   \
 	do {                                                                   \
 		if (!LOGLEVEL(VERYVERBOSE)) {                                  \
 			break;                                                 \
 		}                                                              \
-		char addr[64];                                                 \
-		sa_format(addr, sizeof(addr), &(msg)->addr.sa);                \
+		char addr[64] = "<unknown>";                                   \
+		(void)sa_format(addr, sizeof(addr), &(msg)->addr.sa);          \
 		LOG_F(VERYVERBOSE, what ": %" PRIu16 " bytes, addr=%s",        \
 		      (msg)->len, addr);                                       \
 	} while (0)
 
-static void udp_reset(struct server *restrict s)
+static void udp_log_refused(const struct server *restrict s)
 {
 	if ((s->conf->mode & MODE_SERVER) != 0) {
 		return;
@@ -43,6 +44,9 @@ static void udp_reset(struct server *restrict s)
 }
 
 #if HAVE_RECVMMSG || HAVE_SENDMMSG
+/* shared scratch space between pkt_recv and pkt_send; safe only because
+ * the two are never active on the call stack at the same time (single
+ * event loop, neither calls the other) */
 static struct iovec iovecs[MMSG_BATCH_SIZE];
 static struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
 #endif
@@ -79,15 +83,17 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
 		struct msgframe *frames[nbatch];
+		size_t populated = nbatch;
 		for (size_t i = 0; i < nbatch; i++) {
 			struct msgframe *restrict msg = msgframe_new(q);
 			if (msg == NULL) {
 				LOGOOM();
 				if (i == 0) {
 					/* no frame could be allocated */
+					s->stats.pkt_rx += nbrecv;
 					return nrecv;
 				}
-				nbatch = i;
+				populated = i;
 				break;
 			}
 			frames[i] = msg;
@@ -98,12 +104,12 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 			};
 		}
 
-		const int ret = recvmmsg(fd, mmsgs, nbatch, 0, NULL);
+		const int ret = recvmmsg(fd, mmsgs, populated, 0, NULL);
 		if (ret < 0) {
-			for (size_t i = 0; i < nbatch; i++) {
+			const int err = errno;
+			for (size_t i = 0; i < populated; i++) {
 				msgframe_delete(q, frames[i]);
 			}
-			const int err = errno;
 			if (err == EINTR) {
 				continue;
 			}
@@ -111,30 +117,39 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 				break;
 			}
 			if (err == ECONNREFUSED || err == ECONNRESET) {
-				udp_reset(s);
+				udp_log_refused(s);
 				break;
 			}
 			LOGE_F("recvmmsg: (%d) %s", err, strerror(err));
 			break;
 		}
 		if (ret == 0) {
-			for (size_t i = 0; i < nbatch; i++) {
+			for (size_t i = 0; i < populated; i++) {
 				msgframe_delete(q, frames[i]);
 			}
 			break;
 		}
 		const size_t n = (size_t)ret;
+		ASSERT(n <= populated);
 		for (size_t i = 0; i < n; i++) {
 			struct msgframe *restrict msg = frames[i];
+			if ((mmsgs[i].msg_hdr.msg_flags & MSG_TRUNC) != 0) {
+				LOG_RATELIMITED_F(
+					WARNING, now, 1.0,
+					"pkt_recv: dropped truncated datagram (%zu bytes)",
+					(size_t)mmsgs[i].msg_len);
+				msgframe_delete(q, msg);
+				continue;
+			}
 			const size_t len = (size_t)mmsgs[i].msg_len;
-			msg->len = len;
+			msg->len = (uint16_t)len;
 			msg->ts = now;
 			q->mq_recv[q->mq_recv_len++] = msg;
 			nbrecv += len;
 			PKT_LOGVV("pkt recv", msg);
 		}
 		/* collect unused frames */
-		for (size_t i = n; i < nbatch; i++) {
+		for (size_t i = n; i < populated; i++) {
 			msgframe_delete(q, frames[i]);
 		}
 		nrecv += n;
@@ -175,13 +190,23 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 				break;
 			}
 			if (err == ECONNREFUSED || err == ECONNRESET) {
-				udp_reset(s);
+				udp_log_refused(s);
 				break;
 			}
 			LOGE_F("recvmsg: (%d) %s", err, strerror(err));
 			break;
 		}
-		msg->len = (size_t)nbrecv;
+		if ((hdr.msg_flags & MSG_TRUNC) != 0) {
+			LOG_RATELIMITED_F(
+				WARNING, now, 1.0,
+				"pkt_recv: dropped truncated datagram (%zu bytes)",
+				(size_t)nbrecv);
+			msgframe_delete(q, msg);
+			nrecv++;
+			navail--;
+			continue;
+		}
+		msg->len = (uint16_t)nbrecv;
 		msg->ts = now;
 		q->mq_recv[q->mq_recv_len++] = msg;
 		PKT_LOGVV("pkt recv", msg);
@@ -234,10 +259,12 @@ static size_t pkt_send_drop(struct pktqueue *restrict q)
 
 #if HAVE_SENDMMSG
 
-static size_t pkt_send(struct server *restrict s, const int fd)
+static size_t
+pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	size_t navail = q->mq_send_len;
+	*eagain = false;
 	if (navail == 0) {
 		return 0;
 	}
@@ -262,6 +289,7 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 				continue;
 			}
 			if (err == EAGAIN || err == EWOULDBLOCK) {
+				*eagain = true;
 				break;
 			}
 			LOGE_F("sendmmsg: (%d) %s", err, strerror(err));
@@ -299,10 +327,12 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 
 #else /* HAVE_SENDMMSG */
 
-static size_t pkt_send(struct server *restrict s, const int fd)
+static size_t
+pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	const size_t count = q->mq_send_len;
+	*eagain = false;
 	if (count == 0) {
 		return 0;
 	}
@@ -319,6 +349,7 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 		if (ret < 0) {
 			const int err = errno;
 			if (err == EAGAIN || err == EWOULDBLOCK) {
+				*eagain = true;
 				break;
 			}
 			LOGE_F("sendmsg: (%d) %s", err, strerror(err));
@@ -354,7 +385,8 @@ static size_t pkt_send(struct server *restrict s, const int fd)
 static void pkt_flush(struct server *restrict s)
 {
 	const int fd = s->pkt.w_write.fd;
-	while (pkt_send(s, fd) > 0) {
+	bool eagain = false;
+	while (!eagain && pkt_send(s, fd, &eagain) > 0) {
 		;
 	}
 }

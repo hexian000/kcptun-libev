@@ -35,6 +35,11 @@ static inline bool clock_monotonic(struct timespec *restrict tp)
 	if (clock_gettime(CLOCK_MONOTONIC, tp) == 0) {
 		return true;
 	}
+#elif HAVE_TIMESPEC_GET && defined(TIME_UTC)
+	/* ISO C11 fallback: TIME_UTC is wall-clock, not guaranteed monotonic (it
+	 * may jump on clock adjustment), but it is the only standard option where
+	 * clock_gettime is unavailable. */
+	return timespec_get(tp, TIME_UTC) == TIME_UTC;
 #endif
 	(void)tp;
 	return false;

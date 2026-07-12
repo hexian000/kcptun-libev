@@ -105,7 +105,9 @@ struct json_val json_parse(char *restrict json, size_t *restrict len);
  * @return true on success; false if the fragment is not a valid JSON string
  *         or contains trailing non-whitespace content.
  */
-bool json_parse_string(char *val, size_t vlen, char **out, size_t *outlen);
+bool json_parse_string(
+	char *restrict val, size_t vlen, char **restrict out,
+	size_t *restrict outlen);
 
 /**
  * @brief Interpret a raw JSON fragment as a boolean.
@@ -121,7 +123,7 @@ bool json_parse_string(char *val, size_t vlen, char **out, size_t *outlen);
  * @return true on success; false if the fragment is not a valid JSON boolean
  *         or contains trailing non-whitespace content.
  */
-bool json_parse_bool(char *val, size_t vlen, bool *out);
+bool json_parse_bool(char *restrict val, size_t vlen, bool *restrict out);
 
 /**
  * @brief Interpret a raw JSON fragment as an int.
@@ -140,7 +142,7 @@ bool json_parse_bool(char *val, size_t vlen, bool *out);
  * @return true on success; false if the fragment is not a valid JSON integer
  *         or the value is out of range.
  */
-bool json_parse_int(char *val, size_t vlen, int *out);
+bool json_parse_int(char *restrict val, size_t vlen, int *restrict out);
 
 /**
  * @brief Interpret a raw JSON fragment as an intmax_t.
@@ -159,7 +161,7 @@ bool json_parse_int(char *val, size_t vlen, int *out);
  * @return true on success; false if the fragment is not a valid JSON integer
  *         or the value is out of range.
  */
-bool json_parse_imax(char *val, size_t vlen, intmax_t *out);
+bool json_parse_imax(char *restrict val, size_t vlen, intmax_t *restrict out);
 
 /**
  * @brief Interpret a raw JSON fragment as an unsigned int.
@@ -179,7 +181,7 @@ bool json_parse_imax(char *val, size_t vlen, intmax_t *out);
  * @return true on success; false if the fragment is not a valid JSON
  *         unsigned integer or the value is out of range.
  */
-bool json_parse_uint(char *val, size_t vlen, unsigned *out);
+bool json_parse_uint(char *restrict val, size_t vlen, unsigned *restrict out);
 
 /**
  * @brief Interpret a raw JSON fragment as a uintmax_t.
@@ -199,7 +201,7 @@ bool json_parse_uint(char *val, size_t vlen, unsigned *out);
  * @return true on success; false if the fragment is not a valid JSON
  *         unsigned integer or the value is out of range.
  */
-bool json_parse_umax(char *val, size_t vlen, uintmax_t *out);
+bool json_parse_umax(char *restrict val, size_t vlen, uintmax_t *restrict out);
 
 /**
  * @brief Interpret a raw JSON fragment as a double.
@@ -217,7 +219,7 @@ bool json_parse_umax(char *val, size_t vlen, uintmax_t *out);
  * @return true on success; false if the fragment is not a valid JSON number
  *         or the value is out of range.
  */
-bool json_parse_double(char *val, size_t vlen, double *out);
+bool json_parse_double(char *restrict val, size_t vlen, double *restrict out);
 
 /**
  * @brief Write a JSON-encoded string (with surrounding quotes) to a buffer.
@@ -263,9 +265,9 @@ enum {
  * closing '}'; JSON_NEXT_ERROR on malformed or truncated input.
  */
 int json_obj_next(
-	char *restrict json, const size_t *len, json_iter *restrict iter,
-	char **restrict key, size_t *restrict key_len, char **restrict val,
-	size_t *restrict val_len);
+	char *restrict json, const size_t *restrict len,
+	json_iter *restrict iter, char **restrict key, size_t *restrict key_len,
+	char **restrict val, size_t *restrict val_len);
 
 /**
  * @brief Advance an array iterator to the next element.
@@ -280,8 +282,9 @@ int json_obj_next(
  * closing ']'; JSON_NEXT_ERROR on malformed or truncated input.
  */
 int json_arr_next(
-	char *restrict json, const size_t *len, json_iter *restrict iter,
-	char **restrict val, size_t *restrict val_len);
+	char *restrict json, const size_t *restrict len,
+	json_iter *restrict iter, char **restrict val,
+	size_t *restrict val_len);
 
 /** @} */
 
@@ -326,7 +329,7 @@ enum {
  * the array length).  The active union member is selected by the field kind;
  * the flags bitmask records which constraints are present. */
 struct json_constraint {
-	uint32_t flags;
+	uint_least32_t flags;
 	/* array length (orthogonal to the element kind) */
 	size_t min_items, max_items;
 	union {
@@ -364,7 +367,7 @@ struct json_field {
 	enum json_type_kind kind;
 	bool is_array;
 	/* presence-bit index for a required field, or -1 if optional */
-	int8_t req_bit;
+	int_least8_t req_bit;
 	size_t offset; /* offsetof(struct, field) */
 	size_t count_offset; /* arrays: offsetof(struct, field_count) */
 	const struct json_schema *child; /* object / array-of-object element */
@@ -379,7 +382,7 @@ struct json_schema {
 	/* key -> field index, or -1; matches the fields[] order */
 	int (*lookup)(const char *str, size_t len);
 	const void *defaults; /* static image to copy in, or NULL == all-zero */
-	uint_fast64_t required_mask; /* OR of (1 << req_bit) over required */
+	uint_least64_t required_mask; /* OR of (1 << req_bit) over required */
 	int present_field; /* sentinel field index for optional nested
 			      objects, or -1 to always emit */
 	bool strict; /* reject unknown keys (additionalProperties: false) */
@@ -394,7 +397,8 @@ struct json_schema {
  * @return true on success; on failure, false and *obj reset to all-zero.
  */
 bool json_unmarshal(
-	const struct json_schema *schema, void *obj, char *json, size_t length);
+	const struct json_schema *restrict schema, void *obj, char *json,
+	size_t length);
 
 /**
  * @brief Marshal *obj into @p buf as JSON (snprintf semantics).
@@ -406,15 +410,15 @@ bool json_unmarshal(
  * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error.
  */
 int json_marshal(
-	const struct json_schema *schema, char *buf, size_t bufsz,
-	const void *obj, const char *indent);
+	const struct json_schema *restrict schema, char *restrict buf,
+	size_t bufsz, const void *restrict obj, const char *restrict indent);
 
 /**
  * @brief Free heap-allocated fields (arrays, nested objects) inside *obj.
  * @param schema Descriptor table for the struct type.
  * @param obj Object whose owned allocations are released.
  */
-void json_free(const struct json_schema *schema, void *obj);
+void json_free(const struct json_schema *restrict schema, void *restrict obj);
 
 /** @} */
 

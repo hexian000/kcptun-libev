@@ -1,11 +1,12 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef UTILS_BSWAP_H
-#define UTILS_BSWAP_H
+#ifndef BINARY_BSWAP_H
+#define BINARY_BSWAP_H
 
 #include <stdint.h>
 
+/* a and b must be distinct lvalues; aliasing zeroes both (XOR swap). */
 #ifndef INTSWAP
 #define INTSWAP(a, b)                                                          \
 	do {                                                                   \
@@ -13,10 +14,9 @@
 	} while (0)
 #endif
 
-/* The fallbacks operate on the C11-mandated uint_fast* types (which may be
- * wider than the nominal width) and confine the result with the always
- * available UINTN_C masks, so they stay strictly conforming without relying
- * on the optional exact-width types or on type punning. */
+/* Fallbacks use C11 uint_fast* types (may be wider than nominal), masked
+ * with UINTN_C constants to stay conforming without exact-width types or
+ * type punning. */
 
 #ifdef __has_builtin
 #if __has_builtin(__builtin_bswap64)
@@ -37,7 +37,7 @@ static inline uint_fast64_t bswap64(uint_fast64_t x)
 }
 
 #define BSWAP64 bswap64
-#endif
+#endif /* BSWAP64 */
 #ifdef __has_builtin
 #if __has_builtin(__builtin_bswap32)
 #define BSWAP32 __builtin_bswap32
@@ -53,14 +53,14 @@ static inline uint_fast32_t bswap32(uint_fast32_t x)
 }
 
 #define BSWAP32 bswap32
-#endif
+#endif /* BSWAP32 */
 #ifdef __has_builtin
 #if __has_builtin(__builtin_bswap16)
 #define BSWAP16 __builtin_bswap16
 #endif
 #endif /* __has_builtin */
 #ifndef BSWAP16
-static inline uint_fast16_t bswap16(uint_fast16_t x)
+static inline uint_fast16_t bswap16(const uint_fast16_t x)
 {
 	return (uint_fast16_t)(((x << 8u) | ((x >> 8u) & UINT16_C(0xff))) &
 			       UINT16_C(0xffff));
@@ -69,4 +69,4 @@ static inline uint_fast16_t bswap16(uint_fast16_t x)
 #define BSWAP16 bswap16
 #endif
 
-#endif /* UTILS_BSWAP_H */
+#endif /* BINARY_BSWAP_H */

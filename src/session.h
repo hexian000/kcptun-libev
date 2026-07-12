@@ -6,9 +6,9 @@
 
 #include "server.h"
 
+#include "binary/serialize.h"
 #include "os/socket.h"
 #include "utils/buffer.h"
-#include "utils/serialize.h"
 
 #include <ev.h>
 

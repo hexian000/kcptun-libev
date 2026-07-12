@@ -15,10 +15,10 @@
 #include <stdatomic.h>
 #include <threads.h>
 #endif
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <threads.h>
 #include <time.h>
 
 #define SLOG_BUFSIZE 4096
@@ -45,17 +45,17 @@ static const char *slog_level_color[] = {
 	ANSI_CSI_FG(, 96), ANSI_CSI_FG(, 97),	  ANSI_CSI_FG(, 37),
 };
 
-FILE *slog_output;
+static FILE *slog_output;
 static slog_writer_fn slog_writer;
 static void *slog_writer_ud;
 static slog_syslog_fn slog_syslog;
 static void *slog_syslog_ident;
 
 #if SLOG_MT_SAFE
-mtx_t slog_output_mu;
+static mtx_t slog_output_mu;
 
-atomic_int slog_level_ = LOG_LEVEL_VERBOSE;
-atomic_uint slog_flags_ = 0;
+atomic_int slog_level_ = LOG_LEVEL_SILENCE;
+static atomic_uint slog_flags_ = 0;
 static _Atomic(slog_printer_fn) slog_printer;
 static _Atomic(const char *) slog_fileprefix;
 
@@ -94,9 +94,9 @@ static void slog_init(void)
 }
 
 #define SLOG_INIT() call_once(&slog_init_flag, &slog_init)
-#else
+#else /* !SLOG_MT_SAFE */
 int slog_level_ = LOG_LEVEL_SILENCE;
-unsigned int slog_flags_ = 0;
+static unsigned int slog_flags_ = 0;
 static slog_printer_fn slog_printer = NULL;
 static const char *slog_fileprefix = NULL;
 
@@ -274,13 +274,22 @@ static void slog_print_terminal(
 	va_list args0;
 	va_copy(args0, args);
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
+	/* The message plus its trailer overflow the fixed buffer -- and so must
+	 * be re-emitted straight to the stream -- only when the full formatted
+	 * length would not fit after the prefix. Deriving this from vsnprintf's
+	 * returned length rather than (len >= cap) keeps an exact fit, which
+	 * fills the buffer without truncation, on the fast path. */
+	const size_t trailer_len = sizeof(ANSI_CSI_RESET "\n") - 1;
+	const bool longmsg = (ret >= 0) && ((size_t)ret + trailer_len >
+					    slog_buffer.cap - prefixlen);
 	if (ret < 0) {
 		BUF_APPENDSTR(slog_buffer, "(log format error)");
 	}
-	/* overwritting the null terminator is not an issue */
+	/* overwriting the null terminator is not an issue */
 	BUF_APPENDSTR(slog_buffer, ANSI_CSI_RESET "\n");
-	const bool longmsg = (slog_buffer.len >= slog_buffer.cap);
 
+	/* a logger has no lower channel to report its own I/O failures
+	 * through, so output errors below are best-effort and unescalated */
 	MTX_LOCK(&slog_output_mu);
 	(void)fwrite(
 		slog_buffer.data, sizeof(slog_buffer.data[0]),
@@ -322,12 +331,16 @@ static void slog_print_file(
 	va_list args0;
 	va_copy(args0, args);
 	const int ret = BUF_VAPPENDF(slog_buffer, format, args);
+	/* see slog_print_terminal: detect real truncation from the formatted
+	 * length so an exact fit stays on the fast path */
+	const size_t trailer_len = sizeof("\n") - 1;
+	const bool longmsg = (ret >= 0) && ((size_t)ret + trailer_len >
+					    slog_buffer.cap - prefixlen);
 	if (ret < 0) {
 		BUF_APPENDSTR(slog_buffer, "(log format error)");
 	}
-	/* overwritting the null terminator is not an issue */
+	/* overwriting the null terminator is not an issue */
 	BUF_APPENDSTR(slog_buffer, "\n");
-	const bool longmsg = (slog_buffer.len >= slog_buffer.cap);
 
 	MTX_LOCK(&slog_output_mu);
 	(void)fwrite(
@@ -357,7 +370,7 @@ static void slog_print_writer(
 	if (ret < 0) {
 		BUF_APPENDSTR(slog_buffer, "(log format error)");
 	}
-	/* overwritting the null terminator is not an issue */
+	/* overwriting the null terminator is not an issue */
 	BUF_APPENDSTR(slog_buffer, "\n");
 	/* there is no stream to re-format into, so an overlong line is already
 	 * truncated to the buffer capacity by buf_append */
@@ -411,12 +424,6 @@ void slog_setlevel(const int level)
 	ATOMIC_STORE(&slog_level_, level);
 }
 
-void slog_setflags(unsigned int flags)
-{
-	SLOG_INIT();
-	ATOMIC_STORE(&slog_flags_, flags);
-}
-
 void slog_setoutput(const int type, ...)
 {
 	SLOG_INIT();
@@ -467,10 +474,10 @@ void slog_setoutput(const int type, ...)
 		slog_syslog_ident = NULL;
 		MTX_UNLOCK(&slog_output_mu);
 		ATOMIC_STORE(&slog_printer, slog_print_syslog);
-#else
+#else /* HAVE_SYSLOG */
 		(void)ident;
 		ATOMIC_STORE(&slog_printer, NULL);
-#endif
+#endif /* HAVE_SYSLOG */
 	} break;
 	default:;
 	}
@@ -481,6 +488,12 @@ void slog_setfileprefix(const char *prefix)
 {
 	SLOG_INIT();
 	ATOMIC_STORE(&slog_fileprefix, prefix);
+}
+
+void slog_setflags(const unsigned int flags)
+{
+	SLOG_INIT();
+	ATOMIC_STORE(&slog_flags_, flags);
 }
 
 static void slog_dispatch(

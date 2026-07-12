@@ -4,10 +4,13 @@
 #include "conf.h"
 
 #include "conf_schema.gen.h"
+#include "pktqueue.h"
 #include "util.h"
 
 #include "utils/slog.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,30 +23,41 @@ static char *read_alloc(const char *path, size_t *out_len)
 {
 	FILE *f = fopen(path, "r");
 	if (f == NULL) {
+		const int err = errno;
+		LOGE_F("config: failed to open `%s': %s", path, strerror(err));
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_END) != 0) {
+		const int err = errno;
+		LOGE_F("config: failed to seek `%s': %s", path, strerror(err));
 		(void)fclose(f);
 		return NULL;
 	}
 	const long pos = ftell(f);
 	if (pos < 0) {
+		const int err = errno;
+		LOGE_F("config: failed to tell `%s': %s", path, strerror(err));
 		(void)fclose(f);
 		return NULL;
 	}
 	if (fseek(f, 0, SEEK_SET) != 0) {
+		const int err = errno;
+		LOGE_F("config: failed to seek `%s': %s", path, strerror(err));
 		(void)fclose(f);
 		return NULL;
 	}
 	const size_t cap = (size_t)pos;
 	char *buf = malloc(cap + 1);
 	if (buf == NULL) {
+		LOGOOM();
 		(void)fclose(f);
 		return NULL;
 	}
 	const size_t n = fread(buf, 1, cap, f);
 	(void)fclose(f);
-	if (n == 0 && cap > 0) {
+	if (n != cap) {
+		LOGE_F("config: short read on `%s' (%zu/%zu bytes)", path, n,
+		       cap);
 		free(buf);
 		return NULL;
 	}
@@ -60,10 +74,13 @@ const char *conf_modestr(const struct config *restrict conf)
 	if (conf->mode & MODE_CLIENT) {
 		return "client";
 	}
-	return "rendezvous server";
+	if (conf->mode & MODE_RENDEZVOUS) {
+		return "rendezvous server";
+	}
+	return "relay";
 }
 
-static bool range_check_int(
+static bool check_int_range(
 	const char *key, const int value, const int lbound, const int ubound)
 {
 	if (value < lbound || value > ubound) {
@@ -75,12 +92,15 @@ static bool range_check_int(
 }
 
 #define RANGE_CHECK(key, value, lbound, ubound)                                \
-	_Generic(value, int: range_check_int)(key, value, lbound, ubound)
+	_Generic(value, int: check_int_range)(key, value, lbound, ubound)
+
+#define SERVICE_ID_MAX_LENGTH ((size_t)256)
+#define MIN_SOCKBUF_SIZE 4096
 
 static bool conf_check(struct config *restrict conf)
 {
 	/* 0. basic check */
-	if (conf->service_idlen > 256) {
+	if (conf->service_idlen > SERVICE_ID_MAX_LENGTH) {
 		LOGE("config: service_id too long");
 		return false;
 	}
@@ -132,7 +152,7 @@ static bool conf_check(struct config *restrict conf)
 
 	/* 3. range check */
 	const bool range_ok =
-		RANGE_CHECK("kcp.mtu", conf->kcp_mtu, 300, 1500) &&
+		RANGE_CHECK("kcp.mtu", conf->kcp_mtu, 300, MAX_PACKET_SIZE) &&
 		RANGE_CHECK("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
 		RANGE_CHECK("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
 		RANGE_CHECK("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&
@@ -151,15 +171,23 @@ static bool conf_check(struct config *restrict conf)
 		return false;
 	}
 
-	if ((conf->tcp_sndbuf != 0 && conf->tcp_sndbuf < 4096) ||
-	    (conf->tcp_rcvbuf != 0 && conf->tcp_rcvbuf < 4096)) {
+	if ((conf->tcp_sndbuf > 0 && conf->tcp_sndbuf < MIN_SOCKBUF_SIZE) ||
+	    (conf->tcp_rcvbuf > 0 && conf->tcp_rcvbuf < MIN_SOCKBUF_SIZE)) {
 		LOGW("config: probably too small tcp buffer");
 	}
-	if ((conf->udp_sndbuf != 0 && conf->udp_sndbuf < 4096) ||
-	    (conf->udp_rcvbuf != 0 && conf->udp_rcvbuf < 4096)) {
+	if ((conf->udp_sndbuf > 0 && conf->udp_sndbuf < MIN_SOCKBUF_SIZE) ||
+	    (conf->udp_rcvbuf > 0 && conf->udp_rcvbuf < MIN_SOCKBUF_SIZE)) {
 		LOGW("config: probably too small udp buffer");
 	}
 	return true;
+}
+
+/* Narrow an unsigned schema field to int, clamping instead of relying on
+ * implementation-defined wraparound; conf_check rejects the clamped value
+ * anyway since it's always outside every field's legitimate range. */
+static int narrow_uint_to_int(const unsigned value)
+{
+	return value > (unsigned)INT_MAX ? INT_MAX : (int)value;
 }
 
 /* strndup a parsed zero-copy string field into a freshly-allocated buffer.
@@ -208,14 +236,14 @@ static bool conf_apply(
 	/* copy kcp settings */
 	{
 		const struct json_conf_kcp *k = &parsed->kcp;
-		conf->kcp_mtu = (int)k->mtu;
-		conf->kcp_sndwnd = (int)k->sndwnd;
-		conf->kcp_rcvwnd = (int)k->rcvwnd;
-		conf->kcp_nodelay = (int)k->nodelay;
-		conf->kcp_interval = (int)k->interval;
-		conf->kcp_resend = (int)k->resend;
-		conf->kcp_nc = (int)k->nc;
-		conf->kcp_flush = (int)k->flush;
+		conf->kcp_mtu = narrow_uint_to_int(k->mtu);
+		conf->kcp_sndwnd = narrow_uint_to_int(k->sndwnd);
+		conf->kcp_rcvwnd = narrow_uint_to_int(k->rcvwnd);
+		conf->kcp_nodelay = narrow_uint_to_int(k->nodelay);
+		conf->kcp_interval = narrow_uint_to_int(k->interval);
+		conf->kcp_resend = narrow_uint_to_int(k->resend);
+		conf->kcp_nc = narrow_uint_to_int(k->nc);
+		conf->kcp_flush = narrow_uint_to_int(k->flush);
 	}
 
 	/* copy tcp settings */
@@ -224,24 +252,24 @@ static bool conf_apply(
 		conf->tcp_reuseport = t->reuseport;
 		conf->tcp_keepalive = t->keepalive;
 		conf->tcp_nodelay = t->nodelay;
-		conf->tcp_sndbuf = (int)t->sndbuf;
-		conf->tcp_rcvbuf = (int)t->rcvbuf;
+		conf->tcp_sndbuf = narrow_uint_to_int(t->sndbuf);
+		conf->tcp_rcvbuf = narrow_uint_to_int(t->rcvbuf);
 	}
 
 	/* copy udp settings */
 	{
 		const struct json_conf_udp *u = &parsed->udp;
 		conf->udp_reuseport = u->reuseport;
-		conf->udp_sndbuf = (int)u->sndbuf;
-		conf->udp_rcvbuf = (int)u->rcvbuf;
+		conf->udp_sndbuf = narrow_uint_to_int(u->sndbuf);
+		conf->udp_rcvbuf = narrow_uint_to_int(u->rcvbuf);
 	}
 
 	/* copy top-level integer settings */
-	conf->timeout = (int)parsed->timeout;
-	conf->linger = (int)parsed->linger;
-	conf->keepalive = (int)parsed->keepalive;
-	conf->time_wait = (int)parsed->time_wait;
-	conf->log_level = (int)parsed->loglevel;
+	conf->timeout = narrow_uint_to_int(parsed->timeout);
+	conf->linger = narrow_uint_to_int(parsed->linger);
+	conf->keepalive = narrow_uint_to_int(parsed->keepalive);
+	conf->time_wait = narrow_uint_to_int(parsed->time_wait);
+	conf->log_level = narrow_uint_to_int(parsed->loglevel);
 	return true;
 oom:
 	LOGOOM();
@@ -260,7 +288,7 @@ struct config *conf_read(const char *path)
 	size_t buflen = 0;
 	char *buf = read_alloc(path, &buflen);
 	if (buf == NULL) {
-		LOGE_F("config: failed to read `%s'", path);
+		/* read_alloc() already logged the specific reason */
 		conf_free(conf);
 		return NULL;
 	}
@@ -290,6 +318,9 @@ struct config *conf_read(const char *path)
 
 void conf_free(struct config *conf)
 {
+	if (conf == NULL) {
+		return;
+	}
 	UTIL_SAFE_FREE(conf->listen);
 	UTIL_SAFE_FREE(conf->connect);
 	UTIL_SAFE_FREE(conf->kcp_bind);

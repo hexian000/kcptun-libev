@@ -108,6 +108,9 @@ int url_escape_userinfo(
 	char *restrict buf, size_t maxlen, const char *restrict username,
 	const char *restrict password)
 {
+	if (buf == NULL) {
+		maxlen = 0;
+	}
 	size_t written = 0;
 
 	int n = escape_userinfo(buf, maxlen, username, strlen(username));
@@ -127,10 +130,13 @@ int url_escape_userinfo(
 
 	APPEND_CHAR(':');
 
-	n = escape_userinfo(
-		written < maxlen ? buf + written : buf + maxlen - 1,
-		written < maxlen ? maxlen - written : 1, password,
-		strlen(password));
+	char *p = NULL;
+	size_t avail = 0;
+	if (buf != NULL && written < maxlen) {
+		p = buf + written;
+		avail = maxlen - written;
+	}
+	n = escape_userinfo(p, avail, password, strlen(password));
 	if (n < 0) {
 		return -1;
 	}
@@ -153,6 +159,9 @@ int url_escape_path(
 int url_escape_query(
 	char *restrict buf, size_t maxlen, const char *restrict query)
 {
+	if (buf == NULL) {
+		maxlen = 0;
+	}
 	if (*query == '\0') {
 		if (maxlen > 0) {
 			buf[0] = '\0';
@@ -168,29 +177,35 @@ int url_escape_query(
 		const char *eq = memchr(query, '=', next - query);
 		int n;
 		if (eq != NULL) {
-			n = escape_query(
-				written < maxlen ? buf + written :
-						   buf + maxlen - 1,
-				written < maxlen ? maxlen - written : 1, query,
-				eq - query);
+			char *p = NULL;
+			size_t avail = 0;
+			if (buf != NULL && written < maxlen) {
+				p = buf + written;
+				avail = maxlen - written;
+			}
+			n = escape_query(p, avail, query, eq - query);
 			if (n < 0) {
 				return -1;
 			}
 			written += (size_t)n;
 			APPEND_CHAR('=');
 			query = eq + 1;
-			n = escape_query(
-				written < maxlen ? buf + written :
-						   buf + maxlen - 1,
-				written < maxlen ? maxlen - written : 1, query,
-				next - query);
+			p = NULL;
+			avail = 0;
+			if (buf != NULL && written < maxlen) {
+				p = buf + written;
+				avail = maxlen - written;
+			}
+			n = escape_query(p, avail, query, next - query);
 		} else {
 			/* RFC 3986: key without value is a valid query component */
-			n = escape_query(
-				written < maxlen ? buf + written :
-						   buf + maxlen - 1,
-				written < maxlen ? maxlen - written : 1, query,
-				next - query);
+			char *p = NULL;
+			size_t avail = 0;
+			if (buf != NULL && written < maxlen) {
+				p = buf + written;
+				avail = maxlen - written;
+			}
+			n = escape_query(p, avail, query, next - query);
 		}
 		if (n < 0) {
 			return -1;
@@ -296,8 +311,23 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 	return (int)written;
 }
 
+/* RFC 3986 forbids raw control characters in a URI. Cast through unsigned
+ * char so a high byte (0x80-0xFF) on a signed-char platform is not mistaken
+ * for a control character. */
+static bool has_ctl(const char *s)
+{
+	for (; *s != '\0'; ++s) {
+		const unsigned char c = (unsigned char)*s;
+		if (c < ' ' || c == 0x7f) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool unescape(char *str, const bool space)
 {
+	/* unescape str in place: w <= r always */
 	unsigned char *w = (unsigned char *)str;
 	for (const char *r = str; *r != '\0'; r++) {
 		unsigned char ch = *r;
@@ -335,16 +365,19 @@ static bool unescape(char *str, const bool space)
 		*w++ = ch;
 	}
 	*w = '\0';
+	/* Reject any control character the percent-decode produced (e.g. a
+	 * CR/LF smuggled via %0d/%0a), so no caller of unescape() can leak them
+	 * into headers, redirects or logs. */
+	if (has_ctl(str)) {
+		return false;
+	}
 	return true;
 }
 
 bool url_parse(char *raw, struct url *restrict url)
 {
-	/* safety check */
-	for (const char *p = raw; *p != '\0'; ++p) {
-		if (*p < ' ' || *p == 0x7f) {
-			return false;
-		}
+	if (has_ctl(raw)) {
+		return false;
 	}
 
 	/* parse fragment */
@@ -356,9 +389,7 @@ bool url_parse(char *raw, struct url *restrict url)
 			return false;
 		}
 	}
-	*url = (struct url){
-		.fragment = fragment,
-	};
+	*url = (struct url){ .fragment = fragment };
 
 	if (*raw == '\0') {
 		return false;
@@ -388,7 +419,7 @@ bool url_parse(char *raw, struct url *restrict url)
 	}
 
 	/* parse query */
-	url->query = strrchr(raw, '?');
+	url->query = strchr(raw, '?');
 	if (url->query != NULL) {
 		*url->query = '\0';
 		url->query++;
@@ -413,6 +444,7 @@ bool url_parse(char *raw, struct url *restrict url)
 		}
 		char *host = raw;
 		if (!unescape(host, false)) {
+			/* unescape() now also rejects any decoded control char */
 			return false;
 		}
 		url->host = host;
@@ -490,7 +522,7 @@ bool url_query_component(
 bool url_unescape_userinfo(
 	char *raw, char **restrict username, char **restrict password)
 {
-	const char valid_chars[] = "-._:~!$&\'()*+,;=%@'";
+	const char valid_chars[] = "-._:~!$&'()*+,;=%@";
 	char *colon = NULL;
 	for (char *p = raw; *p != '\0'; ++p) {
 		const unsigned char c = (unsigned char)*p;

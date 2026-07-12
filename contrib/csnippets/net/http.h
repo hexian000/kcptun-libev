@@ -46,6 +46,8 @@ enum http_status_code {
 	HTTP_GATEWAY_TIMEOUT = 504,
 };
 
+/* http_parse() always fills .any; access as .req or .rsp once the
+ * message kind is known from context. */
 struct http_message {
 	union {
 		struct {

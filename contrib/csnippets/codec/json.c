@@ -3,10 +3,12 @@
 
 #include "json.h"
 
-#include "utils/arraysize.h"
+#include "meta/arraysize.h"
+#include "utf8.h"
 #include "utils/ascii.h"
 #include "utils/slog.h"
 
+#include <assert.h>
 #include <errno.h>
 #include <float.h>
 #include <inttypes.h>
@@ -39,45 +41,9 @@ static bool parse_hex4(const char *restrict s, uint_fast32_t *restrict out)
 	return true;
 }
 
-/* encode_utf8: encode a Unicode codepoint to UTF-8
- * buf must have room for at least 4 bytes.
- * Returns bytes written (1-4), or 0 for an invalid codepoint. */
-static int encode_utf8(uint_fast32_t cp, char *restrict buf)
-{
-	if (cp < 0x80) {
-		buf[0] = (char)cp;
-		return 1;
-	}
-	if (cp < 0x800) {
-		buf[0] = (char)(0xC0 | (cp >> 6));
-		buf[1] = (char)(0x80 | (cp & 0x3F));
-		return 2;
-	}
-	if (cp < 0x10000) {
-		buf[0] = (char)(0xE0 | (cp >> 12));
-		buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
-		buf[2] = (char)(0x80 | (cp & 0x3F));
-		return 3;
-	}
-	if (cp <= 0x10FFFF) {
-		buf[0] = (char)(0xF0 | (cp >> 18));
-		buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
-		buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
-		buf[3] = (char)(0x80 | (cp & 0x3F));
-		return 4;
-	}
-	return 0;
-}
-
-/* scan_string_inplace: decode a JSON string in-place on a mutable buffer
- *
- * s        - input pointer (first char after the opening quote)
- * len      - remaining bytes in input
- * out_slen - receives the decoded string length
- * consumed - receives bytes consumed from s (including the closing '"')
- *
- * Decodes directly over the input buffer; output length <= input length.
- * Returns true on success, false on error. */
+/* scan_string_inplace: decode a JSON string in-place; s starts just past the
+ * opening '"'.  *consumed counts through the closing '"'; output length is
+ * always <= input length.  Returns false (and logs) on error. */
 static bool scan_string_inplace(
 	char *restrict s, const size_t len, size_t *restrict out_slen,
 	size_t *restrict consumed)
@@ -86,7 +52,7 @@ static bool scan_string_inplace(
 	size_t i = 0;
 	for (;;) {
 		if (i >= len) {
-			LOGE("jsonutil: unterminated string");
+			LOGE("json: unterminated string");
 			return false;
 		}
 		const unsigned char c = (unsigned char)s[i];
@@ -97,18 +63,33 @@ static bool scan_string_inplace(
 			return true;
 		}
 		if (c < 0x20) {
-			LOGE("jsonutil: unescaped control character in string");
+			LOGE("json: unescaped control character in string");
 			return false;
 		}
 		if (c != '\\') {
-			s[opos++] = (char)c;
-			i++;
+			/* ASCII (already known to be >= 0x20 here) is always a
+			 * complete, valid single-byte sequence -- skip the
+			 * cross-TU validator call for the overwhelmingly
+			 * common case and reserve it for actual multi-byte
+			 * lead bytes. */
+			if (c < 0x80) {
+				s[opos++] = s[i++];
+				continue;
+			}
+			const int n = utf8_decode(NULL, s + i, len - i);
+			if (n == 0) {
+				LOGE("json: invalid UTF-8 sequence in string");
+				return false;
+			}
+			for (int j = 0; j < n; j++) {
+				s[opos++] = s[i++];
+			}
 			continue;
 		}
 		/* escape sequence */
 		i++;
 		if (i >= len) {
-			LOGE("jsonutil: truncated escape sequence");
+			LOGE("json: truncated escape sequence");
 			return false;
 		}
 		const unsigned char ec = (unsigned char)s[i];
@@ -140,12 +121,12 @@ static bool scan_string_inplace(
 			break;
 		case 'u': {
 			if (i + 4 > len) {
-				LOGE("jsonutil: truncated \\uXXXX escape");
+				LOGE("json: truncated \\uXXXX escape");
 				return false;
 			}
 			uint_fast32_t cp;
 			if (!parse_hex4(s + i, &cp)) {
-				LOGE("jsonutil: invalid \\uXXXX escape");
+				LOGE("json: invalid \\uXXXX escape");
 				return false;
 			}
 			i += 4;
@@ -153,36 +134,36 @@ static bool scan_string_inplace(
 			if (cp >= 0xD800 && cp <= 0xDBFF) {
 				if (i + 6 > len || s[i] != '\\' ||
 				    s[i + 1] != 'u') {
-					LOGE("jsonutil: high surrogate without low surrogate");
+					LOGE("json: high surrogate without low surrogate");
 					return false;
 				}
 				i += 2;
 				uint_fast32_t low;
 				if (!parse_hex4(s + i, &low)) {
-					LOGE("jsonutil: invalid low surrogate escape");
+					LOGE("json: invalid low surrogate escape");
 					return false;
 				}
 				if (low < 0xDC00 || low > 0xDFFF) {
-					LOGE("jsonutil: invalid surrogate pair");
+					LOGE("json: invalid surrogate pair");
 					return false;
 				}
 				i += 4;
 				cp = 0x10000 + ((cp - 0xD800) << 10) +
 				     (low - 0xDC00);
 			} else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-				LOGE("jsonutil: lone low surrogate");
+				LOGE("json: lone low surrogate");
 				return false;
 			}
-			const int nbytes = encode_utf8(cp, s + opos);
+			const int nbytes = utf8_encode(s + opos, cp);
 			if (nbytes <= 0) {
-				LOGE("jsonutil: invalid Unicode codepoint");
+				LOGE("json: invalid Unicode codepoint");
 				return false;
 			}
 			opos += (size_t)nbytes;
 			break;
 		}
 		default:
-			LOGE_F("jsonutil: invalid escape '\\%c'", (char)ec);
+			LOGE_F("json: invalid escape '\\%c'", (char)ec);
 			return false;
 		}
 	}
@@ -244,11 +225,11 @@ struct json_val json_parse(char *restrict json, size_t *restrict len)
 	const size_t buflen = *len;
 	/* skip leading whitespace */
 	size_t i = 0;
-	while (i < buflen && json_iswhitespace(json[i])) {
+	while (i < buflen && json_iswhitespace((unsigned char)json[i])) {
 		i++;
 	}
 	if (i >= buflen) {
-		LOGE("jsonutil: empty input");
+		LOGE("json: empty input");
 		*len = i;
 		return (struct json_val){ .type = JSON_ERROR };
 	}
@@ -259,7 +240,7 @@ struct json_val json_parse(char *restrict json, size_t *restrict len)
 			*len = i + 4;
 			return (struct json_val){ .type = JSON_NULL };
 		}
-		LOGE("jsonutil: invalid value 'n...'");
+		LOGE("json: invalid value 'n...'");
 		break;
 	case 't':
 		if (buflen - i >= 4 && memcmp(json + i, "true", 4) == 0) {
@@ -269,7 +250,7 @@ struct json_val json_parse(char *restrict json, size_t *restrict len)
 				.b = true,
 			};
 		}
-		LOGE("jsonutil: invalid value 't...'");
+		LOGE("json: invalid value 't...'");
 		break;
 	case 'f':
 		if (buflen - i >= 5 && memcmp(json + i, "false", 5) == 0) {
@@ -279,7 +260,7 @@ struct json_val json_parse(char *restrict json, size_t *restrict len)
 				.b = false,
 			};
 		}
-		LOGE("jsonutil: invalid value 'f...'");
+		LOGE("json: invalid value 'f...'");
 		break;
 	case '"': {
 		size_t slen, consumed;
@@ -316,7 +297,7 @@ struct json_val json_parse(char *restrict json, size_t *restrict len)
 				.len = nlen,
 			};
 		}
-		LOGE_F("jsonutil: unexpected character '%c'", (char)c);
+		LOGE_F("json: unexpected character '%c'", (char)c);
 		break;
 	}
 	}
@@ -355,7 +336,9 @@ json_rest_is_ws(const char *restrict val, size_t pos, const size_t vlen)
 	return pos == vlen;
 }
 
-bool json_parse_string(char *val, size_t vlen, char **out, size_t *outlen)
+bool json_parse_string(
+	char *restrict val, size_t vlen, char **restrict out,
+	size_t *restrict outlen)
 {
 	size_t pos = vlen;
 	const struct json_val sv = json_parse(val, &pos);
@@ -367,7 +350,7 @@ bool json_parse_string(char *val, size_t vlen, char **out, size_t *outlen)
 	return true;
 }
 
-bool json_parse_bool(char *val, size_t vlen, bool *out)
+bool json_parse_bool(char *restrict val, size_t vlen, bool *restrict out)
 {
 	size_t pos = vlen;
 	const struct json_val bv = json_parse(val, &pos);
@@ -378,7 +361,7 @@ bool json_parse_bool(char *val, size_t vlen, bool *out)
 	return true;
 }
 
-bool json_parse_int(char *val, size_t vlen, int *out)
+bool json_parse_int(char *restrict val, size_t vlen, int *restrict out)
 {
 	size_t pos = vlen;
 	const struct json_val nv = json_parse(val, &pos);
@@ -399,7 +382,7 @@ bool json_parse_int(char *val, size_t vlen, int *out)
 	return true;
 }
 
-bool json_parse_imax(char *val, size_t vlen, intmax_t *out)
+bool json_parse_imax(char *restrict val, size_t vlen, intmax_t *restrict out)
 {
 	size_t pos = vlen;
 	const struct json_val nv = json_parse(val, &pos);
@@ -420,7 +403,7 @@ bool json_parse_imax(char *val, size_t vlen, intmax_t *out)
 	return true;
 }
 
-bool json_parse_uint(char *val, size_t vlen, unsigned *out)
+bool json_parse_uint(char *restrict val, size_t vlen, unsigned *restrict out)
 {
 	size_t pos = vlen;
 	const struct json_val nv = json_parse(val, &pos);
@@ -444,7 +427,7 @@ bool json_parse_uint(char *val, size_t vlen, unsigned *out)
 	return true;
 }
 
-bool json_parse_umax(char *val, size_t vlen, uintmax_t *out)
+bool json_parse_umax(char *restrict val, size_t vlen, uintmax_t *restrict out)
 {
 	size_t pos = vlen;
 	const struct json_val nv = json_parse(val, &pos);
@@ -586,7 +569,7 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 	return true;
 }
 
-bool json_parse_double(char *val, size_t vlen, double *out)
+bool json_parse_double(char *restrict val, size_t vlen, double *restrict out)
 {
 	size_t pos = vlen;
 	const struct json_val nv = json_parse(val, &pos);
@@ -599,6 +582,30 @@ bool json_parse_double(char *val, size_t vlen, double *out)
 /* -------------------------------------------------------------------------
  * json_escape_string
  * ---------------------------------------------------------------------- */
+
+/* Clamp an internal size_t byte count to the public snprintf-style int
+ * return, treating an unrepresentable or error-sentinel (SIZE_MAX) value
+ * as failure rather than silently wrapping. */
+static int marshal_checked_int(const size_t n)
+{
+	if (n > (size_t)INT_MAX) {
+		return -1;
+	}
+	return (int)n;
+}
+
+/* Write a 2-byte "\X" escape at pos, one byte at a time so a truncated
+ * write never skips a byte that does fit while leaving it uninitialized. */
+static void marshal_escape2(
+	char *restrict buf, const size_t bufsz, const size_t pos, const char c)
+{
+	if (pos < bufsz) {
+		buf[pos] = '\\';
+	}
+	if (pos + 1 < bufsz) {
+		buf[pos + 1] = c;
+	}
+}
 
 int json_marshal_string(
 	char *restrict buf, const size_t bufsz, const char *restrict s,
@@ -620,7 +627,8 @@ int json_marshal_string(
 	need += 1; /* NUL terminator */
 
 	if (buf == NULL) {
-		return (int)need - 1; /* snprintf semantics: exclude NUL */
+		/* snprintf semantics: exclude NUL */
+		return marshal_checked_int(need - 1);
 	}
 
 	size_t pos = 0;
@@ -631,55 +639,37 @@ int json_marshal_string(
 	for (size_t i = 0; i < len; i++) {
 		const unsigned char c = (unsigned char)s[i];
 		if (c == '"') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = '"';
-			}
+			marshal_escape2(buf, bufsz, pos, '"');
 			pos += 2;
 		} else if (c == '\\') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = '\\';
-			}
+			marshal_escape2(buf, bufsz, pos, '\\');
 			pos += 2;
 		} else if (c == '\b') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = 'b';
-			}
+			marshal_escape2(buf, bufsz, pos, 'b');
 			pos += 2;
 		} else if (c == '\f') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = 'f';
-			}
+			marshal_escape2(buf, bufsz, pos, 'f');
 			pos += 2;
 		} else if (c == '\n') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = 'n';
-			}
+			marshal_escape2(buf, bufsz, pos, 'n');
 			pos += 2;
 		} else if (c == '\r') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = 'r';
-			}
+			marshal_escape2(buf, bufsz, pos, 'r');
 			pos += 2;
 		} else if (c == '\t') {
-			if (pos + 2 <= bufsz) {
-				buf[pos] = '\\';
-				buf[pos + 1] = 't';
-			}
+			marshal_escape2(buf, bufsz, pos, 't');
 			pos += 2;
 		} else if (c < 0x20) {
-			if (pos + 7 <= bufsz) {
+			/* let snprintf truncate on its own, matching every
+			 * other branch here instead of skipping the write
+			 * (and leaving a gap) whenever the full 6 bytes
+			 * don't fit */
+			if (pos < bufsz) {
 				const int n = snprintf(
 					buf + pos, bufsz - pos, "\\u%04x",
 					(unsigned)c);
-				if (n < 0 || (size_t)n >= bufsz - pos) {
-					return -1;
-				}
+				(void)n;
+				assert(n == 6);
 			}
 			pos += 6;
 		} else {
@@ -697,7 +687,8 @@ int json_marshal_string(
 		buf[pos < bufsz ? pos : bufsz - 1] = '\0';
 	}
 	pos++;
-	return (int)pos - 1; /* snprintf semantics: exclude NUL */
+	/* snprintf semantics: exclude NUL */
+	return marshal_checked_int(pos - 1);
 }
 
 /* -------------------------------------------------------------------------
@@ -709,7 +700,7 @@ int json_marshal_string(
  * 2 if a comma was consumed.  json[*i] is ready when non-zero. */
 static int skip_delim(const char *restrict json, size_t len, size_t *restrict i)
 {
-	while (*i < len && json_iswhitespace(json[*i])) {
+	while (*i < len && json_iswhitespace((unsigned char)json[*i])) {
 		(*i)++;
 	}
 	if (*i >= len) {
@@ -717,7 +708,7 @@ static int skip_delim(const char *restrict json, size_t len, size_t *restrict i)
 	}
 	if (json[*i] == ',') {
 		(*i)++;
-		while (*i < len && json_iswhitespace(json[*i])) {
+		while (*i < len && json_iswhitespace((unsigned char)json[*i])) {
 			(*i)++;
 		}
 		return 2;
@@ -766,7 +757,7 @@ static ptrdiff_t skip_raw_value(const char *restrict buf, const size_t len)
 	case '{': {
 		const char open = buf[0];
 		const char close = (open == '[') ? ']' : '}';
-		int depth = 1;
+		size_t depth = 1;
 		size_t i = 1;
 		while (i < len && depth > 0) {
 			if (buf[i] == '"') {
@@ -804,31 +795,45 @@ static ptrdiff_t skip_raw_value(const char *restrict buf, const size_t len)
 }
 
 int json_obj_next(
-	char *restrict json, const size_t *len, json_iter *restrict iter,
-	char **restrict key, size_t *restrict key_len, char **restrict val,
-	size_t *restrict val_len)
+	char *restrict json, const size_t *restrict len,
+	json_iter *restrict iter, char **restrict key, size_t *restrict key_len,
+	char **restrict val, size_t *restrict val_len)
 {
 	const size_t buflen = *len;
-	size_t i = *iter;
+	const size_t start = *iter;
+	size_t i = start;
 	const int delim = skip_delim(json, buflen, &i);
 	if (delim == 0) {
-		LOGE("jsonutil: unterminated object");
+		LOGE("json: unterminated object");
 		return JSON_NEXT_ERROR;
 	}
 	if (i >= buflen) {
-		LOGE("jsonutil: unterminated object");
+		LOGE("json: unterminated object");
 		return JSON_NEXT_ERROR;
 	}
+	/* The cursor sits just past '{' on the first member and just past the
+	 * previous value otherwise; a JSON value never ends in '{', so the byte
+	 * before the cursor is '{' exactly on the first member. A comma must
+	 * separate members and must not precede the first. */
+	const bool first = (start >= 1 && json[start - 1] == '{');
 	if (json[i] == '}') {
 		if (delim == 2) {
-			LOGE("jsonutil: trailing comma in object");
+			LOGE("json: trailing comma in object");
 			return JSON_NEXT_ERROR;
 		}
 		*iter = i + 1;
 		return JSON_NEXT_END;
 	}
+	if (first && delim == 2) {
+		LOGE("json: leading comma in object");
+		return JSON_NEXT_ERROR;
+	}
+	if (!first && delim != 2) {
+		LOGE("json: expected ',' between object members");
+		return JSON_NEXT_ERROR;
+	}
 	if (i >= buflen || json[i] != '"') {
-		LOGE("jsonutil: expected object key string");
+		LOGE("json: expected object key string");
 		return JSON_NEXT_ERROR;
 	}
 	size_t slen, consumed;
@@ -839,24 +844,24 @@ int json_obj_next(
 	*key = json + i + 1;
 	*key_len = slen;
 	i += 1 + consumed;
-	while (i < buflen && json_iswhitespace(json[i])) {
+	while (i < buflen && json_iswhitespace((unsigned char)json[i])) {
 		i++;
 	}
 	if (i >= buflen || json[i] != ':') {
-		LOGE("jsonutil: expected ':' after object key");
+		LOGE("json: expected ':' after object key");
 		return JSON_NEXT_ERROR;
 	}
 	i++;
-	while (i < buflen && json_iswhitespace(json[i])) {
+	while (i < buflen && json_iswhitespace((unsigned char)json[i])) {
 		i++;
 	}
 	if (i >= buflen) {
-		LOGE("jsonutil: expected value after ':'");
+		LOGE("json: expected value after ':'");
 		return JSON_NEXT_ERROR;
 	}
 	const ptrdiff_t vlen = skip_raw_value(json + i, buflen - i);
 	if (vlen < 0) {
-		LOGE("jsonutil: invalid JSON value");
+		LOGE("json: invalid JSON value");
 		return JSON_NEXT_ERROR;
 	}
 	*val = json + i;
@@ -866,35 +871,45 @@ int json_obj_next(
 }
 
 int json_arr_next(
-	char *restrict json, const size_t *len, json_iter *restrict iter,
-	char **restrict val, size_t *restrict val_len)
+	char *restrict json, const size_t *restrict len,
+	json_iter *restrict iter, char **restrict val, size_t *restrict val_len)
 {
 	const size_t buflen = *len;
-	size_t i = *iter;
+	const size_t start = *iter;
+	size_t i = start;
 	const int delim = skip_delim(json, buflen, &i);
 	if (delim == 0) {
-		LOGE("jsonutil: unterminated array");
+		LOGE("json: unterminated array");
 		return JSON_NEXT_ERROR;
 	}
 	if (i >= buflen) {
-		LOGE("jsonutil: unterminated array");
+		LOGE("json: unterminated array");
 		return JSON_NEXT_ERROR;
 	}
+	/* The cursor sits just past '[' on the first element and just past the
+	 * previous value otherwise; a JSON value never ends in '[', so the byte
+	 * before the cursor is '[' exactly on the first element. A comma must
+	 * separate elements and must not precede the first. */
+	const bool first = (start >= 1 && json[start - 1] == '[');
 	if (json[i] == ']') {
 		if (delim == 2) {
-			LOGE("jsonutil: trailing comma in array");
+			LOGE("json: trailing comma in array");
 			return JSON_NEXT_ERROR;
 		}
 		*iter = i + 1;
 		return JSON_NEXT_END;
 	}
-	if (i >= buflen) {
-		LOGE("jsonutil: expected array element");
+	if (first && delim == 2) {
+		LOGE("json: leading comma in array");
+		return JSON_NEXT_ERROR;
+	}
+	if (!first && delim != 2) {
+		LOGE("json: expected ',' between array elements");
 		return JSON_NEXT_ERROR;
 	}
 	const ptrdiff_t vlen = skip_raw_value(json + i, buflen - i);
 	if (vlen < 0) {
-		LOGE("jsonutil: invalid JSON value in array");
+		LOGE("json: invalid JSON value in array");
 		return JSON_NEXT_ERROR;
 	}
 	*val = json + i;
@@ -967,8 +982,8 @@ static size_t json_elem_size(const struct json_field *restrict f)
 
 /* json_free_array: release the heap owned by array elements (object elements
  * recurse; primitive and string elements own nothing). */
-static void
-json_free_array(const struct json_field *restrict f, void *base, size_t count)
+static void json_free_array(
+	const struct json_field *restrict f, void *restrict base, size_t count)
 {
 	if (f->kind != JSON_K_OBJECT || base == NULL) {
 		return;
@@ -980,27 +995,9 @@ json_free_array(const struct json_field *restrict f, void *base, size_t count)
 	}
 }
 
-void json_free(const struct json_schema *restrict schema, void *obj)
-{
-	char *const base = obj;
-	for (size_t fi = 0; fi < schema->n_fields; fi++) {
-		const struct json_field *const f = &schema->fields[fi];
-		if (f->is_array) {
-			void **const pp = (void **)(base + f->offset);
-			size_t *const pc = (size_t *)(base + f->count_offset);
-			json_free_array(f, *pp, *pc);
-			free(*pp);
-			*pp = NULL;
-			*pc = 0;
-		} else if (f->kind == JSON_K_OBJECT) {
-			json_free(f->child, base + f->offset);
-		}
-	}
-}
-
 /* --- constraint checks ------------------------------------------------- */
 
-static bool json_in_imax(const intmax_t *a, size_t n, intmax_t v)
+static bool json_in_imax(const intmax_t *restrict a, size_t n, intmax_t v)
 {
 	for (size_t i = 0; i < n; i++) {
 		if (a[i] == v) {
@@ -1010,7 +1007,7 @@ static bool json_in_imax(const intmax_t *a, size_t n, intmax_t v)
 	return false;
 }
 
-static bool json_in_umax(const uintmax_t *a, size_t n, uintmax_t v)
+static bool json_in_umax(const uintmax_t *restrict a, size_t n, uintmax_t v)
 {
 	for (size_t i = 0; i < n; i++) {
 		if (a[i] == v) {
@@ -1020,7 +1017,7 @@ static bool json_in_umax(const uintmax_t *a, size_t n, uintmax_t v)
 	return false;
 }
 
-static bool json_in_double(const double *a, size_t n, double v)
+static bool json_in_double(const double *restrict a, size_t n, double v)
 {
 	for (size_t i = 0; i < n; i++) {
 		if (a[i] == v) {
@@ -1030,8 +1027,9 @@ static bool json_in_double(const double *a, size_t n, double v)
 	return false;
 }
 
-static bool
-json_check_str(const struct json_constraint *c, const char *s, size_t len)
+static bool json_check_str(
+	const struct json_constraint *restrict c, const char *restrict s,
+	size_t len)
 {
 	if ((c->flags & JSON_C_MIN_LEN) && len < c->str.min_len) {
 		return false;
@@ -1060,7 +1058,7 @@ json_check_str(const struct json_constraint *c, const char *s, size_t len)
 	return true;
 }
 
-static bool json_check_int(const struct json_constraint *c, intmax_t v)
+static bool json_check_int(const struct json_constraint *restrict c, intmax_t v)
 {
 	if ((c->flags & JSON_C_MIN) && v < c->i.min) {
 		return false;
@@ -1087,7 +1085,8 @@ static bool json_check_int(const struct json_constraint *c, intmax_t v)
 	return true;
 }
 
-static bool json_check_uint(const struct json_constraint *c, uintmax_t v)
+static bool
+json_check_uint(const struct json_constraint *restrict c, uintmax_t v)
 {
 	if ((c->flags & JSON_C_MIN) && v < c->u.min) {
 		return false;
@@ -1114,7 +1113,8 @@ static bool json_check_uint(const struct json_constraint *c, uintmax_t v)
 	return true;
 }
 
-static bool json_check_double(const struct json_constraint *c, double v)
+static bool
+json_check_double(const struct json_constraint *restrict c, double v)
 {
 	if ((c->flags & JSON_C_MIN) && v < c->d.min) {
 		return false;
@@ -1141,7 +1141,7 @@ static bool json_check_double(const struct json_constraint *c, double v)
 	return true;
 }
 
-static bool json_check_bool(const struct json_constraint *c, bool v)
+static bool json_check_bool(const struct json_constraint *restrict c, bool v)
 {
 	if ((c->flags & JSON_C_CONST) && v != (c->b.konst != 0)) {
 		return false;
@@ -1240,6 +1240,11 @@ static bool json_unmarshal_array(
 		}
 		if (count >= cap) {
 			const size_t nc = cap ? cap * 2 : 4;
+			/* reject growth that would overflow size_t (cap*2 wrap,
+			 * or nc*esz wrap) rather than under-allocate the buffer */
+			if (cap > nc || (esz != 0 && nc > SIZE_MAX / esz)) {
+				goto fail;
+			}
 			char *const nb = realloc(buf, nc * esz);
 			if (nb == NULL) {
 				goto fail;
@@ -1280,6 +1285,9 @@ fail:
 	return false;
 }
 
+/* Recurses for nested JSON_K_OBJECT fields; depth follows the schema's
+ * static field nesting (fixed at codegen), not the JSON input, so malformed
+ * or adversarial input cannot drive unbounded recursion. */
 bool json_unmarshal(
 	const struct json_schema *restrict schema, void *obj, char *json,
 	size_t length)
@@ -1366,39 +1374,41 @@ fail:
 
 /* --- marshal ----------------------------------------------------------- */
 
-static int json_emit_ch(char *buf, size_t bufsz, int n, char c)
+static size_t json_emit_ch(char *restrict buf, size_t bufsz, size_t n, char c)
 {
-	if (buf != NULL && (size_t)n < bufsz) {
+	if (buf != NULL && n < bufsz) {
 		buf[n] = c;
 	}
 	return n + 1;
 }
 
-static int
-json_emit_raw(char *buf, size_t bufsz, int n, const char *s, size_t len)
+static size_t json_emit_raw(
+	char *restrict buf, size_t bufsz, size_t n, const char *restrict s,
+	size_t len)
 {
-	if (buf != NULL && (size_t)n < bufsz) {
-		const size_t cap = bufsz - (size_t)n;
+	if (buf != NULL && n < bufsz) {
+		const size_t cap = bufsz - n;
 		memcpy(buf + n, s, len < cap ? len : cap);
 	}
-	return n + (int)len;
+	return n + len;
 }
 
-static int
-json_emit_str(char *buf, size_t bufsz, int n, const char *s, size_t len)
+static size_t json_emit_str(
+	char *restrict buf, size_t bufsz, size_t n, const char *restrict s,
+	size_t len)
 {
-	char *const dst = (buf != NULL && (size_t)n < bufsz) ? buf + n : NULL;
-	const int r = json_marshal_string(
-		dst, dst != NULL ? bufsz - (size_t)n : 0, s, len);
+	char *const dst = (buf != NULL && n < bufsz) ? buf + n : NULL;
+	const int r =
+		json_marshal_string(dst, dst != NULL ? bufsz - n : 0, s, len);
 	if (r < 0) {
-		return -1;
+		return SIZE_MAX;
 	}
-	return n + r;
+	return n + (size_t)r;
 }
 
-static int json_emit_indent(
-	char *buf, size_t bufsz, int n, const char *indent, size_t ind_len,
-	int d)
+static size_t json_emit_indent(
+	char *restrict buf, size_t bufsz, size_t n, const char *restrict indent,
+	size_t ind_len, int d)
 {
 	if (indent == NULL) {
 		return n;
@@ -1410,15 +1420,17 @@ static int json_emit_indent(
 	return n;
 }
 
-static int json_marshal_impl(
-	const struct json_schema *restrict schema, char *buf, size_t bufsz,
-	const void *obj, const char *indent, size_t ind_len, int depth);
+static size_t json_marshal_impl(
+	const struct json_schema *restrict schema, char *restrict buf,
+	size_t bufsz, const void *restrict obj, const char *restrict indent,
+	size_t ind_len, int depth);
 
 /* json_emit_value: emit one field value (no key, no array brackets) of the
- * field's element kind.  Returns the new length, or -1 on error. */
-static int json_emit_value(
-	const struct json_field *restrict f, char *buf, size_t bufsz, int n,
-	const void *slot, const char *indent, size_t ind_len, int depth)
+ * field's element kind.  Returns the new length, or SIZE_MAX on error. */
+static size_t json_emit_value(
+	const struct json_field *restrict f, char *restrict buf, size_t bufsz,
+	size_t n, const void *restrict slot, const char *restrict indent,
+	size_t ind_len, int depth)
 {
 	char tmp[32];
 	int r;
@@ -1447,7 +1459,7 @@ static int json_emit_value(
 		const double v = *(const double *)slot;
 		/* NaN/Inf have no JSON representation */
 		if (!json_isfinite(v)) {
-			return -1;
+			return SIZE_MAX;
 		}
 		r = snprintf(tmp, sizeof(tmp), "%.17g", v);
 		break;
@@ -1457,33 +1469,33 @@ static int json_emit_value(
 			       json_emit_raw(buf, bufsz, n, "true", 4) :
 			       json_emit_raw(buf, bufsz, n, "false", 5);
 	case JSON_K_OBJECT: {
-		char *const dst =
-			(buf != NULL && (size_t)n < bufsz) ? buf + n : NULL;
-		r = json_marshal_impl(
-			f->child, dst, dst != NULL ? bufsz - (size_t)n : 0,
-			slot, indent, ind_len, depth);
-		if (r < 0) {
-			return -1;
+		char *const dst = (buf != NULL && n < bufsz) ? buf + n : NULL;
+		const size_t r2 = json_marshal_impl(
+			f->child, dst, dst != NULL ? bufsz - n : 0, slot,
+			indent, ind_len, depth);
+		if (r2 == SIZE_MAX) {
+			return SIZE_MAX;
 		}
-		return n + r;
+		return n + r2;
 	}
 	default:
-		return -1;
+		return SIZE_MAX;
 	}
 	if (r < 0) {
-		return -1;
+		return SIZE_MAX;
 	}
 	return json_emit_raw(buf, bufsz, n, tmp, (size_t)r);
 }
 
-static int json_marshal_impl(
-	const struct json_schema *restrict schema, char *buf, size_t bufsz,
-	const void *obj, const char *indent, size_t ind_len, int depth)
+static size_t json_marshal_impl(
+	const struct json_schema *restrict schema, char *restrict buf,
+	size_t bufsz, const void *restrict obj, const char *restrict indent,
+	size_t ind_len, int depth)
 {
 	const char *const base = obj;
-	int n = 0;
+	size_t n = 0;
 	n = json_emit_ch(buf, bufsz, n, '{');
-	const int n_start = n;
+	const size_t n_start = n;
 	for (size_t fi = 0; fi < schema->n_fields; fi++) {
 		const struct json_field *const f = &schema->fields[fi];
 		const void *const slot = base + f->offset;
@@ -1540,8 +1552,8 @@ static int json_marshal_impl(
 					f, buf, bufsz, n,
 					(const char *)arr + i * esz, indent,
 					ind_len, depth + 2);
-				if (n < 0) {
-					return -1;
+				if (n == SIZE_MAX) {
+					return SIZE_MAX;
 				}
 			}
 			if (cnt > 0) {
@@ -1554,8 +1566,8 @@ static int json_marshal_impl(
 			n = json_emit_value(
 				f, buf, bufsz, n, slot, indent, ind_len,
 				depth + 1);
-			if (n < 0) {
-				return -1;
+			if (n == SIZE_MAX) {
+				return SIZE_MAX;
 			}
 		}
 		n = json_emit_ch(buf, bufsz, n, ',');
@@ -1569,15 +1581,35 @@ static int json_marshal_impl(
 	}
 	n = json_emit_ch(buf, bufsz, n, '}');
 	if (buf != NULL && bufsz > 0) {
-		buf[(size_t)n < bufsz ? (size_t)n : bufsz - 1] = '\0';
+		buf[n < bufsz ? n : bufsz - 1] = '\0';
 	}
 	return n;
 }
 
 int json_marshal(
-	const struct json_schema *restrict schema, char *buf, size_t bufsz,
-	const void *obj, const char *indent)
+	const struct json_schema *restrict schema, char *restrict buf,
+	size_t bufsz, const void *restrict obj, const char *restrict indent)
 {
 	const size_t ind_len = (indent != NULL) ? strlen(indent) : 0;
-	return json_marshal_impl(schema, buf, bufsz, obj, indent, ind_len, 0);
+	const size_t n =
+		json_marshal_impl(schema, buf, bufsz, obj, indent, ind_len, 0);
+	return marshal_checked_int(n);
+}
+
+void json_free(const struct json_schema *restrict schema, void *restrict obj)
+{
+	char *const base = obj;
+	for (size_t fi = 0; fi < schema->n_fields; fi++) {
+		const struct json_field *const f = &schema->fields[fi];
+		if (f->is_array) {
+			void **const pp = (void **)(base + f->offset);
+			size_t *const pc = (size_t *)(base + f->count_offset);
+			json_free_array(f, *pp, *pc);
+			free(*pp);
+			*pp = NULL;
+			*pc = 0;
+		} else if (f->kind == JSON_K_OBJECT) {
+			json_free(f->child, base + f->offset);
+		}
+	}
 }

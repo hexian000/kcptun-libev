@@ -9,37 +9,24 @@
 
 #define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
 
-static inline uint_fast64_t splitmix64(uint_fast64_t *restrict state)
-{
-	uint_fast64_t result = (*state += UINT64_C(0x9E3779B97f4A7C15));
-	result = (result ^ (result >> 30u)) * UINT64_C(0xBF58476D1CE4E5B9);
-	result = (result ^ (result >> 27u)) * UINT64_C(0x94D049BB133111EB);
-	return result ^ (result >> 31u);
-}
-
-static thread_local uint_fast64_t xoshiro256ss[4] = {
+/* xoshiro256** and splitmix64 (used only to expand a seed into this state)
+ * are bit-exact algorithms defined for 64-bit words; uint_fast64_t is only
+ * guaranteed to be *at least* 64 bits, so the state and arithmetic use the
+ * exact-width type and convert to uint_fast64_t only at the public API. */
+static thread_local uint64_t xoshiro256ss[4] = {
 	UINT64_C(0x910A2DEC89025CC1),
 	UINT64_C(0xBEEB8DA1658EEC67),
 	UINT64_C(0xF893A2EEFB32555E),
 	UINT64_C(0x71C18690EE42C90B),
 };
 
-void srand64(uint_fast64_t seed)
-{
-	uint_fast64_t *restrict s = xoshiro256ss;
-	s[0] = splitmix64(&seed);
-	s[1] = splitmix64(&seed);
-	s[2] = splitmix64(&seed);
-	s[3] = splitmix64(&seed);
-}
-
 uint_fast64_t rand64(void)
 {
-	uint_fast64_t *restrict s = xoshiro256ss;
+	uint64_t *restrict s = xoshiro256ss;
 
-	const uint_fast64_t result =
+	const uint64_t result =
 		ROTL(s[1] * UINT64_C(5), UINT64_C(7)) * UINT64_C(9);
-	const uint_fast64_t t = s[1] << 17u;
+	const uint64_t t = s[1] << 17u;
 
 	s[2] ^= s[0];
 	s[3] ^= s[1];
@@ -49,6 +36,24 @@ uint_fast64_t rand64(void)
 	s[2] ^= t;
 	s[3] = ROTL(s[3], 45);
 	return result;
+}
+
+static inline uint64_t splitmix64(uint64_t *restrict state)
+{
+	uint64_t result = (*state += UINT64_C(0x9E3779B97f4A7C15));
+	result = (result ^ (result >> 30u)) * UINT64_C(0xBF58476D1CE4E5B9);
+	result = (result ^ (result >> 27u)) * UINT64_C(0x94D049BB133111EB);
+	return result ^ (result >> 31u);
+}
+
+void srand64(const uint_fast64_t seed)
+{
+	uint64_t state = (uint64_t)seed;
+	uint64_t *restrict s = xoshiro256ss;
+	s[0] = splitmix64(&state);
+	s[1] = splitmix64(&state);
+	s[2] = splitmix64(&state);
+	s[3] = splitmix64(&state);
 }
 
 uint_fast64_t rand64n(const uint_fast64_t n)

@@ -19,45 +19,65 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
-int socket_set_cloexec(const int fd)
+bool socket_shutdown(const int fd, const int how)
+{
+	if (shutdown(fd, how) != 0) {
+		const int err = errno;
+		LOGW_F("shutdown [fd:%d]: (%d) %s", fd, err, strerror(err));
+		return false;
+	}
+	return true;
+}
+
+void socket_close(const int fd)
+{
+	if (close(fd) != 0) {
+		const int err = errno;
+		LOGW_F("close [fd:%d]: (%d) %s", fd, err, strerror(err));
+	}
+}
+
+bool socket_set_cloexec(const int fd)
 {
 	const int flags = fcntl(fd, F_GETFD, 0);
 	if (flags == -1) {
 		const int err = errno;
 		LOGE_F("fcntl [fd:%d]: F_GETFD (%d) %s", fd, err,
 		       strerror(err));
-		return err;
+		return false;
 	}
 	if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
 		const int err = errno;
 		LOGE_F("fcntl [fd:%d]: F_SETFD (%d) %s", fd, err,
 		       strerror(err));
-		return err;
+		return false;
 	}
-	return 0;
+	return true;
 }
 
-int socket_set_nonblock(const int fd)
+bool socket_set_nonblock(const int fd)
 {
 	const int flags = fcntl(fd, F_GETFL, 0);
 	if (flags == -1) {
 		const int err = errno;
 		LOGE_F("fcntl [fd:%d]: F_GETFL (%d) %s", fd, err,
 		       strerror(err));
-		return err;
+		return false;
 	}
 	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
 		const int err = errno;
 		LOGE_F("fcntl [fd:%d]: F_SETFL (%d) %s", fd, err,
 		       strerror(err));
-		return err;
+		return false;
 	}
-	return 0;
+	return true;
 }
 
-void socket_set_buffer(const int fd, const int sndbuf, const int rcvbuf)
+bool socket_set_buffer(const int fd, const int sndbuf, const int rcvbuf)
 {
+	bool ok = true;
 	if (sndbuf > 0) {
 		if (setsockopt(
 			    fd, SOL_SOCKET, SO_SNDBUF, &sndbuf,
@@ -65,6 +85,7 @@ void socket_set_buffer(const int fd, const int sndbuf, const int rcvbuf)
 			const int err = errno;
 			LOGW_F("setsockopt [fd:%d]: SO_SNDBUF (%d) %s", fd, err,
 			       strerror(err));
+			ok = false;
 		}
 	}
 	if (rcvbuf > 0) {
@@ -74,17 +95,21 @@ void socket_set_buffer(const int fd, const int sndbuf, const int rcvbuf)
 			const int err = errno;
 			LOGW_F("setsockopt [fd:%d]: SO_RCVBUF (%d) %s", fd, err,
 			       strerror(err));
+			ok = false;
 		}
 	}
+	return ok;
 }
 
-void socket_set_reuseport(const int fd, const bool reuseport)
+bool socket_set_reuseport(const int fd, const bool reuseport)
 {
+	bool ok = true;
 	const int opt = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
 		const int err = errno;
 		LOGE_F("setsockopt [fd:%d]: SO_REUSEADDR (%d) %s", fd, err,
 		       strerror(err));
+		ok = false;
 	}
 #ifdef SO_REUSEPORT
 	const int opt_reuseport = reuseport ? 1 : 0;
@@ -94,14 +119,17 @@ void socket_set_reuseport(const int fd, const bool reuseport)
 		const int err = errno;
 		LOGE_F("setsockopt [fd:%d]: SO_REUSEPORT (%d) %s", fd, err,
 		       strerror(err));
+		ok = false;
 	}
 #else
 	(void)reuseport;
-#endif
+#endif /* SO_REUSEPORT */
+	return ok;
 }
 
-void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
+bool socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 {
+	bool ok = true;
 	{
 		const int opt = nodelay ? 1 : 0;
 		if (setsockopt(
@@ -110,6 +138,7 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 			const int err = errno;
 			LOGW_F("setsockopt [fd:%d]: TCP_NODELAY (%d) %s", fd,
 			       err, strerror(err));
+			ok = false;
 		}
 	}
 	{
@@ -120,11 +149,13 @@ void socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 			const int err = errno;
 			LOGW_F("setsockopt [fd:%d]: SO_KEEPALIVE (%d) %s", fd,
 			       err, strerror(err));
+			ok = false;
 		}
 	}
+	return ok;
 }
 
-void socket_set_linger(const int fd, const bool enabled, const int seconds)
+bool socket_set_linger(const int fd, const bool enabled, const int seconds)
 {
 	const struct linger val = {
 		.l_onoff = enabled ? 1 : 0,
@@ -134,51 +165,80 @@ void socket_set_linger(const int fd, const bool enabled, const int seconds)
 		const int err = errno;
 		LOGW_F("setsockopt [fd:%d]: SO_LINGER (%d) %s", fd, err,
 		       strerror(err));
+		return false;
 	}
+	return true;
 }
 
-void socket_set_fastopen(const int fd, const int backlog)
+bool socket_set_fastopen(const int fd, const int backlog)
 {
-#if WITH_TCP_FASTOPEN
+#ifdef TCP_FASTOPEN
 	if (setsockopt(
 		    fd, IPPROTO_TCP, TCP_FASTOPEN, &backlog, sizeof(backlog)) !=
 	    0) {
 		const int err = errno;
 		LOGW_F("setsockopt [fd:%d]: TCP_FASTOPEN (%d) %s", fd, err,
 		       strerror(err));
+		return false;
 	}
+	return true;
 #else
 	(void)fd;
 	(void)backlog;
-#endif
+	return false;
+#endif /* TCP_FASTOPEN */
 }
 
-void socket_set_fastopen_connect(const int fd, const bool enabled)
+bool socket_set_fastopen_connect(const int fd, const bool enabled)
 {
 #ifdef TCP_FASTOPEN_CONNECT
-	int val = enabled ? 1 : 0;
+	const int val = enabled ? 1 : 0;
 	if (setsockopt(
 		    fd, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, &val, sizeof(val))) {
 		const int err = errno;
 		LOGW_F("setsockopt [fd:%d]: TCP_FASTOPEN_CONNECT (%d) %s", fd,
 		       err, strerror(err));
+		return false;
 	}
+	return true;
 #else
 	(void)fd;
 	(void)enabled;
+	return false;
 #endif /* TCP_FASTOPEN_CONNECT */
 }
 
-void socket_rcvlowat(const int fd, const int bytes)
+bool socket_notsent_lowat(const int fd, const int bytes)
+{
+#ifdef TCP_NOTSENT_LOWAT
+	if (setsockopt(
+		    fd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, &bytes,
+		    sizeof(bytes)) != 0) {
+		const int err = errno;
+		LOGW_F("setsockopt [fd:%d]: TCP_NOTSENT_LOWAT (%d) %s", fd, err,
+		       strerror(err));
+		return false;
+	}
+	return true;
+#else
+	(void)fd;
+	(void)bytes;
+	return false;
+#endif /* TCP_NOTSENT_LOWAT */
+}
+
+bool socket_rcvlowat(const int fd, const int bytes)
 {
 	if (bytes > 0) {
-		socklen_t len = (socklen_t)sizeof(bytes);
+		const socklen_t len = (socklen_t)sizeof(bytes);
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVLOWAT, &bytes, len)) {
 			const int err = errno;
 			LOGE_F("setsockopt [fd:%d]: SO_RCVLOWAT (%d) %s", fd,
 			       err, strerror(err));
+			return false;
 		}
 	}
+	return true;
 }
 
 int socket_get_error(const int fd)
@@ -191,26 +251,26 @@ int socket_get_error(const int fd)
 	return err;
 }
 
-socklen_t socket_get_addr(const int fd, union sockaddr_max *const sa)
+bool socket_get_addr(const int fd, union sockaddr_max *const sa)
 {
 	socklen_t len = sizeof(union sockaddr_max);
 	if (getsockname(fd, &sa->sa, &len) != 0) {
 		const int err = errno;
 		LOGE_F("getsockname [fd:%d]: (%d) %s", fd, err, strerror(err));
-		return 0;
+		return false;
 	}
-	return len;
+	return true;
 }
 
-socklen_t socket_get_peer(const int fd, union sockaddr_max *const sa)
+bool socket_get_peer(const int fd, union sockaddr_max *const sa)
 {
 	socklen_t len = sizeof(union sockaddr_max);
 	if (getpeername(fd, &sa->sa, &len) != 0) {
 		const int err = errno;
 		LOGE_F("getpeername [fd:%d]: (%d) %s", fd, err, strerror(err));
-		return 0;
+		return false;
 	}
-	return len;
+	return true;
 }
 
 socklen_t sa_len(const struct sockaddr *sa)
@@ -267,13 +327,34 @@ int sa_format(
 {
 	switch (sa->sa_family) {
 	case AF_INET:
-		return sa_format_inet(s, maxlen, (struct sockaddr_in *)sa);
+		return sa_format_inet(
+			s, maxlen, (const struct sockaddr_in *)sa);
 	case AF_INET6:
-		return sa_format_inet6(s, maxlen, (struct sockaddr_in6 *)sa);
+		return sa_format_inet6(
+			s, maxlen, (const struct sockaddr_in6 *)sa);
 	default:
 		break;
 	}
 	return snprintf(s, maxlen, "<af:%jd>", (intmax_t)sa->sa_family);
+}
+
+static bool sa_equals_inet(
+	const struct sockaddr_in *restrict a,
+	const struct sockaddr_in *restrict b)
+{
+	return a->sin_port == b->sin_port &&
+	       a->sin_addr.s_addr == b->sin_addr.s_addr;
+}
+
+static bool sa_equals_inet6(
+	const struct sockaddr_in6 *restrict a,
+	const struct sockaddr_in6 *restrict b)
+{
+	return a->sin6_port == b->sin6_port &&
+	       a->sin6_flowinfo == b->sin6_flowinfo &&
+	       memcmp(&a->sin6_addr, &b->sin6_addr, sizeof(struct in6_addr)) ==
+		       0 &&
+	       a->sin6_scope_id == b->sin6_scope_id;
 }
 
 bool sa_equals(
@@ -284,9 +365,13 @@ bool sa_equals(
 	}
 	switch (a->sa_family) {
 	case AF_INET:
-		return memcmp(a, b, sizeof(struct sockaddr_in)) == 0;
+		return sa_equals_inet(
+			(const struct sockaddr_in *)a,
+			(const struct sockaddr_in *)b);
 	case AF_INET6:
-		return memcmp(a, b, sizeof(struct sockaddr_in6)) == 0;
+		return sa_equals_inet6(
+			(const struct sockaddr_in6 *)a,
+			(const struct sockaddr_in6 *)b);
 	default:
 		break;
 	}
@@ -391,7 +476,7 @@ enum ipclass sa_ipclassify(const struct sockaddr *sa)
 		}
 	} break;
 	case AF_INET6: {
-		const struct in6_addr *addr =
+		const struct in6_addr *const addr =
 			&((const struct sockaddr_in6 *)sa)->sin6_addr;
 		if (IN6_IS_ADDR_UNSPECIFIED(addr)) {
 			return IPCLASS_UNSPECIFIED;
@@ -484,7 +569,7 @@ bool sa_resolve_bind(
 	union sockaddr_max *restrict sa, const char *restrict name,
 	const char *restrict service, const enum sa_resolve_type type)
 {
-	if (name[0] == '\0') {
+	if (name != NULL && name[0] == '\0') {
 		name = NULL;
 	}
 	const struct addrinfo hints = {

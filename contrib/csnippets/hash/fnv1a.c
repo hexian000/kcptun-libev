@@ -5,6 +5,7 @@
 
 #include "fnv1a.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define FNV_32_PRIME UINT32_C(0x01000193)
@@ -20,22 +21,21 @@ fnv1a_32(const void *restrict ptr, const size_t len, const uint_fast32_t seed)
 	uint_fast32_t h = seed;
 
 	/* FNV-1a hash each octet in the buffer */
-	while (bp < be) {
+	for (; bp < be; bp++) {
 		/* xor the bottom with the current octet */
-		h ^= (uint_fast32_t)*bp++;
+		h ^= (uint_fast32_t)*bp;
 
 		/* multiply by the 32 bit FNV magic prime mod 2^32 */
 #if defined(NO_FNV_GCC_OPTIMIZATION)
 		h *= FNV_32_PRIME;
-#else
+#else /* NO_FNV_GCC_OPTIMIZATION */
 		h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
-#endif
+#endif /* NO_FNV_GCC_OPTIMIZATION */
 	}
 
-	/* return our new hash value; explicit truncation keeps the result a
-	 * true 32-bit FNV-1a value even where uint_fast32_t is wider.
-	 * UINT32_C is mandated by C11 even where the optional uint32_t
-	 * (and hence UINT32_MAX) is absent. */
+	/* Explicit truncation keeps this a true 32-bit FNV-1a value even
+	 * where uint_fast32_t is wider. UINT32_C is mandated by C11 even
+	 * where the optional uint32_t (and UINT32_MAX) is absent. */
 	return h & UINT32_C(0xffffffff);
 }
 
@@ -52,9 +52,9 @@ fnv1a_64(const void *restrict ptr, const size_t len, const uint_fast64_t seed)
 	uint_fast64_t h = seed;
 
 	/* FNV-1a hash each octet of the buffer */
-	while (bp < be) {
+	for (; bp < be; bp++) {
 		/* xor the bottom with the current octet */
-		h ^= (uint_fast64_t)*bp++;
+		h ^= (uint_fast64_t)*bp;
 
 		/* multiply by the 64 bit FNV magic prime mod 2^64 */
 #if defined(NO_FNV_GCC_OPTIMIZATION)

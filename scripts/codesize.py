@@ -54,8 +54,8 @@ def ensure_tool(name: str) -> str:
 def ensure_project_root(root: Path) -> None:
     if not (root / "CMakeLists.txt").exists():
         sys.exit(
-            f"error: working directory does not look like the project root: {
-                root}"
+            "error: working directory does not look like the project "
+            f"root: {root}"
         )
 
 
@@ -90,7 +90,7 @@ def _human(n: int) -> str:
 def build_release(cmake: str, build_dir: Path, base_cache: dict[str, str], config: str) -> None:
     if build_dir.exists():
         log(
-            f"Removing existing build directory {build_dir.relative_to(ROOT)} …")
+            f"Removing existing build directory {build_dir.relative_to(ROOT)} ...")
         shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True)
 
@@ -427,24 +427,25 @@ def main() -> int:
         cmake = ensure_tool("cmake")
         base_cache = parse_cmake_cache(DEFAULT_BUILD_DIR / "CMakeCache.txt")
         log(
-            f"Configuring and building {args.config} in {build_dir.relative_to(ROOT)} …")
+            f"Configuring and building {args.config} in {build_dir.relative_to(ROOT)} ...")
         build_release(cmake, build_dir, base_cache, args.config)
 
-    log("Collecting object file sizes …")
+    log("Collecting object file sizes ...")
     rows = collect_sizes(build_dir, target=args.target)
     if not rows:
         sys.exit(
             f"error: no compiled sources found via {build_dir / 'compile_commands.json'}")
 
-    log("Collecting symbols via nm …")
+    log("Collecting symbols via nm ...")
     symbols = collect_symbols(build_dir, target=args.target)
 
     elapsed = time.monotonic() - t0
-    log(f"{len(rows)} file(s), {sum(sl for _, _, sl in rows):,} SLOC, total {
-        _human(sum(sz for _, sz, _ in rows))}, {elapsed:.1f} s")
+    total_size = _human(sum(sz for _, sz, _ in rows))
+    log(f"{len(rows)} file(s), {sum(sl for _, _, sl in rows):,} SLOC, "
+        f"total {total_size}, {elapsed:.1f} s")
     if symbols:
-        log(f"{len(symbols):,} symbols, {
-            _human(sum(sz for _, sz, _, _ in symbols))} total")
+        symbols_size = _human(sum(sz for _, sz, _, _ in symbols))
+        log(f"{len(symbols):,} symbols, {symbols_size} total")
 
     write_report(rows, symbols, output, elapsed, args.config)
     return 0

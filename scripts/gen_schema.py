@@ -138,13 +138,13 @@ _STDDEF_NAMES = frozenset({
 # <stdint.h> — Integer types with specified widths (C11 §7.20).
 _STDINT_NAMES = frozenset({
     # Exact-width (optional; universally present on POSIX targets)
-    "int8_t",   "int16_t",   "int32_t",   "int64_t",
-    "uint8_t",  "uint16_t",  "uint32_t",  "uint64_t",
+    "int8_t", "int16_t", "int32_t", "int64_t",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t",
     # Minimum-width (required)
-    "int_least8_t",  "int_least16_t",  "int_least32_t",  "int_least64_t",
+    "int_least8_t", "int_least16_t", "int_least32_t", "int_least64_t",
     "uint_least8_t", "uint_least16_t", "uint_least32_t", "uint_least64_t",
     # Fastest minimum-width (required)
-    "int_fast8_t",  "int_fast16_t",  "int_fast32_t",  "int_fast64_t",
+    "int_fast8_t", "int_fast16_t", "int_fast32_t", "int_fast64_t",
     "uint_fast8_t", "uint_fast16_t", "uint_fast32_t", "uint_fast64_t",
     # Pointer-width (optional; universally present on POSIX targets)
     "intptr_t", "uintptr_t",
@@ -1025,8 +1025,6 @@ def generate_marshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> list
     return lines
 
 
-
-
 # ---------------------------------------------------------------------------
 # Function-backend generation (--optimize fast): bespoke per-scope
 # free / unmarshal / marshal functions (faster, larger object code).
@@ -1196,7 +1194,6 @@ def _scalar_constraint_checks(
     return lines
 
 
-
 def _schema_constraint_flags(scopes: list) -> dict:
     """Scan all property schemas for constraint keywords that require extra C includes.
 
@@ -1216,7 +1213,6 @@ def _schema_constraint_flags(scopes: list) -> dict:
     return flags
 
 
-
 def _has_double_fields(scopes: list) -> bool:
     """True when any scope has a double field or a double array field
     (the marshal functions then need <math.h> for isfinite)."""
@@ -1229,7 +1225,6 @@ def _has_double_fields(scopes: list) -> bool:
                     and desc.get("c_base") == "double"):
                 return True
     return False
-
 
 
 def _gen_unmarshal_array_string_helper(
@@ -1285,7 +1280,6 @@ def _gen_unmarshal_array_string_helper(
         f"}}",
         "",
     ]
-
 
 
 def _gen_unmarshal_array_object_helper(
@@ -1351,7 +1345,6 @@ def _gen_unmarshal_array_object_helper(
     ]
 
 
-
 def _gen_unmarshal_array_primitive_helper(
         scope_name: str, pfx: str, fname: str, c_base: str,
         item_checks: list = None, max_items: "int | None" = None) -> list:
@@ -1412,7 +1405,6 @@ def _gen_unmarshal_array_primitive_helper(
         f"}}",
         "",
     ]
-
 
 
 def generate_unmarshal_c(
@@ -1704,7 +1696,6 @@ def generate_unmarshal_c(
         ]
 
     return lines
-
 
 
 def generate_marshal_c(
@@ -2116,7 +2107,6 @@ def generate_marshal_c(
 # ---------------------------------------------------------------------------
 
 
-
 def generate_free_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = False) -> list:
     lines = []
     root_scope = scopes[0][0]
@@ -2336,7 +2326,8 @@ def _build_constraint_c(
             flags.append("JSON_C_ENUM")
             arr = f"{ename}_{fname}_enum"
             side.append(f"static const {wide} {arr}[] = {{")
-            side.append(f"{_INDENT}" + ", ".join(lit(v) for v in enum_vs) + ",")
+            side.append(f"{_INDENT}" + ", ".join(lit(v)
+                        for v in enum_vs) + ",")
             side.append("};")
             um.append(f".enums = {arr}")
             um.append(f".n_enum = {len(enum_vs)}")
@@ -2630,7 +2621,8 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
     # schema can be emitted to several files in one directory -- distinguished
     # by --prefix -- e.g. a fast and a size variant side by side.
     out_stem = opts.output_name or stem
-    guard = re.sub(r"[^A-Za-z0-9_]", "_", Path(out_stem).name).upper() + "_GEN_H"
+    guard = re.sub(r"[^A-Za-z0-9_]", "_",
+                   Path(out_stem).name).upper() + "_GEN_H"
     h_path = schema_path.parent / (out_stem + ".gen.h")
     c_path = schema_path.parent / (out_stem + ".gen.c")
 

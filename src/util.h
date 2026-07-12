@@ -10,9 +10,6 @@
 
 #include <ev.h>
 
-#include <sys/types.h>
-#include <unistd.h>
-
 #include <errno.h>
 #include <math.h>
 #include <stdbool.h>
@@ -20,6 +17,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 /**
  * @brief Mark a variable as intentionally unused and silence compiler warnings.
@@ -35,6 +34,7 @@
 /* RFC 1035: Section 2.3.4 */
 #define FQDN_MAX_LENGTH ((size_t)(255))
 
+/* owned by loadlibs(); freed and reset to NULL by unloadlibs() */
 extern struct mcache *msgpool;
 
 #define UTIL_SAFE_FREE(x)                                                      \
@@ -45,6 +45,8 @@ extern struct mcache *msgpool;
 		}                                                              \
 	} while (0)
 
+/* t is always derived from a trusted internal clock (ev_now()/ev_time()),
+ * never external input, so ASSERT (not CHECK) is the correct guard here */
 static inline uint32_t tstamp2ms(const ev_tstamp t)
 {
 	ASSERT(!signbit(t) && isnormal(t));
@@ -59,7 +61,8 @@ static inline uint32_t tstamp2ms(const ev_tstamp t)
  * when none of the accepted bits are set.
  *
  * @param revents Event bits received from libev callbacks.
- * @param accept Accepted event mask (subset of EV_READ | EV_WRITE).
+ * @param accept Accepted event mask (any libev event-type bitmask, e.g.
+ * EV_READ, EV_WRITE, EV_TIMER, EV_SIGNAL, EV_IDLE).
  */
 #define CHECK_REVENTS(revents, accept)                                         \
 	do {                                                                   \
@@ -73,7 +76,7 @@ static inline uint32_t tstamp2ms(const ev_tstamp t)
 		}                                                              \
 	} while (0)
 
-bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
+bool check_rate_limit(ev_tstamp *restrict last, ev_tstamp now, double interval);
 
 #define RATELIMIT(now, interval, expr)                                         \
 	do {                                                                   \
@@ -84,13 +87,18 @@ bool check_rate_limit(ev_tstamp *last, ev_tstamp now, double interval);
 	} while (0)
 
 #define LOG_RATELIMITED_F(level, now, rate, format, ...)                       \
-	RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__))
+	do {                                                                   \
+		if (!LOGLEVEL(level)) {                                        \
+			break;                                                 \
+		}                                                              \
+		RATELIMIT(now, rate, LOG_F(level, format, __VA_ARGS__));       \
+	} while (0)
 
 #define LOG_RATELIMITED(level, now, rate, message)                             \
 	LOG_RATELIMITED_F(level, now, rate, "%s", message)
 
 /** Process-level initializations. */
-void init(int argc, char **argv);
+void init(void);
 
 /** Load libraries and initialize global subsystems. */
 void loadlibs(void);
@@ -103,14 +111,25 @@ void genpsk(const char *method);
 #endif
 
 /* socket utilities */
-void socket_bind_netdev(int fd, const char *netdev);
+void socket_bind_netdev(int fd, const char *restrict netdev);
+
+struct config;
+
+/**
+ * @brief Make fd non-blocking, closing it on failure.
+ * @return True on success, false on failure (fd is already closed).
+ */
+bool socket_nonblock_or_close(int fd);
+
+/** @brief Apply per-connection TCP tuning (nodelay, keepalive, buffers) from conf. */
+void tcp_apply_conf(int fd, const struct config *restrict conf);
 
 bool resolve_addr(
-	union sockaddr_max *addr, const char *addrstr,
+	union sockaddr_max *restrict addr, const char *restrict addrstr,
 	enum sa_resolve_type type);
 
 bool resolve_bindaddr(
-	union sockaddr_max *addr, const char *addrstr,
+	union sockaddr_max *restrict addr, const char *restrict addrstr,
 	enum sa_resolve_type type);
 
 /**

@@ -60,6 +60,9 @@ static inline char *strtrimleftspace(char *restrict s)
 
 static inline char *strtrimrightspace(char *restrict s)
 {
+	if (*s == '\0') {
+		return s;
+	}
 	unsigned char *e;
 	for (e = (unsigned char *)s; *e; e++) {
 	}

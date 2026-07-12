@@ -3,7 +3,7 @@
 
 #include "buffer.h"
 
-#include "minmax.h"
+#include "meta/minmax.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -12,18 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/**
- * Append formatted text into a fixed buffer using a va_list.
- *
- * Behavior:
- * - Writes at most the remaining capacity.
- * - Ensures there is a trailing NUL in the buffer storage.
- * - Advances len by up to (cap - len - 1).
- *
- * Returns the number of characters that would have been written (excluding
- * the terminating NUL), as per vsnprintf semantics. Non-positive values
- * indicate an encoding/formatting error or zero available space.
- */
+/* vsnprintf may report more chars than fit; len only advances by what was
+ * actually written. */
 int buf_vappendf(
 	struct buffer *restrict buf, const char *restrict format, va_list args)
 {
@@ -49,15 +39,10 @@ int buf_appendf(struct buffer *restrict buf, const char *restrict format, ...)
 }
 
 /**
- * Ensure a growable buffer has capacity of at least `want` bytes.
- *
  * Growth strategy:
  * - Below 256 bytes: jump to 256.
  * - Below 4096 bytes: double the current capacity.
  * - 4096 and above: grow by cap/4 + 3*4096/4 to moderate fragmentation.
- *
- * Always reserves one extra byte for NUL-termination. On allocation failure,
- * returns the original pointer unchanged.
  */
 struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 {
@@ -67,7 +52,7 @@ struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 		cap = vbuf->cap;
 		len = vbuf->len;
 	}
-	if (want <= cap || cap >= maxcap) {
+	if (want <= cap || cap >= maxcap || want > maxcap) {
 		return vbuf;
 	}
 	const size_t threshold1 = 256;
@@ -105,12 +90,6 @@ struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 	return newbuf;
 }
 
-/**
- * Append up to n bytes to a growable buffer.
- * - Attempts to grow to fit; if growth fails, appends what fits.
- * - Maintains a trailing NUL in the reserved byte (does not change len).
- * - If len == cap (previous alloc failure), the append is skipped.
- */
 struct vbuffer *
 vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 {
@@ -138,12 +117,6 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 	return vbuf;
 }
 
-/**
- * Append formatted text to a growable buffer using a va_list.
- * Performs a two-pass attempt: try in-place then grow and retry.
- * Keeps a trailing NUL in the reserved byte. On failure, truncates to fit.
- * Returns vsnprintf-style count. Returns -1 when OOM is already recorded.
- */
 int vbuf_vappendf(
 	struct vbuffer **pvbuf, const char *restrict format, va_list args)
 {
@@ -158,6 +131,8 @@ int vbuf_vappendf(
 	{
 		char *restrict s = (char *)(vbuf->data + vbuf->len);
 		const size_t maxlen = vbuf->cap - vbuf->len;
+		/* args may be needed again below; vsnprintf may only consume
+		 * a va_list once, so pass a copy here. */
 		va_list args0;
 		va_copy(args0, args);
 		ret = vsnprintf(s, maxlen + 1, format, args0);

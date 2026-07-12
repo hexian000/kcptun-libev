@@ -72,13 +72,22 @@ enum {
 };
 void slog_setflags(unsigned int flags);
 
+/**
+ * @brief Extra content written after the message, via func(f, data).
+ * @details Only honored by FILE-based sinks (SLOG_OUTPUT_TERMINAL,
+ * SLOG_OUTPUT_FILE); other sinks ignore it. func, like the writer and syslog
+ * callbacks, runs while slog holds its internal, non-recursive output lock;
+ * calling any slog function from within such a callback is undefined behavior.
+ */
 struct slog_extra {
 	void (*func)(FILE *f, void *data);
 	void *data;
 };
+/** @brief Log a message with a va_list of arguments. extra may be NULL. */
 void slog_vprintf(
 	int level, const char *file, int line, const struct slog_extra *extra,
 	const char *format, va_list args);
+/** @brief Log a message with variadic arguments. extra may be NULL. */
 void slog_printf(
 	int level, const char *file, int line, const struct slog_extra *extra,
 	const char *format, ...);

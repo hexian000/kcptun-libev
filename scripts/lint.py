@@ -72,6 +72,7 @@ def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
         sys.exit(f"error: {db_path} not found — run cmake first")
     db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
     mapping: dict[str, str] = {}
+    ambiguous: set[str] = set()
     for entry in db:
         fpath = entry["file"]
         if not accept(fpath):
@@ -81,7 +82,15 @@ def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
             rel = str(pobj.relative_to(ROOT))
         except ValueError:
             rel = str(pobj)
-        mapping[pobj.name] = rel  # basename → "src/mux/dispatch.c"
+        name = pobj.name
+        if name in mapping and mapping[name] != rel:
+            ambiguous.add(name)
+        mapping[name] = rel  # basename → "src/mux/dispatch.c"
+    # two sources sharing a basename can't be told apart from a basename
+    # alone — drop them so lookups fall back to the raw (unmapped) path
+    # instead of silently guessing the wrong file.
+    for name in ambiguous:
+        del mapping[name]
     return mapping
 
 
@@ -122,6 +131,7 @@ _WARN_RE = re.compile(
 
 def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
     result = []
+    seen: set[tuple[str, int, str, str]] = set()
     for text in raw.splitlines():
         m = _WARN_RE.match(text.rstrip())
         if not m:
@@ -141,12 +151,22 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
             # e.g. "dispatch.c" or "mux/dispatch.c" — look up by basename
             relpath = name_map.get(pobj.name, fpath)
 
+        line = int(m.group("line"))
+        check = m.group("check")
+        msg = m.group("msg")
+        # run-clang-tidy repeats a header's warnings once per translation
+        # unit that includes it; keep only the first occurrence.
+        key = (relpath, line, check, msg)
+        if key in seen:
+            continue
+        seen.add(key)
+
         result.append(
             {
                 "file": relpath,
-                "line": int(m.group("line")),
-                "msg": m.group("msg"),
-                "check": m.group("check"),
+                "line": line,
+                "msg": msg,
+                "check": check,
             }
         )
     return result
@@ -285,7 +305,7 @@ def main() -> int:
     accept = _make_filter(args.tests, args.generated)
     name_map = _build_name_map(build_dir, accept)
 
-    print(f"Linting [{check_label}] …", file=sys.stderr, flush=True)
+    print(f"Linting [{check_label}] ...", file=sys.stderr, flush=True)
     t0 = time.monotonic()
     raw = _run(build_dir, args.check, args.jobs)
     elapsed = time.monotonic() - t0

@@ -3,6 +3,7 @@
 
 #include "intlog2.h"
 
+#include <assert.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -32,130 +33,181 @@ const int intlog2_debruijn_bsf64[64] = {
 	62, 57, 42, 52, 32, 24, 17, 20, 56, 41, 23, 16, 40, 15, 14, 13,
 };
 
-#if UINTMAX_MAX > ULLONG_MAX
-
-#include <threads.h>
-
-/* --- Runtime De Bruijn for arbitrary-width uintmax_t --- */
-
 /* Width (number of bits) of uintmax_t on this platform. */
 #define UINTMAX_W ((int)(sizeof(uintmax_t) * (size_t)CHAR_BIT))
 
 /*
- * FKT algorithm: generate a binary De Bruijn sequence B(2, k) packed into the
- * low UINTMAX_W bits of an uintmax_t (LSB = position 0).
+ * --- Width-generic De Bruijn generator ---
  *
- * Uses a fixed-size working array of depth k <= DBMAX_K; no heap allocation.
- * Returns the De Bruijn word with the sequence packed LSB-first.
+ * Builds a binary De Bruijn sequence B(2, k) and the BSR/BSF lookup tables
+ * derived from it, for any width w = 2^k with w <= UINTMAX_W. Used at
+ * runtime by the wide-uintmax_t path below (only compiled when uintmax_t
+ * is wider than unsigned long long), and exercised directly by
+ * intlog2_test.c at several widths on every platform, regardless of
+ * native uintmax_t width. External linkage with an intlog2_ prefix (but
+ * no public header entry) so the test binary, which links this
+ * translation unit directly, can call them without exposing them as
+ * public API.
  */
-static uintmax_t fkt_gen(int k)
+
+/* Mask selecting the low w bits of a uintmax_t (w <= UINTMAX_W). */
+static uintmax_t low_bits_mask(int w)
 {
-	/* a[i] holds the current string during FKT recursion. */
-	int a[UINTMAX_W + 1];
-	for (int i = 0; i <= UINTMAX_W; i++) {
-		a[i] = 0;
-	}
-	int w = 1 << k; /* sequence length = 2^k */
-	uintmax_t seq = 0;
-	int pos = 0;
+	return (w < UINTMAX_W) ? (((uintmax_t)1 << w) - 1) : (uintmax_t)-1;
+}
 
-	/* Iterative FKT via explicit stack: (n, t) pairs. */
-	typedef struct {
-		int n, t;
-	} frame_t;
-	frame_t stack[UINTMAX_W + 1];
-	int top = 0;
-	stack[top++] = (frame_t){ .n = k, .t = 1 };
-
-	while (top > 0) {
-		frame_t f = stack[--top];
-		int n = f.n, t = f.t;
-		if (n == 0) {
-			if (k % t == 0) {
-				for (int j = 1; j <= t && pos < w; j++, pos++) {
-					if (a[j]) {
-						seq |= (uintmax_t)1 << pos;
-					}
+/*
+ * Recursive step of the FKT (Fredricksen-Kessler-Maiorana) algorithm:
+ * depth-first visits every binary necklace representative for period n,
+ * appending each cycle's first p symbols to *seq at *pos whenever
+ * n % p == 0 (the classic construction of the lexicographically-least
+ * De Bruijn sequence). a[1..n] holds the string built so far; a[0] is a
+ * fixed 0 sentinel. Recursion depth is exactly n+1 - trivially bounded,
+ * since n is the log2 of a bit-width.
+ */
+static void fkt_visit(int t, int p, int n, int a[], uintmax_t *seq, int *pos)
+{
+	if (t > n) {
+		if (n % p == 0) {
+			for (int j = 1; j <= p; j++) {
+				if (a[j]) {
+					*seq |= (uintmax_t)1 << *pos;
 				}
-			}
-		} else {
-			/* Push continuation first (LIFO), then recurse. */
-			for (int j = a[n - t]; j <= 1; j++) {
-				/* push (n-1, t) with a[n]=j */
-				if (top < UINTMAX_W + 1) {
-					a[n] = j;
-					stack[top++] = (frame_t){
-						.n = n - 1,
-						.t = (j == a[n - t]) ? t : n
-					};
-				}
+				(*pos)++;
 			}
 		}
+		return;
 	}
+	a[t] = a[t - p];
+	fkt_visit(t + 1, p, n, a, seq, pos);
+	for (int j = a[t - p] + 1; j <= 1; j++) {
+		a[t] = j;
+		fkt_visit(t + 1, t, n, a, seq, pos);
+	}
+}
+
+/*
+ * Generate a binary De Bruijn sequence B(2, k) packed into the low 2^k
+ * bits of an uintmax_t (LSB = position 0).
+ */
+uintmax_t intlog2_fkt_gen(int k)
+{
+	int a[UINTMAX_W + 1] = { 0 };
+	uintmax_t seq = 0;
+	int pos = 0;
+	fkt_visit(1, 1, k, a, &seq, &pos);
 	return seq;
 }
 
 /*
- * Build the BSF lookup table for a given De Bruijn constant M of width w.
- * For BSF, (x & -x) is always a power of 2, so (M << p) >> (w-k) gives
- * distinct indices for all 0 <= p < w; any De Bruijn sequence works.
- */
-static void build_bsf_table(uintmax_t M, int w, int k, int table[])
-{
-	for (int p = 0; p < w; p++) {
-		/* Logical left shift by p, then take top k bits. */
-		int shift = w - k;
-		uintmax_t idx = (M << p) >> shift;
-		table[idx] = p;
-	}
-}
-
-/*
- * Verify that De Bruijn constant M can serve as a BSR constant for width w.
- * BSR uses the filled value v = (uintmax_t)-1 >> (w-1-p), which is NOT a
- * power of 2, so not every De Bruijn sequence works; we must verify.
+ * Verify that De Bruijn constant M can serve as a BSF constant for width w,
+ * filling table[] as a side effect. BSF looks up (x & -x), always a power
+ * of 2, via a plain (non-rotating) shift - (M << p) mod 2^w, then the top
+ * k bits - to match countr_zeromax()'s multiply-shift lookup exactly. That
+ * plain shift only agrees with a true cyclic rotation of M for p that
+ * doesn't shift any of M's top (k-1) bits out, so - contrary to the common
+ * claim that any De Bruijn sequence works for BSF - only the rotations
+ * whose top (k-1) bits are 0 give a collision-free table; the rest
+ * silently alias two positions onto the same index.
  * Returns true if M gives distinct table indices for all p.
  */
-static bool verify_bsr(uintmax_t M, int w, int k, int table[])
+static bool verify_bsf(uintmax_t M, int w, int k, int table[])
 {
+	/* k >= 1 (not just k >= 0) so shift = w - k never reaches
+	 * UINTMAX_W itself: shifting a full type width is UB too. */
+	assert(k >= 1 && k < w && w <= UINTMAX_W);
 	bool seen[UINTMAX_W] = { false };
+	uintmax_t mask = low_bits_mask(w);
+	int shift = w - k;
 	for (int p = 0; p < w; p++) {
-		/* filled = 2^(p+1) - 1: all ones up to and including bit p */
-		uintmax_t filled = (p + 1 < w) ?
-					   (((uintmax_t)1 << (p + 1)) - 1) :
-					   (uintmax_t)-1;
-		int shift = w - k;
-		uintmax_t product = M * filled;
-		uintmax_t idx = product >> shift;
+		/* Left shift by p, reduced mod 2^w, then take the top k bits. */
+		uintmax_t idx = ((M << p) & mask) >> shift;
 		if (seen[idx]) {
 			return false;
 		}
 		seen[idx] = true;
-		table[p] = (int)idx;
+		table[idx] = p;
 	}
 	return true;
 }
 
 /*
- * Find a BSR-compatible De Bruijn constant for width w (must be a power of 2).
- * Generates a base sequence via FKT, then tries cyclic rotations until one
- * satisfies verify_bsr(). At least one rotation always works for 2^k De Bruijn
- * sequences; returns the found constant (never fails for valid k).
+ * Verify that De Bruijn constant M can serve as a BSR constant for width w.
+ * BSR uses the filled value v = (2^w - 1) >> (w-1-p), which is NOT a power
+ * of 2, so not every De Bruijn sequence works; we must verify.
+ * Returns true if M gives distinct table indices for all p.
  */
-static uintmax_t find_bsr_const(int w, int k, int table[])
+static bool verify_bsr(uintmax_t M, int w, int k, int table[])
 {
-	uintmax_t base = fkt_gen(k);
-	uintmax_t mask =
-		(w < UINTMAX_W) ? (((uintmax_t)1 << w) - 1) : (uintmax_t)-1;
+	/* k >= 1 (not just k >= 0) so shift = w - k never reaches
+	 * UINTMAX_W itself: shifting a full type width is UB too. */
+	assert(k >= 1 && k < w && w <= UINTMAX_W);
+	bool seen[UINTMAX_W] = { false };
+	uintmax_t mask = low_bits_mask(w);
+	int shift = w - k;
+	for (int p = 0; p < w; p++) {
+		/* filled = 2^(p+1) - 1: all ones up to and including bit p,
+		 * reduced mod 2^w. */
+		uintmax_t filled =
+			(p + 1 < w) ? (((uintmax_t)1 << (p + 1)) - 1) : mask;
+		uintmax_t product = (M * filled) & mask;
+		uintmax_t idx = product >> shift;
+		if (seen[idx]) {
+			return false;
+		}
+		seen[idx] = true;
+		table[idx] = p;
+	}
+	return true;
+}
+
+/*
+ * Find a rotation of the base FKT(k) sequence that verify() accepts as a
+ * De Bruijn constant for width w (a power of 2), filling table[] as a
+ * side effect. At least one rotation always works for a valid 2^k De
+ * Bruijn sequence; returns the found constant.
+ */
+static uintmax_t find_rotated_const(
+	int w, int k, int table[], bool (*verify)(uintmax_t, int, int, int *))
+{
+	uintmax_t mask = low_bits_mask(w);
+	uintmax_t base = intlog2_fkt_gen(k) & mask;
 	for (int rot = 0; rot < w; rot++) {
-		uintmax_t M = ((base >> rot) | (base << (w - rot))) & mask;
-		if (verify_bsr(M, w, k, table)) {
+		/* Rotating right by 0 is the identity; the general formula
+		 * below would otherwise shift left by w, which is UB when
+		 * w == UINTMAX_W. */
+		uintmax_t M =
+			(rot == 0) ?
+				base :
+				(((base >> rot) | (base << (w - rot))) & mask);
+		if (verify(M, w, k, table)) {
 			return M;
 		}
 	}
 	/* Unreachable for valid De Bruijn input and power-of-2 width. */
 	return 0;
 }
+
+/*
+ * Find a BSF-compatible De Bruijn constant for width w. See verify_bsf()
+ * for why - unlike BSR - only some rotations of the base sequence work.
+ */
+uintmax_t intlog2_find_bsf_const(int w, int k, int table[])
+{
+	return find_rotated_const(w, k, table, verify_bsf);
+}
+
+/* Find a BSR-compatible De Bruijn constant for width w. */
+uintmax_t intlog2_find_bsr_const(int w, int k, int table[])
+{
+	return find_rotated_const(w, k, table, verify_bsr);
+}
+
+#if UINTMAX_MAX > ULLONG_MAX
+
+#include <threads.h>
+
+/* --- Runtime De Bruijn for arbitrary-width uintmax_t --- */
 
 /* Thread-local De Bruijn state for wide uintmax_t. */
 static thread_local struct {
@@ -169,7 +221,7 @@ static thread_local struct {
 } tl_db;
 
 /* Initialise tl_db on first call in this thread. */
-static void tl_db_init(void)
+static void init_tl_db(void)
 {
 	if (tl_db.init) {
 		return;
@@ -190,15 +242,10 @@ static void tl_db_init(void)
 	tl_db.use_db = true;
 	tl_db.shift = w - k;
 
-	/* BSF constant: any De Bruijn sequence works. */
-	uintmax_t bsf_seq = fkt_gen(k);
-	uintmax_t mask =
-		(w < UINTMAX_W) ? (((uintmax_t)1 << w) - 1) : (uintmax_t)-1;
-	tl_db.bsf_const = bsf_seq & mask;
-	build_bsf_table(tl_db.bsf_const, w, k, tl_db.bsf_table);
-
-	/* BSR constant: need a rotation that satisfies verify_bsr. */
-	tl_db.bsr_const = find_bsr_const(w, k, tl_db.bsr_table);
+	/* BSF and BSR constants each need a rotation that verify_bsf()/
+	 * verify_bsr() accepts - see find_rotated_const(). */
+	tl_db.bsf_const = intlog2_find_bsf_const(w, k, tl_db.bsf_table);
+	tl_db.bsr_const = intlog2_find_bsr_const(w, k, tl_db.bsr_table);
 }
 
 /* Binary-search fallback for BSR (O(log w), used when w is not 2^k). */
@@ -218,7 +265,7 @@ static int bsr_bisect(uintmax_t x)
 int log2umax(uintmax_t x)
 {
 	assert(x > 0);
-	tl_db_init();
+	init_tl_db();
 	if (tl_db.use_db) {
 		int w = UINTMAX_W;
 		uintmax_t v = x;
@@ -233,13 +280,15 @@ int log2umax(uintmax_t x)
 int countr_zeromax(uintmax_t x)
 {
 	assert(x > 0);
-	tl_db_init();
+	init_tl_db();
 	if (tl_db.use_db) {
-		uintmax_t lsb = x & (uintmax_t)(-(intmax_t)x);
+		uintmax_t lsb = x & (uintmax_t)(-x);
 		return tl_db.bsf_table[(tl_db.bsf_const * lsb) >> tl_db.shift];
 	}
-	/* log2(x & -x) == ctz(x) for any nonzero x */
-	return bsr_bisect(x & (uintmax_t)(-(intmax_t)x));
+	/* log2(x & -x) == ctz(x) for any nonzero x. Isolate the lowest set bit
+	 * with unsigned negation; converting to intmax_t first and negating
+	 * INTMAX_MIN (an MSB-only x) would be signed-overflow UB. */
+	return bsr_bisect(x & (uintmax_t)(-x));
 }
 
 int countl_zeromax(uintmax_t x)
@@ -250,6 +299,6 @@ int countl_zeromax(uintmax_t x)
 	return UINTMAX_W - 1 - log2umax(x);
 }
 
-#undef UINTMAX_W
-
 #endif /* UINTMAX_MAX > ULLONG_MAX */
+
+#undef UINTMAX_W

@@ -4,15 +4,11 @@
 #ifndef OS_SOCKET_H
 #define OS_SOCKET_H
 
-#include "utils/slog.h"
-
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <string.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 /**
  * @defgroup sockutil
@@ -21,33 +17,20 @@
  */
 
 /**
- * @def SOCKET_SHUTDOWN_FD(fd, dir)
- * @brief Shuts down the write end of the socket and logs any errors.
+ * @brief Shuts down part of a full-duplex socket and logs any errors.
  * @param fd The socket file descriptor.
- * @param dir The shutdown direction (RD, WR, RDWR).
+ * @param how The shutdown direction (SHUT_RD, SHUT_WR, or SHUT_RDWR).
+ * @return True on success, false on failure; logs LOGW on failure.
+ * @note POSIX version: POSIX.1-2001
  */
-#define SOCKET_SHUTDOWN_FD(fd, dir)                                            \
-	do {                                                                   \
-		if (shutdown((fd), SHUT_##dir) != 0) {                         \
-			const int err = errno;                                 \
-			LOGW_F("shutdown [fd:%d]: (%d) %s", (fd), err,         \
-			       strerror(err));                                 \
-		}                                                              \
-	} while (0)
+bool socket_shutdown(int fd, int how);
 
 /**
- * @def SOCKET_CLOSE_FD(fd)
  * @brief Closes the file descriptor and logs any errors.
  * @param fd The file descriptor.
+ * @note POSIX version: POSIX.1-2001. Logs LOGW on failure.
  */
-#define SOCKET_CLOSE_FD(fd)                                                    \
-	do {                                                                   \
-		if (close((fd)) != 0) {                                        \
-			const int err = errno;                                 \
-			LOGW_F("close [fd:%d]: (%d) %s", (fd), err,            \
-			       strerror(err));                                 \
-		}                                                              \
-	} while (0)
+void socket_close(int fd);
 
 /**
  * @brief Union to hold sockaddr structures for IPv4 and IPv6.
@@ -62,77 +45,113 @@ union sockaddr_max {
 /**
  * @brief Sets the socket to close-on-exec mode.
  * @param fd The socket file descriptor.
- * @return 0 on success, or errno on failure; logs LOGE on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
+ * @note On failure, the fd stays inheritable across exec() and may leak into
+ * child processes.
  */
-int socket_set_cloexec(int fd);
+bool socket_set_cloexec(int fd);
 
 /**
  * @brief Sets the socket to non-blocking mode.
  * @param fd The socket file descriptor.
- * @return 0 on success, or errno on failure; logs LOGE on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
+ * @note On failure, the socket stays in blocking mode; I/O calls on it can
+ * block the calling thread instead of returning EAGAIN/EWOULDBLOCK.
  */
-int socket_set_nonblock(int fd);
+bool socket_set_nonblock(int fd);
 
 /**
  * @brief Sets the send and receive buffer sizes for the socket.
  * @param fd The socket file descriptor.
  * @param sndbuf The send buffer size in bytes; ignored if <= 0.
  * @param rcvbuf The receive buffer size in bytes; ignored if <= 0.
- * @note POSIX version: POSIX.1-2001. Logs LOGW on setsockopt failure.
+ * @return True on success, false on failure; logs LOGW on failure.
+ * @note POSIX version: POSIX.1-2001
+ * @note sndbuf and rcvbuf are applied independently; on failure, one may
+ * have been applied while the other keeps its existing (system default)
+ * size.
  */
-void socket_set_buffer(int fd, int sndbuf, int rcvbuf);
+bool socket_set_buffer(int fd, int sndbuf, int rcvbuf);
 
 /**
  * @brief Sets socket reuse options for binding to the same address and port.
  * @param fd The socket file descriptor.
  * @param reuseport If true, enables SO_REUSEPORT (Linux 3.9+), otherwise only SO_REUSEADDR.
- * @note POSIX version: POSIX.1-2001 (SO_REUSEADDR), Linux 3.9+ (SO_REUSEPORT). Logs LOGE on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
+ * @note POSIX version: POSIX.1-2001 (SO_REUSEADDR), Linux 3.9+ (SO_REUSEPORT)
+ * @note SO_REUSEADDR and SO_REUSEPORT are applied independently; on
+ * failure, one may have been applied while the other was not, and a
+ * subsequent bind() to an address/port already in use may then fail.
  */
-void socket_set_reuseport(int fd, bool reuseport);
+bool socket_set_reuseport(int fd, bool reuseport);
 
 /**
  * @brief Sets TCP-specific options for the socket.
  * @param fd The socket file descriptor.
  * @param nodelay If true, disables Nagle's algorithm (TCP_NODELAY).
  * @param keepalive If true, enables TCP keepalive.
- * @note POSIX version: POSIX.1-2001. Logs LOGW on individual option failures.
+ * @return True on success, false on failure; logs LOGW on individual option failures.
+ * @note POSIX version: POSIX.1-2001
+ * @note nodelay and keepalive are applied independently; on failure, one
+ * may have been applied while the other is left at its previous setting.
  */
-void socket_set_tcp(int fd, bool nodelay, bool keepalive);
+bool socket_set_tcp(int fd, bool nodelay, bool keepalive);
 
 /**
  * @brief Sets SO_LINGER behavior for close() on the socket.
  * @param fd The socket file descriptor.
  * @param enabled If true, enables linger behavior.
  * @param seconds Linger timeout in seconds when enabled.
- * @note POSIX version: POSIX.1-2001. Logs LOGW on failure.
+ * @return True on success, false on failure; logs LOGW on failure.
+ * @note POSIX version: POSIX.1-2001
+ * @note On failure, close() uses the platform's default (non-linger)
+ * behavior instead of the requested setting.
  */
-void socket_set_linger(int fd, bool enabled, int seconds);
+bool socket_set_linger(int fd, bool enabled, int seconds);
 
 /**
  * @brief Enables TCP Fast Open for server-side.
  * @param fd The socket file descriptor.
  * @param backlog The maximum number of pending TFO connections.
- * @note No-op unless compiled with WITH_TCP_FASTOPEN (Linux 3.6+). Logs LOGW on failure.
+ * @return True on success; false on failure or if unsupported at compile time. Logs LOGW on failure.
+ * @note No-op unless TCP_FASTOPEN is defined at compile time (Linux 3.6+).
+ * @note On failure, TFO is not enabled and connections use a regular TCP
+ * handshake.
  */
-void socket_set_fastopen(int fd, int backlog);
+bool socket_set_fastopen(int fd, int backlog);
 
 /**
  * @brief Enables TCP Fast Open for client-side.
  * @param fd The socket file descriptor.
  * @param enabled If true, enables client-side TFO.
- * @note No-op unless TCP_FASTOPEN_CONNECT is defined at compile time (Linux 4.11+). Logs LOGW on failure.
+ * @return True on success; false on failure or if unsupported at compile time. Logs LOGW on failure.
+ * @note No-op unless TCP_FASTOPEN_CONNECT is defined at compile time (Linux 4.11+).
+ * @note On failure, TFO is not enabled and connections use a regular TCP
+ * handshake.
  */
-void socket_set_fastopen_connect(int fd, bool enabled);
+bool socket_set_fastopen_connect(int fd, bool enabled);
+
+/**
+ * @brief Sets the maximum amount of unsent data allowed in the TCP send buffer.
+ * @param fd The socket file descriptor.
+ * @param bytes The unsent data limit in bytes.
+ * @return True on success; false on failure or if unsupported at compile time. Logs LOGW on failure.
+ * @note No-op unless TCP_NOTSENT_LOWAT is defined at compile time (Linux 3.12+).
+ * @note On failure, the socket keeps its existing unsent-data limit.
+ */
+bool socket_notsent_lowat(int fd, int bytes);
 
 /**
  * @brief Sets the minimum number of bytes to receive before notifying.
  * @param fd The socket file descriptor.
  * @param bytes The minimum receive buffer low water mark; no-op if <= 0.
- * @note POSIX version: POSIX.1-2001. Logs LOGE on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
+ * @note POSIX version: POSIX.1-2001
+ * @note On failure, the socket keeps its existing receive low water mark.
  */
-void socket_rcvlowat(int fd, int bytes);
+bool socket_rcvlowat(int fd, int bytes);
 
 /**
  * @brief Retrieves the pending socket error.
@@ -146,19 +165,19 @@ int socket_get_error(int fd);
  * @brief Retrieves the local address of the socket.
  * @param fd The socket file descriptor.
  * @param[out] sa The output sockaddr union.
- * @return The length of the address on success, 0 on failure; logs LOGE on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
-socklen_t socket_get_addr(int fd, union sockaddr_max *sa);
+bool socket_get_addr(int fd, union sockaddr_max *sa);
 
 /**
  * @brief Retrieves the peer address of the socket.
  * @param fd The socket file descriptor.
  * @param[out] sa The output sockaddr union.
- * @return The length of the address on success, 0 on failure; logs LOGE on failure.
+ * @return True on success, false on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001
  */
-socklen_t socket_get_peer(int fd, union sockaddr_max *sa);
+bool socket_get_peer(int fd, union sockaddr_max *sa);
 
 /**
  * @brief Sends data on a socket, retrying on EINTR.

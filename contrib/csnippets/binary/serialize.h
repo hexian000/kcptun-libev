@@ -1,12 +1,14 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef UTILS_SERIALIZE_H
-#define UTILS_SERIALIZE_H
+#ifndef BINARY_SERIALIZE_H
+#define BINARY_SERIALIZE_H
 
 /**
- * @brief serialize.h is a primitive type serializer
- * These functions are carefully tuned for compilers to generate fast code.
+ * @file serialize.h
+ * @brief Primitive type serializer.
+ * @details These functions are carefully tuned for compilers to generate fast
+ * code.
  */
 
 #include <stdint.h>
@@ -20,7 +22,7 @@ static inline uint_fast8_t read_uint8(const void *restrict p)
 static inline void write_uint8(void *restrict p, uint_fast8_t v)
 {
 	unsigned char *b = p;
-	b[0] = v;
+	b[0] = (unsigned char)v;
 }
 
 static inline uint_fast16_t read_uint16(const void *restrict p)
@@ -125,4 +127,4 @@ static inline void write_uint64_le(void *restrict p, uint_fast64_t v)
 	b[7] = (unsigned char)(v >> 56U);
 }
 
-#endif /* UTILS_SERIALIZE_H */
+#endif /* BINARY_SERIALIZE_H */

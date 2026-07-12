@@ -3,36 +3,34 @@
 
 #include "util.h"
 
+#include "conf.h"
 #include "crypto.h"
 #include "pktqueue.h"
 
+#include "ikcp.h"
 #include "math/rand.h"
+#include "meta/minmax.h"
 #include "net/addr.h"
 #include "os/clock.h"
 #include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/mcache.h"
-#include "utils/minmax.h"
 #include "utils/slog.h"
 
-#include "ikcp.h"
-
 #include <ev.h>
-
-#include <net/if.h>
-#include <sys/socket.h>
-
-#include <signal.h>
 
 #include <errno.h>
 #include <inttypes.h>
 #include <locale.h>
+#include <net/if.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <threads.h>
 #include <time.h>
 
@@ -58,12 +56,14 @@ bool check_rate_limit(
 #define PATH_SEPARATOR '/'
 #endif
 
-void init(int argc, char **argv)
+void init(void)
 {
-	UNUSED(argc);
-	UNUSED(argv);
-	(void)setlocale(LC_ALL, "");
-	(void)setvbuf(stdout, NULL, _IONBF, 0);
+	if (setlocale(LC_ALL, "") == NULL) {
+		LOGW("setlocale: failed to set the locale from environment");
+	}
+	if (setvbuf(stdout, NULL, _IONBF, 0) != 0) {
+		LOGW("setvbuf: failed to set stdout to unbuffered mode");
+	}
 	slog_setoutput(SLOG_OUTPUT_FILE, stdout);
 	{
 		static char prefix[] = __FILE__;
@@ -101,6 +101,9 @@ void loadlibs(void)
 	srand64((uint64_t)time(NULL));
 #endif
 
+	/* msgpool doubles as libkcp's segment pool (ikcp_segment_pool below):
+	 * two otherwise-unrelated allocator clients intentionally share one
+	 * fixed-size cache, sized to fit the larger of the two. */
 	const size_t size =
 		MAX(sizeof(struct IKCPSEG) + MAX_PACKET_SIZE,
 		    sizeof(struct msgframe));
@@ -133,7 +136,7 @@ void genpsk(const char *method)
 	(void)fflush(stdout);
 	crypto_free(crypto);
 }
-#endif
+#endif /* WITH_CRYPTO */
 
 double thread_load(void)
 {
@@ -167,6 +170,11 @@ void socket_bind_netdev(const int fd, const char *restrict netdev)
 {
 #ifdef SO_BINDTODEVICE
 	char ifname[IFNAMSIZ];
+	if (strlen(netdev) >= sizeof(ifname)) {
+		LOGW_F("SO_BINDTODEVICE: interface name too long: `%s'",
+		       netdev);
+		return;
+	}
 	(void)strncpy(ifname, netdev, sizeof(ifname) - 1);
 	ifname[sizeof(ifname) - 1] = '\0';
 	if (setsockopt(
@@ -179,19 +187,44 @@ void socket_bind_netdev(const int fd, const char *restrict netdev)
 	if (netdev[0] != '\0') {
 		LOGW("SO_BINDTODEVICE: not supported in current build");
 	}
-#endif
+#endif /* SO_BINDTODEVICE */
+}
+
+bool socket_nonblock_or_close(const int fd)
+{
+	if (!socket_set_nonblock(fd)) {
+		socket_close(fd);
+		return false;
+	}
+	return true;
+}
+
+void tcp_apply_conf(const int fd, const struct config *restrict conf)
+{
+	(void)socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
+	(void)socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
+}
+
+static bool split_addrstr(
+	const char *restrict addrstr, char *restrict buf,
+	char **restrict hoststr, char **restrict portstr)
+{
+	const size_t addrlen = strlen(addrstr);
+	if (addrlen >= FQDN_MAX_LENGTH + sizeof(":65535")) {
+		LOGE_F("address too long: `%s'", addrstr);
+		return false;
+	}
+	memcpy(buf, addrstr, addrlen + 1);
+	return splithostport(buf, hoststr, portstr);
 }
 
 bool resolve_addr(
 	union sockaddr_max *restrict addr, const char *restrict addrstr,
 	const enum sa_resolve_type type)
 {
-	const size_t addrlen = strlen(addrstr);
-	ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));
-	char buf[addrlen + 1];
-	memcpy(buf, addrstr, addrlen + 1);
+	char buf[FQDN_MAX_LENGTH + sizeof(":65535")];
 	char *hoststr, *portstr;
-	if (!splithostport(buf, &hoststr, &portstr)) {
+	if (!split_addrstr(addrstr, buf, &hoststr, &portstr)) {
 		return false;
 	}
 	return sa_resolve(addr, hoststr, portstr, type, PF_UNSPEC);
@@ -201,12 +234,9 @@ bool resolve_bindaddr(
 	union sockaddr_max *restrict addr, const char *restrict addrstr,
 	const enum sa_resolve_type type)
 {
-	const size_t addrlen = strlen(addrstr);
-	ASSERT(addrlen < FQDN_MAX_LENGTH + sizeof(":65535"));
-	char buf[addrlen + 1];
-	memcpy(buf, addrstr, addrlen + 1);
+	char buf[FQDN_MAX_LENGTH + sizeof(":65535")];
 	char *hoststr, *portstr;
-	if (!splithostport(buf, &hoststr, &portstr)) {
+	if (!split_addrstr(addrstr, buf, &hoststr, &portstr)) {
 		return false;
 	}
 	return sa_resolve_bind(addr, hoststr, portstr, type);

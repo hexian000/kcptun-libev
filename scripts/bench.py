@@ -234,8 +234,10 @@ def prepare_runtime_assets(
     runtime_dir.mkdir(parents=True, exist_ok=True)
     server_config_path = runtime_dir / "server.json"
     client_config_path = runtime_dir / "client.json"
-    write_config(server_config_path, build_server_config(use_crypto=use_crypto))
-    write_config(client_config_path, build_client_config(use_crypto=use_crypto))
+    write_config(server_config_path,
+                 build_server_config(use_crypto=use_crypto))
+    write_config(client_config_path,
+                 build_client_config(use_crypto=use_crypto))
     return server_config_path, client_config_path
 
 

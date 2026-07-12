@@ -13,16 +13,14 @@
 #include "util.h"
 
 #include "algo/hashtable.h"
+#include "ikcp.h"
 #include "math/rand.h"
+#include "meta/minmax.h"
 #include "os/socket.h"
 #include "utils/debug.h"
-#include "utils/minmax.h"
 #include "utils/slog.h"
 
-#include "ikcp.h"
-
 #include <ev.h>
-#include <sys/socket.h>
 
 #include <inttypes.h>
 #include <stdbool.h>
@@ -30,16 +28,17 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #define MSG_LOGVV(what, msg)                                                   \
 	do {                                                                   \
 		if (!LOGLEVEL(VERYVERBOSE)) {                                  \
 			break;                                                 \
 		}                                                              \
-		char addr[64];                                                 \
-		sa_format(addr, sizeof(addr), &(msg)->addr.sa);                \
+		char addr[64] = "<unknown>";                                   \
+		(void)sa_format(addr, sizeof(addr), &(msg)->addr.sa);          \
 		LOG_BIN_F(                                                     \
-			VERYVERBOSE, (msg)->buf, (msg)->len, 0,                \
+			VERYVERBOSE, (msg)->buf + (msg)->off, (msg)->len, 0,   \
 			what ": %" PRIu16 " bytes, addr=%s", (msg)->len,       \
 			addr);                                                 \
 	} while (0)
@@ -47,8 +46,8 @@
 #if WITH_CRYPTO
 
 static bool crypto_open_inplace(
-	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
-	const size_t size)
+	const struct pktqueue *restrict q, unsigned char *data,
+	size_t *restrict len, const size_t size)
 {
 	const struct crypto *restrict crypto = q->crypto;
 	ASSERT(crypto != NULL);
@@ -76,8 +75,8 @@ static bool crypto_open_inplace(
 
 /* caller should ensure the buffer is large enough */
 static bool crypto_seal_inplace(
-	struct pktqueue *restrict q, unsigned char *data, size_t *restrict len,
-	const size_t size, const size_t pad)
+	const struct pktqueue *restrict q, unsigned char *data,
+	size_t *restrict len, const size_t size, const size_t pad)
 {
 	const struct crypto *restrict crypto = q->crypto;
 	const size_t src_len = *len;
@@ -105,6 +104,13 @@ static bool crypto_seal_inplace(
 static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 {
 	MSG_LOGVV("queue_recv", msg);
+	if (msg->len < sizeof(uint32_t)) {
+		LOG_RATELIMITED_F(
+			WARNING, ev_now(s->loop), 1.0,
+			"queue_recv: packet too short (%" PRIu16 " bytes)",
+			msg->len);
+		return;
+	}
 	const unsigned char *kcp_packet = msg->buf + msg->off;
 	uint32_t conv = ikcp_getconv(kcp_packet);
 	if (conv == UINT32_C(0)) {
@@ -122,12 +128,9 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	struct session *restrict ss;
 	if (!table_find(s->sessions, &hkey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
-			if (LOGLEVEL(WARNING)) {
-				LOG_RATELIMITED_F(
-					WARNING, ev_now(s->loop), 1.0,
-					"[session:%08" PRIX32 "] not found",
-					conv);
-			}
+			LOG_RATELIMITED_F(
+				WARNING, ev_now(s->loop), 1.0,
+				"[session:%08" PRIX32 "] not found", conv);
 			ss0_reset(s, sa, conv);
 			return;
 		}
@@ -218,10 +221,10 @@ size_t queue_dispatch(struct server *restrict s)
 				continue;
 			}
 		}
-#endif
+#endif /* WITH_OBFS */
 #if WITH_CRYPTO
 		if (q->crypto != NULL) {
-			const size_t cap = MAX_PACKET_SIZE - msg->off;
+			const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
 			size_t len = msg->len;
 			if (!crypto_open_inplace(
 				    q, msg->buf + msg->off, &len, cap)) {
@@ -229,9 +232,9 @@ size_t queue_dispatch(struct server *restrict s)
 				continue;
 			}
 			ASSERT(len <= UINT16_MAX);
-			msg->len = len;
+			msg->len = (uint16_t)len;
 		}
-#endif
+#endif /* WITH_CRYPTO */
 #if WITH_OBFS
 		if (ctx != NULL) {
 			obfs_ctx_auth(ctx, true);
@@ -259,11 +262,12 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 		const size_t pad = rand64n(MIN((size_t)q->mss - len, 15));
 		if (!crypto_seal_inplace(
 			    q, msg->buf + msg->off, &len, cap, pad)) {
+			msgframe_delete(q, msg);
 			return false;
 		}
-		msg->len = len;
+		msg->len = (uint16_t)len;
 	}
-#endif
+#endif /* WITH_CRYPTO */
 #if WITH_OBFS
 	if (q->obfs != NULL) {
 		const bool obfs_seal_ok = obfs_seal_inplace(q->obfs, msg);
@@ -276,12 +280,10 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 
 	const ev_tstamp now = ev_now(s->loop);
 	if (q->mq_send_len >= q->mq_send_cap) {
-		if (LOGLEVEL(WARNING)) {
-			LOG_RATELIMITED_F(
-				WARNING, now, 1.0,
-				"send queue full, %" PRIu16 " bytes discarded",
-				msg->len);
-		}
+		LOG_RATELIMITED_F(
+			WARNING, now, 1.0,
+			"send queue full, %" PRIu16 " bytes discarded",
+			msg->len);
 		msgframe_delete(q, msg);
 		return false;
 	}
@@ -320,6 +322,7 @@ static bool queue_new_crypto(
 		(conf->mode & MODE_SERVER) != 0);
 	if (q->noncegen == NULL) {
 		crypto_free(q->crypto);
+		q->crypto = NULL;
 		return false;
 	}
 	if (q->crypto->noncegen_method == noncegen_counter) {
@@ -330,7 +333,7 @@ static bool queue_new_crypto(
 	}
 	return true;
 }
-#endif
+#endif /* WITH_CRYPTO */
 
 struct pktqueue *queue_new(struct server *restrict s)
 {
@@ -380,15 +383,20 @@ struct pktqueue *queue_new(struct server *restrict s)
 		}
 		q->obfs = obfs_new(s);
 		if (q->obfs == NULL) {
-			LOGW_F("obfs `%s' init failed", conf->obfs);
+			LOGE_F("obfs `%s' init failed", conf->obfs);
+			queue_free(q);
+			return NULL;
 		}
 	}
-#endif
+#endif /* WITH_OBFS */
 	return q;
 }
 
 void queue_free(struct pktqueue *restrict q)
 {
+	if (q == NULL) {
+		return;
+	}
 	if (q->mq_send != NULL) {
 		while (q->mq_send_len > 0) {
 			msgframe_delete(q, q->mq_send[--q->mq_send_len]);
@@ -412,7 +420,7 @@ void queue_free(struct pktqueue *restrict q)
 		noncegen_free(q->noncegen);
 		q->noncegen = NULL;
 	}
-#endif
+#endif /* WITH_CRYPTO */
 #if WITH_OBFS
 	if (q->obfs != NULL) {
 		obfs_free(q->obfs);

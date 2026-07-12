@@ -13,24 +13,35 @@
 struct slog_extra_txt {
 	const char *data;
 	size_t len;
+	/** Column at which to wrap; a value < 4 selects the default of 80. */
 	size_t hardwrap;
 };
-void slog_extra_txt(FILE *f, void *data);
+void slog_extra_txt(FILE *restrict f, void *restrict data);
 
 struct slog_extra_bin {
 	const void *data;
 	size_t len;
+	/** Bytes per row; a value of 0 selects the default of 16. */
 	size_t binwrap;
 };
-void slog_extra_bin(FILE *f, void *data);
+void slog_extra_bin(FILE *restrict f, void *restrict data);
 
 struct slog_extra_stack {
 	size_t len;
 	void *pc[];
 };
-void slog_extra_stack(FILE *f, void *data);
+void slog_extra_stack(FILE *restrict f, void *data);
 
-int debug_backtrace(void **frames, int skip, int len);
+int debug_backtrace(void **restrict frames, int skip, int len);
+
+typedef void (*debug_backtrace_symbols_cb)(void *ctx, const char *line);
+int debug_backtrace_symbols(
+	debug_backtrace_symbols_cb cb, void *ctx, void **restrict frames,
+	int len);
+
+int debug_strframes(
+	char *restrict buf, size_t maxlen, void **restrict frames, int len,
+	const char *restrict indent);
 
 #define DEBUG_STACK_MAXDEPTH 256
 
@@ -43,7 +54,7 @@ int debug_backtrace(void **frames, int skip, int len);
 			size_t len;                                            \
 			void *pc[DEBUG_STACK_MAXDEPTH];                        \
 		} frames;                                                      \
-		frames.len = debug_backtrace(                                  \
+		frames.len = (size_t)debug_backtrace(                          \
 			frames.pc, (skip), DEBUG_STACK_MAXDEPTH);              \
 		struct slog_extra extra = {                                    \
 			.func = slog_extra_stack,                              \
@@ -108,13 +119,9 @@ int debug_backtrace(void **frames, int skip, int len);
 #define FAILMSG(msg) FAILMSGF("%s", msg)
 #define FAIL() FAILMSG("program encountered an unexpected state (bug?)")
 
-/* CHECK*: check runtime condition or FAIL
- *   Suggestions:
- *   - Use assert() when the condition indicates our bug
- *   - Use assert() when the condition does not always cause failure (crash)
- *   - When the unexpected behavior of external component will definitely cause
- *     failure, use CHECK()
- */
+/* CHECK*: check a runtime condition or FAIL.
+ * Use assert() for our own bugs or conditions that don't always crash;
+ * use CHECK() when bad external behavior will definitely cause failure. */
 #define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
 		if (!(cond)) {                                                 \
@@ -129,9 +136,9 @@ int debug_backtrace(void **frames, int skip, int len);
 			FAIL();                                                \
 		}                                                              \
 	} while (0)
-#else
+#else /* NDEBUG */
 #define CHECK(cond) CHECKMSGF(cond, "runtime check failed: `%s'", #cond)
-#endif
+#endif /* NDEBUG */
 
 /* ASSERT: an alternative to assert() */
 #ifdef NDEBUG

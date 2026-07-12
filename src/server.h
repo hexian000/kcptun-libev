@@ -59,11 +59,14 @@ struct link_stats {
 };
 
 struct server {
+	/* owned by main(): server_loadconf() replaces this pointer on
+	 * reload, so callers must always free the current value of this
+	 * field (never a stale local copy) exactly once at shutdown */
 	const struct config *conf;
 	struct ev_loop *loop;
 	struct listener listener;
 	struct pktconn pkt;
-	uint32_t m_conv;
+	uint32_t conv;
 	struct hashtable *sessions;
 	struct {
 		union sockaddr_max connect;
