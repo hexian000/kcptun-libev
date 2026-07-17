@@ -105,7 +105,11 @@ typedef uint_least32_t elemid_type;
 
 struct hash_element {
 	elemid_type bucket, next;
-	bool valid : 1;
+	/* a plain bool, not a `: 1` bitfield: the single-bit field still occupies
+	 * a storage unit plus padding before the 4-byte-aligned `hash` (the struct
+	 * is 32 bytes either way on common LP64 ABIs), so it saved no space while
+	 * turning every hot `valid` read/write into a read-modify-write */
+	bool valid;
 	uint_least32_t hash;
 	const void *key;
 	void *element;
@@ -367,7 +371,9 @@ static inline void bump_version(struct hashtable *restrict table)
 struct hashtable *
 table_reserve(struct hashtable *restrict table, const size_t new_size)
 {
-	assert(table != NULL);
+	if (table == NULL) {
+		return NULL;
+	}
 	size_t new_capacity = new_size;
 	if (new_capacity < table->size) {
 		new_capacity = table->size;

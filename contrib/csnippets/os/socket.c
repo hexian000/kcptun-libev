@@ -112,17 +112,24 @@ bool socket_set_reuseport(const int fd, const bool reuseport)
 		ok = false;
 	}
 #ifdef SO_REUSEPORT
-	const int opt_reuseport = reuseport ? 1 : 0;
-	if (setsockopt(
-		    fd, SOL_SOCKET, SO_REUSEPORT, &opt_reuseport,
-		    sizeof(opt_reuseport)) != 0) {
-		const int err = errno;
-		LOGE_F("setsockopt [fd:%d]: SO_REUSEPORT (%d) %s", fd, err,
-		       strerror(err));
-		ok = false;
+	/* only touch SO_REUSEPORT when it is wanted: the contract is "otherwise
+	 * only SO_REUSEADDR" */
+	if (reuseport) {
+		if (setsockopt(
+			    fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) !=
+		    0) {
+			const int err = errno;
+			LOGE_F("setsockopt [fd:%d]: SO_REUSEPORT (%d) %s", fd,
+			       err, strerror(err));
+			ok = false;
+		}
 	}
 #else
-	(void)reuseport;
+	/* headers lack SO_REUSEPORT: reject a request for it rather than report
+	 * success on SO_REUSEADDR alone, matching the sibling setters */
+	if (reuseport) {
+		ok = false;
+	}
 #endif /* SO_REUSEPORT */
 	return ok;
 }
@@ -194,7 +201,8 @@ bool socket_set_fastopen_connect(const int fd, const bool enabled)
 #ifdef TCP_FASTOPEN_CONNECT
 	const int val = enabled ? 1 : 0;
 	if (setsockopt(
-		    fd, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, &val, sizeof(val))) {
+		    fd, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, &val, sizeof(val)) !=
+	    0) {
 		const int err = errno;
 		LOGW_F("setsockopt [fd:%d]: TCP_FASTOPEN_CONNECT (%d) %s", fd,
 		       err, strerror(err));
@@ -231,7 +239,7 @@ bool socket_rcvlowat(const int fd, const int bytes)
 {
 	if (bytes > 0) {
 		const socklen_t len = (socklen_t)sizeof(bytes);
-		if (setsockopt(fd, SOL_SOCKET, SO_RCVLOWAT, &bytes, len)) {
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVLOWAT, &bytes, len) != 0) {
 			const int err = errno;
 			LOGE_F("setsockopt [fd:%d]: SO_RCVLOWAT (%d) %s", fd,
 			       err, strerror(err));
@@ -253,7 +261,7 @@ int socket_get_error(const int fd)
 
 bool socket_get_addr(const int fd, union sockaddr_max *const sa)
 {
-	socklen_t len = sizeof(union sockaddr_max);
+	socklen_t len = (socklen_t)sizeof(union sockaddr_max);
 	if (getsockname(fd, &sa->sa, &len) != 0) {
 		const int err = errno;
 		LOGE_F("getsockname [fd:%d]: (%d) %s", fd, err, strerror(err));
@@ -264,7 +272,7 @@ bool socket_get_addr(const int fd, union sockaddr_max *const sa)
 
 bool socket_get_peer(const int fd, union sockaddr_max *const sa)
 {
-	socklen_t len = sizeof(union sockaddr_max);
+	socklen_t len = (socklen_t)sizeof(union sockaddr_max);
 	if (getpeername(fd, &sa->sa, &len) != 0) {
 		const int err = errno;
 		LOGE_F("getpeername [fd:%d]: (%d) %s", fd, err, strerror(err));
@@ -357,8 +365,7 @@ static bool sa_equals_inet6(
 	       a->sin6_scope_id == b->sin6_scope_id;
 }
 
-bool sa_equals(
-	const struct sockaddr *restrict a, const struct sockaddr *restrict b)
+bool sa_equals(const struct sockaddr *a, const struct sockaddr *b)
 {
 	if (a->sa_family != b->sa_family) {
 		return false;
@@ -409,9 +416,7 @@ static bool sa_matches_inet6(
 	return true;
 }
 
-bool sa_matches(
-	const struct sockaddr *restrict bind,
-	const struct sockaddr *restrict dest)
+bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 {
 	const int domain = bind->sa_family;
 	if (domain != dest->sa_family) {
@@ -432,52 +437,70 @@ bool sa_matches(
 	return false;
 }
 
+/* Classify a host-byte-order IPv4 address. Note 0.0.0.0/8 ("this network",
+ * RFC 1122) is treated as UNSPECIFIED rather than narrowing to 0.0.0.0/32:
+ * the rest of the block is non-routable too, so reporting it UNSPECIFIED is
+ * safer for policy use than letting it fall through to GLOBAL. */
+static enum ipclass ipclassify_inet4(const uint32_t addr)
+{
+	switch (addr & UINT32_C(0xf0000000)) {
+	case 0xe0000000: /* 224.0.0.0/4 */
+		return IPCLASS_MULTICAST;
+	default:
+		break;
+	}
+	switch (addr & UINT32_C(0xff000000)) {
+	case 0x00000000: /* 0.0.0.0/8 */
+		return IPCLASS_UNSPECIFIED;
+	case 0x7f000000: /* 127.0.0.0/8 */
+		return IPCLASS_LOOPBACK;
+	case 0x0a000000: /* 10.0.0.0/8 */
+		return IPCLASS_SITELOCAL;
+	default:
+		break;
+	}
+	switch (addr & UINT32_C(0xfff00000)) {
+	case 0xac100000: /* 172.16.0.0/12 */
+		return IPCLASS_SITELOCAL;
+	default:
+		break;
+	}
+	switch (addr & UINT32_C(0xffff0000)) {
+	case 0xa9fe0000: /* 169.254.0.0/16 */
+		return IPCLASS_LINKLOCAL;
+	case 0xc0a80000: /* 192.168.0.0/16 */
+		return IPCLASS_SITELOCAL;
+	default:
+		break;
+	}
+	switch (addr & UINT32_C(0xffffff00)) {
+	case 0xc0000000: /* 192.0.0.0/24 */
+		return IPCLASS_SITELOCAL;
+	default:
+		break;
+	}
+	return IPCLASS_GLOBAL;
+}
+
 enum ipclass sa_ipclassify(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
-	case AF_INET: {
-		const in_addr_t addr = ntohl(
-			((const struct sockaddr_in *)sa)->sin_addr.s_addr);
-		switch (addr & (in_addr_t)0xf0000000) {
-		case 0xe0000000: /* 224.0.0.0/4 */
-			return IPCLASS_MULTICAST;
-		default:
-			break;
-		}
-		switch (addr & (in_addr_t)0xff000000) {
-		case 0x00000000: /* 0.0.0.0/8 */
-			return IPCLASS_UNSPECIFIED;
-		case 0x7f000000: /* 127.0.0.0/8 */
-			return IPCLASS_LOOPBACK;
-		case 0x0a000000: /* 10.0.0.0/8 */
-			return IPCLASS_SITELOCAL;
-		default:
-			break;
-		}
-		switch (addr & (in_addr_t)0xfff00000) {
-		case 0xac100000: /* 172.16.0.0/12 */
-			return IPCLASS_SITELOCAL;
-		default:
-			break;
-		}
-		switch (addr & (in_addr_t)0xffff0000) {
-		case 0xa9fe0000: /* 169.254.0.0/16 */
-			return IPCLASS_LINKLOCAL;
-		case 0xc0a80000: /* 192.168.0.0/16 */
-			return IPCLASS_SITELOCAL;
-		default:
-			break;
-		}
-		switch (addr & (in_addr_t)0xffffff00) {
-		case 0xc0000000: /* 192.0.0.0/24 */
-			return IPCLASS_SITELOCAL;
-		default:
-			break;
-		}
-	} break;
+	case AF_INET:
+		return ipclassify_inet4(ntohl(
+			((const struct sockaddr_in *)sa)->sin_addr.s_addr));
 	case AF_INET6: {
 		const struct in6_addr *const addr =
 			&((const struct sockaddr_in6 *)sa)->sin6_addr;
+		if (IN6_IS_ADDR_V4MAPPED(addr)) {
+			/* classify ::ffff:a.b.c.d by its embedded IPv4, so a
+			 * mapped loopback/private address is not reported GLOBAL */
+			const uint32_t v4 =
+				((uint32_t)addr->s6_addr[12] << 24) |
+				((uint32_t)addr->s6_addr[13] << 16) |
+				((uint32_t)addr->s6_addr[14] << 8) |
+				(uint32_t)addr->s6_addr[15];
+			return ipclassify_inet4(v4);
+		}
 		if (IN6_IS_ADDR_UNSPECIFIED(addr)) {
 			return IPCLASS_UNSPECIFIED;
 		}
@@ -495,11 +518,12 @@ enum ipclass sa_ipclassify(const struct sockaddr *sa)
 		if (IN6_IS_ADDR_MULTICAST(addr)) {
 			return IPCLASS_MULTICAST;
 		}
-	} break;
-	default:
-		return IPCLASS_UNKNOWN;
+		return IPCLASS_GLOBAL;
 	}
-	return IPCLASS_GLOBAL;
+	default:
+		break;
+	}
+	return IPCLASS_UNKNOWN;
 }
 
 static bool find_addrinfo(
@@ -540,8 +564,17 @@ static bool nsresolve(
 	struct addrinfo *result = NULL;
 	const int err = getaddrinfo(name, service, hints, &result);
 	if (err != 0) {
-		LOGE_F("getaddrinfo: resolve `%s' `%s': (%d) %s", name, service,
-		       err, gai_strerror(err));
+		if (err == EAI_SYSTEM) {
+			/* EAI_SYSTEM defers to errno; gai_strerror would only
+			 * yield a generic "System error", so report the real OS
+			 * error, captured before any call can clobber errno */
+			const int syserr = errno;
+			LOGE_F("getaddrinfo: resolve `%s' `%s': (%d) %s", name,
+			       service, syserr, strerror(syserr));
+		} else {
+			LOGE_F("getaddrinfo: resolve `%s' `%s': (%d) %s", name,
+			       service, err, gai_strerror(err));
+		}
 		return false;
 	}
 	const bool ok = find_addrinfo(sa, result);

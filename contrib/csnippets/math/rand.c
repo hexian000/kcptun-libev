@@ -3,11 +3,22 @@
 
 #include "rand.h"
 
+#include <assert.h>
 #include <float.h>
 #include <stdint.h>
 #include <threads.h>
 
-#define ROTL(x, r) (((x) << (r)) | ((x) >> ((sizeof(x) * 8) - (r))))
+/* A function, not a macro, so the argument is evaluated exactly once (the
+ * xoshiro step below rotates s[1] * 5). uint_fast64_t may be wider than 64
+ * bits, so mask to the low 64 bits for a well-defined 64-bit rotate. */
+static inline uint_fast64_t rotl64(const uint_fast64_t x, const int r)
+{
+	const uint_fast64_t v = x & UINT64_MAX;
+	/* A shift by the operand width is undefined, so r == 0 must not reach
+	 * `v >> 64`. Every call here passes a non-zero literal, for which the
+	 * ternary folds away. */
+	return r == 0 ? v : (((v << r) | (v >> (64 - r))) & UINT64_MAX);
+}
 
 /* xoshiro256** and splitmix64 (used only to expand a seed into this state)
  * are bit-exact algorithms defined for 64-bit words; uint_fast64_t is only
@@ -25,7 +36,7 @@ uint_fast64_t rand64(void)
 	uint64_t *restrict s = xoshiro256ss;
 
 	const uint64_t result =
-		ROTL(s[1] * UINT64_C(5), UINT64_C(7)) * UINT64_C(9);
+		(rotl64(s[1] * UINT64_C(5), 7) * UINT64_C(9)) & UINT64_MAX;
 	const uint64_t t = s[1] << 17u;
 
 	s[2] ^= s[0];
@@ -34,7 +45,7 @@ uint_fast64_t rand64(void)
 	s[0] ^= s[3];
 
 	s[2] ^= t;
-	s[3] = ROTL(s[3], 45);
+	s[3] = rotl64(s[3], 45);
 	return result;
 }
 
@@ -77,6 +88,17 @@ uint_fast64_t rand64n(const uint_fast64_t n)
 	}
 	return x;
 }
+
+/* Both routines draw the mantissa from a fixed-width random source: 32 bits for
+ * float, 64 for double. On a wider floating-point format the `N - MANT_DIG`
+ * shift below would go negative (undefined) and the `1 << (MANT_DIG - 1)` scale
+ * would overflow its type; mainstream IEEE-754 (FLT_MANT_DIG 24, DBL_MANT_DIG
+ * 53) is well within budget. Assert the assumption so an exotic target fails to
+ * compile here instead of silently invoking UB and under-filling the mantissa. */
+static_assert(
+	FLT_MANT_DIG <= 32, "frandf: float mantissa exceeds its 32-bit source");
+static_assert(
+	DBL_MANT_DIG <= 64, "frand: double mantissa exceeds its 64-bit source");
 
 float frandf(void)
 {

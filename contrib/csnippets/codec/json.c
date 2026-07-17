@@ -13,6 +13,7 @@
 #include <float.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <locale.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -451,44 +452,49 @@ bool json_parse_umax(char *restrict val, size_t vlen, uintmax_t *restrict out)
 	return true;
 }
 
-/* Exact powers of ten representable as double (10^0 .. 10^22). */
+/* Exact powers of ten representable as double (10^0 .. 10^22).  10^22 is the
+ * largest power of ten exactly representable as a double, so it bounds the
+ * exact fast path in json_scale10.  Do not extend this table with an inexact
+ * entry (e.g. 10^23) without revisiting that path. */
 static const double json_pow10[] = {
 	1e0,  1e1,  1e2,  1e3,	1e4,  1e5,  1e6,  1e7,	1e8,  1e9,  1e10, 1e11,
 	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
+static_assert(
+	ARRAY_SIZE(json_pow10) == 23,
+	"json_pow10 must hold exactly 10^0..10^22, the largest exact "
+	"power of ten; json_scale10's fast path depends on the bound");
 
-/* json_scale10: multiply m by 10^exp using exact powers of ten, saturating to
- * +/-inf on overflow and to +/-0 on underflow.  No libm dependency. */
-static double json_scale10(double m, int exp)
+/* json_scale10: return mant * 10^exp as the nearest double.  Both operands are
+ * exactly representable -- mant because it is at most 2^53, the power of ten
+ * because it is tabulated exact -- so this single IEEE operation is correctly
+ * rounded.  This is only the exact fast path; json_strtod defers every other
+ * token to strtod, so no saturation or libm dependency arises here. */
+static double json_scale10(const uint_fast64_t mant, const int exp)
 {
-	enum { max_step = (int)ARRAY_SIZE(json_pow10) - 1 };
-	while (exp > 0) {
-		const int step = exp < max_step ? exp : max_step;
-		m *= json_pow10[step];
-		if (m > DBL_MAX || m < -DBL_MAX) {
-			return m; /* saturated to +/-inf */
-		}
-		exp -= step;
-	}
-	while (exp < 0) {
-		const int step = -exp < max_step ? -exp : max_step;
-		m /= json_pow10[step];
-		if (m == 0.0) {
-			return m; /* underflow to +/-0 */
-		}
-		exp += step;
-	}
-	return m;
+	assert(mant <= (UINT64_C(1) << 53));
+	assert(-22 <= exp && exp <= 22);
+	const double m = (double)mant;
+	return exp >= 0 ? m * json_pow10[exp] : m / json_pow10[-exp];
 }
 
 /* json_strtod: locale-independent conversion of a JSON number token (as
  * produced by scan_number) into a double.  s[0..len-1] need not be
  * NUL-terminated.  Returns false if the token is not a valid number.
- * Up to 19 significant decimal digits are accumulated into a 64-bit mantissa;
- * any excess digits adjust the base-10 exponent instead. */
+ *
+ * The significant digits are collected verbatim (the radix character folded
+ * into a base-10 exponent) and handed to strtod, which rounds the full value
+ * exactly once.  strtod's only locale-dependent input is the radix character,
+ * which the reconstructed <digits>e<exp> token never carries, so the result
+ * stays locale-independent.  A token whose mantissa is an integer <= 2^53 with
+ * a small exponent takes json_scale10's exact fast path instead.  At most
+ * JSON_STRTOD_MAXSIG significant digits are retained; any further nonzero digit
+ * folds into a sticky low-order guard, so an over-long mantissa still rounds on
+ * the correct side of the retained value. */
 static bool
 json_strtod(const char *restrict s, const size_t len, double *restrict out)
 {
+	enum { JSON_STRTOD_MAXSIG = 768 };
 	size_t i = 0;
 	bool neg = false;
 	if (i < len && s[i] == '-') {
@@ -498,10 +504,13 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 	if (i >= len || !isdigit((unsigned char)s[i])) {
 		return false;
 	}
-	uint_fast64_t mant = 0;
-	int sig = 0; /* significant digits captured in mant (max 19) */
-	int exp10 = 0; /* base-10 exponent of mant, clamped to ±100000 */
+	char digits[JSON_STRTOD_MAXSIG];
+	int ndig = 0; /* significant digits captured in digits[] */
+	int_fast64_t exp10 =
+		0; /* base-10 exponent of digits[] read as integer */
+	uint_fast64_t mant = 0; /* value of digits[] while ndig <= 19 */
 	bool seen_nonzero = false;
+	bool nonzero_dropped = false;
 	/* integer part */
 	while (i < len && isdigit((unsigned char)s[i])) {
 		const unsigned d = (unsigned)(s[i] - '0');
@@ -510,11 +519,14 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 			continue; /* skip leading zeros */
 		}
 		seen_nonzero = true;
-		if (sig < 19) {
-			mant = mant * 10 + d;
-			sig++;
-		} else if (exp10 < 100000) {
-			exp10++; /* digit too significant to keep */
+		if (ndig < JSON_STRTOD_MAXSIG) {
+			digits[ndig++] = (char)('0' + d);
+			if (ndig <= 19) {
+				mant = mant * 10 + d;
+			}
+		} else {
+			exp10++; /* digit retained only as magnitude */
+			nonzero_dropped = nonzero_dropped || d != 0;
 		}
 	}
 	/* fractional part */
@@ -527,18 +539,19 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 			const unsigned d = (unsigned)(s[i] - '0');
 			i++;
 			if (d == 0 && !seen_nonzero) {
-				if (exp10 > -100000) {
-					exp10--; /* leading fractional zero */
-				}
+				exp10--; /* leading fractional zero */
 				continue;
 			}
 			seen_nonzero = true;
-			if (sig < 19) {
-				mant = mant * 10 + d;
-				sig++;
+			if (ndig < JSON_STRTOD_MAXSIG) {
+				digits[ndig++] = (char)('0' + d);
+				if (ndig <= 19) {
+					mant = mant * 10 + d;
+				}
 				exp10--;
+			} else {
+				nonzero_dropped = nonzero_dropped || d != 0;
 			}
-			/* else: drop insignificant fractional digit */
 		}
 	}
 	/* exponent part */
@@ -552,10 +565,10 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 		if (i >= len || !isdigit((unsigned char)s[i])) {
 			return false;
 		}
-		int e = 0;
+		int_fast64_t e = 0;
 		while (i < len && isdigit((unsigned char)s[i])) {
-			if (e < 100000) {
-				e = e * 10 + (int)(s[i] - '0');
+			if (e < 1000000000) {
+				e = e * 10 + (s[i] - '0');
 			}
 			i++;
 		}
@@ -564,7 +577,37 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 	if (i != len) {
 		return false;
 	}
-	const double m = json_scale10((double)mant, exp10);
+	if (!seen_nonzero) {
+		*out = neg ? -0.0 : 0.0;
+		return true;
+	}
+	/* Exact fast path: an integer mantissa <= 2^53 scaled by a tabulated
+	 * exact power of ten rounds in one correctly-rounded IEEE operation.
+	 * ndig <= 19 guarantees no digit was dropped, so mant is exact. */
+	if (ndig <= 19 && mant <= (UINT64_C(1) << 53) && -22 <= exp10 &&
+	    exp10 <= 22) {
+		const double m = json_scale10(mant, (int)exp10);
+		*out = neg ? -m : m;
+		return true;
+	}
+	/* Reconstruct <digits>e<exp> and let strtod round the whole value once. */
+	char token[JSON_STRTOD_MAXSIG + 32];
+	memcpy(token, digits, (size_t)ndig);
+	int pos = ndig;
+	if (nonzero_dropped) {
+		/* The retained digits are a truncation, so bias the value just
+		 * above them: appending '1' at 10^(exp10-1) adds a tenth of the
+		 * last retained place, keeping strtod on the correct side of a
+		 * tie at the truncation point. */
+		token[pos++] = '1';
+		exp10--;
+	}
+	const int n = snprintf(
+		token + pos, sizeof(token) - (size_t)pos, "e%" PRIdFAST64,
+		exp10);
+	assert(n > 0 && (size_t)pos + (size_t)n < sizeof(token));
+	(void)n;
+	const double m = strtod(token, NULL);
 	*out = neg ? -m : m;
 	return true;
 }
@@ -580,7 +623,7 @@ bool json_parse_double(char *restrict val, size_t vlen, double *restrict out)
 }
 
 /* -------------------------------------------------------------------------
- * json_escape_string
+ * json_marshal_string
  * ---------------------------------------------------------------------- */
 
 /* Clamp an internal size_t byte count to the public snprintf-style int
@@ -755,12 +798,21 @@ static ptrdiff_t skip_raw_value(const char *restrict buf, const size_t len)
 	}
 	case '[':
 	case '{': {
-		const char open = buf[0];
-		const char close = (open == '[') ? ']' : '}';
+		/* Track nested brackets with a LIFO of expected closers so a '}'
+		 * can only close a '{' and a ']' only a '['.  A single depth
+		 * counter that ignores the other bracket type would accept
+		 * type-mismatched input such as "[}" or "{]" and mis-measure the
+		 * value's end (e.g. swallowing a sibling member).  The stack is a
+		 * fixed automatic array, so nesting is bounded; RFC 8259 §9
+		 * permits a maximum depth, and over-deep input is a syntax error. */
+		enum { max_depth = 256 };
+		char stack[max_depth];
+		stack[0] = (buf[0] == '[') ? ']' : '}';
 		size_t depth = 1;
 		size_t i = 1;
 		while (i < len && depth > 0) {
-			if (buf[i] == '"') {
+			const char c = buf[i];
+			if (c == '"') {
 				i++;
 				while (i < len) {
 					if (buf[i] == '\\') {
@@ -775,9 +827,15 @@ static ptrdiff_t skip_raw_value(const char *restrict buf, const size_t len)
 				}
 				continue;
 			}
-			if (buf[i] == open) {
-				depth++;
-			} else if (buf[i] == close) {
+			if (c == '[' || c == '{') {
+				if (depth >= max_depth) {
+					return -1;
+				}
+				stack[depth++] = (c == '[') ? ']' : '}';
+			} else if (c == ']' || c == '}') {
+				if (c != stack[depth - 1]) {
+					return -1;
+				}
 				depth--;
 			}
 			i++;
@@ -922,8 +980,8 @@ int json_arr_next(
  * Table-driven codec
  * ---------------------------------------------------------------------- */
 
-/* json_isfinite: libm-free finite test, matching the <float.h> style used by
- * json_scale10 so codec/json.c needs no <math.h> / libm dependency. */
+/* json_isfinite: libm-free finite test against the <float.h> bounds, so
+ * codec/json.c needs no <math.h> / libm dependency. */
 static bool json_isfinite(double v)
 {
 	return v == v && v <= DBL_MAX && v >= -DBL_MAX;
@@ -1072,7 +1130,11 @@ static bool json_check_int(const struct json_constraint *restrict c, intmax_t v)
 	if ((c->flags & JSON_C_EXCL_MAX) && v >= c->i.excl_max) {
 		return false;
 	}
-	if ((c->flags & JSON_C_MULT) && (v % c->i.mult) != 0) {
+	/* multipleOf must be positive; a non-positive mult is a malformed
+	 * constraint (the generator drops it, so it can only arrive via a
+	 * hand-authored table). Skip it rather than divide by zero -- or, at
+	 * mult == -1, invoke INTMAX_MIN % -1 overflow. */
+	if ((c->flags & JSON_C_MULT) && c->i.mult > 0 && (v % c->i.mult) != 0) {
 		return false;
 	}
 	if ((c->flags & JSON_C_CONST) && v != c->i.konst) {
@@ -1100,7 +1162,9 @@ json_check_uint(const struct json_constraint *restrict c, uintmax_t v)
 	if ((c->flags & JSON_C_EXCL_MAX) && v >= c->u.excl_max) {
 		return false;
 	}
-	if ((c->flags & JSON_C_MULT) && (v % c->u.mult) != 0) {
+	/* skip a malformed (zero) divisor rather than divide by zero; see
+	 * json_check_int */
+	if ((c->flags & JSON_C_MULT) && c->u.mult > 0 && (v % c->u.mult) != 0) {
 		return false;
 	}
 	if ((c->flags & JSON_C_CONST) && v != c->u.konst) {
@@ -1128,7 +1192,11 @@ json_check_double(const struct json_constraint *restrict c, double v)
 	if ((c->flags & JSON_C_EXCL_MAX) && v >= c->d.excl_max) {
 		return false;
 	}
-	if ((c->flags & JSON_C_MULT) && json_fmod(v, c->d.mult) != 0.0) {
+	/* json_fmod requires a positive divisor; a non-positive mult is a
+	 * malformed constraint (the generator drops it) that would otherwise spin
+	 * json_fmod forever, so skip it rather than hang */
+	if ((c->flags & JSON_C_MULT) && c->d.mult > 0.0 &&
+	    json_fmod(v, c->d.mult) != 0.0) {
 		return false;
 	}
 	if ((c->flags & JSON_C_CONST) && v != c->d.konst) {
@@ -1301,6 +1369,11 @@ bool json_unmarshal(
 	size_t buflen = length;
 	const struct json_val root = json_parse(json, &buflen);
 	if (root.type != JSON_OBJECT) {
+		/* Honor the documented postcondition (*obj reset to all-zero on
+		 * failure). Not the `fail:` path: no field has been unmarshaled
+		 * yet, so base still holds the defaults image whose pointers are
+		 * not owned and must not be freed. */
+		memset(base, 0, schema->obj_size);
 		return false;
 	}
 	json_iter iter = root.iter;
@@ -1425,6 +1498,29 @@ static size_t json_marshal_impl(
 	size_t bufsz, const void *restrict obj, const char *restrict indent,
 	size_t ind_len, int depth);
 
+/* Rewrite the LC_NUMERIC decimal separator in a printf'd number `s` (length
+ * `len`, NUL-terminated) to JSON's '.'.  `dp` is localeconv()->decimal_point.
+ * When it is not "." the first occurrence in `s` is replaced -- a "%g" of a
+ * finite double emits at most one, and never a grouping separator, so this
+ * touches only the radix.  Returns the resulting length, which shrinks for a
+ * multi-byte separator.  Not static: exposed with external linkage (but kept
+ * out of json.h) so the radix normalization can be unit-tested directly,
+ * without depending on an installed comma-decimal locale. */
+size_t json_fixup_radix(char *restrict s, size_t len, const char *restrict dp)
+{
+	if (dp[0] == '.' && dp[1] == '\0') {
+		return len; /* already JSON's radix */
+	}
+	char *const sep = strstr(s, dp);
+	if (sep == NULL) {
+		return len; /* no separator emitted (e.g. an integer-valued %g) */
+	}
+	const size_t dplen = strlen(dp);
+	sep[0] = '.';
+	memmove(&sep[1], &sep[dplen], strlen(&sep[dplen]) + 1);
+	return len - (dplen - 1);
+}
+
 /* json_emit_value: emit one field value (no key, no array brackets) of the
  * field's element kind.  Returns the new length, or SIZE_MAX on error. */
 static size_t json_emit_value(
@@ -1462,6 +1558,15 @@ static size_t json_emit_value(
 			return SIZE_MAX;
 		}
 		r = snprintf(tmp, sizeof(tmp), "%.17g", v);
+		if (r < 0) {
+			return SIZE_MAX;
+		}
+		/* C11 mandates %g emit the LC_NUMERIC decimal separator, but JSON
+		 * requires '.', and the parser (json_strtod) is locale-independent;
+		 * normalize a non-'.' separator so the round-trip holds under a
+		 * comma-decimal locale. */
+		r = (int)json_fixup_radix(
+			tmp, (size_t)r, localeconv()->decimal_point);
 		break;
 	}
 	case JSON_K_BOOL:
@@ -1525,11 +1630,15 @@ static size_t json_marshal_impl(
 			continue;
 		}
 
-		/* key prefix: <newline+indent>"key":<sep> */
+		/* key prefix: <newline+indent>"key":<sep>. The key goes through
+		 * the same escaping path as string values so a name containing a
+		 * '"', '\\', or control byte -- all legal in a JSON object key --
+		 * yields valid JSON rather than the raw bytes. */
 		n = json_emit_indent(buf, bufsz, n, indent, ind_len, depth + 1);
-		n = json_emit_ch(buf, bufsz, n, '"');
-		n = json_emit_raw(buf, bufsz, n, f->name, f->name_len);
-		n = json_emit_ch(buf, bufsz, n, '"');
+		n = json_emit_str(buf, bufsz, n, f->name, f->name_len);
+		if (n == SIZE_MAX) {
+			return SIZE_MAX;
+		}
 		n = json_emit_ch(buf, bufsz, n, ':');
 		if (indent != NULL) {
 			n = json_emit_ch(buf, bufsz, n, ' ');

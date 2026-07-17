@@ -199,7 +199,7 @@ static void fprint_line(void *data, const char *line)
 	(void)fprintf(f, INDENT "%s\n", line);
 }
 
-void slog_extra_stack(FILE *restrict f, void *data)
+void slog_extra_stack(FILE *restrict f, void *restrict data)
 {
 	struct slog_extra_stack *restrict extra = data;
 	(void)debug_backtrace_symbols(
@@ -316,6 +316,7 @@ static void error_cb(void *data, const char *msg, const int errnum)
 		line, sizeof(line), "#%-3d 0x%jx <unknown>", ctx->index,
 		(uintmax_t)ctx->pc);
 	ctx->cb(ctx->arg, line);
+	ctx->index++;
 }
 
 static void syminfo_cb(
@@ -333,6 +334,7 @@ static void syminfo_cb(
 		line, sizeof(line), "#%-3d 0x%jx %s+0x%jx", ctx->index,
 		(uintmax_t)pc, symname, (uintmax_t)(pc - symval));
 	ctx->cb(ctx->arg, line);
+	ctx->index++;
 }
 
 static int pcinfo_cb(
@@ -346,8 +348,11 @@ static int pcinfo_cb(
 			line, sizeof(line), "#%-3d 0x%jx in %s (%s:%d)",
 			ctx->index, (uintmax_t)pc, function, filename, lineno);
 		ctx->cb(ctx->arg, line);
+		ctx->index++;
 		return 0;
 	}
+	/* no inline info: fall back to the symbol table, which emits (and
+	 * counts) exactly one line via syminfo_cb or error_cb */
 	(void)backtrace_syminfo(ctx->state, pc, syminfo_cb, error_cb, data);
 	return 0;
 }
@@ -389,11 +394,17 @@ int debug_backtrace_symbols(
 	}
 	for (int i = 0; i < len; i++) {
 		pctx.pc = (uintptr_t)frames[i];
+		/* backtrace_pcinfo invokes pcinfo_cb once per inlined function at
+		 * this PC (or error_cb once); each emitted line advances
+		 * pctx.index itself, so a PC spanning several inline levels numbers
+		 * its lines consecutively rather than sharing one number. */
 		(void)backtrace_pcinfo(
 			pctx.state, pctx.pc, pcinfo_cb, error_cb, &pctx);
-		pctx.index++;
 	}
-	return len;
+	/* return the number of lines emitted (index started at 1), keeping the
+	 * "cb calls == return value" contract the other backends uphold even when
+	 * inlining made the line count exceed the physical frame count */
+	return pctx.index - 1;
 #elif WITH_LIBUNWIND /* WITH_LIBBACKTRACE */
 	unw_context_t uc;
 	if (unw_getcontext(&uc) != 0) {

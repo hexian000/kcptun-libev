@@ -21,6 +21,14 @@
  * @note Installs no handlers if capturing a stack backtrace does not work.
  * @note Safe to call again while already installed: signals already
  *   captured by a previous call are left untouched.
+ * @note The handlers run on a dedicated alternate signal stack (SA_ONSTACK)
+ *   so a stack-overflow fault still leaves room to report it. sigaltstack is
+ *   per-thread: the alternate stack is set up only for the calling thread,
+ *   and any alternate stack that thread already had is saved and restored by
+ *   crashhandler_uninstall(). A guarded signal raised on another thread is
+ *   still handled, but on that thread's own stack, so a stack-overflow fault
+ *   there can still double-fault untraced. Install from the thread whose
+ *   stack you most need to capture, typically the main thread at startup.
  * @note Not safe to call concurrently with itself, with
  *   crashhandler_uninstall(), or while any thread could still raise one of
  *   the guarded signals: the internal bookkeeping is read and written
@@ -33,6 +41,8 @@ void crashhandler_install(void);
 /**
  * @brief Uninstall crash signal handlers and restore original handlers.
  * @note Restores exactly the signals installed by crashhandler_install.
+ * @note Restores the alternate signal stack that was effective before
+ *   crashhandler_install(), disabling it only if the thread had none.
  * @note Same caller restrictions as crashhandler_install(): not safe to
  *   call concurrently with itself, with crashhandler_install(), or while
  *   any thread could still raise one of the guarded signals. Call once,

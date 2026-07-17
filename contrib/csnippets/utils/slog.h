@@ -76,8 +76,9 @@ void slog_setflags(unsigned int flags);
  * @brief Extra content written after the message, via func(f, data).
  * @details Only honored by FILE-based sinks (SLOG_OUTPUT_TERMINAL,
  * SLOG_OUTPUT_FILE); other sinks ignore it. func, like the writer and syslog
- * callbacks, runs while slog holds its internal, non-recursive output lock;
- * calling any slog function from within such a callback is undefined behavior.
+ * callbacks, runs while slog holds its internal, non-recursive output lock; a
+ * slog call made from within such a callback is silently dropped rather than
+ * dispatched, so it neither re-enters (and deadlocks on) that lock nor emits.
  */
 struct slog_extra {
 	void (*func)(FILE *f, void *data);

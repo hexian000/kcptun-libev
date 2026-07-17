@@ -6,19 +6,44 @@
 
 #include <stdint.h>
 
-/* a and b must be distinct lvalues; aliasing zeroes both (XOR swap). */
+/* Swap two integer lvalues. a and b must be side-effect-free (each is
+ * evaluated more than once); unlike the former XOR swap, self-aliasing is safe
+ * (INTSWAP(x, x) is a no-op) instead of zeroing both. */
 #ifndef INTSWAP
+#if defined(__GNUC__) && !defined(BINARY_INTSWAP_NO_TYPEOF)
 #define INTSWAP(a, b)                                                          \
 	do {                                                                   \
-		(a) ^= (b), (b) ^= (a), (a) ^= (b);                            \
+		__typeof__(a) intswap_tmp_ = (a);                              \
+		(a) = (b);                                                     \
+		(b) = intswap_tmp_;                                            \
 	} while (0)
-#endif
+#else /* !defined(__GNUC__) || defined(BINARY_INTSWAP_NO_TYPEOF) */
+/* Portable fallback without __typeof__: the round-trip through uintmax_t is
+ * value-preserving for the integer lvalues this macro is used with. On a
+ * __GNUC__ toolchain the __typeof__ path above shadows this, so a test build
+ * defines BINARY_INTSWAP_NO_TYPEOF to force this path to compile and be
+ * exercised, mirroring BINARY_BSWAP_NO_BUILTIN below; production never
+ * defines it, so shipped code is unchanged. */
+#define INTSWAP(a, b)                                                          \
+	do {                                                                   \
+		uintmax_t intswap_tmp_ = (uintmax_t)(a);                       \
+		(a) = (b);                                                     \
+		(b) = intswap_tmp_;                                            \
+	} while (0)
+#endif /* defined(__GNUC__) && !defined(BINARY_INTSWAP_NO_TYPEOF) */
+#endif /* INTSWAP */
 
 /* Fallbacks use C11 uint_fast* types (may be wider than nominal), masked
  * with UINTN_C constants to stay conforming without exact-width types or
  * type punning. */
 
-#ifdef __has_builtin
+/* On a toolchain that provides __builtin_bswapN the scalar fallbacks below are
+ * shadowed by the builtin and never compiled, so nothing exercises them. A test
+ * build defines BINARY_BSWAP_NO_BUILTIN to suppress the builtin path and force
+ * the fallbacks to compile, so they can be differential-tested against the
+ * builtin; production never defines it, so shipped code is unchanged. */
+
+#if defined(__has_builtin) && !defined(BINARY_BSWAP_NO_BUILTIN)
 #if __has_builtin(__builtin_bswap64)
 #define BSWAP64 __builtin_bswap64
 #endif
@@ -38,7 +63,7 @@ static inline uint_fast64_t bswap64(uint_fast64_t x)
 
 #define BSWAP64 bswap64
 #endif /* BSWAP64 */
-#ifdef __has_builtin
+#if defined(__has_builtin) && !defined(BINARY_BSWAP_NO_BUILTIN)
 #if __has_builtin(__builtin_bswap32)
 #define BSWAP32 __builtin_bswap32
 #endif
@@ -54,7 +79,7 @@ static inline uint_fast32_t bswap32(uint_fast32_t x)
 
 #define BSWAP32 bswap32
 #endif /* BSWAP32 */
-#ifdef __has_builtin
+#if defined(__has_builtin) && !defined(BINARY_BSWAP_NO_BUILTIN)
 #if __has_builtin(__builtin_bswap16)
 #define BSWAP16 __builtin_bswap16
 #endif

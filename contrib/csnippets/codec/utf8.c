@@ -38,6 +38,11 @@ int utf8_encode(char *restrict buf, const char32_t cp)
 
 int utf8_decode(char32_t *restrict cp, const char *restrict s, const size_t len)
 {
+	if (len == 0) {
+		/* nothing to decode: reject rather than reading s[0], and stay
+		 * consistent with the multibyte "runs past len" rejection below */
+		return 0;
+	}
 	const unsigned char c0 = (unsigned char)s[0];
 	if (c0 < 0x80) {
 		if (cp != NULL) {

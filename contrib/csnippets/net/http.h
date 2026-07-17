@@ -102,7 +102,8 @@ const char *http_status(uint_fast16_t code);
  * @brief Generate a date string in IMF-fixdate format.
  * @param[out] buf string buffer
  * @param buf_size size of string buffer
- * @return Length of the generated string.
+ * @return Length of the generated string (always 29), or 0 if the buffer is
+ * too small, leaving the buffer unspecified.
  */
 size_t http_date(char *restrict buf, size_t buf_size);
 

@@ -114,6 +114,8 @@ struct vbuffer {
  * - On allocation failure, returns the original vbuf unchanged.
  * - One extra byte is always reserved (cap + 1 total) for internal NUL.
  * - Preserves len up to the new cap if shrinking.
+ * - Writes the reserved NUL at the resulting len, so the module-wide
+ *   NUL-termination invariant holds from allocation onwards.
  */
 static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 {
@@ -134,6 +136,8 @@ static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 	vbuf = newbuf;
 	vbuf->cap = cap;
 	vbuf->len = MIN(cap, len);
+	/* data holds cap + 1 bytes, so this slot always exists */
+	vbuf->data[vbuf->len] = '\0';
 	return vbuf;
 }
 
@@ -194,12 +198,15 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  * BUF_INIT(wbuf, 0);
  * ```
  */
-#define BUF_INIT(buf, n)                                                       \
-	do {                                                                   \
-		enum { buf_cap_ = sizeof((buf).data) };                        \
-		static_assert((n) <= buf_cap_, "buffer overflow");             \
-		(buf).cap = sizeof((buf).data);                                \
-		(buf).len = (n);                                               \
+#define BUF_INIT(buf, n)                                                        \
+	do {                                                                    \
+		/* assert against sizeof directly (a named enum could collide \
+		 * with the caller's `n`); the size_t cast keeps `n == 0` from \
+		 * reading as a tautological sizeof comparison */ \
+		static_assert(                                                  \
+			(size_t)(n) <= sizeof((buf).data), "buffer overflow");  \
+		(buf).cap = sizeof((buf).data);                                 \
+		(buf).len = (n);                                                \
 	} while (0)
 
 /* Asserts cap > 0 and len within [0, cap]. */
@@ -279,10 +286,9 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  */
 #define BUF_CONSUME(buf, n)                                                    \
 	do {                                                                   \
-		BUF_ASSERT_LEAST(buf, n);                                      \
-		const unsigned char *b = (buf).data;                           \
-		(void)memmove((buf).data, b + n, (buf).len - n);               \
-		(buf).len -= n;                                                \
+		BUF_ASSERT_LEAST(buf, (n));                                    \
+		(void)memmove((buf).data, (buf).data + (n), (buf).len - (n));  \
+		(buf).len -= (n);                                              \
 	} while (0)
 
 /**
@@ -414,11 +420,15 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 /**
  * @brief Clear the vbuffer without changing the allocation.
  * @details usage: `VBUF_RESET(vbuf);`
+ * The reserved NUL terminator is restored, preserving the module-wide
+ * invariant that vbuffer data stays NUL-terminated; without it the cleared
+ * buffer would still read back as the stale contents.
  */
 #define VBUF_RESET(vbuf)                                                       \
 	do {                                                                   \
 		VBUF_ASSERT_SANITY(vbuf);                                      \
 		(vbuf)->len = 0;                                               \
+		(vbuf)->data[0] = '\0';                                        \
 	} while (0)
 
 /**
@@ -426,36 +436,62 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
  * @param want New capacity in bytes. If smaller than current length, data is
  * truncated.
- * @details On failure, the allocation remains unchanged.
+ * @details On failure, the allocation remains unchanged. Skipped entirely once
+ * an OOM condition is recorded (see `VBUF_HAS_OOM`), so a resize cannot clear
+ * the marker while the data stays truncated; use `VBUF_RESET` to clear it.
  * usage: `VBUF_RESIZE(vbuf, 1024);`
  */
-#define VBUF_RESIZE(vbuf, want)                                                \
-	do {                                                                   \
-		VBUF_ASSERT_SANITY(vbuf);                                      \
-		if ((want) < SIZE_MAX) {                                       \
-			(vbuf) = vbuf_alloc((vbuf), (want) + 1);               \
-			if ((vbuf) != NULL) {                                  \
-				(vbuf)->len = MIN((vbuf)->len, (want));        \
-			}                                                      \
-		}                                                              \
+#define VBUF_RESIZE(vbuf, want)                                                  \
+	do {                                                                     \
+		VBUF_ASSERT_SANITY(vbuf);                                        \
+		/* An OOM condition is recorded as len == cap; a realloc here  \
+		 * would clear the marker while the data stays truncated, so   \
+		 * skip it, mirroring VBUF_RESERVE. */ \
+		if ((vbuf)->len != (vbuf)->cap && (want) < SIZE_MAX) {           \
+			(vbuf) = vbuf_alloc((vbuf), (want) + 1);                 \
+			if ((vbuf) != NULL) {                                    \
+				(vbuf)->len = MIN((vbuf)->len, (want));          \
+				/* truncating here drops len below the NUL \
+				 * vbuf_alloc wrote, so restore it */     \
+				(vbuf)->data[(vbuf)->len] = '\0';                \
+			}                                                        \
+		}                                                                \
 	} while (0)
 
 /**
  * @brief Prepare the vbuffer for specified number of bytes.
  * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
  * @param want Expected vbuffer capacity in bytes.
- * @details On failure, the allocation remains unchanged.
+ * @details On failure, the allocation remains unchanged. Skipped entirely once
+ * the OOM marker (`len == cap`) is set on an existing buffer, so the marker and
+ * the truncated data are preserved; use `VBUF_RESET` to clear it.
  * usage: `VBUF_RESERVE(vbuf, 0);` (with want=0, shrinks the buffer to fit)
  */
-#define VBUF_RESERVE(vbuf, want)                                                 \
-	do {                                                                     \
-		const size_t n = ((vbuf) != NULL) ? (vbuf)->len : 0;             \
-		/* argument order matters: MAX(n, 0) triggers -Wtype-limits    \
-		 * ("unsigned < 0 is always false") when want is a literal 0,  \
-		 * a documented valid call (shrink to fit); MAX(0, n) doesn't, \
-		 * and is the same value since neither operand has side       \
-		 * effects. */ \
-		(vbuf) = vbuf_alloc((vbuf), MAX((want), n) + 1);                 \
+#define VBUF_RESERVE(vbuf, want)                                                   \
+	do {                                                                       \
+		/* A SIZE_MAX reserve is unsatisfiable (target + 1 would wrap to \
+		 * 0, the free-and-return-NULL shrink path); leave the allocation \
+		 * unchanged, mirroring VBUF_RESIZE. */ \
+		/* An OOM condition is recorded as len == cap, so any \
+		 * reallocation here would silently clear the marker while the \
+		 * data stays truncated. Skip instead, as vbuf_append and \
+		 * vbuf_vappendf already do once OOM is set. */            \
+		if (((vbuf) == NULL || (vbuf)->len != (vbuf)->cap) &&              \
+		    (want) < SIZE_MAX) {                                           \
+			const size_t len_ =                                        \
+				((vbuf) != NULL) ? (vbuf)->len : 0;                \
+			const size_t cap_ =                                        \
+				((vbuf) != NULL) ? (vbuf)->cap : 1;                \
+			/* A reserve only grows: keep at least `want` usable \
+			 * bytes without shrinking below the current capacity \
+			 * (use VBUF_RESIZE to shrink). want == 0 is the \
+			 * documented shrink-to-fit. MAX((want), ...) keeps \
+			 * `want` first so a literal 0 does not trip \
+			 * -Wtype-limits. */     \
+			const size_t target_ =                                     \
+				((want) != 0) ? MAX((want), cap_ - 1) : len_;      \
+			(vbuf) = vbuf_alloc((vbuf), target_ + 1);                  \
+		}                                                                  \
 	} while (0)
 
 /**
@@ -517,8 +553,8 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 #define VBUF_CONSUME(vbuf, n)                                                  \
 	do {                                                                   \
 		VBUF_ASSERT_LEAST(vbuf, (n));                                  \
-		const unsigned char *b = (vbuf)->data;                         \
-		(void)memmove((vbuf)->data, b + (n), (vbuf)->len - (n));       \
+		(void)memmove(                                                 \
+			(vbuf)->data, (vbuf)->data + (n), (vbuf)->len - (n));  \
 		(vbuf)->len -= (n);                                            \
 		(vbuf)->data[(vbuf)->len] = '\0';                              \
 	} while (0)

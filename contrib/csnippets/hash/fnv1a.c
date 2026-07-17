@@ -8,8 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define FNV_32_PRIME UINT32_C(0x01000193)
-
 /* fnv1a_32 - perform a 32 bit Fowler/Noll/Vo FNV-1a hash on a buffer */
 uint_fast32_t
 fnv1a_32(const void *restrict ptr, const size_t len, const uint_fast32_t seed)
@@ -25,12 +23,10 @@ fnv1a_32(const void *restrict ptr, const size_t len, const uint_fast32_t seed)
 		/* xor the bottom with the current octet */
 		h ^= (uint_fast32_t)*bp;
 
-		/* multiply by the 32 bit FNV magic prime mod 2^32 */
-#if defined(NO_FNV_GCC_OPTIMIZATION)
-		h *= FNV_32_PRIME;
-#else /* NO_FNV_GCC_OPTIMIZATION */
+		/* multiply by the 32-bit FNV magic prime 0x01000193, mod 2^32,
+		 * decomposed into shifts and adds (1 + 2 + 16 + 128 + 256 +
+		 * 2^24) so the compiler need not emit a general multiply */
 		h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
-#endif /* NO_FNV_GCC_OPTIMIZATION */
 	}
 
 	/* Explicit truncation keeps this a true 32-bit FNV-1a value even
@@ -38,8 +34,6 @@ fnv1a_32(const void *restrict ptr, const size_t len, const uint_fast32_t seed)
 	 * where the optional uint32_t (and UINT32_MAX) is absent. */
 	return h & UINT32_C(0xffffffff);
 }
-
-#define FNV_64_PRIME UINT64_C(0x100000001b3)
 
 /* fnv1a_64 - perform a 64 bit Fowler/Noll/Vo FNV-1a hash on a buffer */
 uint_fast64_t
@@ -56,13 +50,11 @@ fnv1a_64(const void *restrict ptr, const size_t len, const uint_fast64_t seed)
 		/* xor the bottom with the current octet */
 		h ^= (uint_fast64_t)*bp;
 
-		/* multiply by the 64 bit FNV magic prime mod 2^64 */
-#if defined(NO_FNV_GCC_OPTIMIZATION)
-		h *= FNV_64_PRIME;
-#else /* NO_FNV_GCC_OPTIMIZATION */
+		/* multiply by the 64-bit FNV magic prime 0x100000001b3, mod
+		 * 2^64, decomposed into shifts and adds (1 + 2 + 16 + 32 + 128 +
+		 * 256 + 2^40) so the compiler need not emit a general multiply */
 		h += (h << 1) + (h << 4) + (h << 5) + (h << 7) + (h << 8) +
 		     (h << 40);
-#endif /* NO_FNV_GCC_OPTIMIZATION */
 	}
 
 	/* return our new hash value; explicit truncation keeps the result a

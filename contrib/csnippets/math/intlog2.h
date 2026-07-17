@@ -170,7 +170,7 @@ static inline int log2u(unsigned int x)
 {
 	assert(x > 0);
 #if defined(__has_builtin) && __has_builtin(__builtin_clz)
-	return (int)(sizeof(x) << 3u) - 1 - __builtin_clz(x);
+	return (int)(sizeof(x) * CHAR_BIT) - 1 - __builtin_clz(x);
 #else
 #if UINT_MAX == 0xFFFFFFFF
 	return log2u32((uint_fast32_t)x);
@@ -184,7 +184,7 @@ static inline int log2ul(unsigned long x)
 {
 	assert(x > 0);
 #if defined(__has_builtin) && __has_builtin(__builtin_clzl)
-	return (int)(sizeof(x) << 3u) - 1 - __builtin_clzl(x);
+	return (int)(sizeof(x) * CHAR_BIT) - 1 - __builtin_clzl(x);
 #else
 #if ULONG_MAX == 0xFFFFFFFF
 	return log2u32((uint_fast32_t)x);
@@ -198,7 +198,7 @@ static inline int log2ull(unsigned long long x)
 {
 	assert(x > 0);
 #if defined(__has_builtin) && __has_builtin(__builtin_clzll)
-	return (int)(sizeof(x) << 3u) - 1 - __builtin_clzll(x);
+	return (int)(sizeof(x) * CHAR_BIT) - 1 - __builtin_clzll(x);
 #else
 	/* unsigned long long must fit in uint_fast64_t for the
 	 * fallback cast to be lossless. */
@@ -256,7 +256,7 @@ static inline int countr_zeroull(unsigned long long x)
 static inline int countl_zerou(unsigned int x)
 {
 #if defined(__has_builtin) && __has_builtin(__builtin_clz)
-	return x == 0 ? (int)(sizeof(x) << 3u) : __builtin_clz(x);
+	return x == 0 ? (int)(sizeof(x) * CHAR_BIT) : __builtin_clz(x);
 #else
 #if UINT_MAX == 0xFFFFFFFF
 	return countl_zerou32((uint_fast32_t)x);
@@ -269,7 +269,7 @@ static inline int countl_zerou(unsigned int x)
 static inline int countl_zeroul(unsigned long x)
 {
 #if defined(__has_builtin) && __has_builtin(__builtin_clzl)
-	return x == 0 ? (int)(sizeof(x) << 3u) : __builtin_clzl(x);
+	return x == 0 ? (int)(sizeof(x) * CHAR_BIT) : __builtin_clzl(x);
 #else
 #if ULONG_MAX == 0xFFFFFFFF
 	return countl_zerou32((uint_fast32_t)x);
@@ -282,7 +282,7 @@ static inline int countl_zeroul(unsigned long x)
 static inline int countl_zeroull(unsigned long long x)
 {
 #if defined(__has_builtin) && __has_builtin(__builtin_clzll)
-	return x == 0 ? (int)(sizeof(x) << 3u) : __builtin_clzll(x);
+	return x == 0 ? (int)(sizeof(x) * CHAR_BIT) : __builtin_clzll(x);
 #else
 	/* unsigned long long must fit in uint_fast64_t for the
 	 * fallback cast to be lossless. */
@@ -390,12 +390,6 @@ static_assert(
 		unsigned long: countl_zeroul,                                  \
 		unsigned long long: countl_zeroull)(x)
 #endif /* UINTMAX_MAX > ULLONG_MAX */
-
-/* size_t must alias unsigned int, long, or long long for the
- * _Generic dispatch in intlog2() and countr_zero() to cover it. */
-static_assert(
-	sizeof(size_t) <= sizeof(unsigned long long),
-	"size_t wider than unsigned long long: intlog2/countr_zero dispatch incomplete");
 
 /** @} */
 

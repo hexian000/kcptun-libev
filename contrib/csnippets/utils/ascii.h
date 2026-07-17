@@ -51,24 +51,23 @@ static inline char *strupper(char *restrict s)
 
 static inline char *strtrimleftspace(char *restrict s)
 {
-	const unsigned char *p = (unsigned char *)s;
-	while (*p && isspace(*p)) {
-		p++;
+	while (*s != '\0' && isspace((unsigned char)*s)) {
+		s++;
 	}
-	return (char *)p;
+	return s;
 }
 
 static inline char *strtrimrightspace(char *restrict s)
 {
-	if (*s == '\0') {
-		return s;
+	char *e = s;
+	while (*e != '\0') {
+		e++;
 	}
-	unsigned char *e;
-	for (e = (unsigned char *)s; *e; e++) {
-	}
-	e--;
-	while ((unsigned char *)s < e && isspace(*e)) {
-		*e-- = '\0';
+	/* Walk back while the byte before e is a space. Guarding on `e > s`
+	 * both keeps the e[-1] read in bounds and lets e reach s, so an
+	 * all-whitespace string trims to empty. */
+	while (e > s && isspace((unsigned char)e[-1])) {
+		*--e = '\0';
 	}
 	return s;
 }

@@ -81,6 +81,9 @@ bool socket_set_buffer(int fd, int sndbuf, int rcvbuf);
  * @param reuseport If true, enables SO_REUSEPORT (Linux 3.9+), otherwise only SO_REUSEADDR.
  * @return True on success, false on failure; logs LOGE on failure.
  * @note POSIX version: POSIX.1-2001 (SO_REUSEADDR), Linux 3.9+ (SO_REUSEPORT)
+ * @note Requesting reuseport returns false if SO_REUSEPORT is not defined at
+ * compile time, rather than reporting success on SO_REUSEADDR alone;
+ * reuseport=false (SO_REUSEADDR only) still succeeds there.
  * @note SO_REUSEADDR and SO_REUSEPORT are applied independently; on
  * failure, one may have been applied while the other was not, and a
  * subsequent bind() to an address/port already in use may then fail.
@@ -251,7 +254,8 @@ void sa_copy(struct sockaddr *restrict dst, const struct sockaddr *restrict src)
  * @return The number of characters written, or -1 on error.
  * @note POSIX version: POSIX.1-2001
  */
-int sa_format(char *restrict s, size_t maxlen, const struct sockaddr *sa);
+int sa_format(
+	char *restrict s, size_t maxlen, const struct sockaddr *restrict sa);
 
 /**
  * @brief Checks if two sockaddr structures are equal.
@@ -305,8 +309,8 @@ enum sa_resolve_type {
  * @note POSIX version: POSIX.1-2001
  */
 bool sa_resolve(
-	union sockaddr_max *restrict sa, const char *name, const char *service,
-	enum sa_resolve_type type, int family);
+	union sockaddr_max *restrict sa, const char *restrict name,
+	const char *restrict service, enum sa_resolve_type type, int family);
 
 /**
  * @brief Resolves a bind hostname and service into a sockaddr.
@@ -318,8 +322,8 @@ bool sa_resolve(
  * @note POSIX version: POSIX.1-2001
  */
 bool sa_resolve_bind(
-	union sockaddr_max *restrict sa, const char *name, const char *service,
-	enum sa_resolve_type type);
+	union sockaddr_max *restrict sa, const char *restrict name,
+	const char *restrict service, enum sa_resolve_type type);
 
 /** @} */
 

@@ -41,7 +41,9 @@ static const char *const si_prefix_pos[] = {
 };
 
 static const char *const si_prefix_neg[] = {
-	"m", u8"μ", "n", "p", "f", "a", "z", "y", "r", "q",
+	/* U+00B5 MICRO SIGN, matching format_duration; a plain (non-u8) literal
+	 * so it stays char[] under C23 too */
+	"m", "µ", "n", "p", "f", "a", "z", "y", "r", "q",
 };
 
 int format_si_prefix(char *restrict s, const size_t maxlen, const double value)
@@ -53,19 +55,32 @@ int format_si_prefix(char *restrict s, const size_t maxlen, const double value)
 	if (!(1e-30 <= absvalue && absvalue < 1e+31)) {
 		return snprintf(s, maxlen, "%.2e", value);
 	}
-	const int e = (int)floor(log10(absvalue) / 3.0);
+	int e = (int)floor(log10(absvalue) / 3.0);
+	double v = value / pow(10, 3.0 * (double)e);
+	/* the scaled mantissa is in [1, 1000), but %.3g rounds a value in
+	 * [999.5, 1000) up to "1e+03"; promote to the next prefix so it reads
+	 * "1<next>" rather than "1e+03<prev>" */
+	if (fabs(v) >= 999.5) {
+		e++;
+		v /= 1000.0;
+	}
 	if (e == 0) {
-		return snprintf(s, maxlen, "%.3g", value);
+		return snprintf(s, maxlen, "%.3g", v);
 	}
+	const char *prefix;
 	if (e < 0) {
-		const size_t i = MIN((size_t)-e, ARRAY_SIZE(si_prefix_neg));
-		const double v = value / pow(10, -3.0 * (double)i);
-		const char *prefix = si_prefix_neg[i - 1];
-		return snprintf(s, maxlen, "%.3g%s", v, prefix);
+		const size_t i = (size_t)(-e);
+		if (i > ARRAY_SIZE(si_prefix_neg)) {
+			return snprintf(s, maxlen, "%.2e", value);
+		}
+		prefix = si_prefix_neg[i - 1];
+	} else {
+		const size_t i = (size_t)e;
+		if (i > ARRAY_SIZE(si_prefix_pos)) {
+			return snprintf(s, maxlen, "%.2e", value);
+		}
+		prefix = si_prefix_pos[i - 1];
 	}
-	const size_t i = MIN((size_t)e, ARRAY_SIZE(si_prefix_pos));
-	const double v = value / pow(10, 3.0 * (double)i);
-	const char *prefix = si_prefix_pos[i - 1];
 	return snprintf(s, maxlen, "%.3g%s", v, prefix);
 }
 
@@ -253,23 +268,61 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		if (d.second >= 10) {
 			const double seconds = d.second + d.milli * 1e-3 +
 					       d.micro * 1e-6 + d.nano * 1e-9;
+			/* a value that rounds up to 60.00s carries into a
+			 * one-minute display instead of printing "60.00s" */
+			if (nearbyint(seconds * 100.0) >= 60.0 * 100.0) {
+				return format_duration(
+					s, maxlen,
+					(struct duration){ .sign = d.sign,
+							   .minute = 1 });
+			}
 			return snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.2fs"),
 				seconds);
 		}
 		const double millis = d.second * 1e+3 + d.milli +
 				      d.micro * 1e-3 + d.nano * 1e-6;
+		/* a value that rounds up to 10000ms carries into the >=10s
+		 * seconds display */
+		if (nearbyint(millis) >= 10.0 * 1000.0) {
+			return format_duration(
+				s, maxlen,
+				(struct duration){ .sign = d.sign,
+						   .second = 10 });
+		}
 		return snprintf(
 			s, maxlen, SIGNED_STR(d.sign, "%.0fms"), millis);
 	}
 	if (d.milli) {
 		const double millis = d.milli + d.micro * 1e-3 + d.nano * 1e-6;
 		if (d.milli >= 100) {
+			/* a value that rounds up to 1000.0ms carries into a
+			 * one-second display */
+			if (nearbyint(millis * 10.0) >= 1000.0 * 10.0) {
+				return format_duration(
+					s, maxlen,
+					(struct duration){ .sign = d.sign,
+							   .second = 1 });
+			}
 			return snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.1fms"),
 				millis);
 		}
 		if (d.milli >= 10) {
+			/* mirror the micro>=10 guard: rounding up to 100.0 drops
+			 * to one decimal, so "100.0ms" not "100.00ms" */
+			if (nearbyint(millis * 100.0) >= 100.0 * 100.0) {
+				return snprintf(
+					s, maxlen, SIGNED_STR(d.sign, "%.1fms"),
+					millis);
+			}
+			return snprintf(
+				s, maxlen, SIGNED_STR(d.sign, "%.2fms"),
+				millis);
+		}
+		/* milli < 10: rounding up to 10.0 drops to two decimals, so
+		 * "10.00ms" (matching the milli>=10 range) not "10.000ms" */
+		if (nearbyint(millis * 1000.0) >= 10.0 * 1000.0) {
 			return snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.2fms"),
 				millis);
@@ -280,12 +333,29 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 	if (d.micro) {
 		if (d.micro >= 100) {
 			const double micros = d.micro + d.nano * 1e-3;
+			/* a value that rounds up to 1000.0us carries into a
+			 * one-millisecond display */
+			if (nearbyint(micros * 10.0) >= 1000.0 * 10.0) {
+				return format_duration(
+					s, maxlen,
+					(struct duration){ .sign = d.sign,
+							   .milli = 1 });
+			}
 			return snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.1fµs"),
 				micros);
 		}
 		if (d.micro >= 10) {
 			const double micros = d.micro + d.nano * 1e-3;
+			/* a mid-range value that rounds up to 100.0 gains an
+			 * integer digit; drop a decimal (as the >=100 branch does)
+			 * so the width stays ~3 significant figures instead of
+			 * printing "100.00µs" */
+			if (nearbyint(micros * 100.0) >= 100.0 * 100.0) {
+				return snprintf(
+					s, maxlen, SIGNED_STR(d.sign, "%.1fµs"),
+					micros);
+			}
 			return snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.2fµs"),
 				micros);
@@ -316,12 +386,32 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 #define LAYOUT_C "2006-01-02T15:04:05-0700"
 #define LAYOUT_C_UTC "2006-01-02T15:04:05Z"
 
+/* localtime_r/gmtime_r return NULL with EOVERFLOW when the time_t cannot be
+ * represented in a struct tm, which strftime would then dereference.  Report
+ * it as a zero-length result so the callers below take the failure path they
+ * already have for a strftime that produced the wrong length. */
+static size_t strftime_checked(
+	char *restrict s, const size_t maxlen, const char *restrict format,
+	const struct tm *restrict tm)
+{
+	if (tm == NULL) {
+		return 0;
+	}
+	/* RFC 3339 §5.6 requires date-fullyear = 4DIGIT; the length gate cannot
+	 * enforce it (a negative year renders as a 4-char "-NNN" of the expected
+	 * width), so reject any year outside [1000, 9999] here. */
+	if (tm->tm_year < 1000 - 1900 || tm->tm_year > 9999 - 1900) {
+		return 0;
+	}
+	return strftime(s, maxlen, format, tm);
+}
+
 #define STRFTIME(s, maxlen, timer)                                             \
-	(strftime((s), (maxlen), "%FT%T%z", LOCALTIME(timer)) ==               \
+	(strftime_checked((s), (maxlen), "%FT%T%z", LOCALTIME(timer)) ==       \
 	 STRLEN(LAYOUT_C))
 
 #define STRFTIME_UTC(s, maxlen, timer)                                         \
-	(strftime((s), (maxlen), "%FT%TZ", GMTIME(timer)) ==                   \
+	(strftime_checked((s), (maxlen), "%FT%TZ", GMTIME(timer)) ==           \
 	 STRLEN(LAYOUT_C_UTC))
 
 #define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
@@ -343,9 +433,7 @@ int format_rfc3339(
 			return (int)STRLEN(LAYOUT_RFC3339_UTC);
 		}
 		if (!STRFTIME_UTC(s, maxlen, &timer)) {
-			if (maxlen > 0) {
-				s[0] = '\0';
-			}
+			s[0] = '\0';
 			return -1;
 		}
 		return (int)STRLEN(LAYOUT_RFC3339_UTC);
@@ -358,9 +446,7 @@ int format_rfc3339(
 		return (int)STRLEN(LAYOUT_RFC3339);
 	}
 	if (!STRFTIME(s, maxlen, &timer)) {
-		if (maxlen > 0) {
-			s[0] = '\0';
-		}
+		s[0] = '\0';
 		return -1;
 	}
 	const char *restrict tz = s + STRLEN(LAYOUT_C);
@@ -376,6 +462,15 @@ int format_rfc3339nano(
 	char *restrict s, const size_t maxlen,
 	const struct timespec *restrict tp, const bool utc)
 {
+	/* the nine-digit unroll below assumes a normalized tv_nsec; POSIX
+	 * constrains it to [0, 999999999], and outside that range the unroll
+	 * would emit non-digit bytes or silently drop a carried second */
+	if (tp->tv_nsec < 0 || tp->tv_nsec > 999999999) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return -1;
+	}
 	if (utc) {
 		if (maxlen < sizeof(LAYOUT_RFC3339NANO_UTC)) {
 			if (maxlen > 0) {
@@ -384,9 +479,7 @@ int format_rfc3339nano(
 			return (int)STRLEN(LAYOUT_RFC3339NANO_UTC);
 		}
 		if (!STRFTIME_UTC(s, maxlen, &tp->tv_sec)) {
-			if (maxlen > 0) {
-				s[0] = '\0';
-			}
+			s[0] = '\0';
 			return -1;
 		}
 		unsigned char *restrict e =
@@ -414,9 +507,7 @@ int format_rfc3339nano(
 		return (int)STRLEN(LAYOUT_RFC3339NANO);
 	}
 	if (!STRFTIME(s, maxlen, &tp->tv_sec)) {
-		if (maxlen > 0) {
-			s[0] = '\0';
-		}
+		s[0] = '\0';
 		return -1;
 	}
 	const unsigned char *restrict tz =

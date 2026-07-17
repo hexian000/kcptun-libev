@@ -37,6 +37,92 @@ static struct {
 };
 #define NUM_SIGHANDLERS ARRAY_SIZE(sighandlers)
 
+/* AddressSanitizer instrumentation inflates stack frames several-fold, so the
+ * crash handlers' alternate stack must be sized larger when built with it, or
+ * the instrumented handler chain overflows a stack budgeted for release code
+ * and double-faults to SIGSEGV -- defeating the very SA_ONSTACK protection the
+ * alternate stack exists to provide. */
+#if defined(__SANITIZE_ADDRESS__)
+#define CRASH_ALTSTACK_INSTRUMENTED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define CRASH_ALTSTACK_INSTRUMENTED 1
+#endif
+#endif
+#ifndef CRASH_ALTSTACK_INSTRUMENTED
+#define CRASH_ALTSTACK_INSTRUMENTED 0
+#endif
+
+/* A dedicated stack for the crash handlers. The single most common SIGSEGV a
+ * crash tracer exists to capture -- stack exhaustion from runaway recursion --
+ * leaves no room on the faulting stack for the handler's own frames
+ * (LOG_STACK_F alone reserves a DEBUG_STACK_MAXDEPTH-entry pc buffer), so
+ * without SA_ONSTACK the handler double-faults and the process dies untraced.
+ * Set up once alongside the first crashhandler_install() and torn down on
+ * uninstall, saving and restoring any alternate stack the calling thread
+ * already had rather than clobbering it. sigaltstack is per-thread, so this
+ * covers only the installing thread; a guarded fault on another thread still
+ * runs on that thread's own stack. */
+static void *crash_altstack;
+static stack_t crash_prev_altstack;
+
+static size_t crash_altstack_size(void)
+{
+	size_t size = (size_t)SIGSTKSZ + DEBUG_STACK_MAXDEPTH * sizeof(void *);
+#if CRASH_ALTSTACK_INSTRUMENTED
+	/* the instrumented handler chain needs several times the room */
+	size *= 4;
+#endif
+	return size;
+}
+
+static void crash_altstack_setup(void)
+{
+	if (crash_altstack != NULL) {
+		return; /* already installed */
+	}
+	const size_t altsize = crash_altstack_size();
+	void *const base = malloc(altsize);
+	if (base == NULL) {
+		return; /* fall back to the faulting stack (no SA_ONSTACK) */
+	}
+	const stack_t ss = {
+		.ss_sp = base,
+		.ss_size = altsize,
+		.ss_flags = 0,
+	};
+	/* capture the caller's previous alternate stack so uninstall can put it
+	 * back instead of discarding it */
+	if (sigaltstack(&ss, &crash_prev_altstack) != 0) {
+		LOG_PERROR("sigaltstack");
+		free(base);
+		return;
+	}
+	crash_altstack = base;
+}
+
+static void crash_altstack_teardown(void)
+{
+	if (crash_altstack == NULL) {
+		return;
+	}
+	/* restore whatever alternate stack was effective before install rather
+	 * than forcing SS_DISABLE, so a consumer's own SA_ONSTACK stack is left
+	 * intact. A previously-disabled stack reports an unspecified
+	 * ss_sp/ss_size (POSIX), so rebuild a clean descriptor for that case. */
+	stack_t ss = crash_prev_altstack;
+	if ((ss.ss_flags & SS_DISABLE) != 0) {
+		ss = (stack_t){ .ss_sp = NULL,
+				.ss_size = 0,
+				.ss_flags = SS_DISABLE };
+	}
+	if (sigaltstack(&ss, NULL) != 0) {
+		LOG_PERROR("sigaltstack");
+	}
+	free(crash_altstack);
+	crash_altstack = NULL;
+}
+
 static void sighandler_crash(const int signo)
 {
 	const char *const sigstr = os_strsignal(signo);
@@ -85,7 +171,16 @@ void crashhandler_install(void)
 		LOGW("crash handler not installed: backtrace unavailable");
 		return;
 	}
-	const struct sigaction act = { .sa_handler = sighandler_crash };
+	crash_altstack_setup();
+	struct sigaction act = { .sa_handler = sighandler_crash };
+	/* run the handlers on the alternate stack if one was installed, so a
+	 * stack-overflow fault still leaves room for the handler to report it */
+	if (crash_altstack != NULL) {
+		act.sa_flags = SA_ONSTACK;
+	}
+	/* POSIX requires a sigset_t be initialized with sigemptyset/sigfillset
+	 * before use rather than relying on an all-zero value meaning empty */
+	(void)sigemptyset(&act.sa_mask);
 	for (size_t i = 0; i < NUM_SIGHANDLERS; i++) {
 		if (sighandlers[i].installed) {
 			/* already captured; re-installing would overwrite
@@ -120,6 +215,7 @@ void crashhandler_uninstall(void)
 		sighandlers[i].oact =
 			(struct sigaction){ .sa_handler = SIG_DFL };
 	}
+	crash_altstack_teardown();
 }
 
 const char *os_strsignal(const int signo)

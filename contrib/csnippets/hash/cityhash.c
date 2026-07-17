@@ -53,7 +53,10 @@ static const uint_least64_t k2 = UINT64_C(0x9ae16a3b2f90404f);
 static inline uint_fast64_t rotr64(const uint_fast64_t x, const unsigned int r)
 {
 	const uint_fast64_t v = M64(x);
-	return M64((v >> r) | (v << (64u - r)));
+	/* A shift by the operand width is undefined, so r == 0 must not reach
+	 * `v << 64`. Upstream CityHash guards this explicitly; every call here
+	 * passes a non-zero literal, for which the ternary folds away. */
+	return r == 0 ? v : M64((v >> r) | (v << (64u - r)));
 }
 
 static inline uint_fast64_t shift_mix(uint_fast64_t v)
@@ -80,12 +83,6 @@ HashLen16(const uint_fast64_t u, const uint_fast64_t v)
 	return hash16mul(u, v, UINT64_C(0x9ddfea08eb382d69));
 }
 
-static inline uint_fast64_t HashLen16mul(
-	const uint_fast64_t u, const uint_fast64_t v, const uint_fast64_t mul)
-{
-	return hash16mul(u, v, mul);
-}
-
 static uint_fast64_t HashLen0to16(const unsigned char *restrict s, size_t len)
 {
 	if (len >= 8) {
@@ -94,12 +91,12 @@ static uint_fast64_t HashLen0to16(const unsigned char *restrict s, size_t len)
 		uint_fast64_t b = read_uint64_le(s + len - 8);
 		uint_fast64_t c = rotr64(b, 37) * mul + a;
 		uint_fast64_t d = (rotr64(a, 25) + b) * mul;
-		return HashLen16mul(c, d, mul);
+		return hash16mul(c, d, mul);
 	}
 	if (len >= 4) {
 		uint_fast64_t mul = k2 + len * 2;
 		uint_fast64_t a = read_uint32_le(s);
-		return HashLen16mul(
+		return hash16mul(
 			len + (a << 3), read_uint32_le(s + len - 4), mul);
 	}
 	if (len > 0) {
@@ -125,7 +122,7 @@ HashLen17to32(const unsigned char *restrict s, size_t len)
 	uint_fast64_t b = read_uint64_le(s + 8);
 	uint_fast64_t c = read_uint64_le(s + len - 8) * mul;
 	uint_fast64_t d = read_uint64_le(s + len - 16) * k2;
-	return HashLen16mul(
+	return hash16mul(
 		rotr64(a + b, 43) + rotr64(c, 30) + d,
 		a + rotr64(b + k2, 18) + c, mul);
 }
@@ -241,8 +238,8 @@ CityHash64WithSeed(const void *restrict ptr, size_t len, uint_fast64_t seed)
 	return CityHash64WithSeeds(ptr, len, k2, seed);
 }
 
-/* A subroutine for CityHash128().  Returns a decent 128-bit hash for strings
- * of any length representable in signed long.  Based on City and Murmur. */
+/* A subroutine for CityHash128().  Returns a decent 128-bit hash for a byte
+ * string of the given length.  Based on City and Murmur. */
 static void CityMurmur(
 	unsigned char hash[restrict 16], const unsigned char *restrict s,
 	size_t len, const unsigned char seed[restrict 16])

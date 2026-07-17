@@ -34,13 +34,40 @@
 		written++;                                                     \
 	} while (0)
 
+/* Write the terminating NUL for an escape/build result: at buf[written] when
+ * the whole output fit, otherwise at the last byte of the truncated buffer.
+ * maxlen == 0 (the buf == NULL convention) leaves nothing to terminate. */
+static void terminate(char *buf, const size_t maxlen, const size_t written)
+{
+	if (maxlen == 0) {
+		return;
+	}
+	buf[written < maxlen ? written : maxlen - 1] = '\0';
+}
+
+/* Point (*p, *avail) at the unused tail of buf past `written` bytes, or at
+ * (NULL, 0) when buf is absent or already full -- the sub-buffer the next
+ * escape_* component is written into. */
+static void
+subbuf(char *buf, const size_t maxlen, const size_t written, char **restrict p,
+       size_t *restrict avail)
+{
+	if (buf != NULL && written < maxlen) {
+		*p = buf + written;
+		*avail = maxlen - written;
+	} else {
+		*p = NULL;
+		*avail = 0;
+	}
+}
+
 static int
 escape(char *buf, size_t maxlen, const char *str, const size_t len,
        const char *allowed_symbols, const bool space)
 {
 	size_t written = 0;
 	for (size_t i = 0; i < len; i++) {
-		const unsigned char ch = str[i];
+		const unsigned char ch = (unsigned char)str[i];
 		if (isalnum(ch) || strchr(allowed_symbols, ch) != NULL) {
 			APPEND_CHAR(ch);
 			continue;
@@ -64,17 +91,18 @@ escape(char *buf, size_t maxlen, const char *str, const size_t len,
 		}
 		written += 3;
 	}
-	if (maxlen > 0 && written < maxlen) {
-		buf[written] = '\0';
-	} else if (maxlen > 0) {
-		buf[maxlen - 1] = '\0';
-	}
+	terminate(buf, maxlen, written);
 	return (int)written;
 }
 
 #define S_UNRESERVED "-_.~"
 #define S_SUB_DELIMS "!$&'()*+,;="
 #define S_PCHAR S_UNRESERVED S_SUB_DELIMS ":@"
+/* Query sub-delimiters minus '+', '&', '=', which carry form-encoding meaning
+ * (space<->'+' and the key/value/pair separators). A literal one of these in a
+ * query component must be percent-encoded so it is not decoded back as a space
+ * or misread as a parameter separator. */
+#define S_QUERY_SUBDELIMS "!$'()*,;"
 
 static int escape_hostport(
 	char *buf, const size_t maxlen, const char *host, const size_t len)
@@ -87,15 +115,21 @@ static int escape_hostport(
 static int escape_userinfo(
 	char *buf, const size_t maxlen, const char *userinfo, const size_t len)
 {
+	/* No ':' in the allowed set: url_escape_userinfo inserts the single
+	 * structural ':' between the escaped username and password itself, so a
+	 * literal ':' inside either half must percent-encode to %3A. Otherwise
+	 * url_unescape_userinfo, which splits at the first ':', would misattribute
+	 * it as the delimiter and corrupt the round-trip. */
 	return escape(
-		buf, maxlen, userinfo, len, S_UNRESERVED S_SUB_DELIMS ":",
-		false);
+		buf, maxlen, userinfo, len, S_UNRESERVED S_SUB_DELIMS, false);
 }
 
 static int escape_query(
 	char *buf, const size_t maxlen, const char *query, const size_t len)
 {
-	return escape(buf, maxlen, query, len, S_PCHAR "/?", true);
+	return escape(
+		buf, maxlen, query, len, S_UNRESERVED S_QUERY_SUBDELIMS ":@/?",
+		true);
 }
 
 static int escape_fragment(
@@ -114,45 +148,30 @@ int url_escape_userinfo(
 	size_t written = 0;
 
 	int n = escape_userinfo(buf, maxlen, username, strlen(username));
-	if (n < 0) {
-		return -1;
-	}
 	written += (size_t)n;
 
 	if (password == NULL) {
-		if (maxlen > 0 && written < maxlen) {
-			buf[written] = '\0';
-		} else if (maxlen > 0) {
-			buf[maxlen - 1] = '\0';
-		}
+		terminate(buf, maxlen, written);
 		return (int)written;
 	}
 
 	APPEND_CHAR(':');
 
-	char *p = NULL;
-	size_t avail = 0;
-	if (buf != NULL && written < maxlen) {
-		p = buf + written;
-		avail = maxlen - written;
-	}
+	char *p;
+	size_t avail;
+	subbuf(buf, maxlen, written, &p, &avail);
 	n = escape_userinfo(p, avail, password, strlen(password));
-	if (n < 0) {
-		return -1;
-	}
 	written += (size_t)n;
 
-	if (maxlen > 0 && written < maxlen) {
-		buf[written] = '\0';
-	} else if (maxlen > 0) {
-		buf[maxlen - 1] = '\0';
-	}
+	terminate(buf, maxlen, written);
 	return (int)written;
 }
 
-int url_escape_path(
-	char *restrict buf, const size_t maxlen, const char *restrict path)
+int url_escape_path(char *restrict buf, size_t maxlen, const char *restrict path)
 {
+	if (buf == NULL) {
+		maxlen = 0;
+	}
 	return escape(buf, maxlen, path, strlen(path), "-_.~$&+,/:;=@", false);
 }
 
@@ -177,38 +196,21 @@ int url_escape_query(
 		const char *eq = memchr(query, '=', next - query);
 		int n;
 		if (eq != NULL) {
-			char *p = NULL;
-			size_t avail = 0;
-			if (buf != NULL && written < maxlen) {
-				p = buf + written;
-				avail = maxlen - written;
-			}
+			char *p;
+			size_t avail;
+			subbuf(buf, maxlen, written, &p, &avail);
 			n = escape_query(p, avail, query, eq - query);
-			if (n < 0) {
-				return -1;
-			}
 			written += (size_t)n;
 			APPEND_CHAR('=');
 			query = eq + 1;
-			p = NULL;
-			avail = 0;
-			if (buf != NULL && written < maxlen) {
-				p = buf + written;
-				avail = maxlen - written;
-			}
+			subbuf(buf, maxlen, written, &p, &avail);
 			n = escape_query(p, avail, query, next - query);
 		} else {
 			/* RFC 3986: key without value is a valid query component */
-			char *p = NULL;
-			size_t avail = 0;
-			if (buf != NULL && written < maxlen) {
-				p = buf + written;
-				avail = maxlen - written;
-			}
+			char *p;
+			size_t avail;
+			subbuf(buf, maxlen, written, &p, &avail);
 			n = escape_query(p, avail, query, next - query);
-		}
-		if (n < 0) {
-			return -1;
 		}
 		written += (size_t)n;
 		if (*next == '\0') {
@@ -217,24 +219,26 @@ int url_escape_query(
 		query = next + 1;
 		APPEND_CHAR('&');
 	}
-	if (maxlen > 0 && written < maxlen) {
-		buf[written] = '\0';
-	} else if (maxlen > 0) {
-		buf[maxlen - 1] = '\0';
-	}
+	terminate(buf, maxlen, written);
 	return (int)written;
 }
 
 int url_escape_path_segment(
-	char *restrict buf, const size_t maxlen, const char *restrict segment)
+	char *restrict buf, size_t maxlen, const char *restrict segment)
 {
+	if (buf == NULL) {
+		maxlen = 0;
+	}
 	return escape(
 		buf, maxlen, segment, strlen(segment), "-_.~$&+:=@", false);
 }
 
 int url_escape_query_component(
-	char *restrict buf, const size_t maxlen, const char *restrict component)
+	char *restrict buf, size_t maxlen, const char *restrict component)
 {
+	if (buf == NULL) {
+		maxlen = 0;
+	}
 	return escape_query(buf, maxlen, component, strlen(component));
 }
 
@@ -262,17 +266,11 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 				APPEND_STR(url->userinfo);
 				APPEND_CHAR('@');
 			}
-			char *p = NULL;
-			size_t avail = 0;
-			if (buf != NULL && written < maxlen) {
-				p = buf + written;
-				avail = maxlen - written;
-			}
+			char *p;
+			size_t avail;
+			subbuf(buf, maxlen, written, &p, &avail);
 			int n = escape_hostport(
 				p, avail, url->host, strlen(url->host));
-			if (n < 0) {
-				return -1;
-			}
 			written += (size_t)n;
 		}
 		if (url->path != NULL) {
@@ -289,25 +287,15 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 	}
 	if (url->fragment != NULL) {
 		APPEND_CHAR('#');
-		char *p = NULL;
-		size_t avail = 0;
-		if (buf != NULL && written < maxlen) {
-			p = buf + written;
-			avail = maxlen - written;
-		}
+		char *p;
+		size_t avail;
+		subbuf(buf, maxlen, written, &p, &avail);
 		int n = escape_fragment(
 			p, avail, url->fragment, strlen(url->fragment));
-		if (n < 0) {
-			return -1;
-		}
 		written += (size_t)n;
 	}
 
-	if (maxlen > 0 && written < maxlen) {
-		buf[written] = '\0';
-	} else if (maxlen > 0) {
-		buf[maxlen - 1] = '\0';
-	}
+	terminate(buf, maxlen, written);
 	return (int)written;
 }
 
@@ -318,7 +306,7 @@ static bool has_ctl(const char *s)
 {
 	for (; *s != '\0'; ++s) {
 		const unsigned char c = (unsigned char)*s;
-		if (c < ' ' || c == 0x7f) {
+		if (iscntrl(c)) {
 			return true;
 		}
 	}
@@ -330,7 +318,7 @@ static bool unescape(char *str, const bool space)
 	/* unescape str in place: w <= r always */
 	unsigned char *w = (unsigned char *)str;
 	for (const char *r = str; *r != '\0'; r++) {
-		unsigned char ch = *r;
+		unsigned char ch = (unsigned char)*r;
 		switch (ch) {
 		case '%':
 			switch (r[1]) {
@@ -362,15 +350,18 @@ static bool unescape(char *str, const bool space)
 		default:
 			break;
 		}
+		/* Reject any control character the percent-decode produced (e.g.
+		 * a CR/LF smuggled via %0d/%0a), so no caller of unescape() can
+		 * leak them into headers, redirects or logs.  This must happen
+		 * here, while the decoded byte is in hand: a post-hoc C-string
+		 * scan of the result would stop at a NUL from %00 rather than
+		 * reject it, silently truncating the value instead. */
+		if (iscntrl(ch)) {
+			return false;
+		}
 		*w++ = ch;
 	}
 	*w = '\0';
-	/* Reject any control character the percent-decode produced (e.g. a
-	 * CR/LF smuggled via %0d/%0a), so no caller of unescape() can leak them
-	 * into headers, redirects or logs. */
-	if (has_ctl(str)) {
-		return false;
-	}
 	return true;
 }
 
@@ -397,7 +388,7 @@ bool url_parse(char *raw, struct url *restrict url)
 
 	/* parse scheme */
 	for (char *p = raw; *p != '\0'; ++p) {
-		const unsigned char ch = *p;
+		const unsigned char ch = (unsigned char)*p;
 		/* RFC 2396: Section 3.1 */
 		if (isalpha(ch)) {
 			/* skip */

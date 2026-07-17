@@ -35,7 +35,7 @@ struct url_query_component {
  * @param maxlen Buffer size in bytes.
  * @param[in] username Username.
  * @param[in] password Password, can be NULL.
- * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @return Number of characters that would have been written (excluding null terminator), like snprintf.
  */
 int url_escape_userinfo(
 	char *restrict buf, size_t maxlen, const char *restrict username,
@@ -46,7 +46,7 @@ int url_escape_userinfo(
  * @param[out] buf Out buffer.
  * @param maxlen Buffer size in bytes.
  * @param[in] path The full path string like "/s1/s2/s3".
- * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @return Number of characters that would have been written (excluding null terminator), like snprintf.
  */
 int url_escape_path(
 	char *restrict buf, size_t maxlen, const char *restrict path);
@@ -56,7 +56,7 @@ int url_escape_path(
  * @param[out] buf Out buffer.
  * @param maxlen Buffer size in bytes.
  * @param[in] query The full query string like "k1=v1&k2=v1".
- * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @return Number of characters that would have been written (excluding null terminator), like snprintf.
  */
 int url_escape_query(
 	char *restrict buf, size_t maxlen, const char *restrict query);
@@ -66,7 +66,7 @@ int url_escape_query(
  * @param[out] buf Out buffer.
  * @param maxlen Buffer size in bytes.
  * @param[in] segment The path segment.
- * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @return Number of characters that would have been written (excluding null terminator), like snprintf.
  */
 int url_escape_path_segment(
 	char *restrict buf, size_t maxlen, const char *restrict segment);
@@ -76,7 +76,7 @@ int url_escape_path_segment(
  * @param[out] buf Out buffer.
  * @param maxlen Buffer size in bytes.
  * @param[in] component The query component key or value.
- * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @return Number of characters that would have been written (excluding null terminator), like snprintf.
  */
 int url_escape_query_component(
 	char *restrict buf, size_t maxlen, const char *restrict component);
@@ -86,7 +86,7 @@ int url_escape_query_component(
  * @param[out] buf Out buffer. Can be NULL if maxlen is 0.
  * @param maxlen Buffer size in bytes. If 0, no output is written.
  * @param[in] url URL struct.
- * @return Number of characters that would have been written (excluding null terminator), or negative on error.
+ * @return Number of characters that would have been written (excluding null terminator), like snprintf.
  * @note When buf is NULL and maxlen is 0, returns the required buffer size (excluding null terminator), like snprintf.
  * @see struct url
  */

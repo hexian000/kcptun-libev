@@ -18,12 +18,12 @@ int buf_vappendf(
 	struct buffer *restrict buf, const char *restrict format, va_list args)
 {
 	const size_t maxlen = buf->cap - buf->len;
-	if (maxlen == 0) {
-		return 0;
-	}
 	char *restrict s = (char *)(buf->data + buf->len);
+	/* Even when the buffer is full (maxlen == 0) vsnprintf writes nothing
+	 * but still returns the would-be length, so the caller can detect the
+	 * truncation -- do not short-circuit to 0. */
 	const int ret = vsnprintf(s, maxlen, format, args);
-	if (ret > 0) {
+	if (ret > 0 && maxlen > 0) {
 		buf->len += MIN((size_t)ret, maxlen - 1);
 	}
 	return ret;

@@ -30,7 +30,7 @@ struct slog_extra_stack {
 	size_t len;
 	void *pc[];
 };
-void slog_extra_stack(FILE *restrict f, void *data);
+void slog_extra_stack(FILE *restrict f, void *restrict data);
 
 int debug_backtrace(void **restrict frames, int skip, int len);
 

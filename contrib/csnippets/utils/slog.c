@@ -39,7 +39,7 @@ static const unsigned char slog_level_char[] = {
 #define ANSI_CSI_BG(n, fg, bg) ANSI_CSI #n ";" #fg ";" #bg "m"
 #define ANSI_CSI_RESET ANSI_CSI_N(0)
 
-static const char *slog_level_color[] = {
+static const char *const slog_level_color[] = {
 	ANSI_CSI_FG(, 96), ANSI_CSI_BG(, 97, 41), ANSI_CSI_FG(, 91),
 	ANSI_CSI_FG(, 93), ANSI_CSI_FG(, 92),	  ANSI_CSI_FG(, 92),
 	ANSI_CSI_FG(, 96), ANSI_CSI_FG(, 97),	  ANSI_CSI_FG(, 37),
@@ -153,7 +153,11 @@ static size_t slog_timestamp_nanos(
 	const struct timespec *restrict tp)
 {
 	if (flags & SLOG_FLAG_UTC) {
-		if (!STRFTIME_UTC(s, maxsize, &tp->tv_sec)) {
+		/* the fixed-offset writes below reach s[sizeof(layout)-1], which
+		 * strftime's own length check does not cover, so guard maxsize
+		 * for the full layout too */
+		if (maxsize < sizeof(LAYOUT_RFC3339NANO_UTC) ||
+		    !STRFTIME_UTC(s, maxsize, &tp->tv_sec)) {
 			return 0;
 		}
 		unsigned char *restrict e =
@@ -174,7 +178,8 @@ static size_t slog_timestamp_nanos(
 		return STRLEN(LAYOUT_RFC3339NANO_UTC);
 	}
 
-	if (!STRFTIME(s, maxsize, &tp->tv_sec)) {
+	if (maxsize < sizeof(LAYOUT_RFC3339NANO) ||
+	    !STRFTIME(s, maxsize, &tp->tv_sec)) {
 		return 0;
 	}
 	const unsigned char *restrict tz =
@@ -221,7 +226,7 @@ slog_timestamp(char *restrict s, const size_t maxsize, const unsigned int flags)
 		}
 		return STRLEN(LAYOUT_RFC3339_UTC);
 	}
-	if (!STRFTIME(s, maxsize, &now)) {
+	if (maxsize < sizeof(LAYOUT_RFC3339) || !STRFTIME(s, maxsize, &now)) {
 		return 0;
 	}
 	const char *restrict tz = s + STRLEN(LAYOUT_C);
@@ -501,6 +506,11 @@ static void slog_dispatch(
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
 {
+	/* the printers index level-keyed tables (slog_level_char, slog_level_color
+	 * and slog_severity_map, 9 entries each) with `level` directly; it is a
+	 * public int parameter, so guard its valid range here before it can drive
+	 * an out-of-bounds read */
+	assert(level >= LOG_LEVEL_SILENCE && level <= LOG_LEVEL_VERYVERBOSE);
 	const slog_printer_fn printer = ATOMIC_LOAD(&slog_printer);
 	/* drop messages emitted by a sink from within its own invocation;
 	 * re-entering the printer here would deadlock on slog_output_mu */

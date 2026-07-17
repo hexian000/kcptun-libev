@@ -35,11 +35,20 @@ enum table_flags {
  * @details Pass NULL to table_new() for all defaults (equivalent to
  * &TABLE_OPTS_BYTES). When hash and eq are both NULL, the key is treated
  * as const struct hashkey * and hashed/compared by content (cityhash + memcmp).
+ * @warning hash and eq must agree on what the `key` pointer points to. They
+ * default independently, so supplying only one leaves the other interpreting
+ * `key` its own way: leaving eq NULL is safe only if your hash also takes a
+ * `const struct hashkey *`. Pairing a `const char *` hash such as str_hash
+ * with the default eq makes that eq reinterpret the first bytes of the string
+ * as a struct hashkey and memcmp a wild pointer. Prefer one of the presets
+ * below, or set both.
  */
 struct table_opts {
-	/** Hash function. NULL = default (cityhash on struct hashkey). */
+	/** Hash function. NULL = default (cityhash on struct hashkey);
+	 * see the warning above before setting this without eq. */
 	uint_fast32_t (*hash)(const void *key, uint_fast32_t seed);
-	/** Equality function. NULL = default (memcmp on struct hashkey). */
+	/** Equality function. NULL = default (memcmp on struct hashkey);
+	 * see the warning above before setting this without hash. */
 	bool (*eq)(const void *a, const void *b);
 	/** Any combination of enum table_flags. */
 	int flags;
@@ -48,7 +57,7 @@ struct table_opts {
 /** @brief Default opts: key is const struct hashkey *, cityhash + memcmp. */
 extern const struct table_opts TABLE_OPTS_BYTES;
 
-/** @brief String opts: key is const char *, cityhash + strcmp. */
+/** @brief String opts: key is const char *, luahash + strcmp. */
 extern const struct table_opts TABLE_OPTS_STR;
 
 /** @brief Pointer opts: key is a pointer value, hashed by value + pointer equality. */
@@ -71,7 +80,8 @@ void table_free(struct hashtable *table);
  * @brief Explicitly reallocate memory for the table.
  * @param table Pointer to the table is invalidated after call.
  * @param new_size Expected new table size.
- * @return Pointer to the modified table.
+ * @return Pointer to the modified table, or NULL if table was NULL
+ * (no operation is performed).
  * @details 1. Preallocate memory for faster table filling. <br>
  * 2. Passing any new_size less than current size to shrink a table.
  */
