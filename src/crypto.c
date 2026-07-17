@@ -171,6 +171,8 @@ struct crypto *crypto_new(const char *method)
 		crypto_free(crypto);
 		return NULL;
 	}
+	/* sodium_malloc() already locks this region but ignores an mlock
+	   failure; re-lock so the failure is reported */
 	if (sodium_mlock(key, key_size)) {
 		LOGW("crypto: failed to lock secure memory");
 	}
@@ -291,7 +293,8 @@ size_t crypto_seal(
 	if (impl->seal != NULL) {
 		unsigned char *mac = dst + plain_size;
 		const int r = impl->seal(
-			dst, mac, plain, plain_size, nonce, impl->key);
+			dst, mac, plain, (unsigned long long)plain_size, nonce,
+			impl->key);
 		if (r != 0) {
 			LOGE_F("crypto_seal: error %d", r);
 			return 0;
@@ -302,14 +305,14 @@ size_t crypto_seal(
 	 * bounds the write */
 	unsigned long long r_len = 0;
 	const int r = impl->aead_seal(
-		dst, &r_len, plain, plain_size,
-		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, NULL, nonce,
-		impl->key);
+		dst, &r_len, plain, (unsigned long long)plain_size,
+		(const unsigned char *)crypto_tag,
+		(unsigned long long)CRYPTO_TAG_SIZE, NULL, nonce, impl->key);
 	if (r != 0) {
 		LOGE_F("crypto_seal: aead error %d", r);
 		return 0;
 	}
-	return r_len;
+	return (size_t)r_len;
 }
 
 size_t crypto_open(
@@ -332,7 +335,8 @@ size_t crypto_open(
 		const size_t plain_size = cipher_size - crypto->overhead;
 		const unsigned char *mac = cipher + plain_size;
 		const int r = impl->open(
-			dst, cipher, mac, plain_size, nonce, impl->key);
+			dst, cipher, mac, (unsigned long long)plain_size, nonce,
+			impl->key);
 		if (r != 0) {
 			LOG_BIN_F(
 				VERYVERBOSE, cipher, cipher_size, 0,
@@ -345,16 +349,16 @@ size_t crypto_open(
 	 * bound the write */
 	unsigned long long r_len = 0;
 	const int r = impl->aead_open(
-		dst, &r_len, NULL, cipher, cipher_size,
-		(const unsigned char *)crypto_tag, CRYPTO_TAG_SIZE, nonce,
-		impl->key);
+		dst, &r_len, NULL, cipher, (unsigned long long)cipher_size,
+		(const unsigned char *)crypto_tag,
+		(unsigned long long)CRYPTO_TAG_SIZE, nonce, impl->key);
 	if (r != 0) {
 		LOG_BIN_F(
 			VERYVERBOSE, cipher, cipher_size, 0,
 			"crypto_open: aead error %d", r);
 		return 0;
 	}
-	return r_len;
+	return (size_t)r_len;
 }
 
 bool crypto_pad(unsigned char *data, const size_t len, const size_t npad)

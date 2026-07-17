@@ -20,7 +20,6 @@
 #include <ev.h>
 
 #include <errno.h>
-#include <inttypes.h>
 #include <locale.h>
 #include <net/if.h>
 #include <signal.h>
@@ -119,7 +118,7 @@ void unloadlibs(void)
 }
 
 #if WITH_CRYPTO
-void genpsk(const char *method)
+void genpsk(const char *restrict method)
 {
 	loadlibs();
 	struct crypto *crypto = crypto_new(method);
@@ -137,34 +136,6 @@ void genpsk(const char *method)
 	crypto_free(crypto);
 }
 #endif /* WITH_CRYPTO */
-
-double thread_load(void)
-{
-	static thread_local struct {
-		struct timespec monotime, cputime;
-		bool set;
-	} last = { .set = false };
-	double load = -1;
-	struct timespec monotime, cputime;
-	if (!clock_monotonic(&monotime)) {
-		return load;
-	}
-	if (!clock_thread(&cputime)) {
-		return load;
-	}
-	if (last.set) {
-		const int_fast64_t total =
-			TIMESPEC_DIFF(monotime, last.monotime);
-		const int_fast64_t busy = TIMESPEC_DIFF(cputime, last.cputime);
-		if (busy > 0 && total > 0 && busy <= total) {
-			load = (double)busy / (double)total;
-		}
-	}
-	last.monotime = monotime;
-	last.cputime = cputime;
-	last.set = true;
-	return load;
-}
 
 void socket_bind_netdev(const int fd, const char *restrict netdev)
 {
@@ -240,4 +211,32 @@ bool resolve_bindaddr(
 		return false;
 	}
 	return sa_resolve_bind(addr, hoststr, portstr, type);
+}
+
+double thread_load(void)
+{
+	static thread_local struct {
+		struct timespec monotime, cputime;
+		bool set;
+	} last = { .set = false };
+	double load = -1;
+	struct timespec monotime, cputime;
+	if (!clock_monotonic(&monotime)) {
+		return load;
+	}
+	if (!clock_thread(&cputime)) {
+		return load;
+	}
+	if (last.set) {
+		const int_fast64_t total =
+			TIMESPEC_DIFF(monotime, last.monotime);
+		const int_fast64_t busy = TIMESPEC_DIFF(cputime, last.cputime);
+		if (busy > 0 && total > 0 && busy <= total) {
+			load = (double)busy / (double)total;
+		}
+	}
+	last.monotime = monotime;
+	last.cputime = cputime;
+	last.set = true;
+	return load;
 }

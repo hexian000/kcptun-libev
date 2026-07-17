@@ -152,6 +152,31 @@ static void parse_args(int argc, char **argv)
 		      LOG_LEVEL_VERYVERBOSE));
 }
 
+static void reload_config(struct server *restrict s)
+{
+	struct config *conf = conf_read(args.conf_path);
+	if (conf == NULL) {
+		LOGE_F("failed to read config `%s'", args.conf_path);
+		return;
+	}
+	if (s->conf->mode != conf->mode) {
+		LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
+		       conf_modestr(s->conf), s->conf->mode, conf_modestr(conf),
+		       conf->mode);
+		conf_free(conf);
+		return;
+	}
+	set_log_config(conf, conf->log_level + args.verbosity);
+	conf_free((struct config *)s->conf);
+	server_loadconf(s, conf);
+	if (server_resolve(s)) {
+		s->last_resolve_time = ev_now(s->loop);
+		LOGN("config successfully reloaded");
+	} else {
+		LOGW("config reloaded, but failed to resolve server address");
+	}
+}
+
 static void
 signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 {
@@ -160,30 +185,12 @@ signal_cb(struct ev_loop *loop, ev_signal *watcher, const int revents)
 	struct server *restrict s = watcher->data;
 	switch (watcher->signum) {
 	case SIGHUP: {
+		/* a RELOADING notification must always be paired with a later
+		   READY, so bracket the whole reload regardless of its outcome */
 #if WITH_SYSTEMD
 		(void)systemd_notify(DAEMON_SYSTEMD_STATE_RELOADING);
 #endif
-		struct config *conf = conf_read(args.conf_path);
-		if (conf == NULL) {
-			LOGE_F("failed to read config `%s'", args.conf_path);
-			return;
-		}
-		if (s->conf->mode != conf->mode) {
-			LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
-			       conf_modestr(s->conf), s->conf->mode,
-			       conf_modestr(conf), conf->mode);
-			conf_free(conf);
-			return;
-		}
-		set_log_config(conf, conf->log_level + args.verbosity);
-		conf_free((struct config *)s->conf);
-		server_loadconf(s, conf);
-		if (server_resolve(s)) {
-			s->last_resolve_time = ev_now(s->loop);
-			LOGN("config successfully reloaded");
-		} else {
-			LOGW("config reloaded, but failed to resolve server address");
-		}
+		reload_config(s);
 #if WITH_SYSTEMD
 		(void)systemd_notify(DAEMON_SYSTEMD_STATE_READY);
 #endif

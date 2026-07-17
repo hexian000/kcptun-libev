@@ -159,7 +159,7 @@ enum inetaddr_type {
 #define INET6ADDR_LENGTH                                                       \
 	(sizeof(uint8_t) + sizeof(struct in6_addr) + sizeof(in_port_t))
 size_t inetaddr_read(union sockaddr_max *addr, const void *b, size_t n);
-size_t inetaddr_write(void *b, size_t n, const struct sockaddr *sa);
+size_t inetaddr_write(void *b, const struct sockaddr *sa, size_t n);
 
 bool ss0_send(
 	struct server *s, const struct sockaddr *sa, uint16_t what,

@@ -51,6 +51,24 @@ static void kcp_log(const char *log, struct IKCPCB *kcp, void *user)
 	LOGV_F("[session:%08" PRIX32 "] kcp internal: %s", ss->conv, log);
 }
 
+static void
+ss_flush_cb(struct ev_loop *loop, ev_idle *watcher, const int revents)
+{
+	CHECK_REVENTS(revents, EV_IDLE);
+	ev_idle_stop(loop, watcher);
+	struct session *restrict ss = watcher->data;
+	switch (ss->kcp_state) {
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
+	case KCP_STATE_LINGER:
+		break;
+	default:
+		return;
+	}
+	ikcp_flush(ss->kcp);
+	tcp_notify(ss);
+}
+
 static ikcpcb *
 kcp_new(struct session *restrict ss, const struct config *restrict conf,
 	const uint32_t conv)
@@ -60,7 +78,13 @@ kcp_new(struct session *restrict ss, const struct config *restrict conf,
 		return NULL;
 	}
 	ikcp_wndsize(kcp, conf->kcp_sndwnd, conf->kcp_rcvwnd);
-	ikcp_setmtu(kcp, (int)ss->server->pkt.queue->mss);
+	if (ikcp_setmtu(kcp, (int)ss->server->pkt.queue->mss) != 0) {
+		/* leaving kcp->mtu at the library default would desync from the
+		   headroom reserved for crypto/obfs framing */
+		LOGE_F("[session:%08" PRIX32 "] failed to set kcp mtu", conv);
+		ikcp_release(kcp);
+		return NULL;
+	}
 	ikcp_nodelay(
 		kcp, conf->kcp_nodelay, conf->kcp_interval, conf->kcp_resend,
 		conf->kcp_nc);
@@ -72,11 +96,162 @@ kcp_new(struct session *restrict ss, const struct config *restrict conf,
 	return kcp;
 }
 
-static void consume_wbuf(struct session *restrict ss, const size_t n)
+struct session *session_new(
+	struct server *restrict s, const union sockaddr_max *addr,
+	const uint32_t conv)
 {
-	VBUF_CONSUME(ss->wbuf, n);
-	ss->wbuf_flush = 0;
-	ss->wbuf_next = 0;
+	struct session *restrict ss =
+		(struct session *)malloc(sizeof(struct session));
+	if (ss == NULL) {
+		return NULL;
+	}
+	const ev_tstamp now = ev_now(s->loop);
+	*ss = (struct session){
+		.server = s,
+		.tcp_state = TCP_STATE_CLOSED,
+		.kcp_state = KCP_STATE_CLOSED,
+		.kcp_flush = s->conf->kcp_flush,
+		.conv = conv,
+		.raddr = *addr,
+		.created = now,
+		.last_reset = TSTAMP_NIL,
+		.last_send = TSTAMP_NIL,
+		.last_recv = TSTAMP_NIL,
+	};
+	SESSION_MAKEKEY(ss->key, &addr->sa, conv);
+	ss->hkey = (struct hashkey){ .len = SESSION_KEY_SIZE, .data = ss->key };
+	ev_io_init(&ss->w_socket, tcp_socket_cb, -1, EV_NONE);
+	ss->w_socket.data = ss;
+	ev_idle_init(&ss->w_flush, ss_flush_cb);
+	ss->w_flush.data = ss;
+	/* individually allocated buffers can be freed early */
+	ss->rbuf = VBUF_NEW(SESSION_BUF_SIZE);
+	if (ss->rbuf == NULL) {
+		session_free(ss);
+		return NULL;
+	}
+	ss->wbuf = VBUF_NEW(SESSION_BUF_SIZE);
+	if (ss->wbuf == NULL) {
+		session_free(ss);
+		return NULL;
+	}
+	ss->kcp = kcp_new(ss, s->conf, conv);
+	if (ss->kcp == NULL) {
+		session_free(ss);
+		return NULL;
+	}
+	return ss;
+}
+
+void session_free(struct session *restrict ss)
+{
+	session_kcp_stop(ss);
+	struct ev_loop *loop = ss->server->loop;
+	ev_idle_stop(loop, &ss->w_flush);
+	free(ss);
+}
+
+void session_tcp_start(struct session *restrict ss, const int fd)
+{
+	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: start", ss->conv, fd);
+	/* Initialize and start watchers to transfer data */
+	struct ev_loop *loop = ss->server->loop;
+	ev_io *restrict w_socket = &ss->w_socket;
+	ev_io_set(w_socket, fd, EV_READ | EV_WRITE);
+	ev_io_start(loop, w_socket);
+}
+
+void session_tcp_stop(struct session *restrict ss)
+{
+	ss->tcp_state = TCP_STATE_CLOSED;
+	ev_io *restrict w_socket = &ss->w_socket;
+	if (w_socket->fd == -1) {
+		return;
+	}
+	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: stop", ss->conv,
+	       w_socket->fd);
+	ev_io_stop(ss->server->loop, w_socket);
+	socket_close(ss->w_socket.fd);
+	ev_io_set(w_socket, -1, EV_NONE);
+}
+
+void session_kcp_stop(struct session *restrict ss)
+{
+	session_tcp_stop(ss);
+	ss->kcp_state = KCP_STATE_TIME_WAIT;
+	if (ss->kcp != NULL) {
+		ikcp_release(ss->kcp);
+		ss->kcp = NULL;
+	}
+	VBUF_FREE(ss->rbuf);
+	VBUF_FREE(ss->wbuf);
+	ss->wbuf_flush = ss->wbuf_next = 0;
+}
+
+bool session_kcp_send(struct session *restrict ss)
+{
+	if (ss->kcp_eof_sent) {
+		/* already sent EOF, can't send more data */
+		return false;
+	}
+	switch (ss->kcp_state) {
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
+		break;
+	default:
+		return false;
+	}
+	if (ss->rbuf->len == 0) {
+		return true;
+	}
+	if (!kcp_push(ss)) {
+		return false;
+	}
+	if (ss->kcp_flush >= 1) {
+		session_kcp_flush(ss);
+	}
+	return true;
+}
+
+/* kcp flush is only invoked when idle.
+ *   i.e. if the server is perfectly 100% loaded, flush will never work
+ */
+void session_kcp_flush(struct session *restrict ss)
+{
+	ev_idle *restrict w_flush = &ss->w_flush;
+	if (ev_is_active(w_flush)) {
+		return;
+	}
+	ev_idle_start(ss->server->loop, w_flush);
+}
+
+void session_kcp_close(struct session *restrict ss)
+{
+	if (ss->kcp_eof_sent) {
+		/* already sent EOF */
+		return;
+	}
+	switch (ss->kcp_state) {
+	case KCP_STATE_CONNECT:
+	case KCP_STATE_ESTABLISHED:
+		break;
+	default:
+		return;
+	}
+	/* pass eof */
+	if (!kcp_sendmsg(ss, SMSG_EOF)) {
+		session_kcp_stop(ss);
+		return;
+	}
+	ss->kcp_eof_sent = true;
+	LOGD_F("[session:%08" PRIX32 "] kcp: eof sent", ss->conv);
+	/* check if both directions are closed */
+	if (ss->kcp_eof_recv) {
+		ss->kcp_state = KCP_STATE_LINGER;
+	}
+	if (ss->kcp_flush >= 1) {
+		session_kcp_flush(ss);
+	}
 }
 
 static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
@@ -173,9 +348,11 @@ static bool session_on_msg(
 		}
 		LOGD_F("[session:%08" PRIX32 "] msg: keepalive", ss->conv);
 		if (ss->is_accepted) {
-			if (!kcp_sendmsg(ss, SMSG_KEEPALIVE)) {
-				return false;
-			}
+			/* echo the keepalive; a transient send failure (KCP
+			   segment OOM) is already logged by kcp_send and must not
+			   tear down an otherwise-healthy session, since the peer
+			   will ping again */
+			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		return true;
 	}
@@ -185,6 +362,13 @@ static bool session_on_msg(
 	       "msg=%04" PRIX16 ", len=%04" PRIX16,
 	       ss->conv, hdr->msg, hdr->len);
 	return false;
+}
+
+static void consume_wbuf(struct session *restrict ss, const size_t n)
+{
+	VBUF_CONSUME(ss->wbuf, n);
+	ss->wbuf_flush = 0;
+	ss->wbuf_next = 0;
 }
 
 /* returns: OK=0, wait=1, error=-1 */
@@ -228,117 +412,6 @@ static int ss_process(struct session *restrict ss)
 	return 0;
 }
 
-bool session_kcp_send(struct session *restrict ss)
-{
-	if (ss->kcp_eof_sent) {
-		/* already sent EOF, can't send more data */
-		return false;
-	}
-	switch (ss->kcp_state) {
-	case KCP_STATE_CONNECT:
-	case KCP_STATE_ESTABLISHED:
-		break;
-	default:
-		return false;
-	}
-	if (ss->rbuf->len == 0) {
-		return true;
-	}
-	if (!kcp_push(ss)) {
-		return false;
-	}
-	if (ss->kcp_flush >= 1) {
-		session_kcp_flush(ss);
-	}
-	return true;
-}
-
-void session_kcp_close(struct session *restrict ss)
-{
-	if (ss->kcp_eof_sent) {
-		/* already sent EOF */
-		return;
-	}
-	switch (ss->kcp_state) {
-	case KCP_STATE_CONNECT:
-	case KCP_STATE_ESTABLISHED:
-		break;
-	default:
-		return;
-	}
-	/* pass eof */
-	if (!kcp_sendmsg(ss, SMSG_EOF)) {
-		session_kcp_stop(ss);
-		return;
-	}
-	ss->kcp_eof_sent = true;
-	LOGD_F("[session:%08" PRIX32 "] kcp: eof sent", ss->conv);
-	/* check if both directions are closed */
-	if (ss->kcp_eof_recv) {
-		ss->kcp_state = KCP_STATE_LINGER;
-	}
-	if (ss->kcp_flush >= 1) {
-		session_kcp_flush(ss);
-	}
-}
-
-/* kcp flush is only invoked when idle.
- *   i.e. if the server is perfectly 100% loaded, flush will never work
- */
-void session_kcp_flush(struct session *restrict ss)
-{
-	ev_idle *restrict w_flush = &ss->w_flush;
-	if (ev_is_active(w_flush)) {
-		return;
-	}
-	ev_idle_start(ss->server->loop, w_flush);
-}
-
-void session_tcp_stop(struct session *restrict ss)
-{
-	ss->tcp_state = TCP_STATE_CLOSED;
-	ev_io *restrict w_socket = &ss->w_socket;
-	if (w_socket->fd == -1) {
-		return;
-	}
-	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: stop", ss->conv,
-	       w_socket->fd);
-	ev_io_stop(ss->server->loop, w_socket);
-	socket_close(ss->w_socket.fd);
-	ev_io_set(w_socket, -1, EV_NONE);
-}
-
-void session_kcp_stop(struct session *restrict ss)
-{
-	session_tcp_stop(ss);
-	ss->kcp_state = KCP_STATE_TIME_WAIT;
-	if (ss->kcp != NULL) {
-		ikcp_release(ss->kcp);
-		ss->kcp = NULL;
-	}
-	VBUF_FREE(ss->rbuf);
-	VBUF_FREE(ss->wbuf);
-	ss->wbuf_flush = ss->wbuf_next = 0;
-}
-
-void session_tcp_start(struct session *restrict ss, const int fd)
-{
-	LOGD_F("[session:%08" PRIX32 "] tcp [fd:%d]: start", ss->conv, fd);
-	/* Initialize and start watchers to transfer data */
-	struct ev_loop *loop = ss->server->loop;
-	ev_io *restrict w_socket = &ss->w_socket;
-	ev_io_set(w_socket, fd, EV_READ | EV_WRITE);
-	ev_io_start(loop, w_socket);
-}
-
-void session_free(struct session *restrict ss)
-{
-	session_kcp_stop(ss);
-	struct ev_loop *loop = ss->server->loop;
-	ev_idle_stop(loop, &ss->w_flush);
-	free(ss);
-}
-
 void session_read_cb(struct session *restrict ss)
 {
 	int ret = 0;
@@ -354,94 +427,6 @@ void session_read_cb(struct session *restrict ss)
 		return;
 	}
 	tcp_notify(ss);
-}
-
-static void
-ss_flush_cb(struct ev_loop *loop, ev_idle *watcher, const int revents)
-{
-	CHECK_REVENTS(revents, EV_IDLE);
-	ev_idle_stop(loop, watcher);
-	struct session *restrict ss = watcher->data;
-	switch (ss->kcp_state) {
-	case KCP_STATE_CONNECT:
-	case KCP_STATE_ESTABLISHED:
-	case KCP_STATE_LINGER:
-		break;
-	default:
-		return;
-	}
-	ikcp_flush(ss->kcp);
-	tcp_notify(ss);
-}
-
-struct session *session_new(
-	struct server *restrict s, const union sockaddr_max *addr,
-	const uint32_t conv)
-{
-	struct session *restrict ss =
-		(struct session *)malloc(sizeof(struct session));
-	if (ss == NULL) {
-		return NULL;
-	}
-	const ev_tstamp now = ev_now(s->loop);
-	*ss = (struct session){
-		.server = s,
-		.tcp_state = TCP_STATE_CLOSED,
-		.kcp_state = KCP_STATE_CLOSED,
-		.kcp_flush = s->conf->kcp_flush,
-		.conv = conv,
-		.raddr = *addr,
-		.created = now,
-		.last_reset = TSTAMP_NIL,
-		.last_send = TSTAMP_NIL,
-		.last_recv = TSTAMP_NIL,
-	};
-	SESSION_MAKEKEY(ss->key, &addr->sa, conv);
-	ss->hkey = (struct hashkey){ .len = SESSION_KEY_SIZE, .data = ss->key };
-	ev_io_init(&ss->w_socket, tcp_socket_cb, -1, EV_NONE);
-	ss->w_socket.data = ss;
-	ev_idle_init(&ss->w_flush, ss_flush_cb);
-	ss->w_flush.data = ss;
-	/* individually allocated buffers can be freed early */
-	ss->rbuf = VBUF_NEW(SESSION_BUF_SIZE);
-	if (ss->rbuf == NULL) {
-		session_free(ss);
-		return NULL;
-	}
-	ss->wbuf = VBUF_NEW(SESSION_BUF_SIZE);
-	if (ss->wbuf == NULL) {
-		session_free(ss);
-		return NULL;
-	}
-	ss->kcp = kcp_new(ss, s->conf, conv);
-	if (ss->kcp == NULL) {
-		session_free(ss);
-		return NULL;
-	}
-	return ss;
-}
-
-struct session0_header {
-	uint32_t zero;
-	uint16_t what;
-};
-
-#define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
-
-static inline struct session0_header
-ss0_header_read(const unsigned char *restrict d)
-{
-	return (struct session0_header){
-		.zero = read_uint32(d),
-		.what = read_uint16(d + sizeof(uint32_t)),
-	};
-}
-
-static inline void
-ss0_header_write(unsigned char *restrict d, const struct session0_header header)
-{
-	write_uint32(d, header.zero);
-	write_uint16(d + sizeof(uint32_t), header.what);
 }
 
 size_t inetaddr_read(union sockaddr_max *addr, const void *b, const size_t n)
@@ -481,7 +466,7 @@ size_t inetaddr_read(union sockaddr_max *addr, const void *b, const size_t n)
 	return 0;
 }
 
-size_t inetaddr_write(void *b, const size_t n, const struct sockaddr *sa)
+size_t inetaddr_write(void *b, const struct sockaddr *sa, const size_t n)
 {
 	unsigned char *p = b;
 	switch (sa->sa_family) {
@@ -517,12 +502,27 @@ size_t inetaddr_write(void *b, const size_t n, const struct sockaddr *sa)
 	return 0;
 }
 
-void ss0_reset(struct server *s, const struct sockaddr *sa, const uint32_t conv)
+struct session0_header {
+	uint32_t zero;
+	uint16_t what;
+};
+
+#define SESSION0_HEADER_SIZE (sizeof(uint32_t) + sizeof(uint16_t))
+
+static inline struct session0_header
+ss0_header_read(const unsigned char *restrict d)
 {
-	LOGD_F("session0: reset conv=%08" PRIX32, conv);
-	unsigned char b[sizeof(uint32_t)];
-	write_uint32(b, conv);
-	ss0_send(s, sa, S0MSG_RESET, b, sizeof(b));
+	return (struct session0_header){
+		.zero = read_uint32(d),
+		.what = read_uint16(d + sizeof(uint32_t)),
+	};
+}
+
+static inline void
+ss0_header_write(unsigned char *restrict d, const struct session0_header header)
+{
+	write_uint32(d, header.zero);
+	write_uint16(d + sizeof(uint32_t), header.what);
 }
 
 bool ss0_send(
@@ -535,6 +535,7 @@ bool ss0_send(
 		return false;
 	}
 	sa_copy(&msg->addr.sa, sa);
+	ASSERT((size_t)msg->off + SESSION0_HEADER_SIZE + n <= MAX_PACKET_SIZE);
 	unsigned char *packet = msg->buf + msg->off;
 	ss0_header_write(
 		packet, (struct session0_header){
@@ -546,6 +547,14 @@ bool ss0_send(
 	}
 	msg->len = (uint16_t)(SESSION0_HEADER_SIZE + n);
 	return queue_send(s, msg);
+}
+
+void ss0_reset(struct server *s, const struct sockaddr *sa, const uint32_t conv)
+{
+	LOGD_F("session0: reset conv=%08" PRIX32, conv);
+	unsigned char b[sizeof(uint32_t)];
+	write_uint32(b, conv);
+	ss0_send(s, sa, S0MSG_RESET, b, sizeof(b));
 }
 
 static bool
@@ -771,12 +780,12 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	unsigned char b[INET6ADDR_LENGTH + INET6ADDR_LENGTH];
 	unsigned char *p = b;
 	size_t len = sizeof(b);
-	n = inetaddr_write(p, len, &addr.sa);
+	n = inetaddr_write(p, &addr.sa, len);
 	if (n == 0) {
 		return false;
 	}
 	p += n, len -= n;
-	n = inetaddr_write(p, len, &msg->addr.sa);
+	n = inetaddr_write(p, &msg->addr.sa, len);
 	if (n == 0) {
 		return false;
 	}
@@ -787,12 +796,12 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	/* notify the client */
 	p = b;
 	len = sizeof(b);
-	n = inetaddr_write(p, len, &svc->server_addr[0].sa);
+	n = inetaddr_write(p, &svc->server_addr[0].sa, len);
 	if (n == 0) {
 		return false;
 	}
 	p += n, len -= n;
-	n = inetaddr_write(p, len, &svc->server_addr[1].sa);
+	n = inetaddr_write(p, &svc->server_addr[1].sa, len);
 	if (n == 0) {
 		return false;
 	}

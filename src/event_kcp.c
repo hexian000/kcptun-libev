@@ -36,8 +36,8 @@ int kcp_output(const char *buf, const int len, ikcpcb *kcp, void *user)
 	unsigned char *dst = msg->buf + msg->off;
 	memcpy(dst, buf, len);
 	msg->len = (uint16_t)len;
-	s->stats.kcp_tx += len;
-	ss->stats.kcp_tx += len;
+	s->stats.kcp_tx += (uint_least64_t)len;
+	ss->stats.kcp_tx += (uint_least64_t)len;
 	return queue_send(s, msg) ? len : -1;
 }
 
@@ -98,8 +98,9 @@ bool kcp_push(struct session *restrict ss)
 void kcp_recv(struct session *restrict ss)
 {
 	ASSERT(ss->wbuf->len <= SESSION_BUF_SIZE);
-	unsigned char *start = ss->wbuf->data + ss->wbuf->len;
-	size_t cap = SESSION_BUF_SIZE - ss->wbuf->len;
+	unsigned char *start;
+	size_t cap;
+	VBUF_SPACE(start, cap, ss->wbuf);
 	size_t nrecv = 0;
 	while (cap > 0) {
 		const int r = ikcp_recv(ss->kcp, (char *)start, (int)cap);
@@ -150,6 +151,7 @@ void kcp_update_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);
 	const struct server *restrict s = watcher->data;
+	/* not const: &now_ms is passed as table_iterate's void *data */
 	uint32_t now_ms = tstamp2ms(ev_now(s->loop));
 	table_iterate(s->sessions, kcp_update_iter, &now_ms);
 }

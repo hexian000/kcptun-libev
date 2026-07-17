@@ -4,7 +4,6 @@
 #include "conf.h"
 
 #include "conf_schema.gen.h"
-#include "pktqueue.h"
 #include "util.h"
 
 #include "utils/slog.h"
@@ -15,84 +14,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Read the entire file at path into a heap-allocated, NUL-terminated buffer.
- * Returns the buffer and sets *out_len to the byte count (excluding NUL).
- * The caller must free() the returned pointer.  Returns NULL on error. */
-static char *read_alloc(const char *path, size_t *out_len)
-{
-	FILE *f = fopen(path, "r");
-	if (f == NULL) {
-		const int err = errno;
-		LOGE_F("config: failed to open `%s': %s", path, strerror(err));
-		return NULL;
-	}
-	if (fseek(f, 0, SEEK_END) != 0) {
-		const int err = errno;
-		LOGE_F("config: failed to seek `%s': %s", path, strerror(err));
-		(void)fclose(f);
-		return NULL;
-	}
-	const long pos = ftell(f);
-	if (pos < 0) {
-		const int err = errno;
-		LOGE_F("config: failed to tell `%s': %s", path, strerror(err));
-		(void)fclose(f);
-		return NULL;
-	}
-	if (fseek(f, 0, SEEK_SET) != 0) {
-		const int err = errno;
-		LOGE_F("config: failed to seek `%s': %s", path, strerror(err));
-		(void)fclose(f);
-		return NULL;
-	}
-	const size_t cap = (size_t)pos;
-	char *buf = malloc(cap + 1);
-	if (buf == NULL) {
-		LOGOOM();
-		(void)fclose(f);
-		return NULL;
-	}
-	const size_t n = fread(buf, 1, cap, f);
-	(void)fclose(f);
-	if (n != cap) {
-		LOGE_F("config: short read on `%s' (%zu/%zu bytes)", path, n,
-		       cap);
-		free(buf);
-		return NULL;
-	}
-	buf[n] = '\0';
-	*out_len = n;
-	return buf;
-}
-
-const char *conf_modestr(const struct config *restrict conf)
-{
-	if (conf->mode & MODE_SERVER) {
-		return "server";
-	}
-	if (conf->mode & MODE_CLIENT) {
-		return "client";
-	}
-	if (conf->mode & MODE_RENDEZVOUS) {
-		return "rendezvous server";
-	}
-	return "relay";
-}
-
-static bool check_int_range(
-	const char *key, const int value, const int lbound, const int ubound)
-{
-	if (value < lbound || value > ubound) {
-		LOGE_F("config: %s=%d is out of range [%d, %d]", key, value,
-		       lbound, ubound);
-		return false;
-	}
-	return true;
-}
-
-#define RANGE_CHECK(key, value, lbound, ubound)                                \
-	_Generic(value, int: check_int_range)(key, value, lbound, ubound)
 
 #define SERVICE_ID_MAX_LENGTH ((size_t)256)
 #define MIN_SOCKBUF_SIZE 4096
@@ -150,27 +71,9 @@ static bool conf_check(struct config *restrict conf)
 	}
 #endif
 
-	/* 3. range check */
-	const bool range_ok =
-		RANGE_CHECK("kcp.mtu", conf->kcp_mtu, 300, MAX_PACKET_SIZE) &&
-		RANGE_CHECK("kcp.sndwnd", conf->kcp_sndwnd, 16, 65536) &&
-		RANGE_CHECK("kcp.rcvwnd", conf->kcp_rcvwnd, 16, 65536) &&
-		RANGE_CHECK("kcp.nodelay", conf->kcp_nodelay, 0, 2) &&
-		RANGE_CHECK("kcp.interval", conf->kcp_interval, 10, 500) &&
-		RANGE_CHECK("kcp.resend", conf->kcp_resend, 0, 100) &&
-		RANGE_CHECK("kcp.nc", conf->kcp_nc, 0, 1) &&
-		RANGE_CHECK("kcp.flush", conf->kcp_flush, 0, 2) &&
-		RANGE_CHECK("timeout", conf->timeout, 60, 86400) &&
-		RANGE_CHECK("linger", conf->linger, 5, 600) &&
-		RANGE_CHECK("keepalive", conf->keepalive, 0, 600) &&
-		RANGE_CHECK("time_wait", conf->time_wait, 5, 3600) &&
-		RANGE_CHECK(
-			"log_level", conf->log_level, LOG_LEVEL_SILENCE,
-			LOG_LEVEL_VERYVERBOSE);
-	if (!range_ok) {
-		return false;
-	}
-
+	/* 3. buffer-size sanity check; the numeric ranges of every scalar
+	   field are enforced at parse time by the JSON schema constraints
+	   compiled into json_unmarshal_conf, so no range check is repeated here */
 	if ((conf->tcp_sndbuf > 0 && conf->tcp_sndbuf < MIN_SOCKBUF_SIZE) ||
 	    (conf->tcp_rcvbuf > 0 && conf->tcp_rcvbuf < MIN_SOCKBUF_SIZE)) {
 		LOGW("config: probably too small tcp buffer");
@@ -183,27 +86,47 @@ static bool conf_check(struct config *restrict conf)
 }
 
 /* Narrow an unsigned schema field to int, clamping instead of relying on
- * implementation-defined wraparound; conf_check rejects the clamped value
- * anyway since it's always outside every field's legitimate range. */
+ * implementation-defined wraparound. Every field's schema maximum is far below
+ * INT_MAX and enforced at parse time, so the clamp is an unreachable backstop. */
 static int narrow_uint_to_int(const unsigned value)
 {
 	return value > (unsigned)INT_MAX ? INT_MAX : (int)value;
 }
 
-/* strndup a parsed zero-copy string field into a freshly-allocated buffer.
- * Returns false and goes to oom on allocation failure. */
+/* Duplicate a parsed zero-copy string field (not NUL-terminated) into a
+ * freshly-allocated, NUL-terminated buffer. A JSON string may hold a literal
+ * NUL (a decoded escape) that strndup would silently truncate; reject that
+ * rather than corrupt the value with no diagnostic. Leaves *dst untouched when
+ * the field is absent. Returns false on error (already logged). */
+static bool dup_field(
+	char **restrict dst, const char *restrict key,
+	const struct json_string *restrict src)
+{
+	if (src->str == NULL) {
+		return true;
+	}
+	if (memchr(src->str, '\0', src->len) != NULL) {
+		LOGE_F("config: \"%s\" contains an embedded NUL byte", key);
+		return false;
+	}
+	char *s = strndup(src->str, src->len);
+	if (s == NULL) {
+		LOGOOM();
+		return false;
+	}
+	*dst = s;
+	return true;
+}
+
 #define COPY_STRING(dst, key)                                                  \
 	do {                                                                   \
-		if ((parsed->key.str) != NULL) {                               \
-			(dst) = strndup(parsed->key.str, parsed->key.len);     \
-			if ((dst) == NULL) {                                   \
-				goto oom;                                      \
-			}                                                      \
+		if (!dup_field(&(dst), #key, &parsed->key)) {                  \
+			return false;                                          \
 		}                                                              \
 	} while (0)
 
 /* Copy the parsed fields into conf. The parsed buffer is freed by the caller,
- * so strings are duplicated. Returns false on allocation failure. */
+ * so strings are duplicated. Returns false on error. */
 static bool conf_apply(
 	struct config *restrict conf, const struct json_conf *restrict parsed)
 {
@@ -212,12 +135,8 @@ static bool conf_apply(
 	COPY_STRING(conf->kcp_bind, kcp_bind);
 	COPY_STRING(conf->kcp_connect, kcp_connect);
 	COPY_STRING(conf->rendezvous_server, rendezvous_server);
-	if (parsed->service_id.str != NULL) {
-		conf->service_id =
-			strndup(parsed->service_id.str, parsed->service_id.len);
-		if (conf->service_id == NULL) {
-			goto oom;
-		}
+	COPY_STRING(conf->service_id, service_id);
+	if (conf->service_id != NULL) {
 		conf->service_idlen = parsed->service_id.len;
 	}
 	COPY_STRING(conf->http_listen, http_listen);
@@ -271,9 +190,56 @@ static bool conf_apply(
 	conf->time_wait = narrow_uint_to_int(parsed->time_wait);
 	conf->log_level = narrow_uint_to_int(parsed->loglevel);
 	return true;
-oom:
-	LOGOOM();
-	return false;
+}
+
+/* Read the entire file at path into a heap-allocated, NUL-terminated buffer.
+ * Returns the buffer and sets *out_len to the byte count (excluding NUL).
+ * The caller must free() the returned pointer.  Returns NULL on error. */
+static char *read_alloc(const char *path, size_t *out_len)
+{
+	FILE *f = fopen(path, "r");
+	if (f == NULL) {
+		const int err = errno;
+		LOGE_F("config: failed to open `%s': %s", path, strerror(err));
+		return NULL;
+	}
+	if (fseek(f, 0, SEEK_END) != 0) {
+		const int err = errno;
+		LOGE_F("config: failed to seek `%s': %s", path, strerror(err));
+		(void)fclose(f);
+		return NULL;
+	}
+	const long pos = ftell(f);
+	if (pos < 0) {
+		const int err = errno;
+		LOGE_F("config: failed to tell `%s': %s", path, strerror(err));
+		(void)fclose(f);
+		return NULL;
+	}
+	if (fseek(f, 0, SEEK_SET) != 0) {
+		const int err = errno;
+		LOGE_F("config: failed to seek `%s': %s", path, strerror(err));
+		(void)fclose(f);
+		return NULL;
+	}
+	const size_t cap = (size_t)pos;
+	char *buf = malloc(cap + 1);
+	if (buf == NULL) {
+		LOGOOM();
+		(void)fclose(f);
+		return NULL;
+	}
+	const size_t n = fread(buf, 1, cap, f);
+	(void)fclose(f);
+	if (n != cap) {
+		LOGE_F("config: short read on `%s' (%zu/%zu bytes)", path, n,
+		       cap);
+		free(buf);
+		return NULL;
+	}
+	buf[n] = '\0';
+	*out_len = n;
+	return buf;
 }
 
 struct config *conf_read(const char *path)
@@ -314,6 +280,20 @@ struct config *conf_read(const char *path)
 		return NULL;
 	}
 	return conf;
+}
+
+const char *conf_modestr(const struct config *restrict conf)
+{
+	if (conf->mode & MODE_SERVER) {
+		return "server";
+	}
+	if (conf->mode & MODE_CLIENT) {
+		return "client";
+	}
+	if (conf->mode & MODE_RENDEZVOUS) {
+		return "rendezvous server";
+	}
+	return "relay";
 }
 
 void conf_free(struct config *conf)

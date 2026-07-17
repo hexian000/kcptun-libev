@@ -53,9 +53,9 @@ struct pktconn {
 struct config;
 
 struct link_stats {
-	uintmax_t tcp_rx, tcp_tx;
-	uintmax_t kcp_rx, kcp_tx;
-	uintmax_t pkt_rx, pkt_tx;
+	uint_least64_t tcp_rx, tcp_tx;
+	uint_least64_t kcp_rx, kcp_tx;
+	uint_least64_t pkt_rx, pkt_tx;
 };
 
 struct server {

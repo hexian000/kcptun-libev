@@ -28,11 +28,6 @@
 #include <sys/types.h>
 #include <time.h>
 
-static void http_read_cb(struct ev_loop *loop, ev_io *watcher, int revents);
-static void http_write_cb(struct ev_loop *loop, ev_io *watcher, int revents);
-static void
-http_timeout_cb(struct ev_loop *loop, ev_timer *watcher, int revents);
-
 #define HTTP_MAX_REQUEST 4096
 
 struct http_ctx {
@@ -64,70 +59,10 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 	free(ctx);
 }
 
-void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
-{
-	CHECK_REVENTS(revents, EV_READ);
-
-	struct server *restrict s = watcher->data;
-	union sockaddr_max addr;
-	socklen_t addrlen;
-	int fd;
-	do {
-		addrlen = sizeof(addr);
-		fd = accept(watcher->fd, &addr.sa, &addrlen);
-	} while (fd < 0 && errno == EINTR);
-	if (fd < 0) {
-		const int err = errno;
-		if (err == EAGAIN || err == EWOULDBLOCK) {
-			return;
-		}
-		LOGE_F("accept: (%d) %s", err, strerror(err));
-		/* sleep for a while, see listener_cb */
-		ev_io_stop(loop, watcher);
-		ev_timer *restrict w_timer = &s->listener.w_timer;
-		if (!ev_is_active(w_timer)) {
-			ev_timer_start(loop, w_timer);
-		}
-		return;
-	}
-	if (!socket_nonblock_or_close(fd)) {
-		return;
-	}
-	struct http_ctx *restrict ctx = malloc(sizeof(struct http_ctx));
-	if (ctx == NULL) {
-		LOGOOM();
-		socket_close(fd);
-		return;
-	}
-	ctx->loop = loop;
-	ctx->data = s;
-	ctx->fd = fd;
-	ctx->http_msg = (struct http_message){ 0 };
-	ctx->http_nxt = NULL;
-	BUF_INIT(ctx->rbuf, 0);
-	ctx->wbuf = NULL;
-
-	ev_io *restrict w_read = &ctx->w_read;
-	ev_io_init(w_read, http_read_cb, fd, EV_READ);
-	w_read->data = ctx;
-	ev_io_start(loop, w_read);
-	ev_io *restrict w_write = &ctx->w_write;
-	ev_io_init(w_write, http_write_cb, fd, EV_WRITE);
-	w_write->data = ctx;
-	ev_timer *restrict w_timeout = &ctx->w_timeout;
-	ev_timer_init(w_timeout, http_timeout_cb, 15.0, 0.0);
-	w_timeout->data = ctx;
-	ev_timer_start(loop, w_timeout);
-	if (LOGLEVEL(VERBOSE)) {
-		char addr_str[64];
-		sa_format(addr_str, sizeof(addr_str), &addr.sa);
-		LOG_F(VERBOSE, "http: accept %s", addr_str);
-	}
-}
-
 static void http_serve(struct http_ctx *ctx);
 
-void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
+static void
+http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
 
@@ -197,6 +132,15 @@ void http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			return;
 		}
 		if (next == ctx->http_nxt) {
+			/* need more data; if the buffer is already full the
+			   headers can never complete, matching the request-line
+			   path rather than misreading the next 0-length recv as
+			   a clean disconnect */
+			if (cap == 0) {
+				LOGW("http: request too large");
+				http_ctx_free(ctx);
+				return;
+			}
 			return;
 		}
 		ctx->http_nxt = next;
@@ -245,18 +189,81 @@ static void http_ctx_write(struct http_ctx *restrict ctx)
 	http_ctx_free(ctx);
 }
 
-void http_write_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
+static void
+http_write_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_WRITE);
 	http_ctx_write(watcher->data);
 }
 
-void http_timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
+static void
+http_timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);
 	http_ctx_free(watcher->data);
+}
+
+void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
+{
+	CHECK_REVENTS(revents, EV_READ);
+
+	struct server *restrict s = watcher->data;
+	union sockaddr_max addr;
+	socklen_t addrlen;
+	int fd;
+	do {
+		addrlen = sizeof(addr);
+		fd = accept(watcher->fd, &addr.sa, &addrlen);
+	} while (fd < 0 && errno == EINTR);
+	if (fd < 0) {
+		const int err = errno;
+		if (err == EAGAIN || err == EWOULDBLOCK) {
+			return;
+		}
+		LOGE_F("accept: (%d) %s", err, strerror(err));
+		/* sleep for a while, see listener_cb */
+		ev_io_stop(loop, watcher);
+		ev_timer *restrict w_timer = &s->listener.w_timer;
+		if (!ev_is_active(w_timer)) {
+			ev_timer_start(loop, w_timer);
+		}
+		return;
+	}
+	if (!socket_nonblock_or_close(fd)) {
+		return;
+	}
+	struct http_ctx *restrict ctx = malloc(sizeof(struct http_ctx));
+	if (ctx == NULL) {
+		LOGOOM();
+		socket_close(fd);
+		return;
+	}
+	ctx->loop = loop;
+	ctx->data = s;
+	ctx->fd = fd;
+	ctx->http_msg = (struct http_message){ 0 };
+	ctx->http_nxt = NULL;
+	BUF_INIT(ctx->rbuf, 0);
+	ctx->wbuf = NULL;
+
+	ev_io *restrict w_read = &ctx->w_read;
+	ev_io_init(w_read, http_read_cb, fd, EV_READ);
+	w_read->data = ctx;
+	ev_io_start(loop, w_read);
+	ev_io *restrict w_write = &ctx->w_write;
+	ev_io_init(w_write, http_write_cb, fd, EV_WRITE);
+	w_write->data = ctx;
+	ev_timer *restrict w_timeout = &ctx->w_timeout;
+	ev_timer_init(w_timeout, http_timeout_cb, 15.0, 0.0);
+	w_timeout->data = ctx;
+	ev_timer_start(loop, w_timeout);
+	if (LOGLEVEL(VERBOSE)) {
+		char addr_str[64];
+		sa_format(addr_str, sizeof(addr_str), &addr.sa);
+		LOG_F(VERBOSE, "http: accept %s", addr_str);
+	}
 }
 
 static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)

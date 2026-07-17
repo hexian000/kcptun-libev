@@ -90,7 +90,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 				LOGOOM();
 				if (i == 0) {
 					/* no frame could be allocated */
-					s->stats.pkt_rx += nbrecv;
+					s->stats.pkt_rx += (uint_least64_t)nbrecv;
 					return nrecv;
 				}
 				populated = i;
@@ -155,7 +155,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		nrecv += n;
 		navail -= n;
 	} while (navail > 0);
-	s->stats.pkt_rx += nbrecv;
+	s->stats.pkt_rx += (uint_least64_t)nbrecv;
 	return nrecv;
 }
 
@@ -210,7 +210,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		msg->ts = now;
 		q->mq_recv[q->mq_recv_len++] = msg;
 		PKT_LOGVV("pkt recv", msg);
-		s->stats.pkt_rx += nbrecv;
+		s->stats.pkt_rx += (uint_least64_t)nbrecv;
 		nrecv++;
 		navail--;
 	} while (navail > 0);
@@ -317,8 +317,12 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		q->mq_send[i] = q->mq_send[nsend + i];
 	}
 	q->mq_send_len = navail;
-	s->stats.pkt_tx += nbsend;
-	s->pkt.last_send_time = ev_now(s->loop);
+	if (nsend > 0) {
+		/* only stamp last_send_time when something was actually sent;
+		   stamping under sustained EAGAIN would keep deferring keepalive */
+		s->stats.pkt_tx += (uint_least64_t)nbsend;
+		s->pkt.last_send_time = ev_now(s->loop);
+	}
 	if (drop) {
 		nsend += pkt_send_drop(q);
 	}
@@ -359,7 +363,9 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		}
 		nsend++, nbsend += ret;
 	}
-	if (nsend == 0) {
+	/* on a persistent error nsend can still be 0 (the head packet failed);
+	   fall through so the drop-cleanup below runs and unwedges the queue */
+	if (nsend == 0 && !drop) {
 		return 0;
 	}
 	for (size_t i = 0; i < nsend; i++) {
@@ -372,8 +378,11 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		q->mq_send[i] = q->mq_send[nsend + i];
 	}
 	q->mq_send_len = remain;
-	s->stats.pkt_tx += nbsend;
-	s->pkt.last_send_time = ev_now(s->loop);
+	if (nsend > 0) {
+		/* only stamp last_send_time when something was actually sent */
+		s->stats.pkt_tx += (uint_least64_t)nbsend;
+		s->pkt.last_send_time = ev_now(s->loop);
+	}
 	if (drop) {
 		nsend += pkt_send_drop(q);
 	}

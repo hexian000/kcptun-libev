@@ -75,7 +75,14 @@ static void accept_one(
 	}
 	void *elem = ss;
 	s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
-	ASSERT(elem == NULL);
+	if (elem != NULL) {
+		/* table_set leaves the new element in place on allocation
+		   failure; ss was not inserted */
+		LOGOOM();
+		socket_close(fd);
+		session_free(ss);
+		return;
+	}
 	if (LOGLEVEL(INFO)) {
 		char addr_str[64];
 		sa_format(addr_str, sizeof(addr_str), client_sa);
@@ -221,8 +228,8 @@ static int tcp_recv(struct session *restrict ss)
 	cap -= (size_t)nread;
 	ss->rbuf->len += (size_t)nread;
 
-	ss->stats.tcp_rx += (size_t)nread;
-	ss->server->stats.tcp_rx += (size_t)nread;
+	ss->stats.tcp_rx += (uint_least64_t)nread;
+	ss->server->stats.tcp_rx += (uint_least64_t)nread;
 	LOGV_F("[session:%08" PRIX32 "] tcp [fd:%d]: "
 	       "recv %zu bytes, cap: %zu bytes",
 	       ss->conv, fd, (size_t)nread, cap);
@@ -295,8 +302,8 @@ static int tcp_send(struct session *restrict ss)
 	}
 	ASSERT(ret <= INT_MAX);
 	ss->wbuf_flush += (size_t)ret;
-	ss->stats.tcp_tx += (uintmax_t)ret;
-	ss->server->stats.tcp_tx += (uintmax_t)ret;
+	ss->stats.tcp_tx += (uint_least64_t)ret;
+	ss->server->stats.tcp_tx += (uint_least64_t)ret;
 	LOGV_F("[session:%08" PRIX32 "] tcp [fd:%d]: "
 	       "send %zd/%zu bytes",
 	       ss->conv, fd, ret, len);

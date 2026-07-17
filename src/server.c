@@ -275,21 +275,6 @@ udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
 	return true;
 }
 
-size_t udp_overhead(const struct pktconn *restrict udp)
-{
-	switch (udp->domain) {
-	case AF_INET:
-		/* UDP/IP4 */
-		return 28;
-	case AF_INET6:
-		/* UDP/IP6 */
-		return 48;
-	default:
-		break;
-	}
-	FAILMSGF("invalid address family: %d", udp->domain);
-}
-
 /* calculate max send size */
 static size_t server_mss(const struct server *restrict s)
 {
@@ -341,50 +326,14 @@ static bool udp_restart(struct server *restrict s)
 	return true;
 }
 
-bool server_resolve(struct server *restrict s)
+/* resolve the TCP forward target, if configured */
+static bool resolve_connect(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
-	if (conf->connect != NULL) {
-		if (!resolve_addr(&s->connect, conf->connect, SA_RESOLVE_TCP)) {
-			return false;
-		}
-	}
-	struct pktqueue *restrict q = s->pkt.queue;
-#if WITH_OBFS
-	if (q->obfs != NULL) {
-		if (!obfs_resolve(q->obfs)) {
-			return false;
-		}
-		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
-		q->mss = (uint16_t)server_mss(s);
+	if (conf->connect == NULL) {
 		return true;
 	}
-#endif /* WITH_OBFS */
-	if (!udp_restart(s)) {
-		return false;
-	}
-	q->mss = (uint16_t)server_mss(s);
-	return true;
-}
-
-void udp_rendezvous(struct server *restrict s, const uint16_t what)
-{
-	const size_t idlen = s->conf->service_idlen;
-	const struct sockaddr *sa_server = &s->pkt.rendezvous_server.sa;
-	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
-	unsigned char b[INET6ADDR_LENGTH + sizeof(uint16_t) + idlen];
-	unsigned char *p = b;
-	size_t n = inetaddr_write(p, sizeof(b), sa_local);
-	ASSERT(n > 0);
-	p += n;
-	ASSERT(idlen <= UINT16_MAX);
-	write_uint16(p, idlen);
-	p += sizeof(uint16_t), n += sizeof(uint16_t);
-	if (idlen > 0) {
-		memcpy(p, s->conf->service_id, idlen);
-		n += idlen;
-	}
-	ss0_send(s, sa_server, what, b, n);
+	return resolve_addr(&s->connect, conf->connect, SA_RESOLVE_TCP);
 }
 
 static bool udp_start(struct server *restrict s)
@@ -526,11 +475,8 @@ bool server_start(struct server *restrict s)
 	}
 	s->started = now;
 	s->last_stats_time = now;
-	const struct config *restrict conf = s->conf;
-	if (conf->connect != NULL) {
-		if (!resolve_addr(&s->connect, conf->connect, SA_RESOLVE_TCP)) {
-			return false;
-		}
+	if (!resolve_connect(s)) {
+		return false;
 	}
 	s->last_resolve_time = now;
 	ev_timer_start(loop, &s->w_kcp_update);
@@ -571,191 +517,6 @@ void server_ping(struct server *restrict s)
 	write_uint32(b, tstamp);
 	ss0_send(s, sa, S0MSG_PING, b, sizeof(b));
 	s->pkt.inflight_ping = now;
-}
-
-bool server_healthy(
-	const struct server *restrict s, char *restrict buf,
-	const size_t bufsize)
-{
-	const int mode = s->conf->mode;
-	/* a pure server has no upstream peer to monitor */
-	if ((mode & MODE_CLIENT) == 0) {
-		(void)snprintf(buf, bufsize, "healthy");
-		return true;
-	}
-	/* a rendezvous client must have located its peer first */
-	if ((mode & MODE_RENDEZVOUS) != 0 && !s->pkt.connected) {
-		(void)snprintf(buf, bufsize, "rendezvous pending");
-		return false;
-	}
-	const ev_tstamp last = s->pkt.last_recv_time;
-	if (last == TSTAMP_NIL) {
-		(void)snprintf(buf, bufsize, "peer unreachable");
-		return false;
-	}
-	const double idle = ev_now(s->loop) - last;
-	if (idle > s->timeout) {
-		(void)snprintf(
-			buf, bufsize, "peer not responding (%.0fs)", idle);
-		return false;
-	}
-	(void)snprintf(buf, bufsize, "healthy (peer seen %.0fs ago)", idle);
-	return true;
-}
-
-static bool svc_shutdown_filt(
-	const struct hashtable *t, const void *key, void *element, void *user)
-{
-	UNUSED(t);
-	UNUSED(key);
-	UNUSED(user);
-	struct service *restrict svc = element;
-	ASSERT(((const struct hashkey *)key)->data == svc->id);
-	free(svc);
-	return false;
-}
-
-static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
-{
-	conn->services = table_filter(conn->services, svc_shutdown_filt, NULL);
-	if (conn->fd == -1) {
-		return;
-	}
-	ev_io_stop(loop, &conn->w_read);
-	ev_io_stop(loop, &conn->w_write);
-	socket_close(conn->fd);
-	conn->fd = -1;
-}
-
-static void udp_free(struct pktconn *restrict conn)
-{
-	if (conn == NULL) {
-		return;
-	}
-	if (conn->queue != NULL) {
-		queue_free(conn->queue);
-		conn->queue = NULL;
-	}
-	if (conn->services != NULL) {
-		table_free(conn->services);
-		conn->services = NULL;
-	}
-}
-
-static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
-{
-	if (l->fd != -1) {
-		LOGD_F("listener [fd:%d] close", l->fd);
-		ev_io *restrict w_accept = &l->w_accept;
-		ev_io_stop(loop, w_accept);
-		socket_close(l->fd);
-		l->fd = -1;
-	}
-	if (l->fd_http != -1) {
-		LOGD_F("http listener [fd:%d] close", l->fd_http);
-		ev_io *restrict w_accept_http = &l->w_accept_http;
-		ev_io_stop(loop, w_accept_http);
-		socket_close(l->fd_http);
-		l->fd_http = -1;
-	}
-	ev_timer_stop(loop, &l->w_timer);
-}
-
-static bool shutdown_filt(
-	const struct hashtable *t, const void *key, void *element, void *user)
-{
-	UNUSED(t);
-	UNUSED(key);
-	UNUSED(user);
-	struct session *restrict ss = element;
-	ASSERT(((const struct hashkey *)key)->data == ss->key);
-	session_free(ss);
-	return false;
-}
-
-void server_stop(struct server *restrict s)
-{
-	struct ev_loop *loop = s->loop;
-	listener_stop(loop, &s->listener);
-	ev_timer_stop(loop, &s->w_kcp_update);
-	ev_timer_stop(loop, &s->w_keepalive);
-	ev_timer_stop(loop, &s->w_resolve);
-	ev_timer_stop(loop, &s->w_timeout);
-	const size_t num = table_size(s->sessions);
-	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
-	LOGI_F("%zu sessions closed", num);
-#if WITH_OBFS
-	if (s->pkt.queue->obfs != NULL) {
-		obfs_stop(s->pkt.queue->obfs, s);
-	} else {
-		udp_stop(s->loop, &s->pkt);
-	}
-#else
-	udp_stop(s->loop, &s->pkt);
-#endif
-}
-
-void server_free(struct server *restrict s)
-{
-	/* defensively tear down any still-active state: server_start can
-	 * fail after partially starting up, and the caller goes straight to
-	 * server_free without calling server_stop first. Each of these is
-	 * a safe no-op if the corresponding state was never started. */
-	struct ev_loop *loop = s->loop;
-	listener_stop(loop, &s->listener);
-	ev_timer_stop(loop, &s->w_kcp_update);
-	ev_timer_stop(loop, &s->w_keepalive);
-	ev_timer_stop(loop, &s->w_resolve);
-	ev_timer_stop(loop, &s->w_timeout);
-#if WITH_OBFS
-	if (s->pkt.queue != NULL && s->pkt.queue->obfs != NULL) {
-		obfs_stop(s->pkt.queue->obfs, s);
-	} else {
-		udp_stop(s->loop, &s->pkt);
-	}
-#else
-	udp_stop(s->loop, &s->pkt);
-#endif
-	udp_free(&s->pkt);
-	if (s->sessions != NULL) {
-		table_free(s->sessions);
-		s->sessions = NULL;
-	}
-	free(s);
-}
-
-static uint32_t conv_next(uint32_t conv)
-{
-	conv++;
-	/* 0 is reserved */
-	if (conv == UINT32_C(0)) {
-		conv++;
-	}
-	return conv;
-}
-
-uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
-{
-	uint32_t conv = conv_next(s->conv);
-	unsigned char key[SESSION_KEY_SIZE];
-	const struct hashkey hkey = {
-		.len = sizeof(key),
-		.data = key,
-	};
-	SESSION_MAKEKEY(key, sa, conv);
-	if (table_find(s->sessions, &hkey, NULL)) {
-		const double usage =
-			(double)table_size(s->sessions) / (double)MAX_SESSIONS;
-		do {
-			if (usage < 1e-3) {
-				conv = (uint32_t)rand64();
-			}
-			conv = conv_next(conv);
-			SESSION_MAKEKEY(key, sa, conv);
-		} while (table_find(s->sessions, &hkey, NULL));
-	}
-	s->conv = conv;
-	return conv;
 }
 
 struct server_stats_ctx {
@@ -965,4 +726,250 @@ struct vbuffer *server_stats(
 	s->last_stats = s->stats;
 	s->last_stats_time = now;
 	return buf;
+}
+
+bool server_healthy(
+	const struct server *restrict s, char *restrict buf,
+	const size_t bufsize)
+{
+	const int mode = s->conf->mode;
+	/* a pure server has no upstream peer to monitor */
+	if ((mode & MODE_CLIENT) == 0) {
+		(void)snprintf(buf, bufsize, "healthy");
+		return true;
+	}
+	/* a rendezvous client must have located its peer first */
+	if ((mode & MODE_RENDEZVOUS) != 0 && !s->pkt.connected) {
+		(void)snprintf(buf, bufsize, "rendezvous pending");
+		return false;
+	}
+	const ev_tstamp last = s->pkt.last_recv_time;
+	if (last == TSTAMP_NIL) {
+		(void)snprintf(buf, bufsize, "peer unreachable");
+		return false;
+	}
+	const double idle = ev_now(s->loop) - last;
+	if (idle > s->timeout) {
+		(void)snprintf(
+			buf, bufsize, "peer not responding (%.0fs)", idle);
+		return false;
+	}
+	(void)snprintf(buf, bufsize, "healthy (peer seen %.0fs ago)", idle);
+	return true;
+}
+
+bool server_resolve(struct server *restrict s)
+{
+	if (!resolve_connect(s)) {
+		return false;
+	}
+	struct pktqueue *restrict q = s->pkt.queue;
+#if WITH_OBFS
+	if (q->obfs != NULL) {
+		if (!obfs_resolve(q->obfs)) {
+			return false;
+		}
+		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
+		q->mss = (uint16_t)server_mss(s);
+		return true;
+	}
+#endif /* WITH_OBFS */
+	if (!udp_restart(s)) {
+		return false;
+	}
+	q->mss = (uint16_t)server_mss(s);
+	return true;
+}
+
+void udp_rendezvous(struct server *restrict s, const uint16_t what)
+{
+	const size_t idlen = s->conf->service_idlen;
+	const struct sockaddr *sa_server = &s->pkt.rendezvous_server.sa;
+	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
+	ASSERT(idlen <= UINT16_MAX);
+	unsigned char b[INET6ADDR_LENGTH + sizeof(uint16_t) + idlen];
+	unsigned char *p = b;
+	size_t n = inetaddr_write(p, sa_local, sizeof(b));
+	ASSERT(n > 0);
+	p += n;
+	write_uint16(p, (uint_fast16_t)idlen);
+	p += sizeof(uint16_t), n += sizeof(uint16_t);
+	if (idlen > 0) {
+		memcpy(p, s->conf->service_id, idlen);
+		n += idlen;
+	}
+	ss0_send(s, sa_server, what, b, n);
+}
+
+static bool svc_shutdown_filt(
+	const struct hashtable *t, const void *key, void *element, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	struct service *restrict svc = element;
+	ASSERT(((const struct hashkey *)key)->data == svc->id);
+	free(svc);
+	return false;
+}
+
+static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
+{
+	conn->services = table_filter(conn->services, svc_shutdown_filt, NULL);
+	if (conn->fd == -1) {
+		return;
+	}
+	ev_io_stop(loop, &conn->w_read);
+	ev_io_stop(loop, &conn->w_write);
+	socket_close(conn->fd);
+	conn->fd = -1;
+}
+
+static void udp_free(struct pktconn *restrict conn)
+{
+	if (conn == NULL) {
+		return;
+	}
+	if (conn->queue != NULL) {
+		queue_free(conn->queue);
+		conn->queue = NULL;
+	}
+	if (conn->services != NULL) {
+		table_free(conn->services);
+		conn->services = NULL;
+	}
+}
+
+static void listener_stop(struct ev_loop *loop, struct listener *restrict l)
+{
+	if (l->fd != -1) {
+		LOGD_F("listener [fd:%d] close", l->fd);
+		ev_io *restrict w_accept = &l->w_accept;
+		ev_io_stop(loop, w_accept);
+		socket_close(l->fd);
+		l->fd = -1;
+	}
+	if (l->fd_http != -1) {
+		LOGD_F("http listener [fd:%d] close", l->fd_http);
+		ev_io *restrict w_accept_http = &l->w_accept_http;
+		ev_io_stop(loop, w_accept_http);
+		socket_close(l->fd_http);
+		l->fd_http = -1;
+	}
+	ev_timer_stop(loop, &l->w_timer);
+}
+
+static bool shutdown_filt(
+	const struct hashtable *t, const void *key, void *element, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	UNUSED(user);
+	struct session *restrict ss = element;
+	ASSERT(((const struct hashkey *)key)->data == ss->key);
+	session_free(ss);
+	return false;
+}
+
+void server_stop(struct server *restrict s)
+{
+	struct ev_loop *loop = s->loop;
+	listener_stop(loop, &s->listener);
+	ev_timer_stop(loop, &s->w_kcp_update);
+	ev_timer_stop(loop, &s->w_keepalive);
+	ev_timer_stop(loop, &s->w_resolve);
+	ev_timer_stop(loop, &s->w_timeout);
+	const size_t num = table_size(s->sessions);
+	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
+	LOGI_F("%zu sessions closed", num);
+#if WITH_OBFS
+	if (s->pkt.queue->obfs != NULL) {
+		obfs_stop(s->pkt.queue->obfs, s);
+	} else {
+		udp_stop(s->loop, &s->pkt);
+	}
+#else
+	udp_stop(s->loop, &s->pkt);
+#endif
+}
+
+void server_free(struct server *restrict s)
+{
+	/* defensively tear down any still-active state: server_start can
+	 * fail after partially starting up, and the caller goes straight to
+	 * server_free without calling server_stop first. Each of these is
+	 * a safe no-op if the corresponding state was never started. */
+	struct ev_loop *loop = s->loop;
+	listener_stop(loop, &s->listener);
+	ev_timer_stop(loop, &s->w_kcp_update);
+	ev_timer_stop(loop, &s->w_keepalive);
+	ev_timer_stop(loop, &s->w_resolve);
+	ev_timer_stop(loop, &s->w_timeout);
+#if WITH_OBFS
+	if (s->pkt.queue != NULL && s->pkt.queue->obfs != NULL) {
+		obfs_stop(s->pkt.queue->obfs, s);
+	} else {
+		udp_stop(s->loop, &s->pkt);
+	}
+#else
+	udp_stop(s->loop, &s->pkt);
+#endif
+	udp_free(&s->pkt);
+	if (s->sessions != NULL) {
+		/* free any surviving session payloads before the table itself,
+		   matching server_stop; a no-op when server_stop already ran */
+		s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
+		table_free(s->sessions);
+		s->sessions = NULL;
+	}
+	free(s);
+}
+
+static uint32_t conv_next(uint32_t conv)
+{
+	conv++;
+	/* 0 is reserved */
+	if (conv == UINT32_C(0)) {
+		conv++;
+	}
+	return conv;
+}
+
+uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
+{
+	uint32_t conv = conv_next(s->conv);
+	unsigned char key[SESSION_KEY_SIZE];
+	const struct hashkey hkey = {
+		.len = sizeof(key),
+		.data = key,
+	};
+	SESSION_MAKEKEY(key, sa, conv);
+	if (table_find(s->sessions, &hkey, NULL)) {
+		const double usage =
+			(double)table_size(s->sessions) / (double)MAX_SESSIONS;
+		do {
+			if (usage < 1e-3) {
+				conv = (uint32_t)rand64();
+			}
+			conv = conv_next(conv);
+			SESSION_MAKEKEY(key, sa, conv);
+		} while (table_find(s->sessions, &hkey, NULL));
+	}
+	s->conv = conv;
+	return conv;
+}
+
+size_t udp_overhead(const struct pktconn *restrict udp)
+{
+	switch (udp->domain) {
+	case AF_INET:
+		/* UDP/IP4 */
+		return 28;
+	case AF_INET6:
+		/* UDP/IP6 */
+		return 48;
+	default:
+		break;
+	}
+	FAILMSGF("invalid address family: %d", udp->domain);
 }

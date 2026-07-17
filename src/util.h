@@ -17,8 +17,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 /**
  * @brief Mark a variable as intentionally unused and silence compiler warnings.
@@ -107,7 +105,7 @@ void loadlibs(void);
 void unloadlibs(void);
 
 #if WITH_CRYPTO
-void genpsk(const char *method);
+void genpsk(const char *restrict method);
 #endif
 
 /* socket utilities */

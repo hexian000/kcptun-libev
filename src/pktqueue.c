@@ -46,7 +46,7 @@
 #if WITH_CRYPTO
 
 static bool crypto_open_inplace(
-	const struct pktqueue *restrict q, unsigned char *data,
+	const struct pktqueue *restrict q, unsigned char *restrict data,
 	size_t *restrict len, const size_t size)
 {
 	const struct crypto *restrict crypto = q->crypto;
@@ -75,7 +75,7 @@ static bool crypto_open_inplace(
 
 /* caller should ensure the buffer is large enough */
 static bool crypto_seal_inplace(
-	const struct pktqueue *restrict q, unsigned char *data,
+	const struct pktqueue *restrict q, unsigned char *restrict data,
 	size_t *restrict len, const size_t size, const size_t pad)
 {
 	const struct crypto *restrict crypto = q->crypto;
@@ -99,201 +99,7 @@ static bool crypto_seal_inplace(
 	*len = dst_len + nonce_size;
 	return true;
 }
-#endif /* WITH_CRYPTO */
 
-static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
-{
-	MSG_LOGVV("queue_recv", msg);
-	if (msg->len < sizeof(uint32_t)) {
-		LOG_RATELIMITED_F(
-			WARNING, ev_now(s->loop), 1.0,
-			"queue_recv: packet too short (%" PRIu16 " bytes)",
-			msg->len);
-		return;
-	}
-	const unsigned char *kcp_packet = msg->buf + msg->off;
-	uint32_t conv = ikcp_getconv(kcp_packet);
-	if (conv == UINT32_C(0)) {
-		session0(s, msg);
-		return;
-	}
-
-	const struct sockaddr *sa = &msg->addr.sa;
-	unsigned char sskey[SESSION_KEY_SIZE];
-	SESSION_MAKEKEY(sskey, sa, conv);
-	const struct hashkey hkey = {
-		.len = sizeof(sskey),
-		.data = sskey,
-	};
-	struct session *restrict ss;
-	if (!table_find(s->sessions, &hkey, (void **)&ss)) {
-		if ((s->conf->mode & MODE_SERVER) == 0) {
-			LOG_RATELIMITED_F(
-				WARNING, ev_now(s->loop), 1.0,
-				"[session:%08" PRIX32 "] not found", conv);
-			ss0_reset(s, sa, conv);
-			return;
-		}
-		/* accept new kcp session */
-		ss = session_new(s, &msg->addr, conv);
-		if (ss == NULL) {
-			LOGOOM();
-			return;
-		}
-		ss->is_accepted = true;
-		void *elem = ss;
-		s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
-		ASSERT(elem == NULL);
-		if (LOGLEVEL(DEBUG)) {
-			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), sa);
-			LOG_F(DEBUG, "[session:%08" PRIX32 "] kcp: accepted %s",
-			      conv, addr_str);
-		}
-		ss->kcp_state = KCP_STATE_CONNECT;
-	}
-
-	const ev_tstamp now = ev_now(s->loop);
-	if (!sa_equals(sa, &ss->raddr.sa)) {
-		if (ss->last_reset == TSTAMP_NIL ||
-		    now - ss->last_reset > 1.0) {
-			char oaddr_str[64];
-			sa_format(oaddr_str, sizeof(oaddr_str), &ss->raddr.sa);
-			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), sa);
-			LOGW_F("[session:%08" PRIX32 "] conflict: "
-			       "existing %s, refusing %s",
-			       conv, oaddr_str, addr_str);
-			ss0_reset(s, sa, conv);
-			ss->last_reset = now;
-		}
-		return;
-	}
-	switch (ss->kcp_state) {
-	case KCP_STATE_CONNECT:
-		ss->kcp_state = KCP_STATE_ESTABLISHED;
-		/* fallthrough */
-	case KCP_STATE_ESTABLISHED:
-	case KCP_STATE_LINGER:
-		break;
-	case KCP_STATE_TIME_WAIT:
-		if (ss->last_reset == TSTAMP_NIL ||
-		    now - ss->last_reset > 1.0) {
-			ss0_reset(s, sa, conv);
-			ss->last_reset = now;
-		}
-		return;
-	default:
-		FAILMSGF("invalid session state: %d", ss->kcp_state);
-	}
-
-	const int r =
-		ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
-	if (r < 0) {
-		LOGW_F("ikcp_input: %d", r);
-		return;
-	}
-	ss->stats.kcp_rx += msg->len;
-	s->stats.kcp_rx += msg->len;
-	if (ss->kcp_flush >= 2) {
-		/* flush acks */
-		session_kcp_flush(ss);
-	}
-	session_read_cb(ss);
-}
-
-size_t queue_dispatch(struct server *restrict s)
-{
-	struct pktqueue *restrict q = s->pkt.queue;
-	if (q->mq_recv_len == 0) {
-		return 0;
-	}
-	s->pkt.last_recv_time = ev_now(s->loop);
-	size_t nbrecv = 0;
-	for (size_t i = 0; i < q->mq_recv_len; i++) {
-		struct msgframe *restrict msg = q->mq_recv[i];
-#if WITH_OBFS
-		struct obfs_ctx *ctx = NULL;
-		if (q->obfs != NULL) {
-			ctx = obfs_open_inplace(q->obfs, msg);
-			if (ctx == NULL) {
-				msgframe_delete(q, msg);
-				continue;
-			}
-		}
-#endif /* WITH_OBFS */
-#if WITH_CRYPTO
-		if (q->crypto != NULL) {
-			const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
-			size_t len = msg->len;
-			if (!crypto_open_inplace(
-				    q, msg->buf + msg->off, &len, cap)) {
-				msgframe_delete(q, msg);
-				continue;
-			}
-			ASSERT(len <= UINT16_MAX);
-			msg->len = (uint16_t)len;
-		}
-#endif /* WITH_CRYPTO */
-#if WITH_OBFS
-		if (ctx != NULL) {
-			obfs_ctx_auth(ctx, true);
-		}
-#endif
-		queue_recv(s, msg);
-		nbrecv += msg->len;
-		msgframe_delete(q, msg);
-	}
-	q->mq_recv_len = 0;
-	return nbrecv;
-}
-
-bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
-{
-	struct pktqueue *restrict q = s->pkt.queue;
-	MSG_LOGVV("queue_send", msg);
-#if WITH_CRYPTO
-	if (q->crypto != NULL) {
-		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
-		size_t len = msg->len;
-		ASSERT(len <= cap);
-		/* random padding to obscure the plaintext length; pad stays
-		 * below IKCP_OVERHEAD so the peer's KCP ignores the tail */
-		const size_t pad = rand64n(MIN((size_t)q->mss - len, 15));
-		if (!crypto_seal_inplace(
-			    q, msg->buf + msg->off, &len, cap, pad)) {
-			msgframe_delete(q, msg);
-			return false;
-		}
-		msg->len = (uint16_t)len;
-	}
-#endif /* WITH_CRYPTO */
-#if WITH_OBFS
-	if (q->obfs != NULL) {
-		const bool obfs_seal_ok = obfs_seal_inplace(q->obfs, msg);
-		if (!obfs_seal_ok) {
-			msgframe_delete(q, msg);
-			return false;
-		}
-	}
-#endif
-
-	const ev_tstamp now = ev_now(s->loop);
-	if (q->mq_send_len >= q->mq_send_cap) {
-		LOG_RATELIMITED_F(
-			WARNING, now, 1.0,
-			"send queue full, %" PRIu16 " bytes discarded",
-			msg->len);
-		msgframe_delete(q, msg);
-		return false;
-	}
-	msg->ts = now;
-	q->mq_send[q->mq_send_len++] = msg;
-	pkt_notify_send(s);
-	return true;
-}
-
-#if WITH_CRYPTO
 static bool queue_new_crypto(
 	struct pktqueue *restrict q, const struct config *restrict conf)
 {
@@ -428,4 +234,207 @@ void queue_free(struct pktqueue *restrict q)
 	}
 #endif
 	free(q);
+}
+
+static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
+{
+	MSG_LOGVV("queue_recv", msg);
+	if (msg->len < sizeof(uint32_t)) {
+		LOG_RATELIMITED_F(
+			WARNING, ev_now(s->loop), 1.0,
+			"queue_recv: packet too short (%" PRIu16 " bytes)",
+			msg->len);
+		return;
+	}
+	const unsigned char *kcp_packet = msg->buf + msg->off;
+	uint32_t conv = ikcp_getconv(kcp_packet);
+	if (conv == UINT32_C(0)) {
+		session0(s, msg);
+		return;
+	}
+
+	const struct sockaddr *sa = &msg->addr.sa;
+	unsigned char sskey[SESSION_KEY_SIZE];
+	SESSION_MAKEKEY(sskey, sa, conv);
+	const struct hashkey hkey = {
+		.len = sizeof(sskey),
+		.data = sskey,
+	};
+	struct session *restrict ss;
+	if (!table_find(s->sessions, &hkey, (void **)&ss)) {
+		if ((s->conf->mode & MODE_SERVER) == 0) {
+			LOG_RATELIMITED_F(
+				WARNING, ev_now(s->loop), 1.0,
+				"[session:%08" PRIX32 "] not found", conv);
+			ss0_reset(s, sa, conv);
+			return;
+		}
+		/* accept new kcp session */
+		ss = session_new(s, &msg->addr, conv);
+		if (ss == NULL) {
+			LOGOOM();
+			return;
+		}
+		ss->is_accepted = true;
+		void *elem = ss;
+		s->sessions = table_set(s->sessions, SESSION_GETKEY(ss), &elem);
+		if (elem != NULL) {
+			/* table_set leaves the new element in place on allocation
+			   failure; ss was not inserted */
+			LOGOOM();
+			session_free(ss);
+			return;
+		}
+		if (LOGLEVEL(DEBUG)) {
+			char addr_str[64];
+			sa_format(addr_str, sizeof(addr_str), sa);
+			LOG_F(DEBUG, "[session:%08" PRIX32 "] kcp: accepted %s",
+			      conv, addr_str);
+		}
+		ss->kcp_state = KCP_STATE_CONNECT;
+	}
+
+	const ev_tstamp now = ev_now(s->loop);
+	if (!sa_equals(sa, &ss->raddr.sa)) {
+		if (ss->last_reset == TSTAMP_NIL ||
+		    now - ss->last_reset > 1.0) {
+			char oaddr_str[64];
+			sa_format(oaddr_str, sizeof(oaddr_str), &ss->raddr.sa);
+			char addr_str[64];
+			sa_format(addr_str, sizeof(addr_str), sa);
+			LOGW_F("[session:%08" PRIX32 "] conflict: "
+			       "existing %s, refusing %s",
+			       conv, oaddr_str, addr_str);
+			ss0_reset(s, sa, conv);
+			ss->last_reset = now;
+		}
+		return;
+	}
+	switch (ss->kcp_state) {
+	case KCP_STATE_CONNECT:
+		ss->kcp_state = KCP_STATE_ESTABLISHED;
+		/* fallthrough */
+	case KCP_STATE_ESTABLISHED:
+	case KCP_STATE_LINGER:
+		break;
+	case KCP_STATE_TIME_WAIT:
+		if (ss->last_reset == TSTAMP_NIL ||
+		    now - ss->last_reset > 1.0) {
+			ss0_reset(s, sa, conv);
+			ss->last_reset = now;
+		}
+		return;
+	default:
+		FAILMSGF("invalid session state: %d", ss->kcp_state);
+	}
+
+	const int r =
+		ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
+	if (r < 0) {
+		LOGW_F("ikcp_input: %d", r);
+		return;
+	}
+	ss->stats.kcp_rx += msg->len;
+	s->stats.kcp_rx += msg->len;
+	if (ss->kcp_flush >= 2) {
+		/* flush acks */
+		session_kcp_flush(ss);
+	}
+	session_read_cb(ss);
+}
+
+size_t queue_dispatch(struct server *restrict s)
+{
+	struct pktqueue *restrict q = s->pkt.queue;
+	if (q->mq_recv_len == 0) {
+		return 0;
+	}
+	s->pkt.last_recv_time = ev_now(s->loop);
+	size_t nbrecv = 0;
+	for (size_t i = 0; i < q->mq_recv_len; i++) {
+		struct msgframe *restrict msg = q->mq_recv[i];
+#if WITH_OBFS
+		struct obfs_ctx *ctx = NULL;
+		if (q->obfs != NULL) {
+			ctx = obfs_open_inplace(q->obfs, msg);
+			if (ctx == NULL) {
+				msgframe_delete(q, msg);
+				continue;
+			}
+		}
+#endif /* WITH_OBFS */
+#if WITH_CRYPTO
+		if (q->crypto != NULL) {
+			const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
+			size_t len = msg->len;
+			if (!crypto_open_inplace(
+				    q, msg->buf + msg->off, &len, cap)) {
+				msgframe_delete(q, msg);
+				continue;
+			}
+			ASSERT(len <= UINT16_MAX);
+			msg->len = (uint16_t)len;
+		}
+#endif /* WITH_CRYPTO */
+#if WITH_OBFS
+		if (ctx != NULL) {
+			obfs_ctx_auth(ctx, true);
+		}
+#endif
+		queue_recv(s, msg);
+		nbrecv += msg->len;
+		msgframe_delete(q, msg);
+	}
+	q->mq_recv_len = 0;
+	return nbrecv;
+}
+
+bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
+{
+	struct pktqueue *restrict q = s->pkt.queue;
+	MSG_LOGVV("queue_send", msg);
+#if WITH_CRYPTO
+	if (q->crypto != NULL) {
+		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
+		size_t len = msg->len;
+		ASSERT(len <= cap);
+		/* random padding to obscure the plaintext length; pad stays
+		 * below IKCP_OVERHEAD so the peer's KCP ignores the tail. Guard
+		 * len >= mss explicitly: the subtraction is unsigned and would
+		 * otherwise wrap to a huge value that MIN clamps back to 15. */
+		const size_t pad =
+			len < (size_t)q->mss ?
+				rand64n(MIN((size_t)q->mss - len, 15)) :
+				0;
+		if (!crypto_seal_inplace(
+			    q, msg->buf + msg->off, &len, cap, pad)) {
+			msgframe_delete(q, msg);
+			return false;
+		}
+		msg->len = (uint16_t)len;
+	}
+#endif /* WITH_CRYPTO */
+#if WITH_OBFS
+	if (q->obfs != NULL) {
+		const bool obfs_seal_ok = obfs_seal_inplace(q->obfs, msg);
+		if (!obfs_seal_ok) {
+			msgframe_delete(q, msg);
+			return false;
+		}
+	}
+#endif
+
+	const ev_tstamp now = ev_now(s->loop);
+	if (q->mq_send_len >= q->mq_send_cap) {
+		LOG_RATELIMITED_F(
+			WARNING, now, 1.0,
+			"send queue full, %" PRIu16 " bytes discarded",
+			msg->len);
+		msgframe_delete(q, msg);
+		return false;
+	}
+	msg->ts = now;
+	q->mq_send[q->mq_send_len++] = msg;
+	pkt_notify_send(s);
+	return true;
 }

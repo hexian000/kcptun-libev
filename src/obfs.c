@@ -480,7 +480,7 @@ filter_compile(struct sock_fprog *restrict fprog, const struct sockaddr *addr)
 
 	/* link */
 	for (uint16_t i = 0; i < ctx.len; i++) {
-		const uint8_t off = ctx.len - (i + 1u);
+		const uint8_t off = (uint8_t)(ctx.len - (i + 1u));
 		if ((int8_t)ctx.filter[i].jt < 0) {
 			ctx.filter[i].jt += off;
 		}
@@ -503,8 +503,11 @@ obfs_bind(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 
 	const struct sockaddr *restrict bind_sa = &obfs->bind_addr.sa;
 	uint32_t scope_id = 0;
-	if (bind_sa->sa_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(bind_sa)) {
-		scope_id = ((struct sockaddr_in6 *)bind_sa)->sin6_scope_id;
+	if (bind_sa->sa_family == AF_INET6 &&
+	    IN6_IS_ADDR_LINKLOCAL(
+		    &((const struct sockaddr_in6 *)bind_sa)->sin6_addr)) {
+		scope_id =
+			((const struct sockaddr_in6 *)bind_sa)->sin6_scope_id;
 	}
 	unsigned int ifindex = 0;
 	const struct config *restrict conf = obfs->server->conf;
@@ -643,8 +646,7 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 	return true;
 }
 
-/* forward declarations for dpi/tcp mode */
-static void obfs_ctx_free(struct ev_loop *loop, struct obfs_ctx *ctx);
+/* forward declaration: obfs_ctx_new is used before its definition */
 static struct obfs_ctx *obfs_ctx_new(struct obfs *restrict obfs);
 
 /* ========== dpi/tcp mode: raw socket TCP simulation ========== */
@@ -655,44 +657,68 @@ static uint16_t obfs_tcp_alloc_port(void)
 	return (uint16_t)(49152 + rand64n(16383));
 }
 
+/* Write the domain's IP header for a raw obfs packet into out and return its
+   length; laddr/raddr are the source/destination (must match domain) and the
+   L4 ports are returned via sport/dport. */
+static size_t build_ip_hdr(
+	const int domain, const union sockaddr_max *restrict laddr,
+	const union sockaddr_max *restrict raddr, const uint16_t plen,
+	const uint32_t flow, unsigned char *restrict out,
+	uint16_t *restrict sport, uint16_t *restrict dport)
+{
+	switch (domain) {
+	case AF_INET: {
+		ASSERT(laddr->in.sin_family == AF_INET);
+		ASSERT(raddr->in.sin_family == AF_INET);
+		struct iphdr ip;
+		ip4_hdr_init(&ip, &laddr->in, &raddr->in, plen);
+		memcpy(out, &ip, sizeof(ip));
+		*sport = laddr->in.sin_port;
+		*dport = raddr->in.sin_port;
+		return sizeof(struct iphdr);
+	}
+	case AF_INET6: {
+		ASSERT(laddr->in6.sin6_family == AF_INET6);
+		ASSERT(raddr->in6.sin6_family == AF_INET6);
+		struct ip6_hdr ip6;
+		ip6_hdr_init(&ip6, &laddr->in6, &raddr->in6, plen, flow);
+		memcpy(out, &ip6, sizeof(ip6));
+		*sport = laddr->in6.sin6_port;
+		*dport = raddr->in6.sin6_port;
+		return sizeof(struct ip6_hdr);
+	}
+	default:
+		FAILMSGF("invalid address family: %d", domain);
+	}
+}
+
 /* send a raw TCP packet via raw socket (unified IPv4/IPv6) */
 static bool obfs_tcp_send(
 	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx,
 	const uint8_t flags, const void *data, const size_t datalen)
 {
 	const int domain = obfs->domain;
+	ASSERT(datalen <= MAX_PACKET_SIZE);
 	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + datalen);
 	unsigned char pkt[sizeof(struct ip6_hdr) + plen];
-	size_t ip_hdr_len;
-	union sockaddr_max daddr;
 
 	/* build IP header */
 	uint16_t sport, dport;
+	const size_t ip_hdr_len = build_ip_hdr(
+		domain, &ctx->laddr, &ctx->raddr, plen, ctx->cap_flow, pkt,
+		&sport, &dport);
+
+	/* destination for sendto; a raw IPv6 socket rejects a non-zero port */
+	union sockaddr_max daddr = ctx->raddr;
 	switch (domain) {
-	case AF_INET: {
-		struct iphdr ip;
-		ip4_hdr_init(&ip, &ctx->laddr.in, &ctx->raddr.in, plen);
-		memcpy(pkt, &ip, sizeof(ip));
-		ip_hdr_len = sizeof(struct iphdr);
-		daddr.in = ctx->raddr.in;
+	case AF_INET:
 		daddr.in.sin_port = 0;
-		sport = ctx->laddr.in.sin_port;
-		dport = ctx->raddr.in.sin_port;
-	} break;
-	case AF_INET6: {
-		struct ip6_hdr ip6;
-		ip6_hdr_init(
-			&ip6, &ctx->laddr.in6, &ctx->raddr.in6, plen,
-			ctx->cap_flow);
-		memcpy(pkt, &ip6, sizeof(ip6));
-		ip_hdr_len = sizeof(struct ip6_hdr);
-		daddr.in6 = ctx->raddr.in6;
+		break;
+	case AF_INET6:
 		daddr.in6.sin6_port = 0;
-		sport = ctx->laddr.in6.sin6_port;
-		dport = ctx->raddr.in6.sin6_port;
-	} break;
+		break;
 	default:
-		FAILMSGF("invalid address family: %d", ctx->laddr.sa.sa_family);
+		break;
 	}
 
 	/* build TCP header */
@@ -807,6 +833,13 @@ static struct obfs_ctx *obfs_tcp_raw_new_ctx(
 	}
 	void *elem = ctx;
 	obfs->contexts = table_set(obfs->contexts, OBFS_CTX_GETKEY(ctx), &elem);
+	if (elem == ctx) {
+		/* table_set leaves the new element in place on allocation
+		   failure; ctx was not inserted */
+		LOGOOM();
+		free(ctx);
+		return NULL;
+	}
 	ctx->in_table = true;
 	ctx->created = msg->ts;
 	ctx->last_seen = msg->ts;
@@ -914,40 +947,13 @@ static void obfs_tcp_seal(
 {
 	const int domain = obfs->domain;
 	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + msg->len);
-	size_t ip_hdr_len;
-	uint16_t sport, dport;
+	ASSERT(msg->off == obfs_overhead(obfs));
 
 	/* build IP header */
-	switch (domain) {
-	case AF_INET: {
-		ASSERT(msg->off ==
-		       sizeof(struct iphdr) + sizeof(struct tcphdr));
-		ASSERT(ctx->laddr.in.sin_family == AF_INET);
-		ASSERT(msg->addr.in.sin_family == AF_INET);
-		struct iphdr ip;
-		ip4_hdr_init(&ip, &ctx->laddr.in, &msg->addr.in, plen);
-		memcpy(msg->buf, &ip, sizeof(ip));
-		ip_hdr_len = sizeof(struct iphdr);
-		sport = ctx->laddr.in.sin_port;
-		dport = msg->addr.in.sin_port;
-	} break;
-	case AF_INET6: {
-		ASSERT(msg->off ==
-		       sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
-		ASSERT(ctx->laddr.in6.sin6_family == AF_INET6);
-		ASSERT(msg->addr.in6.sin6_family == AF_INET6);
-		struct ip6_hdr ip6;
-		ip6_hdr_init(
-			&ip6, &ctx->laddr.in6, &msg->addr.in6, plen,
-			ctx->cap_flow);
-		memcpy(msg->buf, &ip6, sizeof(ip6));
-		ip_hdr_len = sizeof(struct ip6_hdr);
-		sport = ctx->laddr.in6.sin6_port;
-		dport = msg->addr.in6.sin6_port;
-	} break;
-	default:
-		FAILMSGF("invalid address family: %d", ctx->laddr.sa.sa_family);
-	}
+	uint16_t sport, dport;
+	const size_t ip_hdr_len = build_ip_hdr(
+		domain, &ctx->laddr, &msg->addr, plen, ctx->cap_flow, msg->buf,
+		&sport, &dport);
 
 	/* build TCP header */
 	struct tcphdr tcp;
@@ -1139,6 +1145,12 @@ static bool obfs_ctx_start(
 
 	void *elem = ctx;
 	obfs->contexts = table_set(obfs->contexts, OBFS_CTX_GETKEY(ctx), &elem);
+	if (elem == ctx) {
+		/* table_set leaves the new element in place on allocation
+		   failure; ctx was not inserted, so let the caller free it */
+		LOGOOM();
+		return false;
+	}
 	if (elem != NULL) {
 		struct obfs_ctx *restrict old_ctx = elem;
 		old_ctx->in_table = false;
@@ -1261,6 +1273,13 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		void *elem = ctx;
 		obfs->contexts =
 			table_set(obfs->contexts, OBFS_CTX_GETKEY(ctx), &elem);
+		if (elem == ctx) {
+			/* table_set leaves the new element in place on allocation
+			   failure; ctx was not inserted */
+			LOGOOM();
+			obfs_ctx_free(loop, ctx);
+			return false;
+		}
 		if (elem != NULL) {
 			struct obfs_ctx *restrict old_ctx = elem;
 			old_ctx->in_table = false;
@@ -1880,19 +1899,6 @@ void obfs_free(struct obfs *obfs)
 	free(obfs);
 }
 
-size_t obfs_overhead(const struct obfs *restrict obfs)
-{
-	switch (obfs->domain) {
-	case AF_INET:
-		return sizeof(struct iphdr) + sizeof(struct tcphdr);
-	case AF_INET6:
-		return sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
-	default:
-		break;
-	}
-	FAILMSGF("invalid address family: %d", obfs->domain);
-}
-
 static void obfs_capture(
 	struct obfs_ctx *ctx, const uint32_t flow, const uint8_t ecn,
 	const struct tcphdr *restrict tcp)
@@ -2162,8 +2168,11 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 			DEBUG, now, 1.0, "obfs: rst from %s", addr_str);
 		return NULL;
 	}
-	const uint32_t flow = ntohl(ip6.ip6_flow) & UINT32_C(0xFFFFF);
-	const uint8_t ecn = ((flow >> 20u) & ECN_MASK);
+	/* ip6_flow: 4-bit version, 8-bit traffic class, 20-bit flow label; ECN
+	   is the low 2 bits of the traffic class, i.e. bits 21-20 of the word */
+	const uint32_t flow_word = ntohl(ip6.ip6_flow);
+	const uint32_t flow = flow_word & UINT32_C(0xFFFFF);
+	const uint8_t ecn = (uint8_t)((flow_word >> 20u) & ECN_MASK);
 	obfs_capture(ctx, flow, ecn, &tcp);
 
 	if (!tcp.psh) {
@@ -2203,6 +2212,19 @@ obfs_open_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg)
 	return ctx;
 }
 
+size_t obfs_overhead(const struct obfs *restrict obfs)
+{
+	switch (obfs->domain) {
+	case AF_INET:
+		return sizeof(struct iphdr) + sizeof(struct tcphdr);
+	case AF_INET6:
+		return sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
+	default:
+		break;
+	}
+	FAILMSGF("invalid address family: %d", obfs->domain);
+}
+
 /* seal packet for dpi/tcp-wnd mode (unified IPv4/IPv6) */
 static void obfs_seal(
 	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx,
@@ -2210,40 +2232,13 @@ static void obfs_seal(
 {
 	const int domain = obfs->domain;
 	const uint16_t plen = (uint16_t)(sizeof(struct tcphdr) + msg->len);
-	size_t ip_hdr_len;
-	uint16_t sport, dport;
+	ASSERT(msg->off == obfs_overhead(obfs));
 
 	/* build IP header */
-	switch (domain) {
-	case AF_INET: {
-		ASSERT(msg->off ==
-		       sizeof(struct iphdr) + sizeof(struct tcphdr));
-		ASSERT(ctx->laddr.in.sin_family == AF_INET);
-		ASSERT(msg->addr.in.sin_family == AF_INET);
-		struct iphdr ip;
-		ip4_hdr_init(&ip, &ctx->laddr.in, &msg->addr.in, plen);
-		memcpy(msg->buf, &ip, sizeof(ip));
-		ip_hdr_len = sizeof(struct iphdr);
-		sport = ctx->laddr.in.sin_port;
-		dport = msg->addr.in.sin_port;
-	} break;
-	case AF_INET6: {
-		ASSERT(msg->off ==
-		       sizeof(struct ip6_hdr) + sizeof(struct tcphdr));
-		ASSERT(ctx->laddr.in6.sin6_family == AF_INET6);
-		ASSERT(msg->addr.in6.sin6_family == AF_INET6);
-		struct ip6_hdr ip6;
-		ip6_hdr_init(
-			&ip6, &ctx->laddr.in6, &msg->addr.in6, plen,
-			ctx->cap_flow);
-		memcpy(msg->buf, &ip6, sizeof(ip6));
-		ip_hdr_len = sizeof(struct ip6_hdr);
-		sport = ctx->laddr.in6.sin6_port;
-		dport = msg->addr.in6.sin6_port;
-	} break;
-	default:
-		FAILMSGF("invalid address family: %d", ctx->laddr.sa.sa_family);
-	}
+	uint16_t sport, dport;
+	const size_t ip_hdr_len = build_ip_hdr(
+		domain, &ctx->laddr, &msg->addr, plen, ctx->cap_flow, msg->buf,
+		&sport, &dport);
 
 	/* handle ECN */
 	const bool ecn = ctx->cap_ecn;
