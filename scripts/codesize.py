@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
+# This code is licensed under MIT license (see LICENSE for details)
 """Build the project with Release config and report per-file object file sizes.
 
 Usage:
@@ -41,10 +43,25 @@ CACHE_LINE_RE = re.compile(r"^([A-Za-z0-9_]+):[^=]+=(.*)$")
 
 
 def log(message: str) -> None:
+    """Print *message* to stderr."""
     print(message, file=sys.stderr)
 
 
+def _display_path(p: Path) -> str:
+    """Format *p* relative to ROOT for logging.
+
+    ``Path.relative_to`` is purely lexical and raises ``ValueError`` for any
+    absolute path that is not under ROOT (e.g. ``--build /tmp/b``), so fall back
+    to the absolute path rather than letting a log statement abort the run.
+    """
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
 def ensure_tool(name: str) -> str:
+    """Return the path to tool *name*, exiting if it is not on PATH."""
     path = shutil.which(name)
     if path is None:
         sys.exit(f"error: required tool not found: {name}")
@@ -52,6 +69,7 @@ def ensure_tool(name: str) -> str:
 
 
 def ensure_project_root(root: Path) -> None:
+    """Exit unless *root* looks like the project root (has CMakeLists.txt)."""
     if not (root / "CMakeLists.txt").exists():
         sys.exit(
             "error: working directory does not look like the project "
@@ -60,6 +78,7 @@ def ensure_project_root(root: Path) -> None:
 
 
 def parse_cmake_cache(cache_path: Path) -> dict[str, str]:
+    """Parse a CMakeCache.txt file into a ``{name: value}`` dict."""
     cache: dict[str, str] = {}
     if not cache_path.exists():
         return cache
@@ -88,9 +107,10 @@ def _human(n: int) -> str:
 # ---------------------------------------------------------------------------
 
 def build_release(cmake: str, build_dir: Path, base_cache: dict[str, str], config: str) -> None:
+    """Configure and build *config* into *build_dir*, exiting on failure."""
     if build_dir.exists():
         log(
-            f"Removing existing build directory {build_dir.relative_to(ROOT)} ...")
+            f"Removing existing build directory {_display_path(build_dir)} ...")
         shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True)
 
@@ -108,14 +128,14 @@ def build_release(cmake: str, build_dir: Path, base_cache: dict[str, str], confi
         configure_cmd.append(f"-DCMAKE_C_COMPILER={compiler}")
 
     log("+ " + " ".join(configure_cmd))
-    proc = subprocess.run(configure_cmd)
+    proc = subprocess.run(configure_cmd, check=False)
     if proc.returncode != 0:
         sys.exit(proc.returncode)
 
     jobs = os.cpu_count() or 1
     build_cmd = [cmake, "--build", str(build_dir), f"-j{jobs}"]
     log("+ " + " ".join(build_cmd))
-    proc = subprocess.run(build_cmd)
+    proc = subprocess.run(build_cmd, check=False)
     if proc.returncode != 0:
         sys.exit(proc.returncode)
 
@@ -320,6 +340,7 @@ def write_report(
     elapsed: float,
     config: str,
 ) -> None:
+    """Write the Markdown code-size report (files + symbols) to *output*."""
     total_bytes = sum(sz for _, sz, _ in rows)
     total_sloc = sum(sl for _, _, sl in rows)
     date = datetime.date.today().isoformat()
@@ -369,7 +390,7 @@ def write_report(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines), encoding="utf-8")
-    log(f"wrote {output.relative_to(ROOT)}")
+    log(f"wrote {_display_path(output)}")
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +398,7 @@ def write_report(
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    """Parse arguments, build, collect sizes and symbols, and write the report."""
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -427,7 +449,7 @@ def main() -> int:
         cmake = ensure_tool("cmake")
         base_cache = parse_cmake_cache(DEFAULT_BUILD_DIR / "CMakeCache.txt")
         log(
-            f"Configuring and building {args.config} in {build_dir.relative_to(ROOT)} ...")
+            f"Configuring and building {args.config} in {_display_path(build_dir)} ...")
         build_release(cmake, build_dir, base_cache, args.config)
 
     log("Collecting object file sizes ...")

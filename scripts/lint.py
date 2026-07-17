@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
+# This code is licensed under MIT license (see LICENSE for details)
 
 """Run clang-tidy on production sources and write build/lint.md.
 
@@ -94,16 +96,40 @@ def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
     return mapping
 
 
+def _accepted_sources(build_dir: Path, accept) -> list[str]:
+    """Return the compile_commands.json source files that pass the production
+    filter, deduplicated and in database order.  These are passed to
+    run-clang-tidy so only production sources are analyzed."""
+    db_path = build_dir / "compile_commands.json"
+    if not db_path.exists():
+        sys.exit(f"error: {db_path} not found — run cmake first")
+    db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
+    sources: list[str] = []
+    seen: set[str] = set()
+    for entry in db:
+        fpath = entry["file"]
+        if not accept(fpath) or fpath in seen:
+            continue
+        seen.add(fpath)
+        sources.append(fpath)
+    return sources
+
+
 # ---------------------------------------------------------------------------
 # Run clang-tidy
 # ---------------------------------------------------------------------------
 
-def _run(build_dir: Path, check_filter: str | None, jobs: int) -> str:
+def _run(
+    build_dir: Path, check_filter: str | None, jobs: int, sources: list[str]
+) -> str:
     cmd = ["run-clang-tidy", "-p", str(build_dir), f"-j{jobs}"]
     if check_filter:
         cmd += [f"-checks=-*,{check_filter}"]
-    # Restrict to src/ files; post-filter removes tests and generated files.
-    cmd.append("src/")
+    # Pass the accepted production sources explicitly so clang-tidy analyzes
+    # only those, rather than the whole src/ tree (whose test/generated results
+    # would just be discarded during post-filtering, wasting the analysis and
+    # inflating the reported elapsed time).
+    cmd += sources
     try:
         proc = subprocess.run(
             cmd,
@@ -112,9 +138,18 @@ def _run(build_dir: Path, check_filter: str | None, jobs: int) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
+            check=False,  # returncode is inspected explicitly below
         )
     except FileNotFoundError:
         sys.exit("error: run-clang-tidy not found — install the llvm tools package")
+    # A non-zero status means the driver (or a clang-tidy invocation) errored:
+    # a malformed compile command, an internal crash, a rejected -checks glob.
+    # The captured stdout is then empty or partial, so treating it as "no
+    # warnings" would report a broken run as a clean tree. Fail loudly instead.
+    if proc.returncode != 0:
+        sys.exit(
+            f"error: run-clang-tidy exited with status {proc.returncode}; "
+            "lint results are unreliable (a tool failure is not a clean run)")
     return proc.stdout
 
 
@@ -257,6 +292,7 @@ def _report(
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    """Parse arguments, run clang-tidy, and write the Markdown report."""
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -304,10 +340,15 @@ def main() -> int:
 
     accept = _make_filter(args.tests, args.generated)
     name_map = _build_name_map(build_dir, accept)
+    sources = _accepted_sources(build_dir, accept)
+    if not sources:
+        # No accepted sources: passing zero positional paths would make
+        # run-clang-tidy analyze the entire database, so stop here instead.
+        sys.exit("error: no sources to lint after applying the source filter")
 
     print(f"Linting [{check_label}] ...", file=sys.stderr, flush=True)
     t0 = time.monotonic()
-    raw = _run(build_dir, args.check, args.jobs)
+    raw = _run(build_dir, args.check, args.jobs, sources)
     elapsed = time.monotonic() - t0
 
     warnings = _parse(raw, name_map, accept)

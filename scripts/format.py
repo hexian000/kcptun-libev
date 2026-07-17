@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
+# This code is licensed under MIT license (see LICENSE for details)
 """scripts/format.py
 
 Apply formatting conventions to the repository:
@@ -58,6 +60,7 @@ import subprocess
 import sys
 import types
 import unicodedata
+from collections import deque
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -77,11 +80,18 @@ def iter_c_files(root: Path):
 
 def iter_text_files(root: Path):
     """Yield git-tracked files under root, excluding contrib/ (third-party)."""
+    # -z emits NUL-separated, verbatim paths; without it git C-quotes any path
+    # with non-ASCII bytes (core.quotePath=true), so a quoted string would never
+    # match an on-disk file and such files -- exactly the ones the Unicode pass
+    # exists for -- would be silently skipped.
     out = subprocess.run(
-        ["git", "ls-files"],
-        capture_output=True, text=True, check=True, cwd=str(root),
+        ["git", "ls-files", "-z"],
+        capture_output=True, check=True, cwd=str(root),
     ).stdout
-    for line in out.splitlines():
+    for raw in out.split(b"\x00"):
+        if not raw:
+            continue
+        line = os.fsdecode(raw)
         if line.startswith("contrib/"):
             continue
         p = root / line
@@ -138,7 +148,7 @@ def _clang_version_ok(version: str) -> bool:
         ).stdout
     except subprocess.CalledProcessError:
         return False
-    # Expected: "clang-format version 18.1.8" or "Ubuntu clang-format version 18.1.8"
+    # Expected: "clang-format version 22.1.5" or "Ubuntu clang-format version 22.1.5"
     return bool(re.search(rf"version {re.escape(version)}(?:\s|$)", out))
 
 
@@ -268,6 +278,7 @@ class CompileDB:
     # -- discovery ------------------------------------------------------
     @classmethod
     def discover(cls, search_start):
+        """Locate and load compile_commands.json, or return None if unavailable."""
         path = cls._auto_locate(search_start)
         if path is None:
             return None
@@ -426,18 +437,22 @@ def _cond_kind(stripped: str):
 # cpp-cleanup pass: include-block reordering
 # ---------------------------------------------------------------------------
 
-def _scan_conditional(lines, i):
+def _scan_conditional(lines, i, masked):
     """Scan a conditional starting at opener line *i* to its matching ``#endif``.
 
     Returns ``(endif_index, has_include, has_code)``.  *has_code* is True if the
     block contains any line that is not blank, a comment, or a preprocessor
     directive -- i.e. real C code (a function/definition), which means the block
     is not part of the include list and must not be reordered.  *endif_index* is
-    None if the conditional is unbalanced.
+    None if the conditional is unbalanced.  Lines flagged in *masked* (interior
+    of a ``/* ... */`` comment) are ignored so a directive that is really inside
+    a comment is not mistaken for a live one.
     """
     depth = 0
     has_include = has_code = False
     for j in range(i, len(lines)):
+        if masked[j]:
+            continue
         s = lines[j].strip()
         kind = _cond_kind(s)
         if kind in ("if", "ifdef", "ifndef"):
@@ -455,18 +470,20 @@ def _scan_conditional(lines, i):
     return None, has_include, has_code
 
 
-def _find_include_range(lines):
+def _find_include_range(lines, masked):
     """Return (start, end) covering the leading ``#include`` region.
 
     The range runs from the first ``#include`` across contiguous includes, blank
     lines, and any ``#if`` ... ``#endif`` conditional that *only* selects
     includes (no C code).  A conditional carrying real code (e.g. a debug-only
     static function) ends the range and stays in the body.  (None, None) if
-    there are no includes.
+    there are no includes.  Lines flagged in *masked* (interior of a ``/* ... */``
+    comment) are never treated as includes, so a ``#include`` commented out in a
+    leading block comment cannot start or extend the range.
     """
     start = None
     for i, line in enumerate(lines):
-        if _is_include(line.strip()):
+        if not masked[i] and _is_include(line.strip()):
             start = i
             break
     if start is None:
@@ -475,6 +492,8 @@ def _find_include_range(lines):
     i = start
     end = start
     while i < len(lines):
+        if masked[i]:
+            break
         s = lines[i].strip()
         kind = _cond_kind(s)
         if _is_include(s):
@@ -483,7 +502,7 @@ def _find_include_range(lines):
         elif s == "":
             i += 1
         elif kind in ("if", "ifdef", "ifndef"):
-            close, has_inc, has_code = _scan_conditional(lines, i)
+            close, has_inc, has_code = _scan_conditional(lines, i, masked)
             if close is None or not has_inc or has_code:
                 break
             i = close + 1
@@ -493,9 +512,12 @@ def _find_include_range(lines):
     return start, end
 
 
-def _parse_include_items(lines, start, end, includer_abs, cfg):
+def _parse_include_items(lines, start, end, includer_abs, cfg, masked):
     items = []
     for i in range(start, end):
+        if masked[i]:
+            items.append({"kind": "comment", "group": None, "text": lines[i]})
+            continue
         s = lines[i].strip()
         m = _INC_RE.match(s)
         if m:
@@ -551,6 +573,17 @@ def _merge_conditional_blocks(items):
     return result
 
 
+def _ensure_eol(text: str) -> str:
+    """Guarantee *text* ends with a newline.
+
+    An include item's ``text`` is the verbatim source line, so the file's final
+    line may lack a terminator.  The rebuilt block is always followed by more
+    content, so a missing terminator would otherwise concatenate two directives
+    onto one physical line when that line is sorted out of the final slot.
+    """
+    return text if text.endswith("\n") else text + "\n"
+
+
 def _rebuild_include_block(items):
     items = _merge_conditional_blocks(items)
     groups = {g: [] for g in range(1, NUM_GROUPS + 1)}
@@ -571,9 +604,9 @@ def _rebuild_include_block(items):
         first = False
         for item in groups[g]:
             if item["kind"] == "cond_block":
-                out.extend(c["text"] for c in item["children"])
+                out.extend(_ensure_eol(c["text"]) for c in item["children"])
             else:
-                out.append(item["text"])
+                out.append(_ensure_eol(item["text"]))
 
     cleaned = []
     prev_blank = False
@@ -588,10 +621,11 @@ def _rebuild_include_block(items):
 
 def _reorder_includes(lines, includer_abs, cfg):
     """Return *lines* with the leading include block regrouped and sorted."""
-    start, end = _find_include_range(lines)
+    masked = _block_comment_mask(lines)
+    start, end = _find_include_range(lines, masked)
     if start is None:
         return lines
-    items = _parse_include_items(lines, start, end, includer_abs, cfg)
+    items = _parse_include_items(lines, start, end, includer_abs, cfg, masked)
     if not items:
         return lines
 
@@ -727,8 +761,11 @@ def annotate_conditionals(lines, min_lines):
 # ---------------------------------------------------------------------------
 
 def _collect_includes(lines):
+    masked = _block_comment_mask(lines)
     out = []
     for i, line in enumerate(lines):
+        if masked[i]:
+            continue
         m = _INC_RE.match(line.strip())
         if m:
             out.append((m.group(1), i + 1))
@@ -792,7 +829,6 @@ def _collect_include_dependency_graph(root, cfg):
 def _find_dependency_path(graph, start, target_dir):
     """BFS from file *start* to the nearest file under directory
     *target_dir* (both root-relative).  Returns the file-node path, or None."""
-    from collections import deque
     queue = deque([start])
     predecessor = {start: None}
     while queue:
@@ -922,6 +958,7 @@ def _normalize_unicode_bytes(data: bytes, form: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """Parse arguments and run the formatting passes over the repository."""
     parser = argparse.ArgumentParser()
     parser.add_argument("root", nargs="?", default=".", type=Path)
     parser.add_argument(

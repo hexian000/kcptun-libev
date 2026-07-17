@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
+# This code is licensed under MIT license (see LICENSE for details)
 
 """Build gcov coverage data and print a Markdown coverage report.
 
@@ -33,30 +35,37 @@ HIT_COUNT_RE = re.compile(r"^([0-9]+)")
 
 @dataclass
 class FileCoverage:
+    """Per-file line-coverage accumulator gathered from gcov output."""
+
     executable_lines: Set[int] = field(default_factory=set)
     executed_lines: Set[int] = field(default_factory=set)
     line_hits: Dict[int, int] = field(default_factory=dict)
 
     @property
     def covered(self) -> int:
+        """Number of executable lines that were executed at least once."""
         return len(self.executed_lines)
 
     @property
     def total(self) -> int:
+        """Number of executable lines in the file."""
         return len(self.executable_lines)
 
     @property
     def percent(self) -> float:
+        """Line-coverage percentage (0.0 when there are no executable lines)."""
         if self.total == 0:
             return 0.0
         return 100.0 * float(self.covered) / float(self.total)
 
 
 def log(message: str) -> None:
+    """Print *message* to stderr."""
     print(message, file=sys.stderr)
 
 
 def quote_command(command: Sequence[str]) -> str:
+    """Return *command* as a shell-quoted single string for logging."""
     return " ".join(shlex.quote(part) for part in command)
 
 
@@ -68,14 +77,16 @@ def run_command(
         capture_output: bool = False,
         log_command: bool = True,
 ) -> subprocess.CompletedProcess:
+    """Run *command*, optionally capturing output; exit on failure when *check*."""
     if log_command:
-        log("+ %s" % quote_command(command))
+        log(f"+ {quote_command(command)}")
     proc = subprocess.run(
         list(command),
         cwd=str(cwd) if cwd is not None else None,
         text=True,
         stdout=subprocess.PIPE if capture_output else None,
         stderr=subprocess.PIPE if capture_output else None,
+        check=False,  # returncode is handled explicitly below via *check*
     )
     if check and proc.returncode != 0:
         if capture_output and proc.stdout:
@@ -87,6 +98,7 @@ def run_command(
 
 
 def resolve_path(base: Path, value: str) -> Path:
+    """Resolve *value* against *base* when relative and canonicalize it."""
     path = Path(value)
     if not path.is_absolute():
         path = base / path
@@ -94,6 +106,7 @@ def resolve_path(base: Path, value: str) -> Path:
 
 
 def is_relative_to(path: Path, other: Path) -> bool:
+    """Return whether *path* is lexically located under *other*."""
     try:
         path.relative_to(other)
         return True
@@ -102,21 +115,21 @@ def is_relative_to(path: Path, other: Path) -> bool:
 
 
 def normalize_relative_dir(value: str, option_name: str) -> Path:
+    """Normalize *value* to a repo-relative dir, rejecting absolute/escaping paths."""
     path = Path(os.path.normpath(value))
     if path.is_absolute():
         raise SystemExit(
-            "%s must be relative to the repository root: %s" % (
-                option_name, value)
+            f"{option_name} must be relative to the repository root: {value}"
         )
     if any(part == ".." for part in path.parts):
         raise SystemExit(
-            "%s must stay within the repository root: %s" % (
-                option_name, value)
+            f"{option_name} must stay within the repository root: {value}"
         )
     return path
 
 
 def parse_source_dirs(values: Optional[Sequence[str]]) -> List[Path]:
+    """Normalize and de-duplicate the --source-dir values (default: src)."""
     source_dirs: List[Path] = []
     seen: Set[str] = set()
     for value in values or DEFAULT_SOURCE_DIRS:
@@ -130,6 +143,7 @@ def parse_source_dirs(values: Optional[Sequence[str]]) -> List[Path]:
 
 
 def parse_exclude_source_suffixes(values: Optional[Sequence[str]]) -> Tuple[str, ...]:
+    """De-duplicate the excluded basename suffixes (default: _test.c)."""
     if not values:
         return DEFAULT_EXCLUDE_SOURCE_SUFFIXES
     return tuple(dict.fromkeys(values))
@@ -140,6 +154,7 @@ def should_track_source(
         source_dirs: Sequence[Path],
         exclude_source_suffixes: Sequence[str],
 ) -> bool:
+    """Return whether *rel_path* is a tracked ``.c`` source under *source_dirs*."""
     if rel_path.suffix != ".c":
         return False
     if any(rel_path.name.endswith(suffix) for suffix in exclude_source_suffixes):
@@ -148,6 +163,7 @@ def should_track_source(
 
 
 def parse_cmake_cache(cache_path: Path) -> Dict[str, str]:
+    """Parse a CMakeCache.txt file into a ``{name: value}`` dict."""
     cache: Dict[str, str] = {}
     if not cache_path.exists():
         return cache
@@ -164,16 +180,18 @@ def parse_cmake_cache(cache_path: Path) -> Dict[str, str]:
 
 
 def ensure_tool(name: str) -> str:
+    """Return the path to tool *name*, exiting if it is not on PATH."""
     path = shutil.which(name)
     if path is None:
-        raise SystemExit("required tool not found: %s" % name)
+        raise SystemExit(f"required tool not found: {name}")
     return path
 
 
 def ensure_project_root(root: Path) -> None:
+    """Exit unless *root* looks like the project root (has CMakeLists.txt)."""
     if not (root / "CMakeLists.txt").exists():
         raise SystemExit(
-            "working directory does not look like the project root: %s" % root
+            f"working directory does not look like the project root: {root}"
         )
 
 
@@ -183,6 +201,7 @@ def build_configure_command(
         coverage_build_dir: Path,
         build_type: str,
 ) -> List[str]:
+    """Build the cmake configure command line for the coverage build."""
     command = [
         cmake,
         "-S",
@@ -192,19 +211,24 @@ def build_configure_command(
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DBUILD_TESTING=ON",
         "-DENABLE_SANITIZERS=OFF",
-        "-DCMAKE_C_FLAGS_DEBUG=-O0 -g --coverage",
+        # Config-agnostic so every --build-type is instrumented: CMAKE_C_FLAGS
+        # applies to all configurations, whereas CMAKE_C_FLAGS_<CONFIG> would
+        # carry --coverage only for that one configuration (Debug), leaving any
+        # other build type with no .gcno files.
+        "-DCMAKE_C_FLAGS=-O0 -g --coverage",
         "-DCMAKE_EXE_LINKER_FLAGS=--coverage",
         "-DCMAKE_SHARED_LINKER_FLAGS=--coverage",
         "-DCMAKE_MODULE_LINKER_FLAGS=--coverage",
-        "-DCMAKE_BUILD_TYPE=%s" % build_type,
+        f"-DCMAKE_BUILD_TYPE={build_type}",
     ]
     compiler = base_cache.get("CMAKE_C_COMPILER")
     if compiler:
-        command.append("-DCMAKE_C_COMPILER=%s" % compiler)
+        command.append(f"-DCMAKE_C_COMPILER={compiler}")
     return command
 
 
 def remove_stale_gcda_files(build_dir: Path) -> int:
+    """Delete all ``.gcda`` files under *build_dir*; return how many were removed."""
     removed = 0
     for path in build_dir.rglob("*.gcda"):
         path.unlink()
@@ -215,6 +239,7 @@ def remove_stale_gcda_files(build_dir: Path) -> int:
 def iter_expected_sources(
         source_dirs: Sequence[Path], exclude_source_suffixes: Sequence[str]
 ) -> List[str]:
+    """Return the sorted, de-duplicated tracked sources under *source_dirs*."""
     sources: List[str] = []
     seen: Set[str] = set()
     for source_dir in source_dirs:
@@ -228,8 +253,8 @@ def iter_expected_sources(
                     sources.append(key)
             continue
         if not root_path.exists():
-            log("warning: source directory not found: %s" %
-                source_dir.as_posix())
+            log(
+                f"warning: source directory not found: {source_dir.as_posix()}")
             continue
         for path in sorted(root_path.rglob("*.c")):
             rel_path = path.relative_to(ROOT)
@@ -244,6 +269,7 @@ def iter_expected_sources(
 
 
 def iter_object_files(build_dir: Path) -> List[Path]:
+    """Return the sorted instrumented object files (those with a ``.gcno``)."""
     objects: List[Path] = []
     for path in sorted(build_dir.rglob("*.o")):
         if "CMakeFiles" not in path.parts:
@@ -259,6 +285,7 @@ def normalize_source_path(
         source_dirs: Sequence[Path],
         exclude_source_suffixes: Sequence[str],
 ) -> Optional[str]:
+    """Return *source_text* as a tracked repo-relative path, or None if untracked."""
     source_path = Path(source_text)
     if not source_path.is_absolute():
         source_path = (ROOT / source_path).resolve()
@@ -279,6 +306,7 @@ def parse_gcov_file(
         source_dirs: Sequence[Path],
         exclude_source_suffixes: Sequence[str],
 ) -> None:
+    """Parse one gcov ``.gcov`` file, accumulating line data into *coverage*."""
     source_rel: Optional[str] = None
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for raw_line in handle:
@@ -318,6 +346,7 @@ def parse_gcov_file(
 
 
 def clear_line_coverage_dir(output_dir: Path) -> None:
+    """Remove and recreate *output_dir* so it starts empty."""
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -327,10 +356,14 @@ def write_line_coverage_files(
         output_dir: Path,
         coverage: Dict[str, FileCoverage],
         rows: Sequence[Tuple[str, int, int, float]],
-) -> None:
+) -> Set[str]:
+    """Write a per-line ``.gcov`` file for each source that has coverage data
+    and still exists on disk; return the set of source paths actually written
+    so the report only links files that exist."""
     clear_line_coverage_dir(output_dir)
     percent_by_source = {path: percent for path,
                          _covered, _total, percent in rows}
+    written: Set[str] = set()
     for source_rel, file_coverage in sorted(coverage.items()):
         source_path = ROOT / source_rel
         if not source_path.exists():
@@ -341,11 +374,11 @@ def write_line_coverage_files(
         with source_path.open("r", encoding="utf-8", errors="replace") as src:
             source_lines = src.read().splitlines()
         with output_path.open("w", encoding="utf-8") as out:
-            out.write("        -:    0:Source:%s\n" % source_rel)
+            out.write(f"        -:    0:Source:{source_rel}\n")
             out.write("        -:    0:Generator:gcov.py\n")
             out.write(
-                "        -:    0:Lines executed:%.2f%% of %d\n"
-                % (percent, file_coverage.total)
+                "        -:    0:Lines executed:"
+                f"{percent:.2f}% of {file_coverage.total}\n"
             )
             for line_number, source_line in enumerate(source_lines, start=1):
                 if line_number not in file_coverage.executable_lines:
@@ -353,11 +386,13 @@ def write_line_coverage_files(
                 else:
                     hit_count = file_coverage.line_hits.get(line_number, 0)
                     count_token = str(hit_count) if hit_count > 0 else "#####"
-                out.write("%9s:%5d:%s\n" %
-                          (count_token, line_number, source_line))
+                out.write(f"{count_token:>9}:{line_number:5d}:{source_line}\n")
+        written.add(source_rel)
+    return written
 
 
 def populate_gcov_work_dir(work_dir: Path) -> None:
+    """Mirror the repo root into *work_dir* as symlinks for gcov to run under."""
     for entry in ROOT.iterdir():
         link_path = work_dir / entry.name
         try:
@@ -373,11 +408,12 @@ def collect_coverage(
         source_dirs: Sequence[Path],
         exclude_source_suffixes: Sequence[str],
 ) -> Dict[str, FileCoverage]:
+    """Run gcov on every object file and aggregate per-source coverage."""
     coverage: Dict[str, FileCoverage] = {}
     with tempfile.TemporaryDirectory(prefix="gcov-py-") as temp_root:
         temp_root_path = Path(temp_root)
         for index, object_file in enumerate(object_files, start=1):
-            work_dir = temp_root_path / ("obj-%04d" % index)
+            work_dir = temp_root_path / f"obj-{index:04d}"
             work_dir.mkdir()
             populate_gcov_work_dir(work_dir)
             proc = run_command(
@@ -390,8 +426,8 @@ def collect_coverage(
             gcov_files = sorted(work_dir.glob("*.gcov"))
             if proc.returncode != 0 and not gcov_files:
                 log(
-                    "warning: gcov failed for %s"
-                    % object_file.relative_to(build_dir).as_posix()
+                    "warning: gcov failed for "
+                    f"{object_file.relative_to(build_dir).as_posix()}"
                 )
                 if proc.stderr:
                     log(proc.stderr.rstrip())
@@ -409,6 +445,7 @@ def collect_coverage(
 def summarize_rows(
         expected_sources: Iterable[str], coverage: Dict[str, FileCoverage]
 ) -> List[Tuple[str, int, int, float]]:
+    """Return ``(source, covered, total, percent)`` rows for every expected source."""
     rows: List[Tuple[str, int, int, float]] = []
     for source in expected_sources:
         file_coverage = coverage.get(source, FileCoverage())
@@ -420,32 +457,37 @@ def summarize_rows(
 
 
 def format_percent(covered: int, total: int) -> str:
+    """Format a coverage percentage as ``NN.NN%`` (``0.00%`` when *total* is 0)."""
     if total == 0:
         return "0.00%"
-    return "%.2f%%" % (100.0 * float(covered) / float(total))
+    return f"{100.0 * float(covered) / float(total):.2f}%"
 
 
 def markdown_table(title: str, rows: Sequence[Tuple[str, int, int]]) -> List[str]:
+    """Render *rows* as a titled Markdown coverage table (list of lines)."""
     lines = [title, "", "| Scope | Covered | Total | Line % |",
              "| --- | ---: | ---: | ---: |"]
     for label, covered, total in rows:
         lines.append(
-            "| %s | %d | %d | %s |"
-            % (label, covered, total, format_percent(covered, total))
+            f"| {label} | {covered} | {total} | "
+            f"{format_percent(covered, total)} |"
         )
     return lines
 
 
 def relative_markdown_path(base_dir: Path, target: Path) -> str:
+    """Return *target* relative to *base_dir* using forward slashes for Markdown."""
     return os.path.relpath(target, start=base_dir).replace(os.sep, "/")
 
 
 def label_source_dir(source_dir: Path) -> str:
+    """Return the summary label for *source_dir* (``root`` for the repo root)."""
     label = source_dir.as_posix()
     return "root" if label == "." else label
 
 
 def classify_summary_scope(source_rel: str, source_dirs: Sequence[Path]) -> str:
+    """Return the summary bucket a source belongs to (its top-level scope)."""
     rel_path = Path(source_rel)
     for source_dir in source_dirs:
         if not is_relative_to(rel_path, source_dir):
@@ -463,6 +505,7 @@ def classify_summary_scope(source_rel: str, source_dirs: Sequence[Path]) -> str:
 def build_summary_rows(
         rows: Sequence[Tuple[str, int, int, float]], source_dirs: Sequence[Path]
 ) -> List[Tuple[str, int, int]]:
+    """Aggregate per-file rows into per-scope summary rows plus an overall total."""
     summary_map: Dict[str, List[int]] = {}
     all_covered = 0
     all_total = 0
@@ -486,7 +529,9 @@ def render_markdown_report(
         output_path: Path,
         line_output_dir: Path,
         source_dirs: Sequence[Path],
+        line_files: Set[str],
 ) -> str:
+    """Render the full Markdown coverage report (summary + per-file table)."""
     summary_rows = build_summary_rows(rows, source_dirs)
 
     sorted_rows = sorted(rows, key=lambda item: (item[3], item[0]))
@@ -494,7 +539,7 @@ def render_markdown_report(
     line_dir_link = relative_markdown_path(output_dir, line_output_dir)
     lines = ["# gcov Coverage", ""]
     lines.append(
-        "Line-coverage directory: [%s](%s)" % (line_dir_link, line_dir_link))
+        f"Line-coverage directory: [{line_dir_link}]({line_dir_link})")
     lines.append("")
     lines.extend(markdown_table("## Summary", summary_rows))
     lines.extend(
@@ -507,16 +552,22 @@ def render_markdown_report(
         ]
     )
     for path, covered, total, percent in sorted_rows:
-        line_file = line_output_dir / (path + ".gcov")
-        line_link = relative_markdown_path(output_dir, line_file)
+        if path in line_files:
+            line_file = line_output_dir / (path + ".gcov")
+            line_link = relative_markdown_path(output_dir, line_file)
+            line_cell = f"[gcov]({line_link})"
+        else:
+            # No detail file was written for this source (never compiled, or no
+            # executable lines on this platform); avoid emitting a dead link.
+            line_cell = "n/a"
         lines.append(
-            "| %s | %d | %d | %.2f%% | [gcov](%s) |"
-            % (path, covered, total, percent, line_link)
+            f"| {path} | {covered} | {total} | {percent:.2f}% | {line_cell} |"
         )
     return "\n".join(lines) + "\n"
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """Parse command-line arguments for the coverage run."""
     parser = argparse.ArgumentParser(
         description="Run gcov coverage and print a Markdown report."
     )
@@ -599,6 +650,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Configure, build, test, collect gcov data, and write the Markdown report."""
     args = parse_args(argv)
     cmake = ensure_tool(args.cmake)
     ctest = ensure_tool(args.ctest)
@@ -631,14 +683,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if not args.skip_build:
         run_command(
-            [cmake, "--build", str(coverage_build_dir), "-j%d" % args.jobs],
+            [cmake, "--build", str(coverage_build_dir), f"-j{args.jobs}"],
             cwd=ROOT,
         )
 
     if not args.skip_test:
         if not args.keep_gcda:
             removed = remove_stale_gcda_files(coverage_build_dir)
-            log("removed %d stale .gcda files" % removed)
+            log(f"removed {removed} stale .gcda files")
         run_command(
             [
                 ctest,
@@ -654,8 +706,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     object_files = iter_object_files(coverage_build_dir)
     if not object_files:
         raise SystemExit(
-            "no instrumented object files found under %s" % coverage_build_dir)
-    log("collecting gcov data from %d object files" % len(object_files))
+            f"no instrumented object files found under {coverage_build_dir}")
+    log(f"collecting gcov data from {len(object_files)} object files")
     coverage = collect_coverage(
         gcov,
         coverage_build_dir,
@@ -666,18 +718,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = summarize_rows(
         iter_expected_sources(source_dirs, exclude_source_suffixes), coverage
     )
-    write_line_coverage_files(line_output_dir, coverage, rows)
-    log("wrote per-line coverage files to %s" % line_output_dir)
+    line_files = write_line_coverage_files(line_output_dir, coverage, rows)
+    log(f"wrote per-line coverage files to {line_output_dir}")
     report = render_markdown_report(
         rows,
         output_path=output_path,
         line_output_dir=line_output_dir,
         source_dirs=source_dirs,
+        line_files=line_files,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report, encoding="utf-8")
-    log("wrote %s" % output_path)
+    log(f"wrote {output_path}")
     return 0
 
 
