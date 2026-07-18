@@ -9,6 +9,7 @@
 
 #include "algo/hashtable.h"
 #include "ikcp.h"
+#include "utils/buffer.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 

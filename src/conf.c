@@ -6,6 +6,7 @@
 #include "conf_schema.gen.h"
 #include "util.h"
 
+#include "codec/json.h"
 #include "utils/slog.h"
 
 #include <errno.h>

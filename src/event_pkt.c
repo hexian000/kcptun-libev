@@ -90,7 +90,8 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 				LOGOOM();
 				if (i == 0) {
 					/* no frame could be allocated */
-					s->stats.pkt_rx += (uint_least64_t)nbrecv;
+					s->stats.pkt_rx +=
+						(uint_least64_t)nbrecv;
 					return nrecv;
 				}
 				populated = i;
