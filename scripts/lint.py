@@ -12,6 +12,7 @@ Usage:
   scripts/lint.py --build DIR                # custom build directory
   scripts/lint.py --tests                    # also lint *_test.c files
   scripts/lint.py --generated                # also lint *.gen.c files
+  scripts/lint.py --no-denoise               # keep known false positives
 
 The CHECK argument is forwarded verbatim as the glob in -checks='-*,CHECK'.
 Use a trailing '*' for prefix matching, e.g. "readability-*".
@@ -20,6 +21,13 @@ Production code is defined as all C sources under src/ that are not test
 files (*_test.c) and not generated files (*.gen.c). The third-party tree
 (contrib/) is always excluded; --tests and --generated opt the respective
 file groups back in.
+
+Denoising: some valuable checks fire false positives on this project's own
+facilities (the archetype is misc-include-cleaner on utils/ascii.h, an
+ASCII-only <ctype.h> replacement). Findings that can be *proven* to be such
+false positives are withheld from the main report into a separate section;
+anything uncertain is kept, so a real defect is never dropped. --no-denoise
+disables the pass entirely.
 """
 
 from __future__ import annotations
@@ -208,36 +216,179 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Denoising
+#
+# Some checks are valuable in general but fire false positives on this
+# project's own facilities. The archetype is misc-include-cleaner and
+# utils/ascii.h: ascii.h defines the character-classification family
+# (isdigit, isalnum, isprint, tolower, ...) as ASCII-only macros that
+# deliberately replace <ctype.h> — the two are mutually exclusive, ascii.h
+# #errors if ctype.h's macros are already defined. include-cleaner maps those
+# names to <ctype.h> unconditionally and reports "no header providing isdigit",
+# a demand that is impossible to satisfy here.
+#
+# The denoiser withholds only findings it can PROVE are such false positives;
+# it must never drop a finding that could be a real defect. Each rule is
+# therefore anchored to concrete evidence in the source — here: the flagged
+# name is one ascii.h actually defines AND the flagged file itself includes
+# ascii.h. A <ctype.h>-unrelated missing include (pid_t, char32_t, openlog,
+# ...) is left untouched. Suppressed findings are still reported in their own
+# section, and --no-denoise disables the pass, so nothing is silently hidden.
+# ---------------------------------------------------------------------------
+
+ASCII_HEADER = "utils/ascii.h"  # spelling used in #include directives
+
+# misc-include-cleaner phrasing for a used-but-not-directly-included symbol.
+_INCLUDE_CLEANER_MISSING_RE = re.compile(
+    r'^no header providing "(?P<sym>[^"]+)" is directly included$'
+)
+
+# An #include of ascii.h, e.g.  #include "utils/ascii.h"  (or the <...> form).
+_ASCII_INCLUDE_RE = re.compile(
+    r'^[ \t]*#[ \t]*include[ \t]*[<"]' + re.escape(ASCII_HEADER) + r'[">]',
+    re.MULTILINE,
+)
+
+
+def _ascii_provided_names(root: Path) -> set[str]:
+    """Names that utils/ascii.h provides (macros and inline functions).
+
+    Parsed from the header itself so the set stays correct as ascii.h evolves.
+    Returns an empty set if the header cannot be read — the ascii.h rule then
+    simply never fires (fail safe: keep every finding).
+    """
+    try:
+        text = (root / "src" / ASCII_HEADER).read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    names: set[str] = set()
+    names.update(re.findall(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)", text,
+                            re.MULTILINE))
+    names.update(re.findall(r"\bstatic[ \t]+inline\b[^;{]*?\b([A-Za-z_]\w*)[ \t]*\(",
+                            text, re.DOTALL))
+    return names
+
+
+def _denoise(
+    warnings: list[dict], root: Path
+) -> tuple[list[dict], list[dict]]:
+    """Split warnings into (kept, suppressed).
+
+    A warning is suppressed only when a rule can prove it is a false positive
+    caused by one of this project's own facilities; suppressed warnings carry a
+    human-readable 'reason'. Everything else — including anything uncertain —
+    is kept.
+    """
+    ascii_names = _ascii_provided_names(root)
+    include_cache: dict[str, bool] = {}
+
+    def file_includes_ascii(relpath: str) -> bool:
+        if relpath not in include_cache:
+            try:
+                src = (root / relpath).read_text(encoding="utf-8")
+            except OSError:
+                include_cache[relpath] = False
+            else:
+                include_cache[relpath] = bool(_ASCII_INCLUDE_RE.search(src))
+        return include_cache[relpath]
+
+    def noise_reason(w: dict) -> str | None:
+        # Rule: misc-include-cleaner "no header providing <sym>" where <sym> is
+        # defined by ascii.h and the flagged file includes ascii.h.
+        if not ascii_names or w["check"] != "misc-include-cleaner":
+            return None
+        m = _INCLUDE_CLEANER_MISSING_RE.match(w["msg"])
+        if m is None:
+            return None
+        sym = m.group("sym")
+        if sym not in ascii_names or not file_includes_ascii(w["file"]):
+            return None
+        return (
+            f"`{ASCII_HEADER}` provides `{sym}` "
+            "(ASCII-only <ctype.h> replacement)"
+        )
+
+    kept: list[dict] = []
+    suppressed: list[dict] = []
+    for w in warnings:
+        reason = noise_reason(w)
+        if reason is None:
+            kept.append(w)
+        else:
+            suppressed.append({**w, "reason": reason})
+    return kept, suppressed
+
+
+# ---------------------------------------------------------------------------
 # Markdown report
 # ---------------------------------------------------------------------------
 
+def _excluded_labels(include_tests: bool, include_generated: bool) -> list[str]:
+    """Human-readable list of the file groups the source filter excludes."""
+    labels = ["`contrib/`"]
+    if not include_tests:
+        labels.append("`*_test.c`")
+    if not include_generated:
+        labels.append("`*.gen.c`")
+    return labels
+
+
+def _suppressed_section(suppressed: list[dict]) -> list[str]:
+    """Render the 'Suppressed (known noise)' table, or nothing if empty."""
+    if not suppressed:
+        return []
+    out = [
+        "## Suppressed (known noise)",
+        "",
+        f"{len(suppressed)} finding(s) withheld as provable false positives "
+        "from this project's own facilities (e.g. `utils/ascii.h`). These are "
+        "not real defects; re-run with `--no-denoise` to include them above.",
+        "",
+        "| Check | File | Line | Message | Reason |",
+        "|---|---|---:|---|---|",
+    ]
+    for w in sorted(suppressed, key=lambda w: (w["check"], w["file"], w["line"])):
+        msg = w["msg"].replace("|", "\\|").replace("`", "\\`")
+        reason = w["reason"].replace("|", "\\|")
+        out.append(
+            f"| `{w['check']}` | `{w['file']}` | {w['line']} | {msg} | {reason} |"
+        )
+    out.append("")
+    return out
+
+
 def _report(
-    warnings: list[dict], check_filter: str | None, elapsed: float,
-    include_tests: bool, include_generated: bool,
+    warnings: list[dict], suppressed: list[dict], check_filter: str | None,
+    elapsed: float, excluded: list[str],
 ) -> str:
     title = f"`{check_filter}`" if check_filter else "All Checks"
     total = len(warnings)
 
-    excluded = ["`contrib/`"]
-    if not include_tests:
-        excluded.append("`*_test.c`")
-    if not include_generated:
-        excluded.append("`*.gen.c`")
+    meta = (
+        f"**Date:** {datetime.date.today().isoformat()} &ensp;"
+        f" **Elapsed:** {elapsed:.1f} s &ensp;"
+        f" **Warnings:** {total}"
+    )
+    if suppressed:
+        meta += f" &ensp; **Suppressed:** {len(suppressed)}"
 
     out: list[str] = []
     out += [
         f"# Clang-Tidy Lint Report — {title}",
         "",
-        f"**Date:** {datetime.date.today().isoformat()} &ensp;"
-        f" **Elapsed:** {elapsed:.1f} s &ensp;"
-        f" **Warnings:** {total}",
+        meta,
         "",
         f"> Source filter: excludes {', '.join(excluded)}",
         "",
     ]
 
     if not warnings:
-        out.append("_No warnings found._")
+        out.append(
+            "_No actionable warnings after denoising._" if suppressed
+            else "_No warnings found._"
+        )
+        out.append("")
+        out += _suppressed_section(suppressed)
         return "\n".join(out)
 
     # Organise: check → file → [(line, msg)]
@@ -283,6 +434,8 @@ def _report(
                 safe = msg.replace("|", "\\|").replace("`", "\\`")
                 out.append(f"| {line_no} | {safe} |")
             out.append("")
+
+    out += _suppressed_section(suppressed)
 
     return "\n".join(out)
 
@@ -332,6 +485,12 @@ def main() -> int:
         action="store_true",
         help="also lint generated files (*.gen.c)",
     )
+    ap.add_argument(
+        "--no-denoise",
+        action="store_true",
+        help="keep known false positives (e.g. the utils/ascii.h "
+        "include-cleaner noise) instead of withholding them",
+    )
     args = ap.parse_args()
 
     build_dir = Path(args.build)
@@ -352,12 +511,22 @@ def main() -> int:
     elapsed = time.monotonic() - t0
 
     warnings = _parse(raw, name_map, accept)
+    if args.no_denoise:
+        kept, suppressed = warnings, []
+    else:
+        kept, suppressed = _denoise(warnings, ROOT)
+
     print(
-        f"{len(warnings)} warning(s) in {elapsed:.1f} s → {out_path}",
+        f"{len(kept)} warning(s)"
+        f"{f', {len(suppressed)} suppressed' if suppressed else ''}"
+        f" in {elapsed:.1f} s → {out_path}",
         file=sys.stderr,
     )
 
-    md = _report(warnings, args.check, elapsed, args.tests, args.generated)
+    md = _report(
+        kept, suppressed, args.check, elapsed,
+        _excluded_labels(args.tests, args.generated),
+    )
     out_path.write_text(md, encoding="utf-8")
     return 0
 
