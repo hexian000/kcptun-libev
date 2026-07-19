@@ -238,14 +238,28 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
 
 ASCII_HEADER = "utils/ascii.h"  # spelling used in #include directives
 
+# Include roots under which the "utils/ascii.h" spelling resolves on disk,
+# mirroring the build's -I paths. In csnippets itself the header lives under
+# src/; the downstream projects vendor csnippets under contrib/csnippets/, so
+# the same include spelling resolves there instead. Searched in order; the
+# first hit wins (only one root exists in any given tree). Without this the
+# denoiser silently no-ops in the vendored trees and every ascii.h finding
+# leaks into the report as if it were a real defect.
+_HEADER_INCLUDE_ROOTS = ("src", "contrib/csnippets")
+
 # misc-include-cleaner phrasing for a used-but-not-directly-included symbol.
 _INCLUDE_CLEANER_MISSING_RE = re.compile(
     r'^no header providing "(?P<sym>[^"]+)" is directly included$'
 )
 
-# An #include of ascii.h, e.g.  #include "utils/ascii.h"  (or the <...> form).
+# An #include whose target basename is ascii.h — e.g. #include "utils/ascii.h",
+# the bare "ascii.h" spelling used from within utils/, the vendored
+# "csnippets/utils/ascii.h", or any <...> form. Anchoring on the basename keeps
+# the rule correct regardless of the include-path prefix a project spells it
+# with, while the leading "/"-or-start requirement rejects unrelated names like
+# "myascii.h".
 _ASCII_INCLUDE_RE = re.compile(
-    r'^[ \t]*#[ \t]*include[ \t]*[<"]' + re.escape(ASCII_HEADER) + r'[">]',
+    r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^">]*/)?ascii\.h[">]',
     re.MULTILINE,
 )
 
@@ -254,12 +268,19 @@ def _ascii_provided_names(root: Path) -> set[str]:
     """Names that utils/ascii.h provides (macros and inline functions).
 
     Parsed from the header itself so the set stays correct as ascii.h evolves.
-    Returns an empty set if the header cannot be read — the ascii.h rule then
-    simply never fires (fail safe: keep every finding).
+    The header is looked up under each known include root (src/ for csnippets,
+    contrib/csnippets/ for the downstream projects that vendor it). Returns an
+    empty set if it cannot be read under any root — the ascii.h rule then simply
+    never fires (fail safe: keep every finding).
     """
-    try:
-        text = (root / "src" / ASCII_HEADER).read_text(encoding="utf-8")
-    except OSError:
+    text: str | None = None
+    for inc_root in _HEADER_INCLUDE_ROOTS:
+        try:
+            text = (root / inc_root / ASCII_HEADER).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        break
+    if text is None:
         return set()
     names: set[str] = set()
     names.update(re.findall(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)", text,
