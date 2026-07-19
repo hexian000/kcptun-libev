@@ -1017,14 +1017,109 @@ def generate_free_h(scopes: list, pfx: str, sub_schema: bool = False) -> list:
     return lines
 
 
-def _warn_unsupported_props(node, path: str = "") -> None:
-    """Print a warning for every property whose schema degrades to a raw
-    JSON fragment for a reason the schema author may not expect
-    ($ref, union types, missing type, unsupported array items, out-of-range
-    integer bounds).  Deliberately dynamic objects (additionalProperties
+# JSON Schema keywords the generator consumes structurally or treats as pure
+# annotations; their presence on a node never means a dropped constraint.
+_RECOGNIZED_KEYWORDS = frozenset({
+    # structure the generator acts on
+    "type", "properties", "items", "required", "additionalProperties",
+    "enum", "const", "default",
+    # core / annotation keywords with no code-generation effect by design
+    "title", "description", "$comment", "examples", "deprecated",
+    "readOnly", "writeOnly", "$schema", "$id", "$ref", "$anchor",
+    "$defs", "definitions",
+})
+
+# Constraint keywords the generator actually enforces, keyed by inferred kind.
+# Both backends stay in lockstep here: _scalar_constraint_checks (fast) and
+# _build_constraint_c (size) emit checks for exactly these.
+_ENFORCED_KEYWORDS = {
+    "string": frozenset({"minLength", "maxLength"}),
+    "int": frozenset(
+        {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+         "multipleOf"}),
+    "uint": frozenset(
+        {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+         "multipleOf"}),
+    "double": frozenset(
+        {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+         "multipleOf"}),
+    "array_string": frozenset({"minItems", "maxItems"}),
+    "array_primitive": frozenset({"minItems", "maxItems"}),
+    "array_object": frozenset({"minItems", "maxItems"}),
+}
+
+
+def _dynamic_reason(prop: dict) -> str:
+    """Explain why *prop* degrades to a raw JSON fragment (a ``dynamic`` kind
+    that is not a deliberate dynamic object)."""
+    if "$ref" in prop:
+        return "$ref is not resolved"
+    if isinstance(prop.get("type"), list):
+        return "union types are not supported"
+    if "type" not in prop:
+        return "no 'type' keyword"
+    if prop.get("type") == "array":
+        return "unsupported array item type"
+    if prop.get("type") == "integer":
+        return "integer bounds exceed the 64-bit range"
+    return "unsupported construct"
+
+
+def _warn_dropped_keywords(prop: dict, kind: str, path: str) -> None:
+    """Warn for each keyword on *prop* that the generator emits no check for,
+    so a constraint the author wrote -- e.g. a string ``pattern`` or ``format``
+    -- is not dropped without a diagnostic."""
+    recognized = _RECOGNIZED_KEYWORDS | _ENFORCED_KEYWORDS.get(
+        kind, frozenset())
+    for key in sorted(prop):
+        if key not in recognized:
+            print(
+                f"  warning: property {path!r}: keyword {key!r} is not "
+                "enforced by the generator; the constraint is ignored",
+                file=sys.stderr)
+
+
+def _warn_unsupported_props(
+        node, path: str = "", strict: bool = False,
+        check_own: bool = False) -> None:
+    """Print a warning for schema constructs the generator does not honor:
+    a property that degrades to a raw JSON fragment for a reason the author may
+    not expect ($ref, union types, missing type, unsupported array items,
+    out-of-range integer bounds); a constraint keyword the generator emits no
+    check for; and an ``additionalProperties: false`` node that is inert
+    without ``--strict``.  Deliberately dynamic objects (additionalProperties
     without fixed properties) are not warned about."""
     if not isinstance(node, dict):
         return
+    # 'additionalProperties: false' is honored only by the per-object key switch
+    # that --strict tightens, and only a property-bearing object gets that
+    # switch.  Warn when the constraint is therefore inert -- but the remedy
+    # differs: a property-bearing object needs --strict (so warn only when it is
+    # off), while a property-less object is stored as a raw JSON fragment and can
+    # never reject keys, so --strict is not the fix -- warn regardless and say so.
+    if node.get("type") == "object" \
+            and node.get("additionalProperties") is False:
+        if "properties" not in node:
+            print(
+                f"  warning: {path or '<root>'}: 'additionalProperties: false' "
+                "has no effect on an object with no fixed properties; it is "
+                "stored as a raw JSON fragment and unknown keys are accepted",
+                file=sys.stderr)
+        elif not strict:
+            print(
+                f"  warning: {path or '<root>'}: 'additionalProperties: false' "
+                "has no effect without --strict; unknown keys are accepted",
+                file=sys.stderr)
+    # Check this node's OWN dropped-constraint keywords when it is reached as a
+    # subtree root -- the top-level schema, or a $defs/definitions entry -- since
+    # no parent properties-loop or array-items visit covers it.  Nested
+    # properties and array items are checked by their parent below and pass
+    # check_own=False to avoid a double warning.  A dynamic node carries no
+    # enforceable constraint, so skip it.
+    if check_own:
+        own_kind = _infer_c_type(node)["kind"]
+        if own_kind != "dynamic":
+            _warn_dropped_keywords(node, own_kind, path or "<root>")
     if node.get("type") == "object" and "properties" in node:
         for key, prop in sorted(node["properties"].items()):
             ppath = f"{path}.{key}" if path else key
@@ -1032,29 +1127,24 @@ def _warn_unsupported_props(node, path: str = "") -> None:
                 continue
             desc = _infer_c_type(prop)
             if desc["kind"] == "dynamic" and not _is_dynamic_object(prop):
-                if "$ref" in prop:
-                    reason = "$ref is not resolved"
-                elif isinstance(prop.get("type"), list):
-                    reason = "union types are not supported"
-                elif "type" not in prop:
-                    reason = "no 'type' keyword"
-                elif prop.get("type") == "array":
-                    reason = "unsupported array item type"
-                elif prop.get("type") == "integer":
-                    reason = "integer bounds exceed the 64-bit range"
-                else:
-                    reason = "unsupported construct"
                 print(
-                    f"  warning: property {ppath!r}: {reason}; "
+                    f"  warning: property {ppath!r}: {_dynamic_reason(prop)}; "
                     "the value is stored as a raw JSON fragment",
                     file=sys.stderr)
-            _warn_unsupported_props(prop, ppath)
+            else:
+                _warn_dropped_keywords(prop, desc["kind"], ppath)
+            _warn_unsupported_props(prop, ppath, strict)
     elif node.get("type") == "array" and isinstance(node.get("items"), dict):
-        _warn_unsupported_props(node["items"], path + "[]")
+        item = node["items"]
+        idesc = _infer_c_type(item)
+        if idesc["kind"] != "dynamic":
+            _warn_dropped_keywords(item, idesc["kind"], path + "[]")
+        _warn_unsupported_props(item, path + "[]", strict)
     for defs_key in ("$defs", "definitions"):
         for dname, dnode in sorted(node.get(defs_key, {}).items()):
             _warn_unsupported_props(
-                dnode, f"{path}#{dname}" if path else f"#{dname}")
+                dnode, f"{path}#{dname}" if path else f"#{dname}", strict,
+                check_own=True)
 
 
 def generate_unmarshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> list:
@@ -2801,8 +2891,9 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
                         f"{const_name!r}; rename the conflicting properties")
                 enum_const_owner[const_name] = scope_name
 
-    # Warn about constructs that silently degrade to raw JSON fragments.
-    _warn_unsupported_props(schema)
+    # Warn about constructs that silently degrade to raw JSON fragments and
+    # constraint keywords the generator does not enforce.
+    _warn_unsupported_props(schema, strict=opts.strict, check_own=True)
 
     # --output-name overrides the generated file basename (default: the schema
     # stem).  Generated symbols still derive from the schema stem, so the same
