@@ -1610,11 +1610,11 @@ static size_t json_marshal_impl(
 		 * sentinel sub-field). */
 		bool emit = true;
 		if (f->is_array) {
-			emit = f->req_bit >= 0 ||
+			emit = f->required ||
 			       *(const void *const *)slot != NULL;
 		} else if (f->kind == JSON_K_STRING || f->kind == JSON_K_DYNAMIC) {
 			emit = ((const struct json_string *)slot)->str != NULL;
-		} else if (f->kind == JSON_K_OBJECT && f->req_bit < 0) {
+		} else if (f->kind == JSON_K_OBJECT && !f->required) {
 			const int pf = f->child->present_field;
 			if (pf >= 0) {
 				const struct json_field *const sf =

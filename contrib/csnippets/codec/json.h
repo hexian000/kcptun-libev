@@ -366,6 +366,11 @@ struct json_field {
 	size_t name_len;
 	enum json_type_kind kind;
 	bool is_array;
+	/* true if the schema marks this field required; the marshaller always
+	 * emits a required array/object even when empty/NULL.  Independent of
+	 * req_bit, which is set only when unmarshal validation is generated, so
+	 * marshal presence stays correct under --no-validate. */
+	bool required;
 	/* presence-bit index for a required field, or -1 if optional */
 	int_least8_t req_bit;
 	size_t offset; /* offsetof(struct, field) */
