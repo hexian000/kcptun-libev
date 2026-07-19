@@ -68,25 +68,60 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 
-def iter_c_files(root: Path):
-    """Yield .c/.h files under root/src/, excluding *.gen.[ch]."""
-    src = root / "src"
+def _is_within(path: Path, scope: Path) -> bool:
+    """True if *path* is *scope* itself or lies under *scope* (a directory).
+
+    Both are compared resolved, so a subdirectory or single-file *scope* acts
+    as a filter over an absolute path.
+    """
+    path = path.resolve()
+    scope = scope.resolve()
+    return path == scope or scope in path.parents
+
+
+def iter_c_files(repo_root: Path, scope: Path | None = None):
+    """Yield .c/.h files to format, excluding *.gen.[ch].
+
+    Directory coverage is the repository's ``src/`` tree (per the module
+    docstring).  *scope*, when given, narrows the run: a directory restricts
+    the src/ walk to that subtree, while a file selects exactly that source --
+    even one outside src/ that the caller named explicitly -- so
+    ``format.py src/codec`` and ``format.py src/main.c`` both work rather than
+    silently matching nothing.
+    """
+    def is_source(p: Path) -> bool:
+        return p.suffix in (".c", ".h") and not p.name.endswith(
+            (".gen.c", ".gen.h"))
+
+    if scope is not None and scope.is_file():
+        if is_source(scope):
+            yield scope.resolve()
+        return
+
+    src = repo_root / "src"
     for pattern in ("**/*.c", "**/*.h"):
-        yield from (
-            p for p in src.glob(pattern)
-            if not p.name.endswith((".gen.c", ".gen.h"))
-        )
+        for p in src.glob(pattern):
+            if not is_source(p):
+                continue
+            if scope is not None and not _is_within(p, scope):
+                continue
+            yield p
 
 
-def iter_text_files(root: Path):
-    """Yield git-tracked files under root, excluding contrib/ (third-party)."""
+def iter_text_files(repo_root: Path, scope: Path | None = None):
+    """Yield git-tracked files under repo_root, excluding contrib/ (third-party).
+
+    *scope* narrows the run to a subdirectory or a single file.
+    """
     # -z emits NUL-separated, verbatim paths; without it git C-quotes any path
     # with non-ASCII bytes (core.quotePath=true), so a quoted string would never
     # match an on-disk file and such files -- exactly the ones the Unicode pass
-    # exists for -- would be silently skipped.
+    # exists for -- would be silently skipped.  Listing from the repo root (not
+    # cwd=scope) keeps the contrib/ prefix test meaningful under a subtree scope
+    # and lets *scope* be a file, which is not a valid git cwd.
     out = subprocess.run(
         ["git", "ls-files", "-z"],
-        capture_output=True, check=True, cwd=str(root),
+        capture_output=True, check=True, cwd=str(repo_root),
     ).stdout
     for raw in out.split(b"\x00"):
         if not raw:
@@ -94,9 +129,12 @@ def iter_text_files(root: Path):
         line = os.fsdecode(raw)
         if line.startswith("contrib/"):
             continue
-        p = root / line
-        if p.is_file():
-            yield p
+        p = repo_root / line
+        if not p.is_file():
+            continue
+        if scope is not None and not _is_within(p, scope):
+            continue
+        yield p
 
 
 def _warn(message: str) -> None:
@@ -137,19 +175,21 @@ def _utf8_nobom_issue(data: bytes) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _clang_version_ok(version: str) -> bool:
-    """Return True if clang-format is available and its version matches exactly."""
+def _clang_format_version() -> str | None:
+    """Return the installed clang-format's version (e.g. ``"22.1.5"``), or None
+    if clang-format is absent or reports no parseable version."""
     if shutil.which("clang-format") is None:
-        return False
+        return None
     try:
         out = subprocess.run(
             ["clang-format", "--version"],
             capture_output=True, text=True, check=True,
         ).stdout
     except subprocess.CalledProcessError:
-        return False
+        return None
     # Expected: "clang-format version 22.1.5" or "Ubuntu clang-format version 22.1.5"
-    return bool(re.search(rf"version {re.escape(version)}(?:\s|$)", out))
+    m = re.search(r"version\s+(\d+(?:\.\d+)*)", out)
+    return m.group(1) if m else None
 
 
 def _clang_format_file(path: Path, root: Path) -> bytes:
@@ -923,7 +963,9 @@ def _build_cpp_cleanup_config(root: Path):
         cfg.root = db.root
     if cfg.root is None:
         cfg.root = _find_repo_root(root) or root
-    cfg.include_dep_graph = _collect_include_dependency_graph(root, cfg)
+    # Build the cycle-detection graph over the whole src/ tree (cfg.root), not
+    # just a scoped subtree, so a scoped run still sees cross-subtree edges.
+    cfg.include_dep_graph = _collect_include_dependency_graph(cfg.root, cfg)
     return cfg
 
 
@@ -978,7 +1020,23 @@ def main() -> None:
     root = args.root.resolve()
     form = "NFKC" if args.nfkc else "NFC"
 
-    have_clang = _clang_version_ok(args.clang_version)
+    # Resolve the repository root independently of the argument and treat the
+    # argument as a scope filter (a subtree or a single file), so scoping the
+    # run never silently matches nothing.
+    cpp_cleanup_cfg = _build_cpp_cleanup_config(root)
+    repo_root = cpp_cleanup_cfg.root
+    scope = None if root == repo_root else root
+
+    found_clang = _clang_format_version()
+    have_clang = found_clang == args.clang_version
+    if not have_clang:
+        if found_clang is None:
+            _warn(f"clang-format not found; require {args.clang_version} -- "
+                  "skipping the clang-format pass")
+        else:
+            _warn(f"clang-format version mismatch: found {found_clang}, "
+                  f"require {args.clang_version} -- skipping the clang-format "
+                  "pass")
 
     # Each file is visited once.  A single original copy is read for change
     # detection and to seed the passes that apply to it (clang-format reads the
@@ -987,11 +1045,12 @@ def main() -> None:
     # the clang-format + cpp-cleanup passes; every git-tracked text file takes
     # the Unicode-normalization pass; a file in both sets takes all three but
     # is still handled once.
-    cpp_cleanup_cfg = _build_cpp_cleanup_config(root)
-    c_by_key = {_norm(str(p)): p for p in iter_c_files(root)}
-    text_by_key = {_norm(str(p)): p for p in iter_text_files(root)}
+    c_by_key = {_norm(str(p)): p for p in iter_c_files(repo_root, scope)}
+    text_by_key = {_norm(str(p)): p for p in iter_text_files(repo_root, scope)}
     c_total = len(c_by_key)
     text_total = len(text_by_key)
+    if scope is not None and not c_by_key and not text_by_key:
+        _warn(f"no files matched {root}")
 
     clang_changed = clang_lines = 0
     cpp_cleanup_changed = cpp_cleanup_warned = 0
@@ -1009,13 +1068,13 @@ def main() -> None:
 
         issue = _utf8_nobom_issue(original)
         if issue is not None:
-            _warn(f"skip {path.relative_to(root)}: {issue} "
+            _warn(f"skip {path.relative_to(repo_root)}: {issue} "
                   f"(expected UTF-8, no BOM)")
             continue
         data = original
 
         if is_c and have_clang:
-            formatted = _clang_format_file(path, root)
+            formatted = _clang_format_file(path, repo_root)
             if formatted != data:
                 clang_changed += 1
                 clang_lines += formatted.count(b"\n")
@@ -1028,7 +1087,7 @@ def main() -> None:
             if new_text != pre:
                 cpp_cleanup_changed += 1
             data = new_text.encode("utf-8")
-            rel = path.relative_to(root)
+            rel = path.relative_to(repo_root)
             if not path.stem.endswith("_test"):
                 for lineno, name, target, steps in dep_warnings:
                     cpp_cleanup_warned += 1
@@ -1050,13 +1109,15 @@ def main() -> None:
 
         if data != original:
             if args.check:
-                changed_files.append(path.relative_to(root))
+                changed_files.append(path.relative_to(repo_root))
             else:
                 path.write_bytes(data)
 
     if have_clang:
         print(f"clang-format: {clang_lines} lines in "
               f"{clang_changed}/{c_total} files changed")
+    else:
+        print(f"clang-format: skipped ({c_total} C file(s) not checked)")
     print(f"cpp-cleanup: {cpp_cleanup_changed}/{c_total} files changed, "
           f"{cpp_cleanup_warned} warning(s)")
     print(f"normalize {form}: {norm_lines} lines in "
@@ -1065,9 +1126,18 @@ def main() -> None:
     if args.check:
         for rel in changed_files:
             print(f"would reformat {rel}")
+        failed = False
         if changed_files:
             print(f"format --check: {len(changed_files)} file(s) "
                   f"would be reformatted")
+            failed = True
+        # A skipped clang-format pass means the C sources are unverified, not
+        # clean -- so --check must not pass silently when there were any.
+        if not have_clang and c_total > 0:
+            print("format --check: clang-format did not run, so "
+                  f"{c_total} C file(s) are unverified")
+            failed = True
+        if failed:
             sys.exit(1)
         print("format --check: no changes needed")
 
