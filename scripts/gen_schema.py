@@ -2489,7 +2489,7 @@ def _build_constraint_c(
 
 def _field_entry(
         ename: str, key: str, fname: str, desc: dict, schema_pfx: str,
-        scope_name: str, pfx: str, req_bit: "int | None",
+        scope_name: str, pfx: str, req_bit: "int | None", required: bool,
         cvar: "str | None") -> str:
     """Return the C designated initializer for one struct json_field entry."""
     kind = desc["kind"]
@@ -2503,6 +2503,11 @@ def _field_entry(
     ]
     if is_array:
         parts.append(".is_array = true")
+    # .required drives marshal presence (a required array/object always emits)
+    # and is schema-derived, so it stays set even under --no-validate, where
+    # .req_bit -- consumed only by unmarshal's required_mask check -- is -1.
+    if required:
+        parts.append(".required = true")
     parts.append(f".req_bit = {req_bit if req_bit is not None else -1}")
     parts.append(f".offset = offsetof(struct {ename}, {cfield})")
     if is_array:
@@ -2593,7 +2598,7 @@ def generate_tables_c(
             lines.append(
                 f"{_INDENT}" + _field_entry(
                     ename, key, fname_map[key], desc, schema_pfx, scope_name,
-                    pfx, rb, cvars.get(key)) + ",")
+                    pfx, rb, key in required, cvars.get(key)) + ",")
         lines.append("};")
 
         # Schema object.
