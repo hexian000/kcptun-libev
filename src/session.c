@@ -16,7 +16,7 @@
 #include "os/socket.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
-#include "utils/formats.h"
+#include "strings/format.h"
 #include "utils/slog.h"
 
 #include <ev.h>
@@ -649,27 +649,43 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	return true;
 }
 
-static bool
-ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
+/* decode the rendezvous LISTEN/CONNECT payload: the peer address followed by
+   an optional length-prefixed service id. On success fills addr and key (key
+   points into msg's buffer) and returns true; returns false when the address
+   is missing or malformed. Requires msg->len >= SESSION0_HEADER_SIZE, which
+   the session0 dispatcher guarantees. */
+static bool ss0_parse_service(
+	const struct msgframe *restrict msg, union sockaddr_max *restrict addr,
+	struct hashkey *restrict key)
 {
 	size_t msglen = msg->len;
 	const unsigned char *msgbuf =
 		msg->buf + msg->off + SESSION0_HEADER_SIZE;
 	msglen -= SESSION0_HEADER_SIZE;
-	union sockaddr_max addr;
-	size_t n = inetaddr_read(&addr, msgbuf, msglen);
+	const size_t n = inetaddr_read(addr, msgbuf, msglen);
 	if (n == 0) {
 		return false;
 	}
 	msgbuf += n, msglen -= n;
-	struct hashkey key = { .data = NULL, .len = 0 };
+	*key = (struct hashkey){ .data = NULL, .len = 0 };
 	if (msglen >= sizeof(uint16_t)) {
-		n = read_uint16(msgbuf);
+		const size_t idlen = read_uint16(msgbuf);
 		msgbuf += sizeof(uint16_t), msglen -= sizeof(uint16_t);
-		if (msglen >= n) {
-			key.data = msgbuf;
-			key.len = n;
+		if (msglen >= idlen) {
+			key->data = msgbuf;
+			key->len = idlen;
 		}
+	}
+	return true;
+}
+
+static bool
+ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
+{
+	union sockaddr_max addr;
+	struct hashkey key;
+	if (!ss0_parse_service(msg, &addr, &key)) {
+		return false;
 	}
 	bool created = false;
 	struct service *restrict svc;
@@ -731,24 +747,10 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 static bool
 ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 {
-	size_t msglen = msg->len;
-	const unsigned char *msgbuf =
-		msg->buf + msg->off + SESSION0_HEADER_SIZE;
-	msglen -= SESSION0_HEADER_SIZE;
 	union sockaddr_max addr;
-	size_t n = inetaddr_read(&addr, msgbuf, msglen);
-	if (n == 0) {
+	struct hashkey key;
+	if (!ss0_parse_service(msg, &addr, &key)) {
 		return false;
-	}
-	msgbuf += n, msglen -= n;
-	struct hashkey key = { .data = NULL, .len = 0 };
-	if (msglen >= sizeof(uint16_t)) {
-		n = read_uint16(msgbuf);
-		msgbuf += sizeof(uint16_t), msglen -= sizeof(uint16_t);
-		if (msglen >= n) {
-			key.data = msgbuf;
-			key.len = n;
-		}
 	}
 	const struct service *restrict svc;
 	if (!table_find(s->pkt.services, &key, (void **)&svc)) {
@@ -780,7 +782,7 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	unsigned char b[INET6ADDR_LENGTH + INET6ADDR_LENGTH];
 	unsigned char *p = b;
 	size_t len = sizeof(b);
-	n = inetaddr_write(p, &addr.sa, len);
+	size_t n = inetaddr_write(p, &addr.sa, len);
 	if (n == 0) {
 		return false;
 	}
