@@ -21,7 +21,7 @@
 #include "meta/arraysize.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
-#include "utils/formats.h"
+#include "strings/format.h"
 #include "meta/minmax.h"
 #include "utils/slog.h"
 
@@ -140,13 +140,22 @@ struct obfs_ctx {
 
 #define OBFS_CTX_GETKEY(ctx) (&(ctx)->hkey)
 
+/* derive the context hashtable key from a sockaddr: the address bytes
+   followed by zero padding to fill the fixed-size key buffer */
+static void obfs_ctx_setkey(
+	unsigned char key[static OBFS_CTX_KEY_SIZE],
+	const struct sockaddr *restrict sa)
+{
+	const size_t n = sa_len(sa);
+	memcpy(key, sa, n);
+	memset(key + n, 0, OBFS_CTX_KEY_SIZE - n);
+}
+
 static inline struct obfs_ctx *obfs_find_ctx(
 	const struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 {
 	unsigned char key[OBFS_CTX_KEY_SIZE];
-	const size_t n = sa_len(sa);
-	memcpy(key, (sa), n);
-	memset(key + n, 0, sizeof(key) - n);
+	obfs_ctx_setkey(key, sa);
 	const struct hashkey hkey = {
 		.len = sizeof(key),
 		.data = key,
@@ -820,9 +829,7 @@ static struct obfs_ctx *obfs_tcp_raw_new_ctx(
 	ctx->cap_flow = flow;
 
 	/* register in hashtable */
-	const size_t n = sa_len(&ctx->raddr.sa);
-	memcpy(ctx->key, &ctx->raddr.sa, n);
-	memset(ctx->key + n, 0, sizeof(ctx->key) - n);
+	obfs_ctx_setkey(ctx->key, &ctx->raddr.sa);
 
 	if (table_size(obfs->contexts) >= OBFS_MAX_CONTEXTS) {
 		LOG_RATELIMITED(
@@ -1126,15 +1133,37 @@ static void obfs_ctx_write(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 	}
 }
 
+/* insert ctx into obfs->contexts, tearing down any context it displaces.
+   returns false on allocation failure (ctx was not inserted; the caller
+   still owns it and must free it) */
+static bool
+obfs_ctx_register(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
+{
+	struct ev_loop *loop = obfs->server->loop;
+	void *elem = ctx;
+	obfs->contexts = table_set(obfs->contexts, OBFS_CTX_GETKEY(ctx), &elem);
+	if (elem == ctx) {
+		/* table_set leaves the new element in place on allocation
+		   failure; ctx was not inserted */
+		LOGOOM();
+		return false;
+	}
+	if (elem != NULL) {
+		struct obfs_ctx *restrict old_ctx = elem;
+		old_ctx->in_table = false;
+		OBFS_CTX_LOG(DEBUG, old_ctx, "context replaced");
+		obfs_ctx_stop(loop, old_ctx);
+		obfs_ctx_del(obfs, old_ctx);
+		obfs_ctx_free(loop, old_ctx);
+	}
+	ctx->in_table = true;
+	return true;
+}
+
 static bool obfs_ctx_start(
 	struct obfs *restrict obfs, struct obfs_ctx *restrict ctx, const int fd)
 {
-	{
-		const struct sockaddr *sa = &ctx->raddr.sa;
-		const size_t n = sa_len(sa);
-		memcpy(ctx->key, sa, n);
-		memset(ctx->key + n, 0, sizeof(ctx->key) - n);
-	}
+	obfs_ctx_setkey(ctx->key, &ctx->raddr.sa);
 	struct server *restrict s = obfs->server;
 
 	if ((s->conf->mode & MODE_SERVER) &&
@@ -1143,23 +1172,10 @@ static bool obfs_ctx_start(
 		return false;
 	}
 
-	void *elem = ctx;
-	obfs->contexts = table_set(obfs->contexts, OBFS_CTX_GETKEY(ctx), &elem);
-	if (elem == ctx) {
-		/* table_set leaves the new element in place on allocation
-		   failure; ctx was not inserted, so let the caller free it */
-		LOGOOM();
+	/* ctx was not inserted, so let the caller free it */
+	if (!obfs_ctx_register(obfs, ctx)) {
 		return false;
 	}
-	if (elem != NULL) {
-		struct obfs_ctx *restrict old_ctx = elem;
-		old_ctx->in_table = false;
-		OBFS_CTX_LOG(DEBUG, old_ctx, "context replaced");
-		obfs_ctx_stop(s->loop, old_ctx);
-		obfs_ctx_del(obfs, old_ctx);
-		obfs_ctx_free(s->loop, old_ctx);
-	}
-	ctx->in_table = true;
 
 	ctx->fd = fd;
 	void (*const obfs_read_cb)(
@@ -1266,29 +1282,12 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 		}
 
 		/* register in hashtable using remote address as key */
-		const size_t n = sa_len(&ctx->raddr.sa);
-		memcpy(ctx->key, &ctx->raddr.sa, n);
-		memset(ctx->key + n, 0, sizeof(ctx->key) - n);
+		obfs_ctx_setkey(ctx->key, &ctx->raddr.sa);
 
-		void *elem = ctx;
-		obfs->contexts =
-			table_set(obfs->contexts, OBFS_CTX_GETKEY(ctx), &elem);
-		if (elem == ctx) {
-			/* table_set leaves the new element in place on allocation
-			   failure; ctx was not inserted */
-			LOGOOM();
+		if (!obfs_ctx_register(obfs, ctx)) {
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
-		if (elem != NULL) {
-			struct obfs_ctx *restrict old_ctx = elem;
-			old_ctx->in_table = false;
-			OBFS_CTX_LOG(DEBUG, old_ctx, "context replaced");
-			obfs_ctx_stop(loop, old_ctx);
-			obfs_ctx_del(obfs, old_ctx);
-			obfs_ctx_free(loop, old_ctx);
-		}
-		ctx->in_table = true;
 
 		const ev_tstamp now = ev_now(loop);
 		ctx->created = now;
@@ -1553,14 +1552,8 @@ static bool print_ctx_iter(
 		state = ctx->authenticated ? '-' : '?';
 	}
 
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
-
-	FORMAT_BYTES(byt_rx, (double)(ctx->byt_rx));
-	FORMAT_BYTES(byt_tx, (double)(ctx->byt_tx));
-
-#undef FORMAT_BYTES
+	FORMAT_IEC_BYTES(byt_rx, (double)(ctx->byt_rx));
+	FORMAT_IEC_BYTES(byt_tx, (double)(ctx->byt_tx));
 
 	VBUF_APPENDF(
 		stats->buf, "[%s] %c seen=%.0lfs rx/tx=%s/%s ecn/ece=%ju/%ju\n",
@@ -1586,13 +1579,7 @@ struct vbuffer *obfs_stats_const(const struct obfs *obfs, struct vbuffer *buf)
 
 	const struct obfs_stats *restrict stats = &obfs->stats;
 
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
-
-	FORMAT_BYTES(byt_drop, (double)(stats->byt_drop));
-
-#undef FORMAT_BYTES
+	FORMAT_IEC_BYTES(byt_drop, (double)(stats->byt_drop));
 
 	VBUF_APPENDF(
 		buf, "  = %zu(+%zu) contexts; drop %s\n", authenticated,
@@ -1629,10 +1616,6 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 	const size_t authenticated = obfs->num_authenticated;
 	ASSERT(authenticated <= num_contexts);
 
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
-
 	double dpkt_drop = 0.0;
 	char dbyt_drop[16] = "(unknown)";
 	if (dt > 0) {
@@ -1644,9 +1627,7 @@ obfs_stats(struct obfs *restrict obfs, struct vbuffer *restrict buf)
 			dbyt_drop, sizeof(dbyt_drop),
 			(double)(dstats.byt_drop) / dt);
 	}
-	FORMAT_BYTES(byt_drop, (double)(stats->byt_drop));
-
-#undef FORMAT_BYTES
+	FORMAT_IEC_BYTES(byt_drop, (double)(stats->byt_drop));
 
 	VBUF_APPENDF(
 		buf, "  = %zu(+%zu) contexts; drop %.1lf/s (%s/s), %s\n",
@@ -1921,6 +1902,48 @@ static void obfs_capture(
 	OBFS_CTX_LOG(DEBUG, ctx, "captured");
 }
 
+/* process incoming payload for dpi/tcp-wnd mode (unified IPv4/IPv6);
+   msg->addr must already hold the remote address */
+static struct obfs_ctx *obfs_tcp_wnd_input(
+	struct obfs *restrict obfs, struct msgframe *restrict msg,
+	const uint32_t flow, const uint8_t ecn,
+	const struct tcphdr *restrict tcp, const uint16_t ihl,
+	const uint16_t plen, const uint16_t doff)
+{
+	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &msg->addr.sa);
+	if (ctx == NULL) {
+		if (LOGLEVEL(DEBUG)) {
+			char addr_str[64];
+			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
+			const ev_tstamp now = ev_now(obfs->server->loop);
+			LOG_RATELIMITED_F(
+				DEBUG, now, 1.0,
+				"obfs: unrelated %" PRIu16 " bytes from %s",
+				msg->len, addr_str);
+		}
+		return NULL;
+	}
+
+	/* inbound */
+	if (LOGLEVEL(DEBUG) && tcp->rst) {
+		char addr_str[64];
+		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
+		const ev_tstamp now = ev_now(obfs->server->loop);
+		LOG_RATELIMITED_F(
+			DEBUG, now, 1.0, "obfs: rst from %s", addr_str);
+		return NULL;
+	}
+	obfs_capture(ctx, flow, ecn, tcp);
+
+	if (!tcp->psh) {
+		return NULL;
+	}
+	ctx->last_seen = msg->ts;
+	msg->off = (uint16_t)(ihl + doff);
+	msg->len = (uint16_t)(plen - doff);
+	return ctx;
+}
+
 static struct obfs_ctx *
 obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 {
@@ -2017,40 +2040,9 @@ obfs_open_ipv4(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		.sin_addr.s_addr = ip.saddr,
 		.sin_port = tcp.source,
 	};
-
-	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &msg->addr.sa);
-	if (ctx == NULL) {
-		if (LOGLEVEL(DEBUG)) {
-			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
-			const ev_tstamp now = ev_now(obfs->server->loop);
-			LOG_RATELIMITED_F(
-				DEBUG, now, 1.0,
-				"obfs: unrelated %" PRIu16 " bytes from %s",
-				msg->len, addr_str);
-		}
-		return NULL;
-	}
-
-	/* inbound */
-	if (LOGLEVEL(DEBUG) && tcp.rst) {
-		char addr_str[64];
-		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
-		const ev_tstamp now = ev_now(obfs->server->loop);
-		LOG_RATELIMITED_F(
-			DEBUG, now, 1.0, "obfs: rst from %s", addr_str);
-		return NULL;
-	}
 	const uint8_t ecn = (ip.tos & ECN_MASK);
-	obfs_capture(ctx, UINT32_C(0), ecn, &tcp);
-
-	if (!tcp.psh) {
-		return NULL;
-	}
-	ctx->last_seen = msg->ts;
-	msg->off = (uint16_t)(ihl + doff);
-	msg->len = (uint16_t)(plen - doff);
-	return ctx;
+	return obfs_tcp_wnd_input(
+		obfs, msg, UINT32_C(0), ecn, &tcp, ihl, plen, doff);
 }
 
 static struct obfs_ctx *
@@ -2144,44 +2136,12 @@ obfs_open_ipv6(struct obfs *restrict obfs, struct msgframe *restrict msg)
 		.sin6_port = tcp.source,
 		.sin6_addr = ip6.ip6_src,
 	};
-
-	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &msg->addr.sa);
-	if (ctx == NULL) {
-		if (LOGLEVEL(DEBUG)) {
-			char addr_str[64];
-			sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
-			const ev_tstamp now = ev_now(obfs->server->loop);
-			LOG_RATELIMITED_F(
-				DEBUG, now, 1.0,
-				"obfs: unrelated %" PRIu16 " bytes from %s",
-				msg->len, addr_str);
-		}
-		return NULL;
-	}
-
-	/* inbound */
-	if (LOGLEVEL(DEBUG) && tcp.rst) {
-		char addr_str[64];
-		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
-		const ev_tstamp now = ev_now(obfs->server->loop);
-		LOG_RATELIMITED_F(
-			DEBUG, now, 1.0, "obfs: rst from %s", addr_str);
-		return NULL;
-	}
 	/* ip6_flow: 4-bit version, 8-bit traffic class, 20-bit flow label; ECN
 	   is the low 2 bits of the traffic class, i.e. bits 21-20 of the word */
 	const uint32_t flow_word = ntohl(ip6.ip6_flow);
 	const uint32_t flow = flow_word & UINT32_C(0xFFFFF);
 	const uint8_t ecn = (uint8_t)((flow_word >> 20u) & ECN_MASK);
-	obfs_capture(ctx, flow, ecn, &tcp);
-
-	if (!tcp.psh) {
-		return NULL;
-	}
-	ctx->last_seen = msg->ts;
-	msg->off = (uint16_t)(ihl + doff);
-	msg->len = (uint16_t)(plen - doff);
-	return ctx;
+	return obfs_tcp_wnd_input(obfs, msg, flow, ecn, &tcp, ihl, plen, doff);
 }
 
 struct obfs_ctx *
@@ -2391,10 +2351,7 @@ void obfs_accept_cb(
 			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
-			LOGE_F("accept: (%d) %s", err, strerror(err));
-			/* sleep for a while, see obfs_listener_cb */
-			ev_io_stop(loop, watcher);
-			ev_timer_start(loop, &obfs->w_listener);
+			accept_backoff(loop, watcher, &obfs->w_listener, err);
 			return;
 		}
 		if (is_startup_limited(obfs)) {
