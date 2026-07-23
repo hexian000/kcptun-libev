@@ -6,6 +6,7 @@
 #include "server.h"
 #include "util.h"
 
+#include "io/file.h"
 #include "meta/minmax.h"
 #include "os/daemon.h"
 #include "utils/debug.h"
@@ -61,6 +62,21 @@ static void print_usage(const char *argv0)
 	(void)fflush(stderr);
 }
 
+/* io_filewriter() heap-allocates a stream that slog only borrows for the
+ * process lifetime; cache one per standard stream so switching the log sink
+ * neither leaks the prior sink nor dangles. */
+static struct io_stream *log_filewriter(FILE *const f)
+{
+	static struct io_stream *stdout_writer = NULL;
+	static struct io_stream *stderr_writer = NULL;
+	struct io_stream **restrict slot =
+		(f == stdout) ? &stdout_writer : &stderr_writer;
+	if (*slot == NULL) {
+		*slot = io_filewriter(f);
+	}
+	return *slot;
+}
+
 static void set_log_config(const struct config *restrict conf, const int level)
 {
 	slog_setlevel(CLAMP(level, LOG_LEVEL_SILENCE, LOG_LEVEL_VERYVERBOSE));
@@ -69,9 +85,9 @@ static void set_log_config(const struct config *restrict conf, const int level)
 	}
 	const char *log = conf->log;
 	if (strcmp(log, "stdout") == 0) {
-		slog_setoutput(SLOG_OUTPUT_FILE, stdout);
+		slog_setoutput(SLOG_OUTPUT_WRITER, log_filewriter(stdout));
 	} else if (strcmp(log, "stderr") == 0) {
-		slog_setoutput(SLOG_OUTPUT_FILE, stderr);
+		slog_setoutput(SLOG_OUTPUT_WRITER, log_filewriter(stderr));
 	} else if (strcmp(log, "terminal") == 0) {
 		slog_setoutput(SLOG_OUTPUT_TERMINAL, stderr);
 	} else if (strcmp(log, "syslog") == 0) {

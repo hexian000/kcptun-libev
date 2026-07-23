@@ -8,6 +8,7 @@
 #include "pktqueue.h"
 
 #include "ikcp.h"
+#include "io/file.h"
 #include "math/rand.h"
 #include "meta/minmax.h"
 #include "net/addr.h"
@@ -60,10 +61,14 @@ void init(void)
 	if (setlocale(LC_ALL, "") == NULL) {
 		LOGW("setlocale: failed to set the locale from environment");
 	}
-	if (setvbuf(stdout, NULL, _IONBF, 0) != 0) {
-		LOGW("setvbuf: failed to set stdout to unbuffered mode");
+	/* io_filewriter() heap-allocates a stream that slog only borrows; keep
+	 * it in a static so it stays reachable (and stdout unbuffered) for the
+	 * process lifetime rather than dangling once the sink is later replaced. */
+	static struct io_stream *log_writer = NULL;
+	if (log_writer == NULL) {
+		log_writer = io_filewriter(stdout);
 	}
-	slog_setoutput(SLOG_OUTPUT_FILE, stdout);
+	slog_setoutput(SLOG_OUTPUT_WRITER, log_writer);
 	{
 		static char prefix[] = __FILE__;
 		char *s = strrchr(prefix, PATH_SEPARATOR);
