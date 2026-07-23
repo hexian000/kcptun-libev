@@ -27,6 +27,9 @@
  * - The fixed `BUF_APPEND` raw-byte helper does not add a null terminator.
  *   The growable `VBUF_APPEND` and the formatting helpers keep data
  *   NUL-terminated in an internal reserved slot without affecting `len`.
+ * - The formatting helpers use u8vsnprintf (strings/string.h):
+ *   locale-independent and async-signal-safe, with its documented divergences
+ *   from printf(3); truncation never splits a UTF-8 sequence.
  * - None of the APIs are thread-safe; add external synchronization if shared.
  *
  * Error handling:
@@ -84,8 +87,9 @@ buf_append(struct buffer *restrict buf, const void *restrict data, size_t n)
  * @internal
  * Append formatted text into a fixed buffer using a va_list.
  * Writes at most remaining capacity; output is NUL-terminated in place.
- * len is advanced by up to maxlen - 1.
- * Returns: vsnprintf-style count of chars that would have been written
+ * len is advanced by the bytes actually stored, which on truncation may fall
+ * up to UTF8_MAX_LEN - 1 short of the capacity (whole codepoints only).
+ * Returns: snprintf-style count of chars that would have been written
  * (excluding NUL).
  */
 int buf_vappendf(

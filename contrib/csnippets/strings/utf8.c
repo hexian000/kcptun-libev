@@ -4,7 +4,7 @@
 #include "utf8.h"
 
 #include <stddef.h>
-#include <stdint.h>
+#include <uchar.h>
 
 int utf8_encode(char *restrict buf, const char32_t cp)
 {

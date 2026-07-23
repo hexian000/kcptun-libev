@@ -181,7 +181,7 @@ const struct table_opts TABLE_OPTS_PTR = {
 	.flags = 0,
 };
 
-static inline size_t
+static size_t
 bucket_index(const struct hashtable *restrict table, const uint_least32_t hash)
 {
 	const size_t capacity = table->capacity;

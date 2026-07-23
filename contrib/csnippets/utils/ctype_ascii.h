@@ -1,15 +1,15 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef UTILS_ASCII_H
-#define UTILS_ASCII_H
+#ifndef UTILS_CTYPE_ASCII_H
+#define UTILS_CTYPE_ASCII_H
 
 #if defined(isdigit) || defined(isalpha) || defined(isalnum) ||                \
 	defined(isspace) || defined(iscntrl) || defined(islower) ||            \
 	defined(isupper) || defined(isprint) || defined(isgraph) ||            \
 	defined(ispunct) || defined(isxdigit) || defined(isblank) ||           \
 	defined(tolower) || defined(toupper)
-#error "ascii.h is intended to be a standalone header and should not be included with ctype.h or similar headers that define character classification macros."
+#error "ctype_ascii.h is intended to be a standalone header and should not be included with ctype.h or similar headers that define character classification macros."
 #endif
 
 #define isascii(c) (((c) & ~0x7f) == 0)
@@ -105,4 +105,4 @@ static inline int unhex(const int ch)
 	return -1;
 }
 
-#endif /* UTILS_ASCII_H */
+#endif /* UTILS_CTYPE_ASCII_H */

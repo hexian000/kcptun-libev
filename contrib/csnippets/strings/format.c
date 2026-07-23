@@ -1,7 +1,7 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#include "formats.h"
+#include "format.h"
 
 #include "meta/arraysize.h"
 #include "meta/minmax.h"

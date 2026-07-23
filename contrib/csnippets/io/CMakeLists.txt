@@ -1,0 +1,9 @@
+target_sources(csnippets
+    PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/file.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stream.c"
+    PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/file.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/io.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stream.h"
+)

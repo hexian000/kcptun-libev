@@ -4,8 +4,8 @@
 #include "json.h"
 
 #include "meta/arraysize.h"
-#include "utf8.h"
-#include "utils/ascii.h"
+#include "strings/utf8.h"
+#include "utils/ctype_ascii.h"
 #include "utils/slog.h"
 
 #include <assert.h>
@@ -478,9 +478,20 @@ static double json_scale10(const uint_fast64_t mant, const int exp)
 	return exp >= 0 ? m * json_pow10[exp] : m / json_pow10[-exp];
 }
 
+/* json_isfinite: libm-free finite test against the <float.h> bounds, so
+ * codec/json.c needs no <math.h> / libm dependency. */
+static bool json_isfinite(double v)
+{
+	return v == v && v <= DBL_MAX && v >= -DBL_MAX;
+}
+
 /* json_strtod: locale-independent conversion of a JSON number token (as
  * produced by scan_number) into a double.  s[0..len-1] need not be
- * NUL-terminated.  Returns false if the token is not a valid number.
+ * NUL-terminated.  Returns false if the token is not a valid number, or if
+ * its magnitude overflows the double range: a JSON number can never itself
+ * denote infinity, so a non-finite strtod result means the value is out of
+ * range.  (Underflow to a subnormal or ±0 is the correctly-rounded nearest
+ * double and stays a success, matching how every other value is rounded.)
  *
  * The significant digits are collected verbatim (the radix character folded
  * into a base-10 exponent) and handed to strtod, which rounds the full value
@@ -608,6 +619,9 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 	assert(n > 0 && (size_t)pos + (size_t)n < sizeof(token));
 	(void)n;
 	const double m = strtod(token, NULL);
+	if (!json_isfinite(m)) {
+		return false; /* magnitude overflows the double range */
+	}
 	*out = neg ? -m : m;
 	return true;
 }
@@ -979,13 +993,6 @@ int json_arr_next(
 /* -------------------------------------------------------------------------
  * Table-driven codec
  * ---------------------------------------------------------------------- */
-
-/* json_isfinite: libm-free finite test against the <float.h> bounds, so
- * codec/json.c needs no <math.h> / libm dependency. */
-static bool json_isfinite(double v)
-{
-	return v == v && v <= DBL_MAX && v >= -DBL_MAX;
-}
 
 /* json_fmod: libm-free remainder of x divided by y for finite x and finite
  * y > 0; returns a value with the sign of x and magnitude < y.  Exact in

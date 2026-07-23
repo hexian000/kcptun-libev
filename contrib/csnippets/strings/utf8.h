@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef CODEC_UTF8_H
-#define CODEC_UTF8_H
+#ifndef STRINGS_UTF8_H
+#define STRINGS_UTF8_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -42,4 +42,4 @@ int utf8_decode(char32_t *restrict cp, const char *restrict s, size_t len);
 
 /** @} */
 
-#endif /* CODEC_UTF8_H */
+#endif /* STRINGS_UTF8_H */

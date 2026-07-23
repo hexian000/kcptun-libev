@@ -242,6 +242,9 @@ socklen_t sa_len(const struct sockaddr *sa);
  * @brief Copies a sockaddr structure.
  * @param dst The destination sockaddr.
  * @param src The source sockaddr.
+ * @note The source family must be supported by sa_len (AF_INET or AF_INET6);
+ *       any other family would copy zero bytes and leave dst indeterminate,
+ *       so it is rejected by an assertion.
  * @note POSIX version: POSIX.1-2001
  */
 void sa_copy(struct sockaddr *restrict dst, const struct sockaddr *restrict src);
@@ -283,6 +286,9 @@ enum ipclass {
 	IPCLASS_SITELOCAL,
 	IPCLASS_MULTICAST,
 	IPCLASS_GLOBAL,
+	IPCLASS_SHARED, /* RFC 6598 shared address space (100.64.0.0/10, CGNAT) */
+	IPCLASS_RESERVED, /* RFC 1112 reserved for future use (240.0.0.0/4) */
+	IPCLASS_BROADCAST, /* RFC 919 limited broadcast (255.255.255.255) */
 };
 
 /**

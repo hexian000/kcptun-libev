@@ -1,8 +1,8 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#ifndef UTILS_FORMATS_H
-#define UTILS_FORMATS_H
+#ifndef STRINGS_FORMAT_H
+#define STRINGS_FORMAT_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -108,4 +108,4 @@ int format_rfc3339nano(
 	char *restrict s, size_t maxlen, const struct timespec *restrict tp,
 	bool utc);
 
-#endif /* UTILS_FORMATS_H */
+#endif /* STRINGS_FORMAT_H */

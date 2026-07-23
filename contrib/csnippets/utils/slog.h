@@ -9,9 +9,11 @@
 #if SLOG_MT_SAFE
 #include <stdatomic.h>
 #endif
-#include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+
+struct io_stream;
 
 enum {
 	LOG_LEVEL_SILENCE,
@@ -31,19 +33,18 @@ extern int slog_level_;
 #endif
 void slog_setlevel(int level);
 
-typedef void (*slog_writer_fn)(void *ud, const unsigned char *buf, size_t len);
-
 /* A drop-in replacement for the C library syslog(3). It receives the ident
  * registered with SLOG_OUTPUT_SYSLOG, the priority (facility | severity), and
  * the formatted message body. The ident may point into a caller structure so
- * that fn can recover its context from it. */
+ * that fn can recover its context from it. Runs under slog's output lock;
+ * logging through slog from within it is undefined behavior (see struct
+ * slog_extra). */
 typedef void (*slog_syslog_fn)(
 	const char *ident, int priority, const char *msg, size_t len);
 
 enum {
 	SLOG_OUTPUT_DISCARD,
 	SLOG_OUTPUT_TERMINAL,
-	SLOG_OUTPUT_FILE,
 	SLOG_OUTPUT_WRITER,
 	SLOG_OUTPUT_SYSLOG,
 };
@@ -54,9 +55,14 @@ enum {
  * variadic arguments:
  * - SLOG_OUTPUT_DISCARD: drop all messages. No extra arguments.
  * - SLOG_OUTPUT_TERMINAL, FILE *stream: write to a stream with ANSI colors.
- * - SLOG_OUTPUT_FILE, FILE *stream: write to a stream without ANSI colors.
- * - SLOG_OUTPUT_WRITER, slog_writer_fn fn, void *ud: deliver each formatted
- *   line to fn.
+ *   An overlong line is truncated to the internal buffer size, its color
+ *   reset and newline always emitted.
+ * - SLOG_OUTPUT_WRITER, struct io_stream *stream: write each formatted line to
+ *   stream (io/stream.h) without ANSI colors, then flush. The stream is
+ *   borrowed, never closed, and must stay valid until the sink is replaced;
+ *   NULL discards all messages. An overlong line is truncated to the internal
+ *   buffer size. The stream's write/flush run under slog's output lock and
+ *   must not log through slog (see struct slog_extra).
  * - SLOG_OUTPUT_SYSLOG, void *ident, slog_syslog_fn fn: send messages via fn,
  *   or the system syslog() when fn is NULL. ident is the syslog identity and is
  *   passed back to fn as its first argument.
@@ -73,15 +79,15 @@ enum {
 void slog_setflags(unsigned int flags);
 
 /**
- * @brief Extra content written after the message, via func(f, data).
- * @details Only honored by FILE-based sinks (SLOG_OUTPUT_TERMINAL,
- * SLOG_OUTPUT_FILE); other sinks ignore it. func, like the writer and syslog
- * callbacks, runs while slog holds its internal, non-recursive output lock; a
- * slog call made from within such a callback is silently dropped rather than
- * dispatched, so it neither re-enters (and deadlocks on) that lock nor emits.
+ * @brief Extra content written after the message, via func(s, data).
+ * @details Honored by the terminal and writer sinks; the syslog sink ignores
+ * it. func -- like the syslog callback and the writer stream's write/flush --
+ * runs while slog holds its internal, non-recursive output lock; calling any
+ * slog logging function from inside such a callback is undefined behavior
+ * (deadlock, or unbounded recursion without SLOG_MT_SAFE).
  */
 struct slog_extra {
-	void (*func)(FILE *f, void *data);
+	void (*func)(struct io_stream *s, void *data);
 	void *data;
 };
 /** @brief Log a message with a va_list of arguments. extra may be NULL. */
@@ -92,6 +98,19 @@ void slog_vprintf(
 void slog_printf(
 	int level, const char *file, int line, const struct slog_extra *extra,
 	const char *format, ...);
+
+/**
+ * @brief Async-signal-safe emergency log line, for use from a crash signal
+ * handler.
+ * @details Writes "<L> <file>:<line> <message>\n" to stderr with a single
+ * write(2): no locking, no buffered stdio, no allocation, and no timestamp
+ * (strftime()/localtime() are not async-signal-safe). Formats full printf-style
+ * via u8vsnprintf (strings/string.h), with its documented divergences; an
+ * overlong line is truncated to a fixed internal buffer, the newline always
+ * emitted. Unlike the LOG* macros it does not test the log level; the caller
+ * decides whether to emit.
+ */
+void slog_panicf(int level, const char *file, int line, const char *format, ...);
 
 /* LOG_F: Internal macro to log a message unconditionally. This is not a part of supported API. */
 #define LOG_F(level, format, ...)                                              \

@@ -3,8 +3,11 @@
 
 #include "debug.h"
 
-#include "utils/ascii.h"
+#include "io/stream.h"
+#include "strings/string.h"
+#include "strings/utf8.h"
 #include "utils/buffer.h"
+#include "utils/ctype_ascii.h"
 
 #if WITH_LIBBACKTRACE
 #include <backtrace.h>
@@ -15,7 +18,22 @@
 #include <execinfo.h>
 #endif
 
+/* debug_backtrace_fd() writes each frame itself with write(2) on the
+ * libbacktrace/libunwind and raw-address paths; the glibc path delegates to
+ * backtrace_symbols_fd() and touches neither write() nor errno. Gate the
+ * matching includes and the writer helper on that so no config carries an
+ * unused header or function. */
+#if WITH_LIBBACKTRACE || WITH_LIBUNWIND ||                                     \
+	!(HAVE_BACKTRACE && HAVE_BACKTRACE_SYMBOLS_FD)
+#define DEBUG_FD_RAW_WRITE 1
+#else
+#define DEBUG_FD_RAW_WRITE 0
+#endif
+
 #include <assert.h>
+#if DEBUG_FD_RAW_WRITE
+#include <errno.h>
+#endif
 #include <inttypes.h>
 #if SLOG_MT_SAFE
 #include <stdatomic.h>
@@ -23,9 +41,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <uchar.h>
+#if DEBUG_FD_RAW_WRITE
+#include <unistd.h>
+#endif
 #include <wchar.h>
 #include <wctype.h>
 
@@ -34,12 +55,20 @@
 
 #define INDENT "  "
 
-void slog_extra_txt(FILE *restrict f, void *restrict data)
+/* best-effort write to the log sink: like slog's own printers, an extra
+ * renderer has no channel to report its I/O failures through */
+static void
+put(struct io_stream *restrict s, const void *restrict data, size_t len)
+{
+	(void)io_stream_write(s, data, &len);
+}
+
+void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
 {
 	const struct slog_extra_txt *extra = data;
 	size_t n = extra->len;
 	const size_t hardwrap = extra->hardwrap < 4 ? 80 : extra->hardwrap;
-	const char *restrict s = extra->data;
+	const char *restrict text = extra->data;
 	struct {
 		BUFFER_HDR;
 		unsigned char data[256];
@@ -53,11 +82,11 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 	mbstate_t mbs = { 0 };
 	while (n > 0) {
 		wchar_t wc;
-		const size_t clen = mbrtowc(&wc, s, n, &mbs);
+		const size_t clen = mbrtowc(&wc, text, n, &mbs);
 		if (clen == 0 || clen == (size_t)-1 || clen == (size_t)-2) {
 			break;
 		}
-		s += clen, n -= clen;
+		text += clen, n -= clen;
 		if (cr && wc == L'\n') {
 			/* skip CRLF */
 			cr = false;
@@ -74,7 +103,7 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 		case L'\n':
 			/* soft wrap */
 			BUF_APPENDSTR(buf, "\n");
-			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+			put(s, buf.data, buf.len);
 			buf.len = 0;
 			column = 0;
 			newline = true;
@@ -103,7 +132,7 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 		if (column + width > hardwrap) {
 			/* hard wrap */
 			BUF_APPENDSTR(buf, " +\n" INDENT "     ");
-			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+			put(s, buf.data, buf.len);
 			buf.len = 0;
 			column = 0;
 			if (wc == L'\t') {
@@ -113,13 +142,20 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 		}
 		if (wc == L'\t') {
 			BUF_APPEND(buf, TAB_SPACE, width);
-			column += width;
 		} else {
-			BUF_APPENDF(buf, "%lc", wc);
-			column += width;
+			char u8[UTF8_MAX_LEN];
+			const int n8 = utf8_encode(u8, (char32_t)wc);
+			if (n8 > 0) {
+				BUF_APPEND(buf, u8, (size_t)n8);
+			} else {
+				/* unencodable (e.g. a surrogate half where
+				 * wchar_t is 16-bit): keep the column count */
+				BUF_APPENDSTR(buf, "?");
+			}
 		}
+		column += width;
 		if (buf.cap - buf.len < 16) {
-			(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+			put(s, buf.data, buf.len);
 			buf.len = 0;
 		}
 	}
@@ -127,16 +163,17 @@ void slog_extra_txt(FILE *restrict f, void *restrict data)
 		BUF_APPENDSTR(buf, "\n");
 	}
 	if (buf.len > 0) {
-		(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+		put(s, buf.data, buf.len);
 		buf.len = 0;
 	}
 	if (n > 0) {
 		/* omit bytes after the null terminator or undecodable code point */
-		(void)fprintf(f, INDENT " ... (omitting %zu bytes)\n", n);
+		BUF_APPENDF(buf, INDENT " ... (omitting %zu bytes)\n", n);
+		put(s, buf.data, buf.len);
 	}
 }
 
-void slog_extra_bin(FILE *restrict f, void *restrict data)
+void slog_extra_bin(struct io_stream *restrict s, void *restrict data)
 {
 	const struct slog_extra_bin *extra = data;
 	size_t n = extra->len;
@@ -149,13 +186,12 @@ void slog_extra_bin(FILE *restrict f, void *restrict data)
 	const unsigned char *restrict b = extra->data;
 	/* The fixed buffer only coalesces output to reduce write calls; flush it
 	 * whenever the next token might not fit, so a large binwrap does not
-	 * silently truncate a row. fwrite concatenates, so splitting a row across
-	 * writes yields byte-identical output. */
+	 * silently truncate a row. Writes concatenate, so splitting a row across
+	 * them yields byte-identical output. */
 #define BIN_FLUSH_IF(need)                                                     \
 	do {                                                                   \
 		if (buf.cap - buf.len < (size_t)(need)) {                      \
-			(void)fwrite(                                          \
-				buf.data, sizeof(buf.data[0]), buf.len, f);    \
+			put(s, buf.data, buf.len);                             \
 			buf.len = 0;                                           \
 		}                                                              \
 	} while (0)
@@ -187,23 +223,24 @@ void slog_extra_bin(FILE *restrict f, void *restrict data)
 		}
 		BIN_FLUSH_IF(1);
 		BUF_APPENDSTR(buf, "\n");
-		(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, f);
+		put(s, buf.data, buf.len);
 		buf.len = 0;
 	}
 #undef BIN_FLUSH_IF
 }
 
-static void fprint_line(void *data, const char *line)
+static void put_line(void *data, const char *line)
 {
-	FILE *const f = data;
-	(void)fprintf(f, INDENT "%s\n", line);
+	struct io_stream *restrict s = data;
+	put(s, INDENT, sizeof(INDENT) - 1);
+	put(s, line, strlen(line));
+	put(s, "\n", 1);
 }
 
-void slog_extra_stack(FILE *restrict f, void *restrict data)
+void slog_extra_stack(struct io_stream *restrict s, void *restrict data)
 {
 	struct slog_extra_stack *restrict extra = data;
-	(void)debug_backtrace_symbols(
-		fprint_line, f, extra->pc, (int)extra->len);
+	(void)debug_backtrace_symbols(put_line, s, extra->pc, (int)extra->len);
 }
 
 #if WITH_LIBBACKTRACE
@@ -312,7 +349,7 @@ static void error_cb(void *data, const char *msg, const int errnum)
 	(void)msg;
 	(void)errnum;
 	char line[256];
-	(void)snprintf(
+	(void)u8snprintf(
 		line, sizeof(line), "#%-3d 0x%jx <unknown>", ctx->index,
 		(uintmax_t)ctx->pc);
 	ctx->cb(ctx->arg, line);
@@ -330,7 +367,7 @@ static void syminfo_cb(
 		return;
 	}
 	char line[256];
-	(void)snprintf(
+	(void)u8snprintf(
 		line, sizeof(line), "#%-3d 0x%jx %s+0x%jx", ctx->index,
 		(uintmax_t)pc, symname, (uintmax_t)(pc - symval));
 	ctx->cb(ctx->arg, line);
@@ -344,7 +381,7 @@ static int pcinfo_cb(
 	struct print_context *restrict ctx = data;
 	if (function != NULL && filename != NULL) {
 		char line[256];
-		(void)snprintf(
+		(void)u8snprintf(
 			line, sizeof(line), "#%-3d 0x%jx in %s (%s:%d)",
 			ctx->index, (uintmax_t)pc, function, filename, lineno);
 		ctx->cb(ctx->arg, line);
@@ -364,7 +401,7 @@ static int nosym_lines(
 {
 	char line[256];
 	for (int i = 0; i < len; i++) {
-		(void)snprintf(
+		(void)u8snprintf(
 			line, sizeof(line), "#%-3d %p", i + 1, frames[i]);
 		cb(ctx, line);
 	}
@@ -421,11 +458,11 @@ int debug_backtrace_symbols(
 		unw_word_t offset;
 		char sym[256];
 		if (unw_get_proc_name(&cursor, sym, sizeof(sym), &offset)) {
-			(void)snprintf(
+			(void)u8snprintf(
 				line, sizeof(line), "#%-3d 0x%jx <unknown>",
 				i + 1, (uintmax_t)pc);
 		} else {
-			(void)snprintf(
+			(void)u8snprintf(
 				line, sizeof(line), "#%-3d 0x%jx %s+0x%jx",
 				i + 1, (uintmax_t)pc, sym, (uintmax_t)offset);
 		}
@@ -439,7 +476,8 @@ int debug_backtrace_symbols(
 	}
 	char line[256];
 	for (int i = 0; i < len; i++) {
-		(void)snprintf(line, sizeof(line), "#%-3d %s", i + 1, syms[i]);
+		(void)u8snprintf(
+			line, sizeof(line), "#%-3d %s", i + 1, syms[i]);
 		cb(ctx, line);
 	}
 	free((void *)syms);
@@ -447,6 +485,101 @@ int debug_backtrace_symbols(
 #else /* WITH_LIBBACKTRACE */
 	return nosym_lines(cb, ctx, frames, len);
 #endif /* WITH_LIBBACKTRACE */
+}
+
+/* --- async-signal-safe fd backtrace --------------------------------------- */
+
+/* debug_fd_write() serves the libbacktrace/libunwind and raw-address paths; the
+ * glibc path writes through backtrace_symbols_fd() and does not need it */
+#if DEBUG_FD_RAW_WRITE
+/* write the whole buffer, retrying short writes and EINTR; best-effort during a
+ * crash (a stack tracer has no channel to report its own I/O failure through) */
+static void debug_fd_write(const int fd, const void *restrict data, size_t n)
+{
+	const unsigned char *restrict p = data;
+	while (n > 0) {
+		const ssize_t nw = write(fd, p, n);
+		if (nw < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			break;
+		}
+		if (nw == 0) {
+			break;
+		}
+		p += (size_t)nw;
+		n -= (size_t)nw;
+	}
+}
+#endif /* DEBUG_FD_RAW_WRITE */
+
+static void
+debug_backtrace_warmup_cb(void *restrict ctx, const char *restrict line)
+{
+	(void)ctx;
+	(void)line;
+}
+
+bool debug_backtrace_init(void)
+{
+	void *frames[DEBUG_STACK_MAXDEPTH];
+	const int n = debug_backtrace(frames, 0, DEBUG_STACK_MAXDEPTH);
+	if (n <= 0) {
+		return false;
+	}
+	/* warm the symbolization path too (symbol table / DWARF parse and the
+	 * backend's caches): debug_backtrace() alone only warms the unwinder, so
+	 * a first debug_backtrace_fd() would still allocate/parse otherwise */
+	(void)debug_backtrace_symbols(
+		debug_backtrace_warmup_cb, NULL, frames, n);
+	return true;
+}
+
+#if WITH_LIBBACKTRACE || WITH_LIBUNWIND
+/* line sink for debug_backtrace_symbols(): route each formatted frame to the fd
+ * captured in ctx. Reuses the libbacktrace/libunwind symbolizers, which draw
+ * from their own mmap arenas (not the C heap), so this stays deadlock-free from
+ * a signal handler once debug_backtrace_init() has warmed them. */
+static void debug_fd_line_cb(void *restrict ctx, const char *restrict line)
+{
+	const int fd = *(const int *)ctx;
+	debug_fd_write(fd, line, strlen(line));
+	debug_fd_write(fd, "\n", 1);
+}
+#elif !(HAVE_BACKTRACE && HAVE_BACKTRACE_SYMBOLS_FD)
+/* raw-address fallback: this build has no async-signal-safe symbolizer */
+static void debug_fd_nosym(const int fd, void **restrict frames, const int len)
+{
+	for (int i = 0; i < len; i++) {
+		char line[2 + 3 + 2 + 2 * sizeof(void *) + 2];
+		const int r = u8snprintf(
+			line, sizeof(line), "#%-3d %p\n", i + 1, frames[i]);
+		if (r > 0) {
+			const size_t w = (size_t)r < sizeof(line) ?
+						 (size_t)r :
+						 sizeof(line);
+			debug_fd_write(fd, line, w);
+		}
+	}
+}
+#endif
+
+void debug_backtrace_fd(const int fd, void **restrict frames, const int len)
+{
+	if (fd < 0 || len <= 0) {
+		return;
+	}
+#if WITH_LIBBACKTRACE || WITH_LIBUNWIND
+	int fdarg = fd;
+	(void)debug_backtrace_symbols(debug_fd_line_cb, &fdarg, frames, len);
+#elif HAVE_BACKTRACE && HAVE_BACKTRACE_SYMBOLS_FD
+	/* backtrace_symbols_fd() writes straight to the descriptor and, unlike
+	 * backtrace_symbols(), is documented not to call malloc() */
+	backtrace_symbols_fd(frames, len, fd);
+#else
+	debug_fd_nosym(fd, frames, len);
+#endif
 }
 
 struct strframes_ctx {

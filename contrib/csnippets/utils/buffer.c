@@ -3,28 +3,34 @@
 
 #include "buffer.h"
 
-#include "meta/minmax.h"
+#include "strings/string.h"
 
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* vsnprintf may report more chars than fit; len only advances by what was
- * actually written. */
+/* u8vsnprintf reports more chars than fit; len only advances by what was
+ * actually stored. On truncation the engine drops whole codepoints rather
+ * than splitting one, so the stored prefix may fall short of the capacity;
+ * the NUL it writes in place marks the exact fill (an embedded NUL from %c
+ * undercounts -- accepted as pathological). */
 int buf_vappendf(
 	struct buffer *restrict buf, const char *restrict format, va_list args)
 {
 	const size_t maxlen = buf->cap - buf->len;
 	char *restrict s = (char *)(buf->data + buf->len);
-	/* Even when the buffer is full (maxlen == 0) vsnprintf writes nothing
-	 * but still returns the would-be length, so the caller can detect the
-	 * truncation -- do not short-circuit to 0. */
-	const int ret = vsnprintf(s, maxlen, format, args);
+	/* Even when the buffer is full (maxlen == 0) u8vsnprintf writes
+	 * nothing but still returns the would-be length, so the caller can
+	 * detect the truncation -- do not short-circuit to 0. */
+	const int ret = u8vsnprintf(s, maxlen, format, args);
 	if (ret > 0 && maxlen > 0) {
-		buf->len += MIN((size_t)ret, maxlen - 1);
+		if ((size_t)ret < maxlen) {
+			buf->len += (size_t)ret;
+		} else {
+			buf->len += strlen(s);
+		}
 	}
 	return ret;
 }
@@ -131,11 +137,11 @@ int vbuf_vappendf(
 	{
 		char *restrict s = (char *)(vbuf->data + vbuf->len);
 		const size_t maxlen = vbuf->cap - vbuf->len;
-		/* args may be needed again below; vsnprintf may only consume
-		 * a va_list once, so pass a copy here. */
+		/* args may be needed again below; a va_list may only be
+		 * consumed once, so pass a copy here. */
 		va_list args0;
 		va_copy(args0, args);
-		ret = vsnprintf(s, maxlen + 1, format, args0);
+		ret = u8vsnprintf(s, maxlen + 1, format, args0);
 		va_end(args0);
 	}
 	if (ret <= 0) {
@@ -154,10 +160,15 @@ int vbuf_vappendf(
 	{
 		char *restrict s = (char *)(vbuf->data + vbuf->len);
 		const size_t maxlen = vbuf->cap - vbuf->len;
-		(void)vsnprintf(s, maxlen + 1, format, args);
+		(void)u8vsnprintf(s, maxlen + 1, format, args);
 		if ((size_t)ret < maxlen) {
 			vbuf->len += (size_t)ret;
 		} else {
+			/* len == cap is the OOM marker; the engine may stop a
+			 * whole codepoint short, so zero the gap through the
+			 * reserved NUL slot to expose no stale bytes */
+			const size_t fill = strlen(s);
+			(void)memset(s + fill, 0, maxlen + 1 - fill);
 			vbuf->len = vbuf->cap;
 		}
 	}

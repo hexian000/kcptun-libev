@@ -7,9 +7,11 @@
 #include "utils/debug.h"
 #include "utils/slog.h"
 
+#include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 struct sigmap_entry {
 	int signo;
@@ -125,11 +127,33 @@ static void crash_altstack_teardown(void)
 
 static void sighandler_crash(const int signo)
 {
-	const char *const sigstr = os_strsignal(signo);
-	if (sigstr != NULL) {
-		LOG_STACK_F(FATAL, 2, "DEADLY SIGNAL: (%d) %s", signo, sigstr);
-	} else {
-		LOG_STACK_F(FATAL, 2, "DEADLY SIGNAL: (%d)", signo);
+	/* Report the crash without any async-signal-unsafe call: slog_panicf()
+	 * and debug_backtrace_fd() write straight to stderr with write(2) -- no
+	 * lock, no buffered stdio, no allocation -- unlike the LOG_STACK_F() path
+	 * this replaced, which deadlocked if the crash interrupted a thread
+	 * already holding slog's output lock or inside malloc.
+	 * debug_backtrace_init() (crashhandler_install) must have warmed the
+	 * backtrace machinery first. */
+	if (LOGLEVEL(FATAL)) {
+		/* a signal handler must leave errno as it found it */
+		const int saved_errno = errno;
+		const char *const sigstr = os_strsignal(signo);
+		if (sigstr != NULL) {
+			slog_panicf(
+				LOG_LEVEL_FATAL, __FILE__, __LINE__,
+				"DEADLY SIGNAL: (%d) %s", signo, sigstr);
+		} else {
+			slog_panicf(
+				LOG_LEVEL_FATAL, __FILE__, __LINE__,
+				"DEADLY SIGNAL: (%d)", signo);
+		}
+		/* skip=2 drops debug_backtrace, sighandler_crash and the signal
+		 * trampoline so the trace starts at the faulting frame, matching
+		 * the previous LOG_STACK_F(FATAL, 2, ...) */
+		void *frames[DEBUG_STACK_MAXDEPTH];
+		const int n = debug_backtrace(frames, 2, DEBUG_STACK_MAXDEPTH);
+		debug_backtrace_fd(STDERR_FILENO, frames, n);
+		errno = saved_errno;
 	}
 	size_t idx = NUM_SIGHANDLERS;
 	for (size_t i = 0; i < NUM_SIGHANDLERS; i++) {
@@ -141,7 +165,11 @@ static void sighandler_crash(const int signo)
 	const struct sigaction *const act =
 		idx < NUM_SIGHANDLERS ? &sighandlers[idx].oact : NULL;
 	if (sigaction(signo, act, NULL) != 0) {
-		LOG_PERROR("sigaction");
+		/* async-signal-safe error report on the near-impossible restore
+		 * failure; strerror() is unsafe, so emit the raw errno */
+		slog_panicf(
+			LOG_LEVEL_ERROR, __FILE__, __LINE__, "sigaction: (%d)",
+			errno);
 		_Exit(EXIT_FAILURE);
 	}
 	if (idx < NUM_SIGHANDLERS) {
@@ -157,17 +185,12 @@ static void sighandler_crash(const int signo)
 	}
 }
 
-/* the first capture lazily allocates internal resources, which is not
- * async-signal-safe; capture once beforehand and verify it works */
-static bool probe_backtrace(void)
-{
-	void *frames[DEBUG_STACK_MAXDEPTH];
-	return debug_backtrace(frames, 0, DEBUG_STACK_MAXDEPTH) > 0;
-}
-
 void crashhandler_install(void)
 {
-	if (!probe_backtrace()) {
+	/* Warm the capture and symbolization paths up front (both lazily
+	 * allocate/parse on first use, which is not async-signal-safe) and
+	 * verify a backtrace is actually available before arming the handlers. */
+	if (!debug_backtrace_init()) {
 		LOGW("crash handler not installed: backtrace unavailable");
 		return;
 	}
@@ -178,9 +201,13 @@ void crashhandler_install(void)
 	if (crash_altstack != NULL) {
 		act.sa_flags = SA_ONSTACK;
 	}
-	/* POSIX requires a sigset_t be initialized with sigemptyset/sigfillset
-	 * before use rather than relying on an all-zero value meaning empty */
-	(void)sigemptyset(&act.sa_mask);
+	/* Block everything while the handler runs (the initialization POSIX
+	 * requires anyway): a second guarded signal, e.g. from another crashing
+	 * thread, must not interrupt the report mid-line and interleave its own.
+	 * A synchronous re-fault inside the handler is unblockable regardless
+	 * and takes the process down with the default action, which is the
+	 * intended backstop. */
+	(void)sigfillset(&act.sa_mask);
 	for (size_t i = 0; i < NUM_SIGHANDLERS; i++) {
 		if (sighandlers[i].installed) {
 			/* already captured; re-installing would overwrite

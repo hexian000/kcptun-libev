@@ -6,6 +6,7 @@
 #include "utils/slog.h"
 
 #include <arpa/inet.h>
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -296,7 +297,12 @@ socklen_t sa_len(const struct sockaddr *sa)
 
 void sa_copy(struct sockaddr *restrict dst, const struct sockaddr *restrict src)
 {
-	memcpy(dst, src, sa_len(src));
+	const socklen_t len = sa_len(src);
+	/* sa_len knows only AF_INET / AF_INET6 and returns 0 for any other
+	 * family; copying 0 bytes would silently leave dst indeterminate, so
+	 * require a supported family instead of a no-op corruption. */
+	assert(len > 0);
+	memcpy(dst, src, len);
 }
 
 static int sa_format_inet(
@@ -440,12 +446,20 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
 /* Classify a host-byte-order IPv4 address. Note 0.0.0.0/8 ("this network",
  * RFC 1122) is treated as UNSPECIFIED rather than narrowing to 0.0.0.0/32:
  * the rest of the block is non-routable too, so reporting it UNSPECIFIED is
- * safer for policy use than letting it fall through to GLOBAL. */
+ * safer for policy use than letting it fall through to GLOBAL. The same
+ * principle covers the non-routable blocks that RFC assigns their own class:
+ * 100.64.0.0/10 shared space, 240.0.0.0/4 reserved, and the 255.255.255.255
+ * limited broadcast, none of which are globally routable. */
 static enum ipclass ipclassify_inet4(const uint32_t addr)
 {
+	if (addr == UINT32_C(0xffffffff)) { /* 255.255.255.255 */
+		return IPCLASS_BROADCAST;
+	}
 	switch (addr & UINT32_C(0xf0000000)) {
 	case 0xe0000000: /* 224.0.0.0/4 */
 		return IPCLASS_MULTICAST;
+	case 0xf0000000: /* 240.0.0.0/4 (RFC 1112 §4 reserved) */
+		return IPCLASS_RESERVED;
 	default:
 		break;
 	}
@@ -456,6 +470,12 @@ static enum ipclass ipclassify_inet4(const uint32_t addr)
 		return IPCLASS_LOOPBACK;
 	case 0x0a000000: /* 10.0.0.0/8 */
 		return IPCLASS_SITELOCAL;
+	default:
+		break;
+	}
+	switch (addr & UINT32_C(0xffc00000)) {
+	case 0x64400000: /* 100.64.0.0/10 (RFC 6598 shared address space) */
+		return IPCLASS_SHARED;
 	default:
 		break;
 	}

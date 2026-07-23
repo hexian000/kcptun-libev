@@ -3,7 +3,7 @@
 
 #include "url.h"
 
-#include "utils/ascii.h"
+#include "utils/ctype_ascii.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -299,14 +299,20 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 	return (int)written;
 }
 
-/* RFC 3986 forbids raw control characters in a URI. Cast through unsigned
- * char so a high byte (0x80-0xFF) on a signed-char platform is not mistaken
- * for a control character. */
-static bool has_ctl(const char *s)
+/* RFC 3986 admits only these bytes unencoded in a URI: the unreserved set
+ * (ALPHA / DIGIT / "-" / "." / "_" / "~"), the reserved gen-delims and
+ * sub-delims, and "%" introducing a percent-encoding. Every other byte -- a
+ * raw space, one of <>"{}|\^` and backtick, a control character, or a high
+ * byte 0x80-0xFF -- is forbidden and makes the whole input an invalid URI, so
+ * the "escaped" contract on the parsed path/host/query holds. Cast through
+ * unsigned char so a high byte on a signed-char platform is not misread as an
+ * allowed one. */
+static bool has_forbidden(const char *s)
 {
+	static const char allowed[] = "-._~:/?#[]@!$&'()*+,;=%";
 	for (; *s != '\0'; ++s) {
 		const unsigned char c = (unsigned char)*s;
-		if (iscntrl(c)) {
+		if (!isalnum(c) && strchr(allowed, c) == NULL) {
 			return true;
 		}
 	}
@@ -367,7 +373,7 @@ static bool unescape(char *str, const bool space)
 
 bool url_parse(char *raw, struct url *restrict url)
 {
-	if (has_ctl(raw)) {
+	if (has_forbidden(raw)) {
 		return false;
 	}
 

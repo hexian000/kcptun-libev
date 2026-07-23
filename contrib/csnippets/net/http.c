@@ -4,7 +4,7 @@
 #include "http.h"
 
 #include "meta/arraysize.h"
-#include "utils/ascii.h"
+#include "utils/ctype_ascii.h"
 
 #include <inttypes.h>
 #include <stdbool.h>

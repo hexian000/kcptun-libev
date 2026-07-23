@@ -6,8 +6,8 @@
 
 #include "slog.h"
 
+#include <stdbool.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 struct slog_extra_txt {
@@ -16,7 +16,7 @@ struct slog_extra_txt {
 	/** Column at which to wrap; a value < 4 selects the default of 80. */
 	size_t hardwrap;
 };
-void slog_extra_txt(FILE *restrict f, void *restrict data);
+void slog_extra_txt(struct io_stream *restrict s, void *restrict data);
 
 struct slog_extra_bin {
 	const void *data;
@@ -24,20 +24,45 @@ struct slog_extra_bin {
 	/** Bytes per row; a value of 0 selects the default of 16. */
 	size_t binwrap;
 };
-void slog_extra_bin(FILE *restrict f, void *restrict data);
+void slog_extra_bin(struct io_stream *restrict s, void *restrict data);
 
 struct slog_extra_stack {
 	size_t len;
 	void *pc[];
 };
-void slog_extra_stack(FILE *restrict f, void *restrict data);
+void slog_extra_stack(struct io_stream *restrict s, void *restrict data);
 
 int debug_backtrace(void **restrict frames, int skip, int len);
+
+/**
+ * @brief Warm up the backtrace machinery for async-signal-safe use.
+ * @details Forces the lazy unwinder/allocator and symbol/DWARF initialization
+ * by capturing and symbolizing the current stack once, so a later
+ * debug_backtrace() or debug_backtrace_fd() -- e.g. from a crash signal handler
+ * -- performs no first-use allocation or file parsing. Call once, from ordinary
+ * (non-signal) context, before installing crash handlers; idempotent, and safe
+ * (but not required) to call again after dlopen() to warm newly mapped objects.
+ * @return true if a usable backtrace is available, false otherwise.
+ */
+bool debug_backtrace_init(void);
 
 typedef void (*debug_backtrace_symbols_cb)(void *ctx, const char *line);
 int debug_backtrace_symbols(
 	debug_backtrace_symbols_cb cb, void *ctx, void **restrict frames,
 	int len);
+
+/**
+ * @brief Write a symbolized stack trace straight to a file descriptor.
+ * @details Async-signal-safe after debug_backtrace_init(): emits each frame
+ * with write(2) and no buffered stdio. The glibc backend uses
+ * backtrace_symbols_fd() (documented malloc-free, unlike backtrace_symbols());
+ * the libbacktrace and libunwind backends symbolize from their own mmap-based
+ * arenas rather than the C heap. A build with no async-signal-safe symbolizer
+ * falls back to raw frame addresses. Intended for crash handlers; pass
+ * STDERR_FILENO to target the same destination as slog_panicf(). A no-op when
+ * fd < 0 or len <= 0.
+ */
+void debug_backtrace_fd(int fd, void **restrict frames, int len);
 
 int debug_strframes(
 	char *restrict buf, size_t maxlen, void **restrict frames, int len,
