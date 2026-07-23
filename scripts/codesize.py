@@ -204,11 +204,48 @@ def _sloc(path: Path) -> int:
 # Size collection
 # ---------------------------------------------------------------------------
 
-def _resolve_linked_dirs(build_dir: Path, target: str) -> set[str]:
-    """Return the CMakeFiles *.dir names for *target* and any linked static archives.
+def _cmakefiles_dir(parts: tuple[str, ...]) -> str | None:
+    """Return the ``CMakeFiles/<name>.dir`` component from a path's *parts*.
 
-    Reads link.txt for the target, resolves each ``.a`` path, and derives the
-    CMake target directory name from the archive stem (``libFOO.a`` → ``FOO.dir``).
+    Object files live at ``.../CMakeFiles/<name>.dir/.../foo.c.o``; return the
+    ``<name>.dir`` element, or None when *parts* has no such component.
+    """
+    try:
+        idx = parts.index("CMakeFiles")
+    except ValueError:
+        return None
+    if idx + 1 >= len(parts):
+        return None
+    name = parts[idx + 1]
+    return name if name.endswith(".dir") else None
+
+
+def _archive_dir(p: Path, run_dir: Path) -> str | None:
+    """Derive the ``<name>.dir`` for a linked static-archive token, or None.
+
+    Resolves *p* (relative tokens against *run_dir*) and turns the archive stem
+    into a CMake target directory name (``libFOO.a`` → ``FOO.dir``). Returns None
+    when the archive does not exist on disk.
+    """
+    resolved = (run_dir / p).resolve() if not p.is_absolute() else p.resolve()
+    if not resolved.exists():
+        return None
+    stem = resolved.stem
+    lib_name = stem[3:] if stem.startswith("lib") else stem
+    return f"{lib_name}.dir"
+
+
+def _resolve_linked_dirs(build_dir: Path, target: str) -> set[str]:
+    """Return the CMakeFiles *.dir names contributing objects to *target*.
+
+    Reads link.txt for the target and accounts for both ways CMake feeds a
+    dependency's translation units into the link:
+
+    - **static archives** (``.a``): resolve the path and derive the target
+      directory name from the archive stem (``libFOO.a`` → ``FOO.dir``);
+    - **loose objects** (``.o``): sources built as a CMake OBJECT library are
+      linked as bare object tokens under their own ``CMakeFiles/<name>.dir``,
+      never through a ``.a``, so take that ``.dir`` component directly.
     """
     primary = f"{target}.dir"
     dirs: set[str] = {primary}
@@ -233,15 +270,14 @@ def _resolve_linked_dirs(build_dir: Path, target: str) -> set[str]:
 
     for token in tokens:
         p = Path(token)
-        if p.suffix != ".a":
-            continue
-        resolved = (
-            run_dir / p).resolve() if not p.is_absolute() else p.resolve()
-        if not resolved.exists():
-            continue
-        stem = resolved.stem
-        lib_name = stem[3:] if stem.startswith("lib") else stem
-        dirs.add(f"{lib_name}.dir")
+        if p.suffix == ".a":
+            lib_dir = _archive_dir(p, run_dir)
+            if lib_dir is not None:
+                dirs.add(lib_dir)
+        elif p.suffix == ".o":
+            obj_dir = _cmakefiles_dir(p.parts)
+            if obj_dir is not None:
+                dirs.add(obj_dir)
 
     return dirs
 
@@ -270,12 +306,8 @@ def _find_obj_files(build_dir: Path, target: str | None = None) -> dict[str, Pat
         if obj is None or not obj.exists():
             continue
         if target_dirs is not None:
-            parts = obj.parts
-            try:
-                idx = parts.index("CMakeFiles")
-            except ValueError:
-                continue
-            if idx + 1 >= len(parts) or parts[idx + 1] not in target_dirs:
+            obj_dir = _cmakefiles_dir(obj.parts)
+            if obj_dir is None or obj_dir not in target_dirs:
                 continue
         sz = obj.stat().st_size
         if sz > best.get(src_rel, (None, 0))[1]:
