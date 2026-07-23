@@ -19,7 +19,7 @@
 #include "os/socket.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
-#include "utils/formats.h"
+#include "strings/format.h"
 #include "utils/slog.h"
 
 #include <ev.h>
@@ -562,15 +562,11 @@ static bool print_session_iter(
 	const double not_seen =
 		last_seen != TSTAMP_NIL ? ctx->now - last_seen : TSTAMP_NIL;
 
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
-
 	/* intentionally shows tcp_tx/tcp_rx, not kcp_rx/kcp_tx: the local
 	 * TCP peer's own view of this session's traffic, mirroring the
 	 * tcp/kcp-crossing server_stats uses for its efficiency ratio */
-	FORMAT_BYTES(kcp_rx, (double)ss->stats.tcp_tx);
-	FORMAT_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
+	FORMAT_IEC_BYTES(kcp_rx, (double)ss->stats.tcp_tx);
+	FORMAT_IEC_BYTES(kcp_tx, (double)ss->stats.tcp_rx);
 
 	int rtt = -1, rto = -1;
 	if (ss->kcp != NULL) {
@@ -583,7 +579,6 @@ static bool print_session_iter(
 		"rtt=%d rto=%d waitsnd=%zu rx/tx=%s/%s\n",
 		ss->conv, kcp_state_char[state], addr_str, not_seen, rtt, rto,
 		waitsnd, kcp_rx, kcp_tx);
-#undef FORMAT_BYTES
 
 	return true;
 }
@@ -611,18 +606,13 @@ static struct vbuffer *print_session_table(
 static struct vbuffer *append_traffic_stats(
 	struct vbuffer *buf, const struct link_stats *restrict stats)
 {
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
+	FORMAT_IEC_BYTES(tcp_rx, (double)(stats->tcp_rx));
+	FORMAT_IEC_BYTES(tcp_tx, (double)(stats->tcp_tx));
+	FORMAT_IEC_BYTES(kcp_rx, (double)(stats->kcp_rx));
+	FORMAT_IEC_BYTES(kcp_tx, (double)(stats->kcp_tx));
+	FORMAT_IEC_BYTES(pkt_rx, (double)(stats->pkt_rx));
+	FORMAT_IEC_BYTES(pkt_tx, (double)(stats->pkt_tx));
 
-	FORMAT_BYTES(tcp_rx, (double)(stats->tcp_rx));
-	FORMAT_BYTES(tcp_tx, (double)(stats->tcp_tx));
-	FORMAT_BYTES(kcp_rx, (double)(stats->kcp_rx));
-	FORMAT_BYTES(kcp_tx, (double)(stats->kcp_tx));
-	FORMAT_BYTES(pkt_rx, (double)(stats->pkt_rx));
-	FORMAT_BYTES(pkt_tx, (double)(stats->pkt_tx));
-
-#undef FORMAT_BYTES
 	VBUF_APPENDF(
 		buf, "[total] tcp: %s, %s; kcp: %s, %s; pkt: %s, %s\n",
 		/* total */ tcp_rx, tcp_tx, kcp_rx, kcp_tx, pkt_rx, pkt_tx);
@@ -659,10 +649,6 @@ struct vbuffer *server_stats(
 	const double dt = now - s->last_stats_time;
 	const struct link_stats *restrict stats = &s->stats;
 
-#define FORMAT_BYTES(name, value)                                              \
-	char name[16];                                                         \
-	(void)format_iec_bytes(name, sizeof(name), (value))
-
 #define FORMAT_DURATION(name, value)                                           \
 	char name[16];                                                         \
 	(void)format_duration(name, sizeof(name), (value))
@@ -679,10 +665,10 @@ struct vbuffer *server_stats(
 	/* two calls within the same event-loop iteration (or a backward
 	 * wall-clock step) would otherwise divide by a zero or negative dt */
 	if (dt > 0) {
-		FORMAT_BYTES(dtcp_rx, dstats.tcp_rx / dt);
-		FORMAT_BYTES(dtcp_tx, dstats.tcp_tx / dt);
-		FORMAT_BYTES(dkcp_rx, dstats.kcp_rx / dt);
-		FORMAT_BYTES(dkcp_tx, dstats.kcp_tx / dt);
+		FORMAT_IEC_BYTES(dtcp_rx, dstats.tcp_rx / dt);
+		FORMAT_IEC_BYTES(dtcp_tx, dstats.tcp_tx / dt);
+		FORMAT_IEC_BYTES(dkcp_rx, dstats.kcp_rx / dt);
+		FORMAT_IEC_BYTES(dkcp_tx, dstats.kcp_tx / dt);
 		/* kcp_rx/kcp_tx are legitimately zero on any idle interval */
 		const double deff_rx = dstats.kcp_rx > 0 ?
 					       (double)dstats.tcp_tx * 100.0 /
@@ -719,7 +705,6 @@ struct vbuffer *server_stats(
 		buf, "  = load: %s (last %s); pkt: %s/s, %s/s; uptime: %s\n",
 		load_str, dt_str, dpkt_rx, dpkt_tx, uptime_str);
 
-#undef FORMAT_BYTES
 #undef FORMAT_DURATION
 
 	/* rotate stats */
@@ -871,34 +856,10 @@ static bool shutdown_filt(
 	return false;
 }
 
-void server_stop(struct server *restrict s)
+/* stop every server watcher and the packet transport; safe to call on a
+   partially-started server (s->pkt.queue may be NULL) */
+static void server_watchers_stop(struct server *restrict s)
 {
-	struct ev_loop *loop = s->loop;
-	listener_stop(loop, &s->listener);
-	ev_timer_stop(loop, &s->w_kcp_update);
-	ev_timer_stop(loop, &s->w_keepalive);
-	ev_timer_stop(loop, &s->w_resolve);
-	ev_timer_stop(loop, &s->w_timeout);
-	const size_t num = table_size(s->sessions);
-	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
-	LOGI_F("%zu sessions closed", num);
-#if WITH_OBFS
-	if (s->pkt.queue->obfs != NULL) {
-		obfs_stop(s->pkt.queue->obfs, s);
-	} else {
-		udp_stop(s->loop, &s->pkt);
-	}
-#else
-	udp_stop(s->loop, &s->pkt);
-#endif
-}
-
-void server_free(struct server *restrict s)
-{
-	/* defensively tear down any still-active state: server_start can
-	 * fail after partially starting up, and the caller goes straight to
-	 * server_free without calling server_stop first. Each of these is
-	 * a safe no-op if the corresponding state was never started. */
 	struct ev_loop *loop = s->loop;
 	listener_stop(loop, &s->listener);
 	ev_timer_stop(loop, &s->w_kcp_update);
@@ -914,6 +875,23 @@ void server_free(struct server *restrict s)
 #else
 	udp_stop(s->loop, &s->pkt);
 #endif
+}
+
+void server_stop(struct server *restrict s)
+{
+	server_watchers_stop(s);
+	const size_t num = table_size(s->sessions);
+	s->sessions = table_filter(s->sessions, shutdown_filt, NULL);
+	LOGI_F("%zu sessions closed", num);
+}
+
+void server_free(struct server *restrict s)
+{
+	/* defensively tear down any still-active state: server_start can fail
+	 * after partially starting up, and the caller goes straight to
+	 * server_free without calling server_stop first. server_watchers_stop
+	 * is a safe no-op if the corresponding state was never started. */
+	server_watchers_stop(s);
 	udp_free(&s->pkt);
 	if (s->sessions != NULL) {
 		/* free any surviving session payloads before the table itself,
