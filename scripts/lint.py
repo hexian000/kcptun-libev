@@ -23,7 +23,7 @@ files (*_test.c) and not generated files (*.gen.c). The third-party tree
 file groups back in.
 
 Denoising: some valuable checks fire false positives on this project's own
-facilities (the archetype is misc-include-cleaner on utils/ascii.h, an
+facilities (the archetype is misc-include-cleaner on utils/ctype_ascii.h, an
 ASCII-only <ctype.h> replacement). Findings that can be *proven* to be such
 false positives are withheld from the main report into a separate section;
 anything uncertain is kept, so a real defect is never dropped. --no-denoise
@@ -40,7 +40,7 @@ import re
 import subprocess
 import sys
 import time
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from pathlib import Path
 
 
@@ -218,32 +218,48 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Denoising
 #
-# Some checks are valuable in general but fire false positives on this
-# project's own facilities. The archetype is misc-include-cleaner and
-# utils/ascii.h: ascii.h defines the character-classification family
-# (isdigit, isalnum, isprint, tolower, ...) as ASCII-only macros that
-# deliberately replace <ctype.h> — the two are mutually exclusive, ascii.h
-# #errors if ctype.h's macros are already defined. include-cleaner maps those
-# names to <ctype.h> unconditionally and reports "no header providing isdigit",
-# a demand that is impossible to satisfy here.
+# Some checks are valuable in general but fire false positives when a header
+# genuinely provides a symbol yet clang-tidy's include-cleaner fails to credit
+# it. The archetype is misc-include-cleaner and utils/ctype_ascii.h, which
+# defines the character-classification family (isdigit, isalnum, isprint,
+# tolower, ...) as ASCII-only macros that deliberately replace <ctype.h> — the
+# two are mutually exclusive, ctype_ascii.h #errors if ctype.h's macros are
+# already defined.
+# include-cleaner maps those names to <ctype.h> unconditionally and reports "no
+# header providing isdigit", a demand that is impossible to satisfy here.
+#
+# The same failure recurs for several standard/third-party headers whose symbol
+# supply clang's map misattributes or overlooks: <sys/wait.h> (wait-status
+# macros clang credits to <stdlib.h>), <errno.h>, <netinet/in.h> and <net/if.h>
+# (whose symbols clang can miss), the POSIX types ssize_t/socklen_t (a real
+# provider header is included, yet clang reports none), and single-umbrella
+# libraries such as libsodium (<sodium.h>) and Lua (<lua.h>) that expose an
+# entire prefixed symbol family through one public header. Each surfaces as one
+# of two misc-include-cleaner phrasings: the symbol reads as unprovided ("no
+# header providing ..."), or the header reads as unused ("included header ... is
+# not used directly").
 #
 # The denoiser withholds only findings it can PROVE are such false positives;
-# it must never drop a finding that could be a real defect. Each rule is
-# therefore anchored to concrete evidence in the source — here: the flagged
-# name is one ascii.h actually defines AND the flagged file itself includes
-# ascii.h. A <ctype.h>-unrelated missing include (pid_t, char32_t, openlog,
-# ...) is left untouched. Suppressed findings are still reported in their own
-# section, and --no-denoise disables the pass, so nothing is silently hidden.
+# it must never drop a finding that could be a real defect. Every rule is a
+# _Provider entry anchored to concrete evidence in the source: a finding is
+# suppressed only when the file actually includes the provider header AND the
+# flagged symbol genuinely belongs to that provider (an exact name, a
+# ctype_ascii.h-defined name, or a library symbol-prefix). A missing include unrelated
+# to a known provider (pid_t, char32_t, openlog, ...) is left untouched, as is a
+# header whose symbols overlap other headers (e.g. <sys/types.h> reported unused
+# — possibly a genuine redundant include — is never suppressed). Suppressed
+# findings are still reported in their own section, and --no-denoise disables the
+# pass, so nothing is silently hidden.
 # ---------------------------------------------------------------------------
 
-ASCII_HEADER = "utils/ascii.h"  # spelling used in #include directives
+ASCII_HEADER = "utils/ctype_ascii.h"  # spelling used in #include directives
 
-# Include roots under which the "utils/ascii.h" spelling resolves on disk,
-# mirroring the build's -I paths. In csnippets itself the header lives under
-# src/; the downstream projects vendor csnippets under contrib/csnippets/, so
-# the same include spelling resolves there instead. Searched in order; the
+# Include roots under which the "utils/ctype_ascii.h" spelling resolves on
+# disk, mirroring the build's -I paths. In csnippets itself the header lives
+# under src/; the downstream projects vendor csnippets under contrib/csnippets/,
+# so the same include spelling resolves there instead. Searched in order; the
 # first hit wins (only one root exists in any given tree). Without this the
-# denoiser silently no-ops in the vendored trees and every ascii.h finding
+# denoiser silently no-ops in the vendored trees and every ctype_ascii.h finding
 # leaks into the report as if it were a real defect.
 _HEADER_INCLUDE_ROOTS = ("src", "contrib/csnippets")
 
@@ -252,26 +268,223 @@ _INCLUDE_CLEANER_MISSING_RE = re.compile(
     r'^no header providing "(?P<sym>[^"]+)" is directly included$'
 )
 
-# An #include whose target basename is ascii.h — e.g. #include "utils/ascii.h",
-# the bare "ascii.h" spelling used from within utils/, the vendored
-# "csnippets/utils/ascii.h", or any <...> form. Anchoring on the basename keeps
-# the rule correct regardless of the include-path prefix a project spells it
-# with, while the leading "/"-or-start requirement rejects unrelated names like
-# "myascii.h".
+# misc-include-cleaner phrasing for an included-but-directly-unused header.
+_INCLUDE_CLEANER_UNUSED_RE = re.compile(
+    r"^included header (?P<hdr>\S+) is not used directly$"
+)
+
+# An #include whose target basename is ctype_ascii.h — e.g.
+# #include "utils/ctype_ascii.h", the bare "ctype_ascii.h" spelling used from
+# within strings/, the vendored "csnippets/utils/ctype_ascii.h", or any <...>
+# form. Anchoring on the basename keeps the rule correct regardless of the
+# include-path prefix a project spells it with, while the leading "/"-or-start
+# requirement rejects unrelated names like "myctype_ascii.h".
 _ASCII_INCLUDE_RE = re.compile(
-    r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^">]*/)?ascii\.h[">]',
+    r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^">]*/)?ctype_ascii\.h[">]',
     re.MULTILINE,
 )
 
 
-def _ascii_provided_names(root: Path) -> set[str]:
-    """Names that utils/ascii.h provides (macros and inline functions).
+def _include_re(spelling: str) -> re.Pattern:
+    """Compile a regex matching a `#include` of `spelling` (angle or quote form).
 
-    Parsed from the header itself so the set stays correct as ascii.h evolves.
+    `spelling` is a regex fragment for the header path, e.g. r'sys/wait\\.h' or
+    r'(?:lua|lauxlib)\\.h'. It is matched verbatim (no basename relaxation), so
+    a bare <wait.h> is not mistaken for <sys/wait.h>.
+    """
+    return re.compile(
+        r'^[ \t]*#[ \t]*include[ \t]*[<"]' + spelling + r'[">]', re.MULTILINE)
+
+
+# A provider is a header that genuinely supplies a family of symbols whose
+# supply clang-tidy fails to credit. Fields:
+#   name             reason-text label, e.g. "<sys/wait.h>"
+#   include          _include_re() matching the header's #include directive
+#   unused_basename  basename as reported in "included header X not used
+#                    directly" (drives the "unused header" rule); None disables
+#                    that rule for this provider — used when the header's symbols
+#                    overlap other headers, so "unused" may be a real finding
+#   symbols          exact provided names (frozenset), or None
+#   prefixes         provided-symbol name prefixes for umbrella libraries
+#                    (tuple), or None
+#   note             short parenthetical appended to the suppression reason
+_Provider = namedtuple(
+    "_Provider", "name include unused_basename symbols prefixes note")
+
+_STATIC_PROVIDERS: tuple[_Provider, ...] = (
+    # POSIX.1-2008 mandates <sys/wait.h> for the wait-status macros and
+    # waitpid()/waitid(); glibc's <stdlib.h> only optionally (XSI) re-exposes
+    # them and clang's symbol map credits <stdlib.h>, never <sys/wait.h>.
+    _Provider(
+        name="<sys/wait.h>",
+        include=_include_re(r"sys/wait\.h"),
+        unused_basename="wait.h",
+        symbols=frozenset({
+            "WIFEXITED", "WEXITSTATUS", "WIFSIGNALED", "WTERMSIG", "WIFSTOPPED",
+            "WSTOPSIG", "WIFCONTINUED", "WCOREDUMP", "WNOHANG", "WUNTRACED",
+            "WCONTINUED", "waitpid", "waitid",
+        }),
+        prefixes=None,
+        note="POSIX wait-status symbol clang maps to <stdlib.h>",
+    ),
+    # `errno` is a macro (*__errno_location()); clang can miss macro-only use
+    # and report <errno.h> unused even where errno is read.
+    _Provider(
+        name="<errno.h>",
+        include=_include_re(r"errno\.h"),
+        unused_basename="errno.h",
+        symbols=frozenset({"errno"}),
+        prefixes=None,
+        note="clang can miss macro-only <errno.h> use",
+    ),
+    # The socket-address structures and IP protocol/address constants are
+    # declared only in <netinet/in.h>; clang misattributes them.
+    _Provider(
+        name="<netinet/in.h>",
+        include=_include_re(r"netinet/in\.h"),
+        unused_basename="in.h",
+        symbols=frozenset({
+            "sockaddr_in", "sockaddr_in6", "in_addr", "in6_addr", "in_port_t",
+            "in_addr_t", "ip_mreq", "ipv6_mreq", "ip_mreqn",
+        }),
+        prefixes=("IPPROTO_", "INADDR_", "IN6ADDR_"),
+        note="declared only in <netinet/in.h>",
+    ),
+    # Interface-name helpers and IFNAMSIZ are declared only in <net/if.h>.
+    _Provider(
+        name="<net/if.h>",
+        include=_include_re(r"net/if\.h"),
+        unused_basename="if.h",
+        symbols=frozenset({
+            "IFNAMSIZ", "if_nametoindex", "if_indextoname", "if_nameindex",
+            "if_freenameindex", "ifreq", "ifconf",
+        }),
+        prefixes=None,
+        note="declared only in <net/if.h>",
+    ),
+    # ssize_t is provided by <unistd.h> and <sys/types.h>; clang can report "no
+    # header providing ssize_t" even where one is included. Two entries so the
+    # rule fires whichever provider the file actually includes. Neither drives
+    # the "unused header" rule (unused_basename=None): <sys/types.h> in
+    # particular is a frequent redundant include, and suppressing its "unused"
+    # finding could hide a real cleanup.
+    _Provider(
+        name="<unistd.h>",
+        include=_include_re(r"unistd\.h"),
+        unused_basename=None,
+        symbols=frozenset({"ssize_t"}),
+        prefixes=None,
+        note="POSIX type provided by an included header clang overlooks",
+    ),
+    _Provider(
+        name="<sys/types.h>",
+        include=_include_re(r"sys/types\.h"),
+        unused_basename=None,
+        symbols=frozenset({"ssize_t"}),
+        prefixes=None,
+        note="POSIX type provided by an included header clang overlooks",
+    ),
+    # socklen_t is provided by <sys/socket.h>; clang can report it unprovided.
+    _Provider(
+        name="<sys/socket.h>",
+        include=_include_re(r"sys/socket\.h"),
+        unused_basename=None,
+        symbols=frozenset({"socklen_t"}),
+        prefixes=None,
+        note="POSIX type provided by <sys/socket.h> clang overlooks",
+    ),
+    # libsodium exposes its whole API — crypto_*, sodium_*, randombytes_* — only
+    # through the umbrella <sodium.h>; include-cleaner wants a per-symbol header
+    # that does not exist for callers.
+    _Provider(
+        name="<sodium.h>",
+        include=_include_re(r"sodium\.h"),
+        unused_basename="sodium.h",
+        symbols=None,
+        prefixes=("crypto_", "sodium_", "randombytes_"),
+        note="libsodium umbrella header",
+    ),
+    # Lua's LUA_* configuration constants come from <luaconf.h>, pulled in by the
+    # public <lua.h>/<lauxlib.h>; clang reports them unprovided.
+    _Provider(
+        name="<lua.h>",
+        include=_include_re(r"(?:lua|lauxlib)\.h"),
+        unused_basename=None,
+        symbols=None,
+        prefixes=("LUA_",),
+        note="Lua constant from <luaconf.h> via <lua.h>",
+    ),
+)
+
+
+def _provider_provides(p: _Provider, sym: str) -> bool:
+    """True if provider `p` genuinely supplies `sym` (exact name or prefix)."""
+    if p.symbols is not None and sym in p.symbols:
+        return True
+    if p.prefixes is not None and sym.startswith(p.prefixes):
+        return True
+    return False
+
+
+def _provider_use_re(p: _Provider) -> re.Pattern | None:
+    """Regex matching any in-source use of a symbol `p` provides, or None.
+
+    Used as the evidence that an "unused header" finding is a false positive:
+    the header only looks unused because clang credited one of these uses to a
+    different header. The search runs over `_strip_noncode()`-cleaned source so
+    a symbol name that appears only in a comment, a string literal, or the
+    provider's own `#include` line is not mistaken for a genuine use.
+    """
+    parts: list[str] = []
+    if p.symbols:
+        parts.append(
+            r"\b(?:" + "|".join(re.escape(s) for s in sorted(p.symbols))
+            + r")\b")
+    if p.prefixes:
+        parts.append(
+            r"\b(?:" + "|".join(re.escape(x) for x in p.prefixes) + r")\w+\b")
+    return re.compile("|".join(parts)) if parts else None
+
+
+# Regions of C source whose text can spell a provider symbol's name without
+# being a genuine use of it: comments (`/* clears errno */`), string/char
+# literals (`"errno was set"`), and `#include` directives (whose header name
+# `<errno.h>` contains the word `errno`). The "unused header" rule's use-search
+# must rest on real code, so these are blanked before the search runs —
+# otherwise a redundant `#include` whose symbol appears only in such text would
+# be wrongly proven "used" and its genuine finding suppressed, breaking the
+# denoiser's provable-false-positive contract.
+_NONCODE_RE = re.compile(
+    r"""
+      //[^\n]*                          # line comment
+    | /\*.*?\*/                         # block comment
+    | "(?:\\.|[^"\\\n])*"               # string literal
+    | '(?:\\.|[^'\\\n])*'               # char literal
+    | ^[ \t]*\#[ \t]*include\b[^\n]*    # #include directive (header filename)
+    """,
+    re.VERBOSE | re.DOTALL | re.MULTILINE,
+)
+
+
+def _strip_noncode(src: str) -> str:
+    """Blank comments, string/char literals and `#include` lines out of `src`.
+
+    Each such region is replaced by spaces of equal length (newlines kept), so
+    the result is the same source with only genuine code tokens left for the
+    symbol-use search. Preserving length matters: it keeps adjacent tokens
+    separated (`err/*x*/no` stays `err     no`, never collapses to `errno`).
+    """
+    return _NONCODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), src)
+
+
+def _ascii_provided_names(root: Path) -> set[str]:
+    """Names that utils/ctype_ascii.h provides (macros and inline functions).
+
+    Parsed from the header itself so the set stays correct as the header evolves.
     The header is looked up under each known include root (src/ for csnippets,
     contrib/csnippets/ for the downstream projects that vendor it). Returns an
-    empty set if it cannot be read under any root — the ascii.h rule then simply
-    never fires (fail safe: keep every finding).
+    empty set if it cannot be read under any root — the ctype_ascii.h rule then
+    simply never fires (fail safe: keep every finding).
     """
     text: str | None = None
     for inc_root in _HEADER_INCLUDE_ROOTS:
@@ -290,44 +503,103 @@ def _ascii_provided_names(root: Path) -> set[str]:
     return names
 
 
+def _providers(root: Path) -> list[_Provider]:
+    """The provider table for `root`: the static entries plus
+    utils/ctype_ascii.h, whose provided-name set is parsed from the (possibly
+    vendored) header. The ctype_ascii.h entry is omitted when the header cannot
+    be read, so its rule simply never fires there (fail safe)."""
+    providers = list(_STATIC_PROVIDERS)
+    ascii_names = _ascii_provided_names(root)
+    if ascii_names:
+        providers.append(_Provider(
+            name=ASCII_HEADER,
+            include=_ASCII_INCLUDE_RE,
+            unused_basename="ctype_ascii.h",
+            symbols=frozenset(ascii_names),
+            prefixes=None,
+            note="ASCII-only <ctype.h> replacement",
+        ))
+    return providers
+
+
 def _denoise(
     warnings: list[dict], root: Path
 ) -> tuple[list[dict], list[dict]]:
     """Split warnings into (kept, suppressed).
 
-    A warning is suppressed only when a rule can prove it is a false positive
-    caused by one of this project's own facilities; suppressed warnings carry a
-    human-readable 'reason'. Everything else — including anything uncertain —
-    is kept.
+    A warning is suppressed only when a provider rule can prove it is a false
+    positive — the file includes the provider header AND the flagged symbol
+    genuinely belongs to it; suppressed warnings carry a human-readable
+    'reason'. Everything else — including anything uncertain — is kept.
     """
-    ascii_names = _ascii_provided_names(root)
-    include_cache: dict[str, bool] = {}
+    providers = _providers(root)
+    use_res: dict[str, re.Pattern | None] = {
+        p.name: _provider_use_re(p) for p in providers
+    }
+    src_cache: dict[str, str | None] = {}
+    code_cache: dict[str, str | None] = {}
 
-    def file_includes_ascii(relpath: str) -> bool:
-        if relpath not in include_cache:
+    def file_src(relpath: str) -> str | None:
+        if relpath not in src_cache:
             try:
-                src = (root / relpath).read_text(encoding="utf-8")
+                src_cache[relpath] = (
+                    root / relpath).read_text(encoding="utf-8")
             except OSError:
-                include_cache[relpath] = False
-            else:
-                include_cache[relpath] = bool(_ASCII_INCLUDE_RE.search(src))
-        return include_cache[relpath]
+                src_cache[relpath] = None
+        return src_cache[relpath]
+
+    def code_src(relpath: str) -> str | None:
+        """`file_src` with comments, literals and #include lines blanked out —
+        the genuine-code view the "unused header" use-search must rest on."""
+        if relpath not in code_cache:
+            raw = file_src(relpath)
+            code_cache[relpath] = (
+                _strip_noncode(raw) if raw is not None else None)
+        return code_cache[relpath]
+
+    def includes(relpath: str, pattern: re.Pattern) -> bool:
+        src = file_src(relpath)
+        return src is not None and bool(pattern.search(src))
 
     def noise_reason(w: dict) -> str | None:
-        # Rule: misc-include-cleaner "no header providing <sym>" where <sym> is
-        # defined by ascii.h and the flagged file includes ascii.h.
-        if not ascii_names or w["check"] != "misc-include-cleaner":
+        if w["check"] != "misc-include-cleaner":
             return None
+
+        # "no header providing <sym>": suppress when some provider that genuinely
+        # supplies <sym> is directly included by the file.
         m = _INCLUDE_CLEANER_MISSING_RE.match(w["msg"])
-        if m is None:
+        if m is not None:
+            sym = m.group("sym")
+            for p in providers:
+                if (_provider_provides(p, sym)
+                        and includes(w["file"], p.include)):
+                    return f"`{p.name}` provides `{sym}` ({p.note})"
             return None
-        sym = m.group("sym")
-        if sym not in ascii_names or not file_includes_ascii(w["file"]):
+
+        # "included header <hdr> not used directly": suppress when a provider
+        # with that basename is included AND the file actually uses one of its
+        # symbols in code — so the header only looks unused because clang
+        # credited the use elsewhere. The use-search runs over code_src (comments,
+        # literals and #include lines blanked) so a symbol named only in a
+        # comment/string, or in the provider's own #include line, is not counted.
+        u = _INCLUDE_CLEANER_UNUSED_RE.match(w["msg"])
+        if u is not None:
+            base = Path(u.group("hdr")).name
+            for p in providers:
+                if p.unused_basename != base:
+                    continue
+                use_re = use_res[p.name]
+                if use_re is None or not includes(w["file"], p.include):
+                    continue
+                src = code_src(w["file"])
+                hit = use_re.search(src) if src is not None else None
+                if hit is not None:
+                    return (
+                        f"`{p.name}` is used via `{hit.group(0)}`, which clang "
+                        f"misattributes ({p.note})"
+                    )
             return None
-        return (
-            f"`{ASCII_HEADER}` provides `{sym}` "
-            "(ASCII-only <ctype.h> replacement)"
-        )
+        return None
 
     kept: list[dict] = []
     suppressed: list[dict] = []
@@ -362,7 +634,7 @@ def _suppressed_section(suppressed: list[dict]) -> list[str]:
         "## Suppressed (known noise)",
         "",
         f"{len(suppressed)} finding(s) withheld as provable false positives "
-        "from this project's own facilities (e.g. `utils/ascii.h`). These are "
+        "from this project's own facilities (e.g. `utils/ctype_ascii.h`). These are "
         "not real defects; re-run with `--no-denoise` to include them above.",
         "",
         "| Check | File | Line | Message | Reason |",
@@ -509,7 +781,7 @@ def main() -> int:
     ap.add_argument(
         "--no-denoise",
         action="store_true",
-        help="keep known false positives (e.g. the utils/ascii.h "
+        help="keep known false positives (e.g. the utils/ctype_ascii.h "
         "include-cleaner noise) instead of withholding them",
     )
     args = ap.parse_args()
