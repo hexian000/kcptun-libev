@@ -47,6 +47,20 @@ static double keepalive_jitter(const double keepalive)
 	return keepalive / (1.0 - 0.2 * frand());
 }
 
+/* if now has not yet reached deadline, reschedule w for the remaining time
+   and return true; otherwise leave the watcher untouched and return false */
+static bool timer_defer_until(
+	struct ev_loop *loop, ev_timer *restrict w, const ev_tstamp now,
+	const ev_tstamp deadline)
+{
+	if (now >= deadline) {
+		return false;
+	}
+	w->repeat = deadline - now;
+	ev_timer_again(loop, w);
+	return true;
+}
+
 void keepalive_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_TIMER);
@@ -69,24 +83,20 @@ void keepalive_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 
 	const ev_tstamp now = ev_now(loop);
 	if (s->pkt.inflight_ping != TSTAMP_NIL) {
-		const double next = s->pkt.inflight_ping + s->ping_timeout;
-		if (now < next) {
-			watcher->repeat = next - now;
-			ev_timer_again(loop, watcher);
+		if (timer_defer_until(
+			    loop, watcher, now,
+			    s->pkt.inflight_ping + s->ping_timeout)) {
 			return;
 		}
 		LOGD("ping timeout");
 		s->pkt.inflight_ping = TSTAMP_NIL;
 	}
 
-	if (s->pkt.last_send_time != TSTAMP_NIL) {
-		const double next =
-			s->pkt.last_send_time + keepalive_jitter(s->keepalive);
-		if (now < next) {
-			watcher->repeat = next - now;
-			ev_timer_again(loop, watcher);
-			return;
-		}
+	if (s->pkt.last_send_time != TSTAMP_NIL &&
+	    timer_defer_until(
+		    loop, watcher, now,
+		    s->pkt.last_send_time + keepalive_jitter(s->keepalive))) {
+		return;
 	}
 
 	server_ping(s);
@@ -100,22 +110,16 @@ void resolve_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	struct server *restrict s = watcher->data;
 	const ev_tstamp now = ev_now(loop);
 
-	if (s->last_resolve_time != TSTAMP_NIL) {
-		const double next = s->last_resolve_time + s->timeout;
-		if (now < next) {
-			watcher->repeat = next - now;
-			ev_timer_again(loop, watcher);
-			return;
-		}
+	if (s->last_resolve_time != TSTAMP_NIL &&
+	    timer_defer_until(
+		    loop, watcher, now, s->last_resolve_time + s->timeout)) {
+		return;
 	}
 
-	if (s->pkt.last_recv_time != TSTAMP_NIL) {
-		const double next = s->pkt.last_recv_time + s->timeout;
-		if (now < next) {
-			watcher->repeat = next - now;
-			ev_timer_again(loop, watcher);
-			return;
-		}
+	if (s->pkt.last_recv_time != TSTAMP_NIL &&
+	    timer_defer_until(
+		    loop, watcher, now, s->pkt.last_recv_time + s->timeout)) {
+		return;
 	}
 
 	if ((s->conf->mode & MODE_CLIENT) != 0) {
