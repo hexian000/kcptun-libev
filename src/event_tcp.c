@@ -112,13 +112,8 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 			if (err == EAGAIN || err == EWOULDBLOCK) {
 				break;
 			}
-			LOGE_F("accept: (%d) %s", err, strerror(err));
-			/* sleep for a while, see listener_cb */
-			ev_io_stop(loop, watcher);
-			ev_timer *restrict w_timer = &s->listener.w_timer;
-			if (!ev_is_active(w_timer)) {
-				ev_timer_start(loop, w_timer);
-			}
+			accept_backoff(
+				loop, watcher, &s->listener.w_timer, err);
 			return;
 		}
 		if (table_size(s->sessions) >= MAX_SESSIONS) {
