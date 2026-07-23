@@ -95,6 +95,15 @@ bool check_rate_limit(ev_tstamp *restrict last, ev_tstamp now, double interval);
 #define LOG_RATELIMITED(level, now, rate, message)                             \
 	LOG_RATELIMITED_F(level, now, rate, "%s", message)
 
+/**
+ * @brief Declare a fixed 16-byte stack buffer `name` and fill it with `value`
+ * formatted as IEC bytes (KiB/MiB/...). Expands format_iec_bytes() from
+ * strings/format.h, which the including source must have available.
+ */
+#define FORMAT_IEC_BYTES(name, value)                                          \
+	char name[16];                                                         \
+	(void)format_iec_bytes(name, sizeof(name), (value))
+
 /** Process-level initializations. */
 void init(void);
 
@@ -121,6 +130,15 @@ bool socket_nonblock_or_close(int fd);
 
 /** @brief Apply per-connection TCP tuning (nodelay, keepalive, buffers) from conf. */
 void tcp_apply_conf(int fd, const struct config *restrict conf);
+
+/**
+ * @brief Back off after a hard accept() error: log it, stop the accept
+ * watcher, and arm the listener timer so its callback retries accept later.
+ * @param err The errno captured from the failed accept().
+ */
+void accept_backoff(
+	struct ev_loop *loop, ev_io *restrict w_accept,
+	ev_timer *restrict w_timer, int err);
 
 bool resolve_addr(
 	union sockaddr_max *restrict addr, const char *restrict addrstr,

@@ -170,6 +170,18 @@ bool socket_nonblock_or_close(const int fd)
 	return true;
 }
 
+void accept_backoff(
+	struct ev_loop *loop, ev_io *restrict w_accept,
+	ev_timer *restrict w_timer, const int err)
+{
+	LOGE_F("accept: (%d) %s", err, strerror(err));
+	/* sleep for a while, see listener_cb */
+	ev_io_stop(loop, w_accept);
+	if (!ev_is_active(w_timer)) {
+		ev_timer_start(loop, w_timer);
+	}
+}
+
 void tcp_apply_conf(const int fd, const struct config *restrict conf)
 {
 	(void)socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
