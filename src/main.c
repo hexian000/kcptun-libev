@@ -85,11 +85,11 @@ static void set_log_config(const struct config *restrict conf, const int level)
 	}
 	const char *log = conf->log;
 	if (strcmp(log, "stdout") == 0) {
-		slog_setoutput(SLOG_OUTPUT_WRITER, log_filewriter(stdout));
+		slog_setoutput(SLOG_OUTPUT_STREAM, log_filewriter(stdout));
 	} else if (strcmp(log, "stderr") == 0) {
-		slog_setoutput(SLOG_OUTPUT_WRITER, log_filewriter(stderr));
+		slog_setoutput(SLOG_OUTPUT_STREAM, log_filewriter(stderr));
 	} else if (strcmp(log, "terminal") == 0) {
-		slog_setoutput(SLOG_OUTPUT_TERMINAL, stderr);
+		slog_setoutput(SLOG_OUTPUT_TERMINAL, log_filewriter(stderr));
 	} else if (strcmp(log, "syslog") == 0) {
 		slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME, NULL);
 	} else if (strcmp(log, "discard") == 0) {

@@ -68,7 +68,7 @@ void init(void)
 	if (log_writer == NULL) {
 		log_writer = io_filewriter(stdout);
 	}
-	slog_setoutput(SLOG_OUTPUT_WRITER, log_writer);
+	slog_setoutput(SLOG_OUTPUT_STREAM, log_writer);
 	{
 		static char prefix[] = __FILE__;
 		char *s = strrchr(prefix, PATH_SEPARATOR);
