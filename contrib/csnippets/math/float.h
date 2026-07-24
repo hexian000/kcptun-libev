@@ -80,6 +80,21 @@ uint64_t float_decompose(double x, int *e2);
  */
 int float_todecimal(double x, int ndigits, char *digits, int *dec_exp);
 
+/**
+ * @brief Correctly-rounded decimal → binary64 (round-half-even).
+ *
+ * Returns the double nearest to 0.d1d2..dn * 10^dec_exp, the exact inverse of
+ * float_todecimal's digit/exponent contract. A magnitude above the finite range
+ * yields +inf, one below half the smallest subnormal yields +0; the caller
+ * applies the sign. Digits outside '0'-'9' are undefined behavior.
+ *
+ * @param[in] digits Significant decimal digits as ASCII '0'-'9', no sign/point.
+ * @param ndigits Digit count; may be 0 (returns +0).
+ * @param dec_exp Power-of-ten exponent K as in float_todecimal.
+ * @return The rounded nonnegative double.
+ */
+double float_fromdecimal(const char *digits, int ndigits, int dec_exp);
+
 /** @} */
 
 #endif /* MATH_FLOAT_H */

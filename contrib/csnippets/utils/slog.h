@@ -33,6 +33,12 @@ extern int slog_level_;
 #endif
 void slog_setlevel(int level);
 
+/* Receives each fully formatted log line -- including its trailing newline --
+ * and the ud registered with SLOG_OUTPUT_WRITER. Runs under slog's output lock;
+ * logging through slog from within it is undefined behavior (see struct
+ * slog_extra). */
+typedef void (*slog_writer_fn)(void *ud, const unsigned char *buf, size_t len);
+
 /* A drop-in replacement for the C library syslog(3). It receives the ident
  * registered with SLOG_OUTPUT_SYSLOG, the priority (facility | severity), and
  * the formatted message body. The ident may point into a caller structure so
@@ -45,6 +51,7 @@ typedef void (*slog_syslog_fn)(
 enum {
 	SLOG_OUTPUT_DISCARD,
 	SLOG_OUTPUT_TERMINAL,
+	SLOG_OUTPUT_STREAM,
 	SLOG_OUTPUT_WRITER,
 	SLOG_OUTPUT_SYSLOG,
 };
@@ -54,15 +61,21 @@ enum {
  * @param type One of the SLOG_OUTPUT_* constants, followed by the matching
  * variadic arguments:
  * - SLOG_OUTPUT_DISCARD: drop all messages. No extra arguments.
- * - SLOG_OUTPUT_TERMINAL, FILE *stream: write to a stream with ANSI colors.
- *   An overlong line is truncated to the internal buffer size, its color
- *   reset and newline always emitted.
- * - SLOG_OUTPUT_WRITER, struct io_stream *stream: write each formatted line to
+ * - SLOG_OUTPUT_TERMINAL, struct io_stream *stream: write each formatted line
+ *   to stream (io/stream.h) with ANSI colors, then flush. The stream is
+ *   borrowed like SLOG_OUTPUT_STREAM below. An overlong line is truncated to
+ *   the internal buffer size, its color reset and newline always emitted.
+ * - SLOG_OUTPUT_STREAM, struct io_stream *stream: write each formatted line to
  *   stream (io/stream.h) without ANSI colors, then flush. The stream is
  *   borrowed, never closed, and must stay valid until the sink is replaced;
  *   NULL discards all messages. An overlong line is truncated to the internal
  *   buffer size. The stream's write/flush run under slog's output lock and
  *   must not log through slog (see struct slog_extra).
+ * - SLOG_OUTPUT_WRITER, slog_writer_fn fn, void *ud: deliver each formatted
+ *   line to fn(ud, buf, len), without ANSI colors. fn is borrowed and must stay
+ *   valid until the sink is replaced; NULL discards all messages. An overlong
+ *   line is truncated to the internal buffer size. Like the syslog sink, the
+ *   writer sink ignores struct slog_extra.
  * - SLOG_OUTPUT_SYSLOG, void *ident, slog_syslog_fn fn: send messages via fn,
  *   or the system syslog() when fn is NULL. ident is the syslog identity and is
  *   passed back to fn as its first argument.
@@ -80,11 +93,11 @@ void slog_setflags(unsigned int flags);
 
 /**
  * @brief Extra content written after the message, via func(s, data).
- * @details Honored by the terminal and writer sinks; the syslog sink ignores
- * it. func -- like the syslog callback and the writer stream's write/flush --
- * runs while slog holds its internal, non-recursive output lock; calling any
- * slog logging function from inside such a callback is undefined behavior
- * (deadlock, or unbounded recursion without SLOG_MT_SAFE).
+ * @details Honored by the terminal and stream sinks; the writer and syslog
+ * sinks ignore it. func -- like the syslog callback and the stream's
+ * write/flush -- runs while slog holds its internal, non-recursive output lock;
+ * calling any slog logging function from inside such a callback is undefined
+ * behavior (deadlock, or unbounded recursion without SLOG_MT_SAFE).
  */
 struct slog_extra {
 	void (*func)(struct io_stream *s, void *data);

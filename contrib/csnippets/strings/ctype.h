@@ -181,48 +181,6 @@ static inline int unhex(const char32_t c)
 	return -1;
 }
 
-/**
- * @brief Trim leading whitespace codepoints, returning the new start.
- * @param[in] s NUL-terminated UTF-8 string.
- * @return A pointer into s past any leading isspace() codepoints.
- */
-char *strtrimleftspace(char *restrict s);
-
-/**
- * @brief Trim trailing whitespace codepoints in place.
- * @param[in,out] s NUL-terminated UTF-8 string; truncated with a NUL after the
- *                last non-whitespace codepoint.
- * @return s.
- */
-char *strtrimrightspace(char *restrict s);
-
-/**
- * @brief Trim leading and trailing whitespace codepoints.
- * @param[in,out] s NUL-terminated UTF-8 string; see strtrimrightspace.
- * @return strtrimrightspace(strtrimleftspace(s)).
- */
-char *strtrimspace(char *restrict s);
-
-/**
- * @brief Lowercase a UTF-8 string using the simple Unicode case mapping.
- *
- * Unlike ctype_ascii.h's in-place strlower, the mapping may change the encoded
- * length, so output goes to a separate buffer with snprintf(3) semantics:
- * always NUL-terminated when maxlen > 0, and truncation never splits a codepoint.
- *
- * @param[out] buf Output buffer; may be NULL only when maxlen == 0.
- * @param maxlen Size of buf in bytes, including the NUL terminator.
- * @param[in] src NUL-terminated UTF-8 string.
- * @return Bytes needed excluding the NUL; a value >= maxlen indicates truncation.
- */
-int strlower(char *restrict buf, size_t maxlen, const char *restrict src);
-
-/**
- * @brief Uppercase a UTF-8 string using the simple Unicode case mapping.
- * @see strlower
- */
-int strupper(char *restrict buf, size_t maxlen, const char *restrict src);
-
 /** @} */
 
 #endif /* STRINGS_CTYPE_H */

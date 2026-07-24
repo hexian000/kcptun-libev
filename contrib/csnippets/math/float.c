@@ -277,3 +277,255 @@ int float_todecimal(
 	*dec_exp = k;
 	return n;
 }
+
+/* --- correctly-rounded decimal parsing ------------------------------------ *
+ * Read-side companion to float_todecimal. The significand is held exactly in a
+ * base-2^32 big integer, so the rounded 53-bit mantissa with its guard/round/
+ * sticky bits falls out of shifts, a multiply by 5^e (e >= 0), or one exact
+ * divide by 5^-e (e < 0). Pure integer rounding: no libc, no FPU rounding.
+ */
+
+/* powers of five that stay below 2^31, for chunked multiply/divide */
+static const uint32_t pow5[] = {
+	1,     5,      25,	125,	 625,	   3125,      15625,
+	78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125,
+};
+
+/* the significand fills at most FLOAT_DECIMAL_DIGITS digits (~2548 bits); the
+ * e < 0 path shifts it left by ~5^-e's bit length before the divide, so ~2600
+ * bits with margin */
+enum { BINLIMBS = FLOAT_DECIMAL_DIGITS / 8 + 32 };
+
+struct binint {
+	uint32_t limb[BINLIMBS]; /* base-2^32, least significant at limb[0] */
+	int len; /* live limbs; 0 iff the value is zero */
+};
+
+/* b = b * mul + add (both small) */
+static void
+binint_muladd(struct binint *restrict b, const uint32_t mul, const uint32_t add)
+{
+	uint64_t carry = add;
+	for (int i = 0; i < b->len; i++) {
+		const uint64_t v = (uint64_t)b->limb[i] * mul + carry;
+		b->limb[i] = (uint32_t)v;
+		carry = v >> 32;
+	}
+	while (carry != 0) {
+		assert(b->len < BINLIMBS);
+		b->limb[b->len++] = (uint32_t)carry;
+		carry >>= 32;
+	}
+}
+
+/* b /= d; returns the remainder */
+static uint32_t binint_divmod(struct binint *restrict b, const uint32_t d)
+{
+	uint64_t rem = 0;
+	for (int i = b->len - 1; i >= 0; i--) {
+		const uint64_t cur = (rem << 32) | b->limb[i];
+		b->limb[i] = (uint32_t)(cur / d);
+		rem = cur % d;
+	}
+	while (b->len > 0 && b->limb[b->len - 1] == 0) {
+		b->len--;
+	}
+	return (uint32_t)rem;
+}
+
+/* b <<= sh (sh >= 0) */
+static void binint_shl(struct binint *restrict b, const int sh)
+{
+	if (b->len == 0 || sh == 0) {
+		return;
+	}
+	const int words = sh / 32;
+	const int bits = sh % 32;
+	const int newlen = b->len + words + 1;
+	assert(newlen <= BINLIMBS);
+	/* high to low so each source limb is read before it is overwritten */
+	for (int j = newlen - 1; j >= 0; j--) {
+		const int s = j - words;
+		const uint32_t lo = (s >= 0 && s < b->len) ? b->limb[s] : 0;
+		const uint32_t hi =
+			(s - 1 >= 0 && s - 1 < b->len) ? b->limb[s - 1] : 0;
+		b->limb[j] = (uint32_t)(lo << bits) |
+			     (bits != 0 ? hi >> (32 - bits) : 0);
+	}
+	b->len = newlen;
+	while (b->len > 0 && b->limb[b->len - 1] == 0) {
+		b->len--;
+	}
+}
+
+static int binint_bitlen(const struct binint *restrict b)
+{
+	if (b->len == 0) {
+		return 0;
+	}
+	int bits = 0;
+	for (uint32_t top = b->limb[b->len - 1]; top != 0; top >>= 1) {
+		bits++;
+	}
+	return (b->len - 1) * 32 + bits;
+}
+
+static int binint_bit(const struct binint *restrict b, const int pos)
+{
+	const int i = pos / 32;
+	if (i >= b->len) {
+		return 0;
+	}
+	return (int)((b->limb[i] >> (pos % 32)) & 1u);
+}
+
+/* any set bit strictly below position pos */
+static bool binint_low_nonzero(const struct binint *restrict b, const int pos)
+{
+	const int i = pos / 32;
+	for (int j = 0; j < i && j < b->len; j++) {
+		if (b->limb[j] != 0) {
+			return true;
+		}
+	}
+	if (i < b->len) {
+		const uint32_t mask =
+			(pos % 32) != 0 ? (UINT32_C(1) << (pos % 32)) - 1 : 0;
+		if ((b->limb[i] & mask) != 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* floor(b / 2^sh) truncated to 64 bits; the caller guarantees it fits */
+static uint64_t binint_shr_u64(const struct binint *restrict b, const int sh)
+{
+	const int i = sh / 32;
+	const int r = sh % 32;
+	const uint64_t l0 = (i >= 0 && i < b->len) ? b->limb[i] : 0;
+	const uint64_t l1 = (i + 1 >= 0 && i + 1 < b->len) ? b->limb[i + 1] : 0;
+	if (r == 0) {
+		return l0 | (l1 << 32);
+	}
+	const uint64_t l2 = (i + 2 >= 0 && i + 2 < b->len) ? b->limb[i + 2] : 0;
+	return (l0 >> r) | (l1 << (32 - r)) | (l2 << (64 - r));
+}
+
+/* b << sh as a 64-bit value; the caller guarantees b has <= 53 bits */
+static uint64_t binint_shl_u64(const struct binint *restrict b, const int sh)
+{
+	uint64_t v = 0;
+	for (int i = b->len - 1; i >= 0; i--) {
+		v = (v << 32) | b->limb[i];
+	}
+	return v << sh;
+}
+
+/* Round the exact value x * 2^p (x != 0, plus a positive tail below 2^p iff
+ * sticky_tail) to the nearest binary64 magnitude, round-half-even. */
+static double
+assemble(const struct binint *restrict x, const int p, const bool sticky_tail)
+{
+	const int bl = binint_bitlen(x);
+	int expb = bl + p + 1022; /* biased exponent for a normal mantissa */
+	int drop = bl - 53; /* x bits to drop for 53 significant bits */
+	if (expb < 1) {
+		/* subnormal: the least significant bit is fixed at 2^-1074 */
+		drop = -1074 - p;
+		expb = 0;
+	}
+	uint64_t m;
+	int roundbit = 0;
+	bool sticky = sticky_tail;
+	if (drop <= 0) {
+		m = binint_shl_u64(x, -drop);
+	} else {
+		m = binint_shr_u64(x, drop);
+		roundbit = binint_bit(x, drop - 1);
+		sticky = sticky || binint_low_nonzero(x, drop - 1);
+	}
+	if (roundbit != 0 && (sticky || (m & 1) != 0)) {
+		m++;
+	}
+	if (expb == 0) {
+		/* m in [0, 2^52]; m == 2^52 carries into the exponent field */
+		return float_frombits(m);
+	}
+	if (m == (UINT64_C(1) << 53)) {
+		/* rounding overflowed the mantissa: 1.11..1 -> 10.0 */
+		m >>= 1;
+		expb++;
+	}
+	if (expb >= 2047) {
+		return float_frombits(UINT64_C(0x7FF) << 52); /* +inf */
+	}
+	return float_frombits(
+		(uint64_t)expb << 52 | (m & ((UINT64_C(1) << 52) - 1)));
+}
+
+double float_fromdecimal(
+	const char *const digits, const int ndigits, const int dec_exp)
+{
+	/* leading zeros do not change the integer significand; trailing zeros
+	 * only shift the exponent */
+	int lo = 0;
+	while (lo < ndigits && digits[lo] == '0') {
+		lo++;
+	}
+	if (lo == ndigits) {
+		return 0.0;
+	}
+	int hi = ndigits;
+	while (hi > lo && digits[hi - 1] == '0') {
+		hi--;
+	}
+	/* value = D * 10^e10, D = integer(digits[lo..hi)) */
+	const int e10 = dec_exp - hi;
+	const int nd = hi - lo;
+	/* value in [10^(nd+e10-1), 10^(nd+e10)) */
+	const long mag = (long)nd + e10;
+	if (mag > 309) {
+		return float_frombits(UINT64_C(0x7FF) << 52); /* +inf */
+	}
+	if (mag < -323) {
+		return 0.0; /* below 2^-1075, rounds to zero */
+	}
+	struct binint x = { .len = 0 };
+	for (int t = lo; t < hi; t++) {
+		binint_muladd(&x, 10, (uint32_t)(digits[t] - '0'));
+	}
+	int p;
+	bool sticky = false;
+	if (e10 >= 0) {
+		for (int e = e10; e > 0;) {
+			const int c = e < 13 ? e : 13;
+			binint_muladd(&x, pow5[c], 0);
+			e -= c;
+		}
+		p = e10;
+	} else {
+		const int k = -e10;
+		/* leave floor(D << g / 5^k) with ~55 significant bits; the divide
+		 * folds every lower bit into the sticky flag */
+		const int bits5k =
+			(int)(((int64_t)k * 2321929 + 999999) / 1000000) + 1;
+		int g = bits5k + 55 - binint_bitlen(&x);
+		if (g < 0) {
+			g = 0;
+		}
+		binint_shl(&x, g);
+		for (int e = k; e > 0;) {
+			const int c = e < 13 ? e : 13;
+			if (binint_divmod(&x, pow5[c]) != 0) {
+				sticky = true;
+			}
+			e -= c;
+		}
+		p = e10 - g;
+	}
+	if (x.len == 0) {
+		return 0.0;
+	}
+	return assemble(&x, p, sticky);
+}

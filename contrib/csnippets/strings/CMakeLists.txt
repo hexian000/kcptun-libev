@@ -1,6 +1,5 @@
 target_sources(csnippets
     PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/ctype.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/ctype_data.gen.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/format.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/string.c"

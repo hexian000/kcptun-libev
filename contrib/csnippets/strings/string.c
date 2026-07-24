@@ -325,6 +325,104 @@ char *u8strsep(char **restrict s, const char *restrict set)
 	}
 }
 
+/* Bytes available for one decode: peek up to a whole sequence without ever
+ * reading past the terminator. */
+static size_t peek_avail(const char *restrict p)
+{
+	size_t avail = 1;
+	while (avail < UTF8_MAX_LEN && p[avail] != '\0') {
+		avail++;
+	}
+	return avail;
+}
+
+char *u8strtrimleftspace(char *restrict s)
+{
+	while (*s != '\0') {
+		char32_t cp;
+		const int n = utf8_decode(&cp, s, peek_avail(s));
+		if (n <= 0 || !isspace(cp)) {
+			break;
+		}
+		s += n;
+	}
+	return s;
+}
+
+char *u8strtrimrightspace(char *restrict s)
+{
+	char *cut = s; /* the NUL goes here: end of the last non-space unit */
+	for (char *p = s; *p != '\0';) {
+		char32_t cp;
+		const int n = utf8_decode(&cp, p, peek_avail(p));
+		/* an invalid byte is a non-space unit of length 1 */
+		const size_t unit = n > 0 ? (size_t)n : 1;
+		p += unit;
+		if (n <= 0 || !isspace(cp)) {
+			cut = p;
+		}
+	}
+	*cut = '\0';
+	return s;
+}
+
+char *u8strtrimspace(char *restrict s)
+{
+	return u8strtrimrightspace(u8strtrimleftspace(s));
+}
+
+/* Case-map every codepoint of src into buf with snprintf(3) semantics: whole
+ * units are appended atomically so truncation never splits a sequence, and an
+ * invalid byte passes through unchanged. */
+static int case_convert(
+	char *restrict buf, const size_t maxlen, const char *restrict src,
+	const bool upper)
+{
+	const size_t cap = maxlen > 0 ? maxlen - 1 : 0;
+	size_t fill = 0; /* bytes stored, the NUL slot excluded */
+	size_t len = 0; /* bytes needed; may exceed cap */
+	bool frozen = false;
+	for (const char *p = src; *p != '\0';) {
+		char unit[UTF8_MAX_LEN];
+		char32_t cp;
+		const int n = utf8_decode(&cp, p, peek_avail(p));
+		size_t ulen;
+		if (n > 0) {
+			const char32_t mapped =
+				upper ? toupper(cp) : tolower(cp);
+			ulen = (size_t)utf8_encode(unit, mapped);
+			p += n;
+		} else {
+			unit[0] = *p;
+			ulen = 1;
+			p++;
+		}
+		if (!frozen) {
+			if (fill + ulen <= cap) {
+				memcpy(buf + fill, unit, ulen);
+				fill += ulen;
+			} else {
+				frozen = true;
+			}
+		}
+		len = ulen <= SIZE_MAX - len ? len + ulen : SIZE_MAX;
+	}
+	if (maxlen > 0) {
+		buf[fill] = '\0';
+	}
+	return len <= INT_MAX ? (int)len : -1;
+}
+
+int u8strlower(char *restrict buf, const size_t maxlen, const char *restrict src)
+{
+	return case_convert(buf, maxlen, src, false);
+}
+
+int u8strupper(char *restrict buf, const size_t maxlen, const char *restrict src)
+{
+	return case_convert(buf, maxlen, src, true);
+}
+
 /* --- locale-free, async-signal-safe printf -------------------------------- *
  * No libc function is called on any path: output is copied bytewise, and the
  * floating conversions build on math/float.h. The sink appends whole
@@ -1065,6 +1163,746 @@ int u8snprintf(
 	va_list args;
 	va_start(args, format);
 	const int ret = u8vsnprintf(buf, maxlen, format, args);
+	va_end(args);
+	return ret;
+}
+
+/* --- locale-free, async-signal-safe scanf --------------------------------- *
+ * The mirror of the printf above: input is walked one codepoint at a time and
+ * the decimal float parse is handed to math/float.h's float_fromdecimal, so no
+ * libc function is called on any path. Whitespace and literal matching are
+ * codepoint-aware; numeric syntax is ASCII.
+ */
+
+enum scan_status { SCAN_OK, SCAN_NOMATCH, SCAN_INPUT_END };
+
+/* Round mant * 2^e2 (plus a positive tail below 2^e2 iff sticky) to the nearest
+ * binary64 magnitude, round-half-even. The uint64 analog of float.c's assemble,
+ * used only for the exact hexfloat path. */
+static double scale2(uint64_t mant, const int e2, bool sticky)
+{
+	if (mant == 0) {
+		return 0.0;
+	}
+	int bl = 0;
+	for (uint64_t v = mant; v != 0; v >>= 1) {
+		bl++;
+	}
+	int expb = bl + e2 + 1022;
+	int drop = bl - 53;
+	if (expb < 1) {
+		drop = -1074 - e2;
+		expb = 0;
+	}
+	uint64_t m;
+	int roundbit = 0;
+	if (drop <= 0) {
+		m = mant << -drop;
+	} else if (drop < 64) {
+		m = mant >> drop;
+		roundbit = (int)((mant >> (drop - 1)) & 1);
+		if ((mant & ((UINT64_C(1) << (drop - 1)) - 1)) != 0) {
+			sticky = true;
+		}
+	} else {
+		m = 0;
+		if (drop == 64) {
+			roundbit = (int)(mant >> 63);
+			sticky = sticky ||
+				 (mant & ((UINT64_C(1) << 63) - 1)) != 0;
+		} else {
+			sticky = true;
+		}
+	}
+	if (roundbit != 0 && (sticky || (m & 1) != 0)) {
+		m++;
+	}
+	if (expb == 0) {
+		return float_frombits(m);
+	}
+	if (m == (UINT64_C(1) << 53)) {
+		m >>= 1;
+		expb++;
+	}
+	if (expb >= 2047) {
+		return float_frombits(UINT64_C(0x7FF) << 52);
+	}
+	return float_frombits(
+		(uint64_t)expb << 52 | (m & ((UINT64_C(1) << 52) - 1)));
+}
+
+/* length of tok if the ASCII-case-insensitive prefix matches at p, else 0 */
+static int match_ci(const char *restrict p, const char *restrict tok)
+{
+	int i = 0;
+	for (; tok[i] != '\0'; i++) {
+		char c = p[i];
+		if ('A' <= c && c <= 'Z') {
+			c = (char)(c + ('a' - 'A'));
+		}
+		if (c != tok[i]) {
+			return 0;
+		}
+	}
+	return i;
+}
+
+static const char *skip_ws(const char *restrict p)
+{
+	for (;;) {
+		char32_t cp;
+		const char *q = p;
+		if (utf8next(&cp, &q) == 0 || !isspace(cp)) {
+			return p;
+		}
+		p = q;
+	}
+}
+
+/* Is codepoint c a member of the [set] spelled by format bytes [begin, end)?
+ * A 'lo-hi' triple is a codepoint range; a '-' with no bound is literal. */
+static bool scanset_match(
+	const char32_t c, const char *restrict begin, const char *restrict end,
+	const bool negate)
+{
+	bool found = false;
+	const char *s = begin;
+	while (s < end) {
+		char32_t lo;
+		const char *q = s;
+		(void)utf8next(&lo, &q);
+		if (q < end && *q == '-' && q + 1 < end) {
+			char32_t hi;
+			const char *r = q + 1;
+			(void)utf8next(&hi, &r);
+			if (lo <= c && c <= hi) {
+				found = true;
+			}
+			s = r;
+			continue;
+		}
+		if (lo == c) {
+			found = true;
+		}
+		s = q;
+	}
+	return found != negate;
+}
+
+static void
+store_signed(va_list *restrict ap, const enum length_mod len, const intmax_t v)
+{
+	switch (len) {
+	case LEN_CHAR:
+		*va_arg(*ap, signed char *) = (signed char)v;
+		break;
+	case LEN_SHORT:
+		*va_arg(*ap, short *) = (short)v;
+		break;
+	case LEN_LONG:
+		*va_arg(*ap, long *) = (long)v;
+		break;
+	case LEN_LLONG:
+		*va_arg(*ap, long long *) = (long long)v;
+		break;
+	case LEN_MAX:
+		*va_arg(*ap, intmax_t *) = v;
+		break;
+	case LEN_SIZE:
+		/* the signed counterpart of size_t shares its width */
+		*va_arg(*ap, size_t *) = (size_t)v;
+		break;
+	case LEN_PTRDIFF:
+		*va_arg(*ap, ptrdiff_t *) = (ptrdiff_t)v;
+		break;
+	default:
+		*va_arg(*ap, int *) = (int)v;
+		break;
+	}
+}
+
+static void store_unsigned(
+	va_list *restrict ap, const enum length_mod len, const uintmax_t v)
+{
+	switch (len) {
+	case LEN_CHAR:
+		*va_arg(*ap, unsigned char *) = (unsigned char)v;
+		break;
+	case LEN_SHORT:
+		*va_arg(*ap, unsigned short *) = (unsigned short)v;
+		break;
+	case LEN_LONG:
+		*va_arg(*ap, unsigned long *) = (unsigned long)v;
+		break;
+	case LEN_LLONG:
+		*va_arg(*ap, unsigned long long *) = (unsigned long long)v;
+		break;
+	case LEN_MAX:
+		*va_arg(*ap, uintmax_t *) = v;
+		break;
+	case LEN_SIZE:
+		*va_arg(*ap, size_t *) = (size_t)v;
+		break;
+	case LEN_PTRDIFF:
+		/* the unsigned counterpart of ptrdiff_t shares its width */
+		*va_arg(*ap, ptrdiff_t *) = (ptrdiff_t)v;
+		break;
+	default:
+		*va_arg(*ap, unsigned int *) = (unsigned int)v;
+		break;
+	}
+}
+
+static void store_float(
+	va_list *restrict ap, const enum length_mod len, const bool neg,
+	const double mag)
+{
+	const double v = neg ? -mag : mag;
+	switch (len) {
+	case LEN_LONG:
+		*va_arg(*ap, double *) = v;
+		break;
+	case LEN_LDOUBLE:
+		*va_arg(*ap, long double *) = (long double)v;
+		break;
+	default:
+		*va_arg(*ap, float *) = (float)v;
+		break;
+	}
+}
+
+struct scanspec {
+	bool suppress; /* '*' */
+	int width; /* 0 = unbounded */
+	enum length_mod length;
+	char conv;
+};
+
+static void
+parse_scanspec(struct scanspec *restrict sp, const char **restrict pf)
+{
+	*sp = (struct scanspec){ 0 };
+	if (**pf == '*') {
+		sp->suppress = true;
+		(*pf)++;
+	}
+	for (; '0' <= **pf && **pf <= '9'; (*pf)++) {
+		sp->width = sp->width < (INT_MAX - 9) / 10 ?
+				    sp->width * 10 + (**pf - '0') :
+				    INT_MAX;
+	}
+	switch (**pf) {
+	case 'h':
+		(*pf)++;
+		if (**pf == 'h') {
+			(*pf)++;
+			sp->length = LEN_CHAR;
+		} else {
+			sp->length = LEN_SHORT;
+		}
+		break;
+	case 'l':
+		(*pf)++;
+		if (**pf == 'l') {
+			(*pf)++;
+			sp->length = LEN_LLONG;
+		} else {
+			sp->length = LEN_LONG;
+		}
+		break;
+	case 'j':
+		(*pf)++;
+		sp->length = LEN_MAX;
+		break;
+	case 'z':
+		(*pf)++;
+		sp->length = LEN_SIZE;
+		break;
+	case 't':
+		(*pf)++;
+		sp->length = LEN_PTRDIFF;
+		break;
+	case 'L':
+		(*pf)++;
+		sp->length = LEN_LDOUBLE;
+		break;
+	default:
+		break;
+	}
+	sp->conv = **pf;
+}
+
+/* consume up to maxw base digits; returns the count and the value */
+static int read_uint(
+	const char **restrict pp, const unsigned int base, const int maxw,
+	uintmax_t *restrict out)
+{
+	const char *p = *pp;
+	uintmax_t v = 0;
+	int n = 0;
+	for (; n < maxw; n++) {
+		const int d = unhex((char32_t)(unsigned char)*p);
+		if (d < 0 || (unsigned int)d >= base) {
+			break;
+		}
+		v = v * base + (unsigned int)d;
+		p++;
+	}
+	*out = v;
+	*pp = p;
+	return n;
+}
+
+static enum scan_status read_int(
+	const char **restrict in, const struct scanspec *restrict sp,
+	va_list *restrict ap)
+{
+	const char *p = skip_ws(*in);
+	if (*p == '\0') {
+		return SCAN_INPUT_END;
+	}
+	const int maxw = sp->width > 0 ? sp->width : INT_MAX;
+	int used = 0;
+	bool neg = false;
+	if ((*p == '+' || *p == '-') && used < maxw) {
+		neg = (*p == '-');
+		p++;
+		used++;
+	}
+	const char conv = sp->conv;
+	unsigned int base;
+	bool is_signed;
+	switch (conv) {
+	case 'd':
+		base = 10, is_signed = true;
+		break;
+	case 'i':
+		base = 0, is_signed = true;
+		break;
+	case 'u':
+		base = 10, is_signed = false;
+		break;
+	case 'o':
+		base = 8, is_signed = false;
+		break;
+	default: /* x X p */
+		base = 16, is_signed = false;
+		break;
+	}
+	/* accept a 0x prefix for hex and auto base, or a leading 0 as octal */
+	if ((base == 0 || base == 16) && *p == '0') {
+		if ((p[1] == 'x' || p[1] == 'X') &&
+		    unhex((char32_t)(unsigned char)p[2]) >= 0 &&
+		    used + 2 <= maxw) {
+			base = 16;
+			p += 2;
+			used += 2;
+		} else if (base == 0) {
+			base = 8;
+		}
+	}
+	if (base == 0) {
+		base = 10;
+	}
+	uintmax_t val;
+	if (read_uint(&p, base, maxw - used, &val) == 0) {
+		return SCAN_NOMATCH;
+	}
+	if (!sp->suppress) {
+		if (conv == 'p') {
+			*va_arg(*ap, void **) = (void *)(uintptr_t)val;
+		} else if (is_signed) {
+			store_signed(
+				ap, sp->length,
+				neg ? -(intmax_t)val : (intmax_t)val);
+		} else {
+			store_unsigned(
+				ap, sp->length, neg ? (uintmax_t)0 - val : val);
+		}
+	}
+	*in = p;
+	return SCAN_OK;
+}
+
+/* value = mant * 2^binexp; after "0x", up to maxw-used more chars */
+static double read_hexfloat(
+	const char **restrict pp, const int maxw, int used, bool *restrict ok)
+{
+	const char *p = *pp;
+	uint64_t mant = 0;
+	int binexp = 0;
+	bool dot = false, sticky = false;
+	int ndig = 0;
+	for (; used < maxw; used++) {
+		if (*p == '.' && !dot) {
+			dot = true;
+			p++;
+			continue;
+		}
+		const int h = unhex((char32_t)(unsigned char)*p);
+		if (h < 0) {
+			break;
+		}
+		p++;
+		ndig++;
+		if (mant < (UINT64_C(1) << 59)) {
+			mant = mant * 16 + (unsigned int)h;
+			if (dot) {
+				binexp -= 4;
+			}
+		} else {
+			if (!dot) {
+				binexp += 4;
+			}
+			sticky = sticky || h != 0;
+		}
+	}
+	if (ndig == 0) {
+		*ok = false;
+		return 0.0;
+	}
+	if (*p == 'p' || *p == 'P') {
+		const char *q = p + 1;
+		bool eneg = false;
+		if (*q == '+' || *q == '-') {
+			eneg = (*q == '-');
+			q++;
+		}
+		if ('0' <= *q && *q <= '9') {
+			int ev = 0;
+			for (; '0' <= *q && *q <= '9'; q++) {
+				ev = ev < 100000 ? ev * 10 + (*q - '0') : ev;
+			}
+			binexp += eneg ? -ev : ev;
+			p = q;
+		}
+	}
+	*pp = p;
+	*ok = true;
+	return scale2(mant, binexp, sticky);
+}
+
+static enum scan_status read_float(
+	const char **restrict in, const struct scanspec *restrict sp,
+	va_list *restrict ap)
+{
+	const char *p = skip_ws(*in);
+	if (*p == '\0') {
+		return SCAN_INPUT_END;
+	}
+	const int maxw = sp->width > 0 ? sp->width : INT_MAX;
+	int used = 0;
+	bool neg = false;
+	if ((*p == '+' || *p == '-') && used < maxw) {
+		neg = (*p == '-');
+		p++;
+		used++;
+	}
+	double mag;
+	if (match_ci(p, "inf") != 0) {
+		p += 3;
+		if (match_ci(p, "inity") != 0) {
+			p += 5;
+		}
+		mag = float_frombits(UINT64_C(0x7FF) << 52);
+	} else if (match_ci(p, "nan") != 0) {
+		p += 3;
+		if (*p == '(') {
+			const char *q = p + 1;
+			while (*q != '\0' && *q != ')') {
+				q++;
+			}
+			if (*q == ')') {
+				p = q + 1;
+			}
+		}
+		mag = float_frombits(UINT64_C(0x7FF8) << 48);
+	} else if (
+		*p == '0' && (p[1] == 'x' || p[1] == 'X') &&
+		(unhex((char32_t)(unsigned char)p[2]) >= 0 ||
+		 (p[2] == '.' && unhex((char32_t)(unsigned char)p[3]) >= 0))) {
+		p += 2;
+		bool ok;
+		mag = read_hexfloat(&p, maxw, used + 2, &ok);
+		if (!ok) {
+			return SCAN_NOMATCH;
+		}
+	} else {
+		char digits[FLOAT_DECIMAL_DIGITS];
+		int nd = 0, intdigits = 0;
+		bool dot = false, any = false;
+		for (; used < maxw; used++) {
+			if (*p == '.' && !dot) {
+				dot = true;
+				p++;
+				continue;
+			}
+			if (*p < '0' || *p > '9') {
+				break;
+			}
+			any = true;
+			if (!dot) {
+				intdigits++;
+			}
+			if (nd < FLOAT_DECIMAL_DIGITS) {
+				digits[nd++] = *p;
+			}
+			p++;
+		}
+		if (!any) {
+			return SCAN_NOMATCH;
+		}
+		int k = intdigits;
+		if (*p == 'e' || *p == 'E') {
+			const char *q = p + 1;
+			bool eneg = false;
+			if (*q == '+' || *q == '-') {
+				eneg = (*q == '-');
+				q++;
+			}
+			if ('0' <= *q && *q <= '9') {
+				long ev = 0;
+				for (; '0' <= *q && *q <= '9'; q++) {
+					ev = ev < 1000000 ?
+						     ev * 10 + (*q - '0') :
+						     ev;
+				}
+				k += (int)(eneg ? -ev : ev);
+				p = q;
+			}
+		}
+		mag = float_fromdecimal(digits, nd, k);
+	}
+	if (!sp->suppress) {
+		store_float(ap, sp->length, neg, mag);
+	}
+	*in = p;
+	return SCAN_OK;
+}
+
+static enum scan_status read_str(
+	const char **restrict in, const struct scanspec *restrict sp,
+	va_list *restrict ap)
+{
+	const char *p = skip_ws(*in);
+	if (*p == '\0') {
+		return SCAN_INPUT_END;
+	}
+	const int maxw = sp->width > 0 ? sp->width : INT_MAX;
+	char *out = sp->suppress ? NULL : va_arg(*ap, char *);
+	for (int n = 0; n < maxw;) {
+		char32_t cp;
+		const char *q = p;
+		const int len = utf8next(&cp, &q);
+		if (len == 0 || isspace(cp)) {
+			break;
+		}
+		if (out != NULL) {
+			memcpy(out, p, (size_t)len);
+			out += len;
+		}
+		p = q;
+		n++;
+	}
+	if (out != NULL) {
+		*out = '\0';
+	}
+	*in = p;
+	return SCAN_OK;
+}
+
+static enum scan_status read_char(
+	const char **restrict in, const struct scanspec *restrict sp,
+	va_list *restrict ap)
+{
+	const char *p = *in; /* no leading-whitespace skip */
+	const int want = sp->width > 0 ? sp->width : 1;
+	char *out = sp->suppress ? NULL : va_arg(*ap, char *);
+	int got = 0;
+	for (; got < want; got++) {
+		char32_t cp;
+		const char *q = p;
+		const int len = utf8next(&cp, &q);
+		if (len == 0) {
+			break;
+		}
+		if (out != NULL) {
+			memcpy(out, p, (size_t)len);
+			out += len;
+		}
+		p = q;
+	}
+	if (got == 0) {
+		return SCAN_INPUT_END;
+	}
+	*in = p;
+	return SCAN_OK;
+}
+
+static enum scan_status read_scanset(
+	const char **restrict in, const struct scanspec *restrict sp,
+	const char *restrict setb, const char *restrict sete, const bool neg,
+	va_list *restrict ap)
+{
+	const char *p = *in; /* no leading-whitespace skip */
+	if (*p == '\0') {
+		return SCAN_INPUT_END;
+	}
+	const int maxw = sp->width > 0 ? sp->width : INT_MAX;
+	char *out = sp->suppress ? NULL : va_arg(*ap, char *);
+	int n = 0;
+	for (; n < maxw; n++) {
+		char32_t cp;
+		const char *q = p;
+		const int len = utf8next(&cp, &q);
+		if (len == 0 || !scanset_match(cp, setb, sete, neg)) {
+			break;
+		}
+		if (out != NULL) {
+			memcpy(out, p, (size_t)len);
+			out += len;
+		}
+		p = q;
+	}
+	if (n == 0) {
+		return SCAN_NOMATCH;
+	}
+	if (out != NULL) {
+		*out = '\0';
+	}
+	*in = p;
+	return SCAN_OK;
+}
+
+int u8vsscanf(
+	const char *restrict str, const char *restrict format, va_list args)
+{
+	va_list ap;
+	va_copy(ap, args);
+	const char *in = str;
+	int count = 0;
+	bool input_end = false;
+	const char *f = format;
+	while (*f != '\0') {
+		if (*f != '%') {
+			char32_t fcp;
+			const char *fq = f;
+			(void)utf8next(&fcp, &fq);
+			if (isspace(fcp)) {
+				in = skip_ws(in);
+				f = fq;
+				continue;
+			}
+			char32_t icp;
+			const char *iq = in;
+			if (utf8next(&icp, &iq) == 0) {
+				input_end = true;
+				break;
+			}
+			if (icp != fcp) {
+				break;
+			}
+			in = iq;
+			f = fq;
+			continue;
+		}
+		f++;
+		if (*f == '%') {
+			/* match a literal '%' */
+			if (*in != '%') {
+				input_end = (*in == '\0');
+				break;
+			}
+			in++;
+			f++;
+			continue;
+		}
+		struct scanspec sp;
+		parse_scanspec(&sp, &f); /* f now at the conversion char */
+		const char conv = sp.conv;
+		const char *setb = NULL, *sete = NULL;
+		bool neg = false;
+		if (conv == '[') {
+			const char *s = f + 1;
+			if (*s == '^') {
+				neg = true;
+				s++;
+			}
+			setb = s;
+			if (*s == ']') {
+				s++;
+			}
+			while (*s != '\0' && *s != ']') {
+				s++;
+			}
+			sete = s;
+			if (*s == ']') {
+				s++;
+			}
+			f = s;
+		} else if (conv != '\0') {
+			f++;
+		}
+		enum scan_status st;
+		switch (conv) {
+		case 'd':
+		case 'i':
+		case 'u':
+		case 'o':
+		case 'x':
+		case 'X':
+		case 'p':
+			st = read_int(&in, &sp, &ap);
+			break;
+		case 'f':
+		case 'F':
+		case 'e':
+		case 'E':
+		case 'g':
+		case 'G':
+		case 'a':
+		case 'A':
+			st = read_float(&in, &sp, &ap);
+			break;
+		case 's':
+			st = sp.length != LEN_NONE ? SCAN_NOMATCH :
+						     read_str(&in, &sp, &ap);
+			break;
+		case 'c':
+			st = sp.length != LEN_NONE ? SCAN_NOMATCH :
+						     read_char(&in, &sp, &ap);
+			break;
+		case '[':
+			st = sp.length != LEN_NONE ?
+				     SCAN_NOMATCH :
+				     read_scanset(
+					     &in, &sp, setb, sete, neg, &ap);
+			break;
+		default:
+			/* '\0' (malformed) or unsupported (%n, %ls, ...): stop */
+			st = SCAN_NOMATCH;
+			break;
+		}
+		if (st == SCAN_INPUT_END) {
+			input_end = true;
+			break;
+		}
+		if (st == SCAN_NOMATCH) {
+			break;
+		}
+		if (!sp.suppress) {
+			count++;
+		}
+	}
+	va_end(ap);
+	return count == 0 && input_end ? -1 : count;
+}
+
+int u8sscanf(const char *restrict str, const char *restrict format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	const int ret = u8vsscanf(str, format, args);
 	va_end(args);
 	return ret;
 }

@@ -18,7 +18,6 @@
 #include <threads.h>
 #endif
 #include <stddef.h>
-#include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -55,8 +54,9 @@ static const char *const slog_level_color[] = {
 	ANSI_CSI_FG(, 96), ANSI_CSI_FG(, 97),	  ANSI_CSI_FG(, 37),
 };
 
-static FILE *slog_output;
 static struct io_stream *slog_stream;
+static slog_writer_fn slog_writer;
+static void *slog_writer_ud;
 static slog_syslog_fn slog_syslog;
 static void *slog_syslog_ident;
 
@@ -253,8 +253,8 @@ static const char *slog_filename(const char *restrict file)
 }
 
 /* write the whole buffer, retrying short writes and EINTR. Like the printers'
- * stdio calls, output errors are best-effort and unescalated -- a logger has no
- * lower channel to report its own I/O failures through. Async-signal-safe. */
+ * stream writes, output errors are best-effort and unescalated -- a logger has
+ * no lower channel to report its own I/O failures through. Async-signal-safe. */
 static void slog_write_all(const int fd, const void *restrict data, size_t n)
 {
 	const unsigned char *restrict p = data;
@@ -273,24 +273,6 @@ static void slog_write_all(const int fd, const void *restrict data, size_t n)
 		n -= (size_t)nw;
 	}
 }
-
-/* stream view of the terminal sink's FILE, so struct slog_extra callbacks
- * (which take a stream) can write to it */
-static int slog_term_write(void *p, const void *buf, size_t *restrict len)
-{
-	struct io_stream *restrict s = p;
-	FILE *restrict f = s->data;
-	const size_t want = *len;
-	*len = fwrite(buf, sizeof(unsigned char), want, f);
-	if (*len < want) {
-		return -1;
-	}
-	return 0;
-}
-
-static const struct io_stream_vftable slog_term_vftable = {
-	.write = slog_term_write,
-};
 
 static void slog_print_terminal(
 	const int level, const char *restrict file, const int line,
@@ -320,20 +302,25 @@ static void slog_print_terminal(
 	buf.cap = cap;
 	/* overwriting the null terminator is not an issue */
 	BUF_APPENDSTR(buf, ANSI_CSI_RESET "\n");
+	size_t len = buf.len;
 
 	/* a logger has no lower channel to report its own I/O failures
 	 * through, so output errors below are best-effort and unescalated */
 	MTX_LOCK(&slog_output_mu);
-	(void)fwrite(buf.data, sizeof(buf.data[0]), buf.len, slog_output);
-	if (extra != NULL) {
-		struct io_stream term = { &slog_term_vftable, slog_output };
-		extra->func(&term, extra->data);
+	/* re-check under the lock: a concurrent slog_setoutput may have cleared
+	 * the stream after this printer was selected */
+	if (slog_stream != NULL) {
+		(void)io_stream_write(slog_stream, buf.data, &len);
+		if (extra != NULL) {
+			extra->func(slog_stream, extra->data);
+		}
+		(void)io_stream_flush(slog_stream);
 	}
-	(void)fflush(slog_output);
 	MTX_UNLOCK(&slog_output_mu);
 }
 
-/* builds the "<L> <timestamp> <file>:<line> " prefix of the writer sink */
+/* builds the "<L> <timestamp> <file>:<line> " prefix shared by the stream and
+ * writer sinks */
 static void slog_build_prefix(
 	struct slog_linebuf *restrict buf, const int level,
 	const char *restrict file, const int line)
@@ -346,7 +333,7 @@ static void slog_build_prefix(
 	BUF_APPENDF(*buf, " %s:%d ", slog_filename(file), line);
 }
 
-static void slog_print_writer(
+static void slog_print_stream(
 	const int level, const char *restrict file, const int line,
 	const struct slog_extra *restrict extra, const char *restrict format,
 	va_list args)
@@ -374,6 +361,35 @@ static void slog_print_writer(
 		}
 		(void)io_stream_flush(slog_stream);
 	}
+	MTX_UNLOCK(&slog_output_mu);
+}
+
+static void slog_print_writer(
+	const int level, const char *restrict file, const int line,
+	const struct slog_extra *restrict extra, const char *restrict format,
+	va_list args)
+{
+	struct slog_linebuf buf;
+	slog_build_prefix(&buf, level, file, line);
+
+	const int ret = BUF_VAPPENDF(buf, format, args);
+	if (ret < 0) {
+		BUF_APPENDSTR(buf, "(log format error)");
+	}
+	/* overwriting the null terminator is not an issue */
+	BUF_APPENDSTR(buf, "\n");
+	/* there is no stream to re-format into, so an overlong line is already
+	 * truncated to the buffer capacity by buf_append */
+	const size_t len = buf.len;
+
+	MTX_LOCK(&slog_output_mu);
+	/* re-check under the lock: a concurrent slog_setoutput may have cleared
+	 * the writer after this printer was selected */
+	if (slog_writer != NULL) {
+		slog_writer(slog_writer_ud, buf.data, len);
+	}
+	/* like the syslog sink, the writer function sink ignores extra */
+	(void)extra;
 	MTX_UNLOCK(&slog_output_mu);
 }
 
@@ -427,20 +443,32 @@ void slog_setoutput(const int type, ...)
 		ATOMIC_STORE(&slog_printer, NULL);
 	} break;
 	case SLOG_OUTPUT_TERMINAL: {
-		FILE *stream = va_arg(args, FILE *);
-		MTX_LOCK(&slog_output_mu);
-		slog_output = stream;
-		MTX_UNLOCK(&slog_output_mu);
-		ATOMIC_STORE(&slog_printer, slog_print_terminal);
-	} break;
-	case SLOG_OUTPUT_WRITER: {
 		struct io_stream *stream = va_arg(args, struct io_stream *);
 		MTX_LOCK(&slog_output_mu);
 		slog_stream = stream;
 		MTX_UNLOCK(&slog_output_mu);
 		ATOMIC_STORE(
 			&slog_printer,
-			stream != NULL ? slog_print_writer : NULL);
+			stream != NULL ? slog_print_terminal : NULL);
+	} break;
+	case SLOG_OUTPUT_STREAM: {
+		struct io_stream *stream = va_arg(args, struct io_stream *);
+		MTX_LOCK(&slog_output_mu);
+		slog_stream = stream;
+		MTX_UNLOCK(&slog_output_mu);
+		ATOMIC_STORE(
+			&slog_printer,
+			stream != NULL ? slog_print_stream : NULL);
+	} break;
+	case SLOG_OUTPUT_WRITER: {
+		slog_writer_fn fn = va_arg(args, slog_writer_fn);
+		void *ud = va_arg(args, void *);
+		MTX_LOCK(&slog_output_mu);
+		slog_writer = fn;
+		slog_writer_ud = ud;
+		MTX_UNLOCK(&slog_output_mu);
+		ATOMIC_STORE(
+			&slog_printer, fn != NULL ? slog_print_writer : NULL);
 	} break;
 	case SLOG_OUTPUT_SYSLOG: {
 		void *ident = va_arg(args, void *);

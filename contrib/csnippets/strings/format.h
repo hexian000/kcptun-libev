@@ -9,13 +9,6 @@
 #include <stdint.h>
 #include <time.h>
 
-/*
- * Note: the numeric formatters below go through the C stdio conversions
- * (%g/%f), so the decimal separator in their output follows the active
- * LC_NUMERIC locale (e.g. a comma under some locales). Set LC_NUMERIC to "C"
- * around the call if locale-independent '.' output is required.
- */
-
 /**
  * @brief Format the value with human-readable SI metric prefix.
  * @return Same as snprintf.

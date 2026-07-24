@@ -24,11 +24,14 @@
  * (u8strchr, u8strspn, ...); the prefix keeps every symbol distinct from libc,
  * so plain byte operations already correct for UTF-8 (strcmp, strstr, memchr)
  * are left to <string.h> and only the codepoint-aware additions live here. The
- * header also carries u8snprintf/u8vsnprintf, locale-independent snprintf(3)/
- * vsnprintf(3) formatters. Where the shared root would mislead, the semantics
- * still differ: u8strlen/u8strnlen count codepoints rather than bytes, and
+ * header also carries u8snprintf/u8vsnprintf and u8sscanf/u8vsscanf, locale-
+ * independent snprintf(3)/vsnprintf(3) formatters and sscanf(3) scanners. Where
+ * the shared root would mislead, the semantics
+ * still differ: u8strlen/u8strnlen count codepoints rather than bytes,
  * u8strlcpy/u8strlcat take snprintf-style arguments and return an int rather
- * than following BSD strlcpy/strlcat.
+ * than following BSD strlcpy/strlcat, and u8strlower/u8strupper write to a
+ * separate buffer with the same snprintf-style truncation because a simple
+ * Unicode case fold can change the encoded length.
  * @{
  */
 
@@ -120,6 +123,48 @@ char *u8strtrimprefix(char *restrict s, const char *restrict prefix);
  *  @return s. */
 char *u8strtrimsuffix(char *restrict s, const char *restrict suffix);
 
+/**
+ * @brief Trim leading whitespace codepoints, returning the new start.
+ * @param[in] s NUL-terminated UTF-8 string.
+ * @return A pointer into s past any leading isspace() codepoints.
+ */
+char *u8strtrimleftspace(char *restrict s);
+
+/**
+ * @brief Trim trailing whitespace codepoints in place.
+ * @param[in,out] s NUL-terminated UTF-8 string; truncated with a NUL after the
+ *                last non-whitespace codepoint.
+ * @return s.
+ */
+char *u8strtrimrightspace(char *restrict s);
+
+/**
+ * @brief Trim leading and trailing whitespace codepoints.
+ * @param[in,out] s NUL-terminated UTF-8 string; see u8strtrimrightspace.
+ * @return u8strtrimrightspace(u8strtrimleftspace(s)).
+ */
+char *u8strtrimspace(char *restrict s);
+
+/**
+ * @brief Lowercase a UTF-8 string using the simple Unicode case mapping.
+ *
+ * Unlike ctype_ascii.h's in-place strlower, the mapping may change the encoded
+ * length, so output goes to a separate buffer with snprintf(3) semantics:
+ * always NUL-terminated when maxlen > 0, and truncation never splits a codepoint.
+ *
+ * @param[out] buf Output buffer; may be NULL only when maxlen == 0.
+ * @param maxlen Size of buf in bytes, including the NUL terminator.
+ * @param[in] src NUL-terminated UTF-8 string.
+ * @return Bytes needed excluding the NUL; a value >= maxlen indicates truncation.
+ */
+int u8strlower(char *restrict buf, size_t maxlen, const char *restrict src);
+
+/**
+ * @brief Uppercase a UTF-8 string using the simple Unicode case mapping.
+ * @see u8strlower
+ */
+int u8strupper(char *restrict buf, size_t maxlen, const char *restrict src);
+
 /** @brief Length in bytes of the initial run of codepoints in @p set.
  *  @param[in] s NUL-terminated UTF-8 string.
  *  @param[in] set UTF-8 string spelling the accepted codepoints.
@@ -180,6 +225,37 @@ int u8vsnprintf(
  */
 int u8snprintf(
 	char *restrict buf, size_t maxlen, const char *restrict format, ...);
+
+/**
+ * @brief Parse a string like vsscanf(3), independent of libc and locale.
+ *
+ * Allocation-free, thread-safe and async-signal-safe: no libc function is
+ * called on any path, and the decimal float parse is correctly rounded. Supports
+ * the conversions d i u o x X c s p f F e E g G a A [ %%, assignment suppression
+ * `*`, a maximum field width, and the length modifiers hh h l ll j z t L. A
+ * whitespace directive matches zero or more input whitespace codepoints, and a
+ * literal directive matches the same codepoint.
+ *
+ * Divergences from vsscanf(3):
+ * - Whitespace and codepoint matching are Unicode-aware (any isspace()
+ *   codepoint); for %%s, %%c and %%[, the field width counts codepoints not bytes.
+ * - %%p reads "0x" followed by hex digits, the inverse of u8snprintf's %%p.
+ * - %%n, %%ls, %%lc and other unsupported conversions stop the scan.
+ *
+ * @param[in] str NUL-terminated UTF-8 input string.
+ * @param[in] format scanf-style format string.
+ * @param args Pointers receiving the converted values.
+ * @return Number of input items assigned; -1 (EOF) if the input ends before the
+ *         first conversion succeeds.
+ */
+int u8vsscanf(
+	const char *restrict str, const char *restrict format, va_list args);
+
+/**
+ * @brief Parse a string like sscanf(3), independent of libc and locale.
+ * @see u8vsscanf
+ */
+int u8sscanf(const char *restrict str, const char *restrict format, ...);
 
 /** @} */
 
