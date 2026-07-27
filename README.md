@@ -70,7 +70,7 @@ Read more about [KCP](https://github.com/skywind3000/kcp/blob/master/README.en.m
 - Dynamic DNS aware: Dynamic IP addresses can be resolved automatically.
 - Configurable: When used with other encryption (e.g., udp2raw, WireGuard), built‐in encryption can be disabled or omitted at build time.
 - Portable: Compliant with ISO C; supports both GNU/Linux and POSIX APIs.
-- Long-Term Supported: Follow the latest releases of the dependent projects. Even if we don't make any changes, the binary release will be rebuilt at least once a year.
+- Long-Term Supported: Follow the latest releases of the dependent projects. Even if we don't make any changes, the binary release may be rebuilt irregualrly.
 
 kcptun-libev is extremely lightweight. The main executable is ~200 KiB on most platforms\*, with low CPU usage and memory footprint.
 
