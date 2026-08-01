@@ -32,6 +32,9 @@ void srand64(uint_fast64_t seed);
 
 /**
  * @brief Generate uniformly distributed integer in [0, n].
+ * @param n Inclusive upper bound, at most UINT64_MAX. rand64 supplies 64 bits
+ * of entropy, so where uint_fast64_t is wider than that a larger bound cannot
+ * be covered and is rejected by an assertion rather than silently truncated.
  * @details Based on rand64.
  * @see rand64
  */

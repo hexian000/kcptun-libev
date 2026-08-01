@@ -8,8 +8,30 @@
 
 /**
  * @defgroup intcast
- * @brief Safely cast stdint types to unknown int types.
- * @details The compiler implementation must support all types from int8_t to uint64_t.
+ * @brief Range-check a cast to an integer type named only by a value.
+ * @details The point of these macros is that the destination need not be
+ * spelled out: a caller with an opaque platform typedef (`uid_t`, `off_t`, ...)
+ * passes a value of it and gets the right bounds without having to know which
+ * type that is.
+ *
+ * What the destination *must* be is one of the eight exact-width types
+ * `int8_t`..`uint64_t`, or a typedef that resolves to one of them --
+ * `uid_t` and `gid_t` do, which is why `os/daemon.c` can use them here. There
+ * is deliberately no `default:` branch: for a type whose range these macros
+ * cannot name, silently letting the cast through would defeat the purpose, so
+ * an unsupported destination is a compile error instead.
+ *
+ * That leaves standard types that alias none of the eight on a given platform,
+ * and the set differs per platform: plain `char` never matches (it is a
+ * distinct type from both `signed char` and `unsigned char`), `long long` and
+ * `unsigned long long` do not match where `int64_t` is `long` (LP64), and
+ * `long` does not match where `int64_t` is `long long` (LLP64). Branches for
+ * them cannot simply be added, because on the platforms where they *do* alias
+ * an exact-width type the association list would contain the same type twice,
+ * which is ill-formed. A caller in that position must name the destination
+ * width itself, e.g. `INTCAST_CHECK((int64_t)0, src)`.
+ *
+ * The implementation must support all types from int8_t to uint64_t.
  * @{
  */
 

@@ -37,6 +37,9 @@ int format_rfc3339nano(
  * @brief Local timezone offset in seconds east of UTC, in effect at instant t.
  * @details DST-correct for the given instant. Thread-safe where localtime_r is
  * available; otherwise it falls back to the thread-unsafe localtime.
+ * @return The offset, or 0 when the instant cannot be broken down (which is
+ * indistinguishable from a genuine UTC zone; there is no error channel here,
+ * and the callers -- timestamp formatting -- have no better answer than UTC).
  */
 int local_tzoff(time_t t);
 
@@ -55,6 +58,10 @@ time_t parse_rfc3339(const char *restrict tstamp);
  * @param tp Filled with the absolute time on success. The stamp's own offset is
  * applied; the result is independent of the local timezone. Fractional digits
  * beyond nanosecond precision are ignored.
+ * @details The 'T' and 'Z' separators are accepted in either case, as RFC 3339
+ * section 5.6 permits. A stamp of 64 bytes or more is rejected outright: the
+ * grammar puts no bound on time-secfrac, but an unbounded parse over untrusted
+ * input is not worth the digits past nanoseconds, which are discarded anyway.
  * @return 0 on success, -1 if tstamp is not a valid stamp.
  */
 int parse_rfc3339nano(struct timespec *restrict tp, const char *restrict tstamp);

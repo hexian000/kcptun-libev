@@ -54,9 +54,14 @@ void drop_privileges(const char *identity);
  *     security-relevant: a file the daemon later creates with the customary
  *     0666 lands world-writable, so callers that care must set their own
  *     umask after this returns.
- * @note Does not return on failure: a failing pipe, fork or freopen, or a
- *     daemon process that dies before confirming startup, aborts the process.
- *     If identity is non-NULL, drop_privileges' own fatal failures apply too.
+ * @note Does not return on failure: a failing pipe, fork or freopen, a failing
+ *     read of the readiness message, or a daemon process that dies before
+ *     confirming startup, aborts the process. If identity is non-NULL,
+ *     drop_privileges' own fatal failures apply too.
+ * @note Survives losing the original process: if it dies before reading the
+ *     readiness message, the already-started daemon logs LOGW and carries on
+ *     rather than being killed by SIGPIPE, which is ignored across that write
+ *     and restored afterwards.
  * @note Requires POSIX.1-1990 for setsid.
  */
 void daemonize(const char *identity, bool nochdir, bool noclose);
@@ -70,6 +75,11 @@ void daemonize(const char *identity, bool nochdir, bool noclose);
  * @brief Send a state notification to systemd.
  * @param state The state string to notify, e.g., DAEMON_SYSTEMD_STATE_READY.
  * @return >0 on successfully notified, 0 if systemd is not running, <0 on error.
+ * @note Built without systemd support this is a no-op returning -1 for every
+ *     state, so the two are told apart by the return alone: 0 means a systemd
+ *     build found nothing listening, -1 that there is no systemd support at
+ *     all. A caller that treats <0 as an error condition should test for
+ *     systemd support at build time rather than at each call.
  */
 int systemd_notify(const char *state);
 

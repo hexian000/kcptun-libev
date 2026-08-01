@@ -55,13 +55,13 @@ function(find_backtrace)
         return()
     endif()
     if(NOT BUILD_STATIC AND NOT LINK_STATIC_LIBS)
-        find_path(LIBUNWIND_INCLUDE_DIR NAMES libunwind.h)
+        # LLVM libunwind's Debian/Ubuntu packages install the header under a
+        # libunwind/ subdir (e.g. /usr/include/libunwind/libunwind.h), so search
+        # that suffix too; the resulting -I lets debug.c keep #include <libunwind.h>.
+        find_path(LIBUNWIND_INCLUDE_DIR NAMES libunwind.h PATH_SUFFIXES libunwind)
         find_library(LIBUNWIND_LIBRARY NAMES unwind)
-        find_library(LIBLZMA_LIBRARY NAMES lzma)
-        if((EXISTS ${LIBUNWIND_INCLUDE_DIR}) AND (EXISTS ${LIBUNWIND_LIBRARY}) AND (EXISTS ${LIBLZMA_LIBRARY}))
+        if((EXISTS ${LIBUNWIND_INCLUDE_DIR}) AND (EXISTS ${LIBUNWIND_LIBRARY}))
             message(STATUS "libunwind: ${LIBUNWIND_LIBRARY}")
-            message(STATUS "liblzma: ${LIBLZMA_LIBRARY}")
-            set(LIBUNWIND_LIBRARY "${LIBUNWIND_LIBRARY};${LIBLZMA_LIBRARY}")
             set(WITH_LIBUNWIND TRUE PARENT_SCOPE)
             return()
         endif()

@@ -4,7 +4,9 @@
 #ifndef META_LIKELY_H
 #define META_LIKELY_H
 
-#if defined(__has_builtin)
+/* META_FORCE_FALLBACK selects the portable identity definition even under GCC/
+ * Clang, so a test can compile and exercise that otherwise-unreachable path. */
+#if defined(__has_builtin) && !defined(META_FORCE_FALLBACK)
 #if __has_builtin(__builtin_expect)
 
 #ifndef LIKELY
@@ -16,7 +18,19 @@
 #endif
 
 #endif /* __has_builtin(__builtin_expect) */
-#endif /* defined(__has_builtin) */
+#elif defined(__GNUC__) && !defined(META_FORCE_FALLBACK)
+/* GCC before 10 predates __has_builtin but has provided __builtin_expect since
+ * 3.0, so use it directly there instead of dropping the branch hint. */
+
+#ifndef LIKELY
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#endif
+
+#ifndef UNLIKELY
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
+#endif /* __has_builtin / __GNUC__, and not META_FORCE_FALLBACK */
 
 #ifndef LIKELY
 #define LIKELY(x) (x)

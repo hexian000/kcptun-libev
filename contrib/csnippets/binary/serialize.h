@@ -7,8 +7,9 @@
 /**
  * @file serialize.h
  * @brief Primitive type serializer.
- * @details These functions are carefully tuned for compilers to generate fast
- * code.
+ * @details Each function reads or writes a fixed-width unsigned integer to or
+ * from a raw byte buffer in a defined byte order: the unsuffixed functions use
+ * big-endian, the _le variants little-endian.
  */
 
 #include <stdint.h>

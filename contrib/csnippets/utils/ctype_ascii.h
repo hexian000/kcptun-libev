@@ -12,6 +12,12 @@
 #error "ctype_ascii.h is intended to be a standalone header and should not be included with ctype.h or similar headers that define character classification macros."
 #endif
 
+/* The guard above only catches <ctype.h> included *before* this header. A
+ * header pulled in later still breaks: its `int tolower(int);` declaration is
+ * macro-expanded into a syntax error reported at that declaration rather than
+ * here. The preprocessor cannot express the other direction, so include this
+ * header last in a translation unit, or not at all where <ctype.h> is needed. */
+
 /* These classification and conversion macros may evaluate their argument
  * more than once (isalnum up to 6 times, isxdigit 4, tolower/toupper 2-3),
  * unlike the <ctype.h> functions they substitute for, so the argument must
@@ -41,7 +47,7 @@
 static inline char *strlower(char *restrict s)
 {
 	for (unsigned char *p = (unsigned char *)s; *p; p++) {
-		*p = tolower(*p);
+		*p = (unsigned char)tolower(*p);
 	}
 	return s;
 }
@@ -49,7 +55,7 @@ static inline char *strlower(char *restrict s)
 static inline char *strupper(char *restrict s)
 {
 	for (unsigned char *p = (unsigned char *)s; *p; p++) {
-		*p = toupper(*p);
+		*p = (unsigned char)toupper(*p);
 	}
 	return s;
 }

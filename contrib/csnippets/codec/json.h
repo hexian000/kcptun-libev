@@ -367,9 +367,10 @@ struct json_field {
 	enum json_type_kind kind;
 	bool is_array;
 	/* true if the schema marks this field required; the marshaller always
-	 * emits a required array/object even when empty/NULL.  Independent of
-	 * req_bit, which is set only when unmarshal validation is generated, so
-	 * marshal presence stays correct under --no-validate. */
+	 * emits a required field even when empty/NULL: an array as [], an
+	 * object as {}, a string as "", a dynamic fragment as null.  Independent
+	 * of req_bit, which is set only when unmarshal validation is generated,
+	 * so marshal presence stays correct under --no-validate. */
 	bool required;
 	/* presence-bit index for a required field, or -1 if optional */
 	int_least8_t req_bit;
@@ -386,7 +387,13 @@ struct json_schema {
 	size_t obj_size; /* sizeof(struct); also the array element size */
 	/* key -> field index, or -1; matches the fields[] order */
 	int (*lookup)(const char *str, size_t len);
-	const void *defaults; /* static image to copy in, or NULL == all-zero */
+	/* Static image to copy in, or NULL == all-zero. Every array pointer in
+	 * it, at any nesting depth, must be NULL: the image is shared and not
+	 * owned, while an unmarshal that fails part-way frees whatever the
+	 * object holds at that moment, which for an untouched field is still
+	 * whatever this image supplied. gen_schema.py never emits an array
+	 * default; a hand-authored table must observe the same rule. */
+	const void *defaults;
 	uint_least64_t required_mask; /* OR of (1 << req_bit) over required */
 	int present_field; /* sentinel field index for optional nested
 			      objects, or -1 to always emit */
@@ -413,6 +420,11 @@ bool json_unmarshal(
  * @param obj Object to encode.
  * @param indent Per-level indent for pretty output, or NULL for compact.
  * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error.
+ * @note An optional array is carried as a NULL buffer with count 0, which is
+ * exactly what an explicit `[]` unmarshals to, so the two are indistinguishable
+ * by the time marshalling runs: an optional array that was present but empty in
+ * the input is omitted here rather than re-emitted as `[]`. Required arrays are
+ * unaffected -- those are always emitted, empty or not.
  */
 int json_marshal(
 	const struct json_schema *restrict schema, char *restrict buf,

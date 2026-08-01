@@ -17,7 +17,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -449,7 +448,11 @@ bool sa_matches(const struct sockaddr *bind, const struct sockaddr *dest)
  * safer for policy use than letting it fall through to GLOBAL. The same
  * principle covers the non-routable blocks that RFC assigns their own class:
  * 100.64.0.0/10 shared space, 240.0.0.0/4 reserved, and the 255.255.255.255
- * limited broadcast, none of which are globally routable. */
+ * limited broadcast, none of which are globally routable. A reservation with
+ * no class of its own stays GLOBAL by design: the RFC 5737 documentation
+ * ranges and the RFC 2544 benchmarking range are used as ordinary addresses
+ * in practice, so reporting them non-global would mislead a policy consumer.
+ * The IPv6 counterparts below are treated the same way. */
 static enum ipclass ipclassify_inet4(const uint32_t addr)
 {
 	if (addr == UINT32_C(0xffffffff)) { /* 255.255.255.255 */
@@ -538,6 +541,9 @@ enum ipclass sa_ipclassify(const struct sockaddr *sa)
 		if (IN6_IS_ADDR_MULTICAST(addr)) {
 			return IPCLASS_MULTICAST;
 		}
+		/* as in IPv4, a reservation with no class of its own stays
+		 * GLOBAL: 2001:db8::/32 (RFC 3849) documentation and
+		 * 2001:2::/48 (RFC 5180) benchmarking */
 		return IPCLASS_GLOBAL;
 	}
 	default:
@@ -599,7 +605,28 @@ static bool nsresolve(
 	}
 	const bool ok = find_addrinfo(sa, result);
 	freeaddrinfo(result);
+	if (!ok) {
+		LOGE_F("getaddrinfo: resolve `%s' `%s': no usable address",
+		       name, service);
+	}
 	return ok;
+}
+
+/* getaddrinfo consults the resolver only for a real host name: a numeric
+ * address is parsed locally, and a NULL node yields the loopback or, with
+ * AI_PASSIVE, the wildcard address. Only a resolver lookup can return a family
+ * the caller never asked for, which is all AI_ADDRCONFIG guards against;
+ * anywhere else the flag only does harm, glibc not counting a loopback address
+ * as configured, so a host with only `lo` up rejects 127.0.0.1 and ::1 too. */
+static bool needs_resolver(const char *const name)
+{
+	if (name == NULL) {
+		return false;
+	}
+	struct in_addr addr;
+	struct in6_addr addr6;
+	return inet_pton(AF_INET, name, &addr) != 1 &&
+	       inet_pton(AF_INET6, name, &addr6) != 1;
 }
 
 bool sa_resolve(
@@ -613,7 +640,7 @@ bool sa_resolve(
 			(type == SA_RESOLVE_UDP) ? SOCK_DGRAM : SOCK_STREAM,
 		.ai_protocol =
 			(type == SA_RESOLVE_UDP) ? IPPROTO_UDP : IPPROTO_TCP,
-		.ai_flags = AI_ADDRCONFIG,
+		.ai_flags = needs_resolver(name) ? AI_ADDRCONFIG : 0,
 	};
 	return nsresolve(sa, name, service, &hints);
 }
@@ -631,7 +658,10 @@ bool sa_resolve_bind(
 			(type == SA_RESOLVE_UDP) ? SOCK_DGRAM : SOCK_STREAM,
 		.ai_protocol =
 			(type == SA_RESOLVE_UDP) ? IPPROTO_UDP : IPPROTO_TCP,
-		.ai_flags = AI_ADDRCONFIG | AI_PASSIVE,
+		/* never AI_ADDRCONFIG: a bind address is taken as given, so a
+		 * loopback-only host still resolves; an unbindable family is
+		 * bind()'s to report */
+		.ai_flags = AI_PASSIVE,
 	};
 	return nsresolve(sa, name, service, &hints);
 }

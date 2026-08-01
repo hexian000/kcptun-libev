@@ -17,6 +17,7 @@
 #include <grp.h>
 #include <inttypes.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -64,9 +65,21 @@ void drop_privileges(const char *const identity)
 		const intmax_t uidvalue = strtoimax(user, &endptr, 10);
 		if (endptr == user || *endptr ||
 		    !INTCAST_CHECK(uid, uidvalue)) {
-			/* search user database for user name */
+			/* Search the user database for the user name. POSIX
+			 * marks a miss with NULL and errno untouched, and a
+			 * failure with NULL and errno set, so errno is cleared
+			 * first: a transient NSS/LDAP error must be reported as
+			 * itself, not as a missing account. Every lookup below
+			 * follows the same protocol. */
+			errno = 0;
 			pw = getpwnam(user);
 			if (pw == NULL) {
+				const int err = errno;
+				if (err != 0) {
+					FAILMSGF(
+						"passwd: name `%s': (%d) %s",
+						user, err, strerror(err));
+				}
 				FAILMSGF(
 					"passwd: name `%s' does not exist",
 					user);
@@ -86,8 +99,15 @@ void drop_privileges(const char *const identity)
 		if (endptr == group || *endptr ||
 		    !INTCAST_CHECK(gid, gidvalue)) {
 			/* search group database for group name */
+			errno = 0;
 			const struct group *const gr = getgrnam(group);
 			if (gr == NULL) {
+				const int err = errno;
+				if (err != 0) {
+					FAILMSGF(
+						"group: name `%s': (%d) %s",
+						group, err, strerror(err));
+				}
 				FAILMSGF(
 					"group: name `%s' does not exist",
 					group);
@@ -102,8 +122,15 @@ void drop_privileges(const char *const identity)
 	} else if (user != NULL && colon != NULL) {
 		/* group is not specified, search from user database */
 		if (pw == NULL) {
+			errno = 0;
 			pw = getpwuid(uid);
 			if (pw == NULL) {
+				const int err = errno;
+				if (err != 0) {
+					FAILMSGF(
+						"passwd: user `%s': (%d) %s",
+						user, err, strerror(err));
+				}
 				FAILMSGF(
 					"passwd: user `%s' does not exist",
 					user);
@@ -153,6 +180,59 @@ void drop_privileges(const char *const identity)
 	}
 }
 
+/* Tell the original process that startup is complete. Its end of the pipe is
+ * the only reader, and it can be gone -- killed by an init system, the operator
+ * or the OOM killer between the first fork and its read(). The daemon is fully
+ * started by then, so losing the launcher must not lose the daemon: SIGPIPE,
+ * whose default disposition would kill it outright, is ignored across the
+ * write, and the EPIPE that surfaces instead ends the notification quietly. */
+static void notify_ready(const int fd)
+{
+	char buf[256];
+	const int n = snprintf(
+		buf, sizeof(buf), "daemon process has started with pid %jd",
+		(intmax_t)getpid());
+	assert(n > 0 && (size_t)n < sizeof(buf));
+
+	struct sigaction ignore = { .sa_handler = SIG_IGN };
+	struct sigaction saved;
+	bool restore = false;
+	if (sigemptyset(&ignore.sa_mask) != 0) {
+		const int err = errno;
+		LOGW_F("sigemptyset: (%d) %s", err, strerror(err));
+	} else if (sigaction(SIGPIPE, &ignore, &saved) != 0) {
+		const int err = errno;
+		LOGW_F("sigaction: SIGPIPE (%d) %s", err, strerror(err));
+	} else {
+		restore = true;
+	}
+
+	size_t written = 0;
+	const size_t len = (size_t)n;
+	while (written < len) {
+		/* write(2) may complete partially or be interrupted by a
+		 * signal; retry until len bytes are written or a genuine
+		 * (non-EINTR) error occurs. */
+		const ssize_t ret = write(fd, buf + written, len - written);
+		if (ret < 0) {
+			const int err = errno;
+			if (err == EINTR) {
+				continue;
+			}
+			CHECK(err == EPIPE);
+			LOGW("readiness: the calling process is gone, starting unnotified");
+			break;
+		}
+		written += (size_t)ret;
+	}
+
+	if (restore && sigaction(SIGPIPE, &saved, NULL) != 0) {
+		const int err = errno;
+		LOGW_F("sigaction: SIGPIPE restore (%d) %s", err,
+		       strerror(err));
+	}
+}
+
 void daemonize(
 	const char *const identity, const bool nochdir, const bool noclose)
 {
@@ -189,17 +269,29 @@ void daemonize(
 		} else if (pid > 0) {
 			(void)close(fd[1]);
 			char buf[256];
-			/* Wait for the daemon process to signal readiness. If it
-			 * exits or crashes first instead, the pipe closes with no
-			 * message and this read() returns 0 (EOF), which the CHECK
-			 * below reports as a startup failure. Retry on EINTR so a
-			 * signal during startup does not spuriously abort the
-			 * parent (matching the grandchild's write loop below). */
+			/* Wait for the daemon process to signal readiness,
+			 * retrying on EINTR so a signal during startup does not
+			 * spuriously abort the parent (matching the grandchild's
+			 * write loop below). A daemon that exits or crashes
+			 * first closes the pipe with no message, which reads as
+			 * EOF -- a distinct outcome from a failing read(), and
+			 * reported as such. */
 			ssize_t nread;
-			do {
+			for (;;) {
 				nread = read(fd[0], buf, sizeof(buf));
-			} while (nread < 0 && errno == EINTR);
-			CHECK(nread > 0);
+				if (nread >= 0) {
+					break;
+				}
+				const int err = errno;
+				if (err != EINTR) {
+					FAILMSGF(
+						"readiness: read: (%d) %s", err,
+						strerror(err));
+				}
+			}
+			if (nread == 0) {
+				FAILMSG("readiness: the daemon process exited before confirming startup");
+			}
 			LOGI_F("%.*s", (int)nread, buf);
 			/* Finally, call exit() in the original process. */
 			exit(EXIT_SUCCESS);
@@ -254,29 +346,7 @@ void daemonize(
 	}
 	/* From the daemon process, notify the original process started
            that initialization is complete. */
-	{
-		char buf[256];
-		const int n = snprintf(
-			buf, sizeof(buf),
-			"daemon process has started with pid %jd",
-			(intmax_t)getpid());
-		assert(n > 0 && (size_t)n < sizeof(buf));
-		size_t written = 0;
-		const size_t len = (size_t)n;
-		while (written < len) {
-			/* write(2) may complete partially or be interrupted by a
-			 * signal; retry until len bytes are written or a genuine
-			 * (non-EINTR) error occurs. */
-			const ssize_t ret =
-				write(fd[1], buf + written, len - written);
-			if (ret < 0) {
-				const int err = errno;
-				CHECK(err == EINTR);
-				continue;
-			}
-			written += (size_t)ret;
-		}
-	}
+	notify_ready(fd[1]);
 	/* Close the anonymous pipe. */
 	(void)close(fd[1]);
 }

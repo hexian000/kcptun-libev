@@ -127,6 +127,11 @@ static void crash_altstack_teardown(void)
 
 static void sighandler_crash(const int signo)
 {
+	/* A signal handler must leave errno as it found it on any path back to
+	 * the interrupted code. Save it up front (the sigaction() below clobbers
+	 * it) and restore it just before re-raising. */
+	const int saved_errno = errno;
+
 	/* Report the crash without any async-signal-unsafe call: slog_panicf()
 	 * and debug_backtrace_fd() write straight to stderr with write(2) -- no
 	 * lock, no buffered stdio, no allocation -- unlike the LOG_STACK_F() path
@@ -135,8 +140,6 @@ static void sighandler_crash(const int signo)
 	 * debug_backtrace_init() (crashhandler_install) must have warmed the
 	 * backtrace machinery first. */
 	if (LOGLEVEL(FATAL)) {
-		/* a signal handler must leave errno as it found it */
-		const int saved_errno = errno;
 		const char *const sigstr = os_strsignal(signo);
 		if (sigstr != NULL) {
 			slog_panicf(
@@ -153,7 +156,6 @@ static void sighandler_crash(const int signo)
 		void *frames[DEBUG_STACK_MAXDEPTH];
 		const int n = debug_backtrace(frames, 2, DEBUG_STACK_MAXDEPTH);
 		debug_backtrace_fd(STDERR_FILENO, frames, n);
-		errno = saved_errno;
 	}
 	size_t idx = NUM_SIGHANDLERS;
 	for (size_t i = 0; i < NUM_SIGHANDLERS; i++) {
@@ -180,7 +182,8 @@ static void sighandler_crash(const int signo)
 		sighandlers[idx].oact =
 			(struct sigaction){ .sa_handler = SIG_DFL };
 	}
-	if (raise(signo)) {
+	errno = saved_errno;
+	if (raise(signo) != 0) {
 		_Exit(EXIT_FAILURE);
 	}
 }
@@ -270,6 +273,17 @@ const char *os_strsignal(const int signo)
 		{ SIGTTIN, "Stopped (tty input)" },
 		{ SIGTTOU, "Stopped (tty output)" },
 		{ SIGURG, "Urgent I/O condition" },
+		/* the rest of the POSIX.1-2008 base set, then the XSI pair,
+		 * which is optional and so guarded */
+		{ SIGXCPU, "CPU time limit exceeded" },
+		{ SIGXFSZ, "File size limit exceeded" },
+		{ SIGVTALRM, "Virtual timer expired" },
+#ifdef SIGPROF
+		{ SIGPROF, "Profiling timer expired" },
+#endif
+#ifdef SIGPOLL
+		{ SIGPOLL, "I/O possible" },
+#endif
 		{ SIGSYS, "Bad system call" },
 	};
 

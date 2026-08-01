@@ -413,7 +413,10 @@ table_set(struct hashtable *restrict table, const void *key, void **element)
 	size_t collision = 0;
 	for (elemid_type i = table->p[bucket].bucket; i != ID_NIL;
 	     i = table->p[i].next) {
-		struct hash_element *restrict p = &table->p[i];
+		/* deliberately not restrict: table_reseed() below rehashes every
+		 * element through table-derived pointers, so it both reads and
+		 * writes *p, and it must observe the key stored here */
+		struct hash_element *p = &table->p[i];
 		if (p->hash == hash && table->eq_fn(p->key, key)) {
 			/* replace existing element */
 			void *old_elem = p->element;
@@ -448,7 +451,8 @@ table_set(struct hashtable *restrict table, const void *key, void **element)
 		table->size++;
 	}
 
-	struct hash_element *restrict p = &table->p[index];
+	/* not restrict, for the same reason as the replace path above */
+	struct hash_element *p = &table->p[index];
 	p->valid = true;
 	p->hash = hash;
 	p->key = key;

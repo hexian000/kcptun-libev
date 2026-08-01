@@ -12,7 +12,6 @@
 #if WITH_LIBBACKTRACE
 #include <backtrace.h>
 #elif WITH_LIBUNWIND
-#define UNW_LOCAL_ONLY
 #include <libunwind.h>
 #elif HAVE_BACKTRACE
 #include <execinfo.h>
@@ -34,8 +33,9 @@
 #if DEBUG_FD_RAW_WRITE
 #include <errno.h>
 #endif
-#include <inttypes.h>
-#if SLOG_MT_SAFE
+/* bt_state() is the only user of stdatomic, and it exists only with
+ * libbacktrace, so an MT-safe build without it needs no atomics here. */
+#if WITH_LIBBACKTRACE && SLOG_MT_SAFE
 #include <stdatomic.h>
 #endif
 #include <stdbool.h>
@@ -312,11 +312,31 @@ int debug_backtrace(void **restrict frames, int skip, const int len)
 	(void)backtrace_simple(ctx.state, skip, backtrace_cb, NULL, &ctx);
 	return (int)ctx.i;
 #elif WITH_LIBUNWIND /* WITH_LIBBACKTRACE */
-	int n = unw_backtrace(frames, len);
-	int w = 0;
-	for (int i = skip; i < n; i++) {
-		frames[w++] = frames[i];
+	unw_context_t uc;
+	if (unw_getcontext(&uc) != 0) {
+		return 0;
 	}
+	unw_cursor_t cursor;
+	if (unw_init_local(&cursor, &uc) != 0) {
+		return 0;
+	}
+	/* depth 0 is debug_backtrace's own frame (matching unw_backtrace's
+	 * frame 0), so the caller's incremented skip carries over unchanged */
+	int w = 0;
+	int depth = 0;
+	do {
+		if (depth >= skip) {
+			unw_word_t ip;
+			if (unw_get_reg(&cursor, UNW_REG_IP, &ip) != 0) {
+				break;
+			}
+			frames[w++] = (void *)(uintptr_t)ip;
+			if (w >= len) {
+				break;
+			}
+		}
+		depth++;
+	} while (unw_step(&cursor) > 0);
 	return w;
 #elif HAVE_BACKTRACE /* WITH_LIBBACKTRACE */
 	int n = backtrace(frames, len);

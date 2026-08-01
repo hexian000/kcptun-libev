@@ -83,6 +83,14 @@ enum {
  */
 void slog_setoutput(int type, ...);
 
+/**
+ * @brief Set a path prefix stripped from the __FILE__ shown in each line.
+ * @param prefix Borrowed, not copied: the pointer is stored and dereferenced
+ * by every subsequent log call, including the async-signal-safe panic path,
+ * so it must stay valid until it is replaced or cleared with NULL. A string
+ * literal or other static storage is the intended use; a stack or temporary
+ * buffer is a use-after-scope.
+ */
 void slog_setfileprefix(const char *prefix);
 
 enum {

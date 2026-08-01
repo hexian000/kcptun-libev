@@ -258,6 +258,20 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		if (tenths >= 600) {
 			tenths -= 600;
 			t.minute++;
+			if (t.minute >= 10) {
+				/* the carry crossed into the whole-second
+				 * display; re-dispatch so 9m59.96s prints
+				 * "10:00" like an exact ten minutes, rather
+				 * than "10:00.0" in a format that range never
+				 * uses -- the same policy the second and
+				 * millisecond branches below follow */
+				return format_duration(
+					s, maxlen,
+					(struct duration){
+						.sign = d.sign,
+						.minute = t.minute,
+					});
+			}
 		}
 		return u8snprintf(
 			s, maxlen, SIGNED_STR(d.sign, "%u:%04.1f"), t.minute,
@@ -272,8 +286,10 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 			if (nearbyint(seconds * 100.0) >= 60.0 * 100.0) {
 				return format_duration(
 					s, maxlen,
-					(struct duration){ .sign = d.sign,
-							   .minute = 1 });
+					(struct duration){
+						.sign = d.sign,
+						.minute = 1,
+					});
 			}
 			return u8snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.2fs"),
@@ -286,8 +302,10 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		if (nearbyint(millis) >= 10.0 * 1000.0) {
 			return format_duration(
 				s, maxlen,
-				(struct duration){ .sign = d.sign,
-						   .second = 10 });
+				(struct duration){
+					.sign = d.sign,
+					.second = 10,
+				});
 		}
 		return u8snprintf(
 			s, maxlen, SIGNED_STR(d.sign, "%.0fms"), millis);
@@ -300,8 +318,10 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 			if (nearbyint(millis * 10.0) >= 1000.0 * 10.0) {
 				return format_duration(
 					s, maxlen,
-					(struct duration){ .sign = d.sign,
-							   .second = 1 });
+					(struct duration){
+						.sign = d.sign,
+						.second = 1,
+					});
 			}
 			return u8snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.1fms"),
@@ -337,8 +357,10 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 			if (nearbyint(micros * 10.0) >= 1000.0 * 10.0) {
 				return format_duration(
 					s, maxlen,
-					(struct duration){ .sign = d.sign,
-							   .milli = 1 });
+					(struct duration){
+						.sign = d.sign,
+						.milli = 1,
+					});
 			}
 			return u8snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.1fµs"),

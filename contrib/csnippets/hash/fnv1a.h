@@ -4,7 +4,8 @@
 #ifndef HASH_FNV1A_H
 #define HASH_FNV1A_H
 
-#define FNV_VERSION "5.0.6 2025-04-19" /* format: major.minor YYYY-MM-DD */
+#define FNV_VERSION                                                            \
+	"5.0.6 2025-04-19" /* format: major.minor.patch YYYY-MM-DD */
 
 #include <stddef.h>
 #include <stdint.h>

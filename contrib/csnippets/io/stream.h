@@ -74,6 +74,12 @@ int io_stream_flush(struct io_stream *s);
  * @return Error code, 0 for OK.
  * @details Base stream is closed too. If error occurs,
  * still close all resources and return the first error.
+ * @warning A stream whose vftable leaves `close` NULL is passed to `free()`
+ * here, so such a stream must be a single `malloc`'d block whose address is
+ * the `struct io_stream` itself -- which is what the `memory.h` constructors
+ * return. An implementation whose stream is static, automatic, or embedded in
+ * a larger object must install a `close` slot, even a do-nothing one, or this
+ * call is undefined behavior.
  */
 int io_stream_close(struct io_stream *s);
 

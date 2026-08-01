@@ -114,6 +114,25 @@ char *http_parse(char *restrict buf, struct http_message *restrict msg)
 	/* break tokens */
 	field2[-1] = field3[-1] = '\0';
 
+	/* RFC 7230 Section 3.1.1: the start-line separator is exactly one SP, so
+	 * a run of them is not "excess whitespace to skip" but a line this
+	 * parser cannot tokenize -- splitting on the first SP of a run yields an
+	 * empty field and shifts the rest, e.g. "GET  / HTTP/1.1" would parse as
+	 * method "GET", url "" and version "/ HTTP/1.1" and be reported as a
+	 * success. Reject the line instead; a caller has no way to tell that
+	 * split apart from a real one.
+	 *
+	 * Only the first two fields are checked. An empty third field is legal:
+	 * on a status line it is the reason-phrase, which Section 3.1.2 spells
+	 * *( HTAB / SP / VCHAR / obs-text ), so zero characters is a conforming
+	 * "HTTP/1.1 404 ". This parser serves requests and responses alike and
+	 * cannot tell which it has, the same reason a run before the last field
+	 * is accepted; a request whose version came out empty is rejected by the
+	 * caller's version check. */
+	if (field1[0] == '\0' || field2[0] == '\0') {
+		return NULL;
+	}
+
 	/* reject a bare CR/LF (or other CTL) smuggled into any field */
 	if (http_line_has_ctl(field1) || http_line_has_ctl(field2) ||
 	    http_line_has_ctl(field3)) {
@@ -139,7 +158,7 @@ static char *skip_whitespace(char *restrict s)
  *   tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
  *           "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
  * This is not RFC 2045's token (mime.c's istoken): HTTP additionally excludes
- * "{", "}" and "\". */
+ * "{" and "}" (RFC 2045 tspecials already exclude "\"). */
 static int is_tchar(const unsigned char c)
 {
 	static const char tchar[] = "!#$%&'*+-.^_`|~";
@@ -202,11 +221,8 @@ http_parsehdr(char *restrict buf, char **restrict key, char **restrict value)
 	 * smuggled before the terminating CRLF); SP and HT are allowed between
 	 * words. This mirrors the whitespace-before-colon smuggling hardening
 	 * above and url.c's decoded-CTL rejection. */
-	for (const char *p = v; *p != '\0'; ++p) {
-		const unsigned char c = (unsigned char)*p;
-		if ((c < ' ' && c != '\t') || c == 0x7f) {
-			return NULL;
-		}
+	if (http_line_has_ctl(v)) {
+		return NULL;
 	}
 	*key = buf, *value = v;
 	return next;
@@ -292,18 +308,30 @@ int http_error(
 	if (desc == NULL) {
 		desc = name;
 	}
+	/* http_date returns 0 when the current time has no IMF-fixdate
+	 * rendering; emitting "Date: \r\n" would then send a header whose
+	 * field-value is empty, which RFC 7231 does not admit. Omit the whole
+	 * line instead -- Date is not mandatory on a response -- which also
+	 * keeps the uninitialized date_str out of the output entirely. */
 	char date_str[32];
 	const size_t date_len = http_date(date_str, sizeof(date_str));
+	char date_hdr[sizeof("Date: \r\n") + sizeof(date_str)];
+	if (date_len > 0) {
+		(void)snprintf(
+			date_hdr, sizeof(date_hdr), "Date: %.*s\r\n",
+			(int)date_len, date_str);
+	} else {
+		date_hdr[0] = '\0';
+	}
 	return snprintf(
 		buf, buf_size,
 		"HTTP/1.1 %" PRIuFAST16 " %s\r\n"
-		"Date: %.*s\r\n"
+		"%s"
 		"Connection: close\r\n"
 		"Content-type: text/html\r\n\r\n"
 		"<HTML><HEAD><TITLE>%" PRIuFAST16 " %s</TITLE></HEAD>\n"
 		"<BODY><H1>%" PRIuFAST16 " %s</H1>\n"
 		"%s\n"
 		"</BODY></HTML>\n",
-		code, name, (int)date_len, date_str, code, name, code, name,
-		desc);
+		code, name, date_hdr, code, name, code, name, desc);
 }

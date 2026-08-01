@@ -89,6 +89,11 @@ static void fkt_visit(int t, int p, int n, int a[], uintmax_t *seq, int *pos)
 /*
  * Generate a binary De Bruijn sequence B(2, k) packed into the low 2^k
  * bits of an uintmax_t (LSB = position 0).
+ *
+ * Not static: this and the two const finders below are exposed with external
+ * linkage, but kept out of intlog2.h, so intlog2_test.c can drive them at
+ * widths the native uintmax_t never reaches. It declares them itself; see the
+ * extern block there.
  */
 uintmax_t intlog2_fkt_gen(int k)
 {
@@ -191,13 +196,15 @@ static uintmax_t find_rotated_const(
 /*
  * Find a BSF-compatible De Bruijn constant for width w. See verify_bsf()
  * for why - unlike BSR - only some rotations of the base sequence work.
+ * Non-static for the reason given at intlog2_fkt_gen().
  */
 uintmax_t intlog2_find_bsf_const(int w, int k, int table[])
 {
 	return find_rotated_const(w, k, table, verify_bsf);
 }
 
-/* Find a BSR-compatible De Bruijn constant for width w. */
+/* Find a BSR-compatible De Bruijn constant for width w. Non-static for the
+ * reason given at intlog2_fkt_gen(). */
 uintmax_t intlog2_find_bsr_const(int w, int k, int table[])
 {
 	return find_rotated_const(w, k, table, verify_bsr);

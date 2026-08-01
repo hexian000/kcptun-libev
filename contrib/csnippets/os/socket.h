@@ -269,7 +269,9 @@ void sa_copy(struct sockaddr *restrict dst, const struct sockaddr *restrict src)
  * @param s The output buffer.
  * @param maxlen The maximum length of the buffer.
  * @param sa The sockaddr to format.
- * @return The number of characters written, or -1 on error.
+ * @return snprintf semantics: the length the full output would have, excluding
+ * the terminating null, so a value >= maxlen means the output was truncated;
+ * -1 on error.
  * @note POSIX version: POSIX.1-2001
  */
 int sa_format(
@@ -308,6 +310,10 @@ enum ipclass {
 
 /**
  * @brief Classifies the IP address of a sockaddr into an address class.
+ * @details Only blocks that RFC assigns a class of their own are special-cased.
+ * A reservation without one reports IPCLASS_GLOBAL by design -- the RFC 5737 /
+ * RFC 3849 documentation and RFC 2544 / RFC 5180 benchmarking ranges are used
+ * as ordinary addresses in practice.
  * @param sa The sockaddr to classify.
  * @return The address class; IPCLASS_UNKNOWN for unknown address families.
  * @note POSIX version: POSIX.1-2001
@@ -326,8 +332,12 @@ enum sa_resolve_type {
  * @param[in] service The service name or port.
  * @param type The socket type (SA_RESOLVE_TCP or SA_RESOLVE_UDP).
  * @param family The preferred protocol family (PF_UNSPEC, PF_INET, or PF_INET6).
- * @return True on success, false on failure; logs LOGE on getaddrinfo failure.
+ * @return True on success, false on failure; logs LOGE on failure, whether
+ * getaddrinfo failed or returned no usable address.
  * @note POSIX version: POSIX.1-2001
+ * @note AI_ADDRCONFIG applies only when @p name needs the resolver. A numeric
+ * address is taken as given: the flag ignores loopback, so it would otherwise
+ * reject 127.0.0.1 and ::1 on a host with only `lo` up.
  */
 bool sa_resolve(
 	union sockaddr_max *restrict sa, const char *restrict name,
@@ -339,8 +349,12 @@ bool sa_resolve(
  * @param[in] name The hostname or IP.
  * @param[in] service The service name or port.
  * @param type The socket type (SA_RESOLVE_TCP or SA_RESOLVE_UDP).
- * @return True on success, false on failure; logs LOGE on getaddrinfo failure.
+ * @return True on success, false on failure; logs LOGE on failure, whether
+ * getaddrinfo failed or returned no usable address.
  * @note POSIX version: POSIX.1-2001
+ * @note AI_ADDRCONFIG is never applied, so a host with only `lo` up still
+ * resolves. An empty or NULL @p name therefore yields the wildcard of whichever
+ * family the resolver lists first; name "0.0.0.0" or "::" to pin one.
  */
 bool sa_resolve_bind(
 	union sockaddr_max *restrict sa, const char *restrict name,

@@ -49,8 +49,8 @@ static inline bool clock_monotonic(struct timespec *restrict tp)
 
 /**
  * @brief Get current thread CPU time.
- * @param tp Pointer to timespec structure to store the time.
- * @return true if successful, false otherwise.
+ * @param[out] tp The timestamp, if successful.
+ * @return true if successful.
  */
 static inline bool clock_thread(struct timespec *restrict tp)
 {
@@ -65,8 +65,8 @@ static inline bool clock_thread(struct timespec *restrict tp)
 
 /**
  * @brief Get current process CPU time.
- * @param tp Pointer to timespec structure to store the time.
- * @return true if successful, false otherwise.
+ * @param[out] tp The timestamp, if successful.
+ * @return true if successful.
  */
 static inline bool clock_process(struct timespec *restrict tp)
 {
@@ -81,8 +81,8 @@ static inline bool clock_process(struct timespec *restrict tp)
 
 /**
  * @brief Get current boot time.
- * @param tp Pointer to timespec structure to store the time.
- * @return true if successful, false otherwise.
+ * @param[out] tp The timestamp, if successful.
+ * @return true if successful.
  */
 static inline bool clock_boot(struct timespec *restrict tp)
 {

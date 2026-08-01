@@ -8,7 +8,14 @@
 
 /* Swap two integer lvalues. a and b must be side-effect-free (each is
  * evaluated more than once); unlike the former XOR swap, self-aliasing is safe
- * (INTSWAP(x, x) is a no-op) instead of zeroing both. */
+ * (INTSWAP(x, x) is a no-op) instead of zeroing both.
+ *
+ * Contract: the operands must be unsigned, or signed holding a non-negative
+ * value. Which of the two definitions below compiles depends on the toolchain,
+ * and the portable one routes the value through uintmax_t, where a negative
+ * signed value converts to a large unsigned one and back in an
+ * implementation-defined way (C11 6.3.1.3p3). Restricting the contract is what
+ * makes the two definitions interchangeable. */
 #ifndef INTSWAP
 #if defined(__GNUC__) && !defined(BINARY_INTSWAP_NO_TYPEOF)
 #define INTSWAP(a, b)                                                          \
@@ -19,11 +26,15 @@
 	} while (0)
 #else /* !defined(__GNUC__) || defined(BINARY_INTSWAP_NO_TYPEOF) */
 /* Portable fallback without __typeof__: the round-trip through uintmax_t is
- * value-preserving for the integer lvalues this macro is used with. On a
- * __GNUC__ toolchain the __typeof__ path above shadows this, so a test build
- * defines BINARY_INTSWAP_NO_TYPEOF to force this path to compile and be
- * exercised, mirroring BINARY_BSWAP_NO_BUILTIN below; production never
- * defines it, so shipped code is unchanged. */
+ * value-preserving for the operands the contract above admits -- unsigned, or
+ * non-negative signed -- which is exactly why the contract is stated. The
+ * assignment back to (b) narrows implicitly rather than through an explicit
+ * cast: without __typeof__ there is no way to name the operand's type, and the
+ * same reason rules out a typed temporary. On a __GNUC__ toolchain the
+ * __typeof__ path above shadows this, so a test build defines
+ * BINARY_INTSWAP_NO_TYPEOF to force this path to compile and be exercised,
+ * mirroring BINARY_BSWAP_NO_BUILTIN below; production never defines it, so
+ * shipped code is unchanged. */
 #define INTSWAP(a, b)                                                          \
 	do {                                                                   \
 		uintmax_t intswap_tmp_ = (uintmax_t)(a);                       \

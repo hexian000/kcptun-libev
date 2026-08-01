@@ -481,23 +481,38 @@ double float_fromdecimal(
 	while (hi > lo && digits[hi - 1] == '0') {
 		hi--;
 	}
-	/* value = D * 10^e10, D = integer(digits[lo..hi)) */
-	const int e10 = dec_exp - hi;
-	const int nd = hi - lo;
-	/* value in [10^(nd+e10-1), 10^(nd+e10)) */
-	const long mag = (long)nd + e10;
+	/* value in [10^(mag-1), 10^mag). Neither dec_exp nor the digit count is
+	 * restricted, and dec_exp - hi overflows int at the extremes, so reach
+	 * the magnitude the other way round -- it is exactly dec_exp - lo -- and
+	 * compute it wide enough that nothing can wrap. */
+	const int_fast64_t mag = (int_fast64_t)dec_exp - lo;
 	if (mag > 309) {
 		return float_frombits(UINT64_C(0x7FF) << 52); /* +inf */
 	}
 	if (mag < -323) {
 		return 0.0; /* below 2^-1075, rounds to zero */
 	}
+	/* Correct rounding never needs more significant digits than
+	 * float_todecimal can emit; beyond that the tail only has to be known to
+	 * be nonzero, which sticky carries into assemble(). Dropping it is also
+	 * what holds the binint inside BINLIMBS, sized for exactly that many
+	 * digits. Trailing zeros are already gone, so a dropped tail ends in a
+	 * nonzero digit and is never all zero. */
+	bool sticky = false;
+	if (hi - lo > FLOAT_DECIMAL_DIGITS) {
+		hi = lo + FLOAT_DECIMAL_DIGITS;
+		sticky = true;
+	}
+	/* value = D * 10^e10, D = integer(digits[lo..hi)); mag is within
+	 * [-323, 309] and nd within [1, FLOAT_DECIMAL_DIGITS], so e10 lands
+	 * well inside int */
+	const int nd = hi - lo;
+	const int e10 = (int)(mag - nd);
 	struct binint x = { .len = 0 };
 	for (int t = lo; t < hi; t++) {
 		binint_muladd(&x, 10, (uint32_t)(digits[t] - '0'));
 	}
 	int p;
-	bool sticky = false;
 	if (e10 >= 0) {
 		for (int e = e10; e > 0;) {
 			const int c = e < 13 ? e : 13;

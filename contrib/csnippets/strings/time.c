@@ -120,6 +120,16 @@ static int put_zone(char *restrict s, const int tzoff)
 int format_rfc3339(
 	char *restrict s, const size_t maxlen, const time_t t, const int tzoff)
 {
+	/* Check representability before the buffer size so an unrepresentable
+	 * time returns -1 even on a size query, instead of being masked by the
+	 * snprintf-style needed-size return. */
+	struct tm tm;
+	if (!break_down(t, tzoff, &tm)) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return -1;
+	}
 	const size_t need = tzoff == 0 ? STRLEN(LAYOUT_RFC3339_UTC) :
 					 STRLEN(LAYOUT_RFC3339);
 	if (maxlen < need + 1) {
@@ -127,11 +137,6 @@ int format_rfc3339(
 			s[0] = '\0';
 		}
 		return (int)need;
-	}
-	struct tm tm;
-	if (!break_down(t, tzoff, &tm)) {
-		s[0] = '\0';
-		return -1;
 	}
 	put_datetime(s, &tm);
 	const int len = (int)STRLEN(LAYOUT_DATETIME) + put_zone(s + 19, tzoff);
@@ -149,6 +154,14 @@ int format_rfc3339nano(
 		}
 		return -1;
 	}
+	/* representability before buffer size (see format_rfc3339) */
+	struct tm tm;
+	if (!break_down(tp->tv_sec, tzoff, &tm)) {
+		if (maxlen > 0) {
+			s[0] = '\0';
+		}
+		return -1;
+	}
 	const size_t need = tzoff == 0 ? STRLEN(LAYOUT_RFC3339NANO_UTC) :
 					 STRLEN(LAYOUT_RFC3339NANO);
 	if (maxlen < need + 1) {
@@ -156,11 +169,6 @@ int format_rfc3339nano(
 			s[0] = '\0';
 		}
 		return (int)need;
-	}
-	struct tm tm;
-	if (!break_down(tp->tv_sec, tzoff, &tm)) {
-		s[0] = '\0';
-		return -1;
 	}
 	put_datetime(s, &tm);
 	s[19] = '.';
@@ -235,10 +243,11 @@ int parse_rfc3339nano(struct timespec *restrict tp, const char *restrict tstamp)
 	const unsigned char *restrict s = (const unsigned char *)tstamp;
 	if (!isdigit(s[0]) || !isdigit(s[1]) || !isdigit(s[2]) ||
 	    !isdigit(s[3]) || s[4] != '-' || !isdigit(s[5]) || !isdigit(s[6]) ||
-	    s[7] != '-' || !isdigit(s[8]) || !isdigit(s[9]) || s[10] != 'T' ||
-	    !isdigit(s[11]) || !isdigit(s[12]) || s[13] != ':' ||
-	    !isdigit(s[14]) || !isdigit(s[15]) || s[16] != ':' ||
-	    !isdigit(s[17]) || !isdigit(s[18])) {
+	    s[7] != '-' || !isdigit(s[8]) || !isdigit(s[9]) ||
+	    (s[10] != 'T' && s[10] != 't') || !isdigit(s[11]) ||
+	    !isdigit(s[12]) || s[13] != ':' || !isdigit(s[14]) ||
+	    !isdigit(s[15]) || s[16] != ':' || !isdigit(s[17]) ||
+	    !isdigit(s[18])) {
 		return -1;
 	}
 	const int year = (s[0] - '0') * 1000 + (s[1] - '0') * 100 +
@@ -248,8 +257,21 @@ int parse_rfc3339nano(struct timespec *restrict tp, const char *restrict tstamp)
 	const int hour = (s[11] - '0') * 10 + (s[12] - '0');
 	const int min = (s[14] - '0') * 10 + (s[15] - '0');
 	const int sec = (s[17] - '0') * 10 + (s[18] - '0');
-	if (mon < 1 || mon > 12 || mday < 1 || mday > 31 || hour > 23 ||
+	if (year < 1000 || mon < 1 || mon > 12 || mday < 1 || hour > 23 ||
 	    min > 59 || sec > 60) {
+		return -1;
+	}
+	/* reject impossible calendar dates: mon is valid now, so index its
+	 * length and widen February in a leap year, rather than letting
+	 * days_from_civil silently normalize e.g. 2023-02-29 into March. */
+	static const int mdays[12] = { 31, 28, 31, 30, 31, 30,
+				       31, 31, 30, 31, 30, 31 };
+	int maxday = mdays[mon - 1];
+	if (mon == 2 &&
+	    ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) {
+		maxday = 29;
+	}
+	if (mday > maxday) {
 		return -1;
 	}
 	s += 19, len -= 19;
@@ -272,7 +294,11 @@ int parse_rfc3339nano(struct timespec *restrict tp, const char *restrict tstamp)
 
 	int offset = 0;
 	switch (s[0]) {
+	/* RFC 3339 section 5.6 NOTE: the 'T' and 'Z' separators may also be
+	 * lower case, so both spellings are accepted here and at s[10] above.
+	 * The formatter still emits only the upper-case forms. */
 	case 'Z':
+	case 'z':
 		if (len != STRLEN("Z")) {
 			return -1;
 		}
@@ -299,6 +325,13 @@ int parse_rfc3339nano(struct timespec *restrict tp, const char *restrict tstamp)
 				return -1;
 			}
 			om = (s[0] - '0') * 10 + (s[1] - '0');
+		}
+		/* RFC 3339 time-numoffset: time-hour is 00-23 and time-minute
+		 * 00-59, the same bounds the time-of-day fields above check.
+		 * Without this, "+99:99" parses and shifts the instant by a
+		 * span no zone has. */
+		if (oh > 23 || om > 59) {
+			return -1;
 		}
 		offset = sign * (oh * 3600 + om * 60);
 	} break;

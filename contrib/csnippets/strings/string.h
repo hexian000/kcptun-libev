@@ -289,6 +289,20 @@ int u8snprintf(
  *   codepoint); for %%s, %%c and %%[, the field width counts codepoints not bytes.
  * - %%p reads "0x" followed by hex digits, the inverse of u8snprintf's %%p.
  * - %%n, %%ls, %%lc and other unsupported conversions stop the scan.
+ * - A float conversion consumes the whole "nan(n-char-sequence)" spelling,
+ *   which C11 7.21.6.2 calls for (the item is the strtod subject sequence) but
+ *   glibc's scanf leaves after "nan". An unterminated or width-truncated
+ *   sequence backs off to plain "nan" in both.
+ * - Two hex-float shapes differ from glibc in opposite directions: "0xg"
+ *   assigns 0 here, its strtod subject sequence being "0", where glibc reports
+ *   a matching failure; and a width cutting the prefix short, %%3lf on "0x.5",
+ *   is a matching failure here, where glibc assigns 0.
+ * - A float conversion parses at double precision, so %%Lf assigns a long double
+ *   carrying only the double result; glibc parses at long double precision.
+ * - An exponent marker with no digits behind it, whether absent outright or cut
+ *   off by the field width, is left unconsumed: "1ex" and %%2le on "1e10" both
+ *   read 1 and stop at the 'e', as C11 7.21.6.2 calls for (the item is the
+ *   strtod subject sequence). glibc absorbs the marker and any sign.
  *
  * @param[in] str NUL-terminated UTF-8 input string.
  * @param[in] format scanf-style format string.

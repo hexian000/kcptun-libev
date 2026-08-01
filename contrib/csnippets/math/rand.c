@@ -6,7 +6,9 @@
 #include <assert.h>
 #include <float.h>
 #include <stdint.h>
+#if WITH_THREADS
 #include <threads.h>
+#endif
 
 /* A function, not a macro, so the argument is evaluated exactly once (the
  * xoshiro step below rotates s[1] * 5). uint_fast64_t may be wider than 64
@@ -20,11 +22,20 @@ static inline uint_fast64_t rotl64(const uint_fast64_t x, const int r)
 	return r == 0 ? v : (((v << r) | (v >> (64 - r))) & UINT64_MAX);
 }
 
+/* Only the thread_local macro comes from <threads.h>. The storage class it
+ * names is core C11 (6.7.1), which __STDC_NO_THREADS__ does not withdraw
+ * (7.26.1), so spell it directly where the header is absent. */
+#if WITH_THREADS
+#define THREAD_LOCAL thread_local
+#else
+#define THREAD_LOCAL _Thread_local
+#endif
+
 /* xoshiro256** and splitmix64 (used only to expand a seed into this state)
  * are bit-exact algorithms defined for 64-bit words; uint_fast64_t is only
  * guaranteed to be *at least* 64 bits, so the state and arithmetic use the
  * exact-width type and convert to uint_fast64_t only at the public API. */
-static thread_local uint64_t xoshiro256ss[4] = {
+static THREAD_LOCAL uint64_t xoshiro256ss[4] = {
 	UINT64_C(0x910A2DEC89025CC1),
 	UINT64_C(0xBEEB8DA1658EEC67),
 	UINT64_C(0xF893A2EEFB32555E),
@@ -69,6 +80,12 @@ void srand64(const uint_fast64_t seed)
 
 uint_fast64_t rand64n(const uint_fast64_t n)
 {
+	/* rand64() yields 64 bits and the mask smear below spans no more, so a
+	 * bound above UINT64_MAX -- reachable only where uint_fast64_t is wider
+	 * -- cannot be sampled uniformly: the rejection loop would accept the
+	 * first draw and quietly return from a truncated range. */
+	assert(n <= UINT64_MAX);
+
 	if ((n & (n + UINT64_C(1))) == UINT64_C(0)) {
 		return rand64() & n;
 	}

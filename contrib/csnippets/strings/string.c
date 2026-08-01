@@ -53,6 +53,42 @@ size_t u8strnlen(const char *restrict s, const size_t n)
 	}
 }
 
+/* Bounded output with snprintf(3) semantics, shared by the u8str* writers here
+ * and the printf family below: a unit is stored only if it fits whole, so
+ * truncation never splits a sequence, while len keeps counting what was
+ * needed. */
+struct sink {
+	char *buf; /* NULL allowed only when cap == 0 */
+	size_t cap; /* writable content bytes, the NUL slot excluded */
+	size_t len; /* would-be content length; may exceed cap */
+	size_t fill; /* bytes stored; the NUL goes at buf[fill] */
+	bool frozen; /* a unit was dropped: keep the stored prefix clean */
+};
+
+/* saturate: the total is only compared against INT_MAX */
+static void sink_count(struct sink *restrict s, const size_t n)
+{
+	s->len = n <= SIZE_MAX - s->len ? s->len + n : SIZE_MAX;
+}
+
+/* append one atomic unit: a whole 1..4-byte codepoint or a single byte */
+static void
+sink_put(struct sink *restrict s, const char *restrict p, const size_t n)
+{
+	if (!s->frozen) {
+		if (s->fill + n <= s->cap) {
+			for (size_t i = 0; i < n; i++) {
+				s->buf[s->fill + i] = p[i];
+			}
+			s->fill += n;
+		} else {
+			/* the whole unit would not fit: drop it */
+			s->frozen = true;
+		}
+	}
+	sink_count(s, n);
+}
+
 /* Append whole units of src after dlen existing bytes of dst with snprintf(3)
  * semantics: units are stored atomically so truncation never splits a sequence,
  * and the full needed length is always returned. */
@@ -61,28 +97,26 @@ static int copy_units(
 	const char *restrict src)
 {
 	const size_t cap = dstsize > 0 ? dstsize - 1 : 0;
-	size_t fill = dlen < cap ? dlen : cap;
-	bool frozen = dlen >= cap;
-	size_t len = dlen; /* bytes needed; may exceed cap */
+	/* dst already holds dlen bytes: seed the sink with them, and freeze it
+	 * when they alone reached the cap */
+	struct sink s = {
+		.buf = dst,
+		.cap = cap,
+		.len = dlen,
+		.fill = dlen < cap ? dlen : cap,
+		.frozen = dlen >= cap,
+	};
 	for (const char *p = src; *p != '\0';) {
 		char32_t cp;
 		const char *next = p;
 		const size_t ulen = (size_t)utf8_next(&cp, &next);
-		if (!frozen) {
-			if (fill + ulen <= cap) {
-				memcpy(dst + fill, p, ulen);
-				fill += ulen;
-			} else {
-				frozen = true;
-			}
-		}
-		len = ulen <= SIZE_MAX - len ? len + ulen : SIZE_MAX;
+		sink_put(&s, p, ulen);
 		p = next;
 	}
 	if (dlen < dstsize) {
-		dst[fill] = '\0';
+		dst[s.fill] = '\0';
 	}
-	return len <= INT_MAX ? (int)len : -1;
+	return s.len <= INT_MAX ? (int)s.len : -1;
 }
 
 int u8strlcpy(char *restrict dst, const size_t dstsize, const char *restrict src)
@@ -426,10 +460,10 @@ static int case_convert(
 	char *restrict buf, const size_t maxlen, const char *restrict src,
 	const bool upper)
 {
-	const size_t cap = maxlen > 0 ? maxlen - 1 : 0;
-	size_t fill = 0; /* bytes stored, the NUL slot excluded */
-	size_t len = 0; /* bytes needed; may exceed cap */
-	bool frozen = false;
+	struct sink s = {
+		.buf = buf,
+		.cap = maxlen > 0 ? maxlen - 1 : 0,
+	};
 	for (const char *p = src; *p != '\0';) {
 		char unit[UTF8_MAX_LEN];
 		char32_t cp;
@@ -445,20 +479,12 @@ static int case_convert(
 			ulen = 1;
 			p++;
 		}
-		if (!frozen) {
-			if (fill + ulen <= cap) {
-				memcpy(buf + fill, unit, ulen);
-				fill += ulen;
-			} else {
-				frozen = true;
-			}
-		}
-		len = ulen <= SIZE_MAX - len ? len + ulen : SIZE_MAX;
+		sink_put(&s, unit, ulen);
 	}
 	if (maxlen > 0) {
-		buf[fill] = '\0';
+		buf[s.fill] = '\0';
 	}
-	return len <= INT_MAX ? (int)len : -1;
+	return s.len <= INT_MAX ? (int)s.len : -1;
 }
 
 int u8strlower(char *restrict buf, const size_t maxlen, const char *restrict src)
@@ -593,41 +619,10 @@ done:
 
 /* --- locale-free, async-signal-safe printf -------------------------------- *
  * No libc function is called on any path: output is copied bytewise, and the
- * floating conversions build on math/float.h. The sink appends whole
- * codepoints atomically, so truncation never splits a UTF-8 sequence.
+ * floating conversions build on math/float.h. Output goes through the same
+ * bounded sink as the u8str* writers above, so truncation never splits a
+ * UTF-8 sequence.
  */
-
-struct sink {
-	char *buf; /* NULL allowed only when cap == 0 */
-	size_t cap; /* writable content bytes, the NUL slot excluded */
-	size_t len; /* would-be content length; may exceed cap */
-	size_t fill; /* bytes stored; the NUL goes at buf[fill] */
-	bool frozen; /* a unit was dropped: keep the stored prefix clean */
-};
-
-/* saturate: the total is only compared against INT_MAX */
-static void sink_count(struct sink *restrict s, const size_t n)
-{
-	s->len = n <= SIZE_MAX - s->len ? s->len + n : SIZE_MAX;
-}
-
-/* append one atomic unit: a whole 1..4-byte codepoint or a single byte */
-static void
-sink_put(struct sink *restrict s, const char *restrict p, const size_t n)
-{
-	if (!s->frozen) {
-		if (s->fill + n <= s->cap) {
-			for (size_t i = 0; i < n; i++) {
-				s->buf[s->fill + i] = p[i];
-			}
-			s->fill += n;
-		} else {
-			/* the whole unit would not fit: drop it */
-			s->frozen = true;
-		}
-	}
-	sink_count(s, n);
-}
 
 static void sink_putc(struct sink *restrict s, const char c)
 {
@@ -1031,7 +1026,8 @@ static void emit_hexfloat(
 	const int be = (int)((u >> 52) & 0x7FF);
 	const uint64_t frac = u & ((UINT64_C(1) << 52) - 1);
 	int lead = be != 0 ? 1 : 0;
-	const int e2 = be != 0 ? be - 1023 : (frac != 0 ? -1022 : 0);
+	const int sub_e2 = frac != 0 ? -1022 : 0;
+	const int e2 = be != 0 ? be - 1023 : sub_e2;
 	int shown; /* fraction nibbles taken from hfrac */
 	size_t zext = 0; /* zero nibbles appended beyond the mantissa */
 	uint64_t hfrac;
@@ -1732,16 +1728,23 @@ static double read_hexfloat(
 		*ok = false;
 		return 0.0;
 	}
-	if (*p == 'p' || *p == 'P') {
+	/* The binary exponent is part of the same input item, so it is bounded
+	 * by the same field width (C11 7.21.6.2: at most width characters). An
+	 * exponent that does not fit whole is not consumed at all -- the item
+	 * ends before the 'p', exactly as sscanf(3) backs off. */
+	if (used < maxw && (*p == 'p' || *p == 'P')) {
 		const char *q = p + 1;
+		int eused = used + 1;
 		bool eneg = false;
-		if (*q == '+' || *q == '-') {
+		if (eused < maxw && (*q == '+' || *q == '-')) {
 			eneg = (*q == '-');
 			q++;
+			eused++;
 		}
-		if ('0' <= *q && *q <= '9') {
+		if (eused < maxw && '0' <= *q && *q <= '9') {
 			int ev = 0;
-			for (; '0' <= *q && *q <= '9'; q++) {
+			for (; eused < maxw && '0' <= *q && *q <= '9';
+			     q++, eused++) {
 				ev = ev < 100000 ? ev * 10 + (*q - '0') : ev;
 			}
 			binexp += eneg ? -ev : ev;
@@ -1770,26 +1773,52 @@ static enum scan_status read_float(
 		used++;
 	}
 	double mag;
-	if (match_ci(p, "inf") != 0) {
-		p += 3;
-		if (match_ci(p, "inity") != 0) {
-			p += 5;
+	/* The infinity and NaN spellings are input items like any other, so
+	 * they match only when they fit whole within the field width; a
+	 * shorter width falls through to the numeric branches, which then find
+	 * no digits and report a matching failure. */
+	if (used + 3 <= maxw && match_ci(p, "inf") != 0) {
+		/* The item runs as far along the spelling as the width allows
+		 * (C11 7.21.6.2), and only "inf" and "infinity" are matching
+		 * sequences -- a width stopping anywhere between them yields a
+		 * mere prefix, which is a matching failure rather than a
+		 * shorter match. */
+		int n = 3;
+		if (match_ci(p + 3, "inity") != 0) {
+			while (n < 8 && used + n + 1 <= maxw) {
+				n++;
+			}
+			if (n != 3 && n != 8) {
+				return SCAN_NOMATCH;
+			}
 		}
+		p += n;
 		mag = float_frombits(UINT64_C(0x7FF) << 52);
-	} else if (match_ci(p, "nan") != 0) {
-		p += 3;
-		if (*p == '(') {
-			const char *q = p + 1;
+	} else if (used + 3 <= maxw && match_ci(p, "nan") != 0) {
+		/* The n-char-sequence is optional, so unlike the inf spelling
+		 * "nan" is itself a matching sequence (C11 7.22.1.3): the item
+		 * is the longest initial subsequence of the expected form, and
+		 * a "(...)" that is unterminated or does not fit whole within
+		 * the field width simply is not part of it. Back off to the
+		 * plain spelling rather than failing the conversion, which is
+		 * what sscanf(3) does. */
+		int n = 3;
+		if (p[3] == '(' && used + 4 <= maxw) {
+			const char *q = p + 4;
 			while (*q != '\0' && *q != ')') {
 				q++;
 			}
-			if (*q == ')') {
-				p = q + 1;
+			/* compared as a distance so a sequence longer than int
+			 * cannot wrap into a negative width */
+			const ptrdiff_t full = q + 1 - p;
+			if (*q == ')' && full <= (ptrdiff_t)(maxw - used)) {
+				n = (int)full;
 			}
 		}
+		p += n;
 		mag = float_frombits(UINT64_C(0x7FF8) << 48);
 	} else if (
-		*p == '0' && (p[1] == 'x' || p[1] == 'X') &&
+		used + 2 < maxw && *p == '0' && (p[1] == 'x' || p[1] == 'X') &&
 		(unhex((char32_t)(unsigned char)p[2]) >= 0 ||
 		 (p[2] == '.' && unhex((char32_t)(unsigned char)p[3]) >= 0))) {
 		p += 2;
@@ -1824,16 +1853,21 @@ static enum scan_status read_float(
 			return SCAN_NOMATCH;
 		}
 		int k = intdigits;
-		if (*p == 'e' || *p == 'E') {
+		/* the exponent shares the item's field width; one that does not
+		 * fit whole is left unconsumed, as sscanf(3) backs off */
+		if (used < maxw && (*p == 'e' || *p == 'E')) {
 			const char *q = p + 1;
+			int eused = used + 1;
 			bool eneg = false;
-			if (*q == '+' || *q == '-') {
+			if (eused < maxw && (*q == '+' || *q == '-')) {
 				eneg = (*q == '-');
 				q++;
+				eused++;
 			}
-			if ('0' <= *q && *q <= '9') {
+			if (eused < maxw && '0' <= *q && *q <= '9') {
 				long ev = 0;
-				for (; '0' <= *q && *q <= '9'; q++) {
+				for (; eused < maxw && '0' <= *q && *q <= '9';
+				     q++, eused++) {
 					ev = ev < 1000000 ?
 						     ev * 10 + (*q - '0') :
 						     ev;
@@ -1958,7 +1992,7 @@ int u8vsscanf(
 		if (*f != '%') {
 			char32_t fcp;
 			const char *fq = f;
-			(void)utf8_next(&fcp, &fq);
+			const int fn = utf8_next(&fcp, &fq);
 			if (is_space32(fcp)) {
 				in = skip_ws(in);
 				f = fq;
@@ -1966,11 +2000,25 @@ int u8vsscanf(
 			}
 			char32_t icp;
 			const char *iq = in;
-			if (utf8_next(&icp, &iq) == 0) {
+			const int in_len = utf8_next(&icp, &iq);
+			if (in_len == 0) {
 				input_end = true;
 				break;
 			}
-			if (icp != fcp) {
+			/* utf8_next maps every ill-formed byte to U+FFFD while
+			 * consuming just that byte, so comparing the decoded
+			 * values alone would make any two invalid bytes match
+			 * each other. A single-byte U+FFFD is such a byte (a
+			 * genuine U+FFFD decodes from three); when either side
+			 * is one, compare the raw bytes instead. */
+			const bool fbad = (fcp == 0xFFFDu && fn == 1);
+			const bool ibad = (icp == 0xFFFDu && in_len == 1);
+			if (fbad || ibad) {
+				if (fbad != ibad ||
+				    (unsigned char)*in != (unsigned char)*f) {
+					break;
+				}
+			} else if (icp != fcp) {
 				break;
 			}
 			in = iq;
@@ -1979,7 +2027,10 @@ int u8vsscanf(
 		}
 		f++;
 		if (*f == '%') {
-			/* match a literal '%' */
+			/* Match a literal '%'. This is a conversion
+			 * specification like any other, so it skips leading
+			 * input whitespace first -- only [, c and n do not. */
+			in = skip_ws(in);
 			if (*in != '%') {
 				input_end = (*in == '\0');
 				break;

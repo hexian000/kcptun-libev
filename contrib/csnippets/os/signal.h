@@ -54,8 +54,9 @@ void crashhandler_uninstall(void);
  * @brief Convert a signal number to a string description.
  * @param signo The signal number.
  * @return A pointer to a string describing the signal, or NULL if unknown.
- * @note Only POSIX-defined signals are supported; a POSIX-compatible
- *   alternative to strsignal().
+ * @note Covers every POSIX.1-2008 base signal, plus the XSI SIGPROF and
+ *   SIGPOLL where the platform defines them; a POSIX-compatible alternative
+ *   to strsignal(). Real-time and platform-specific signals return NULL.
  */
 const char *os_strsignal(int signo);
 

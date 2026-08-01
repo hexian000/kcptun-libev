@@ -5,7 +5,9 @@
 #define META_ARRAYSIZE_H
 
 #ifndef ARRAY_SIZE
-#if defined(__GNUC__)
+/* META_FORCE_FALLBACK selects the portable non-GNU definition even under GCC/
+ * Clang, so a test can compile and exercise that otherwise-unreachable path. */
+#if defined(__GNUC__) && !defined(META_FORCE_FALLBACK)
 /* Reject a pointer argument at compile time, mirroring the type safety the rest
  * of meta/ invests in. For a real array, x and &(x)[0] have different types
  * (array vs pointer-to-element), so __builtin_types_compatible_p is 0, the
@@ -22,9 +24,9 @@
 			 2 * !!__builtin_types_compatible_p(                   \
 				     __typeof__(x), __typeof__(&(x)[0]));      \
 	 }) * 0)
-#else /* !defined(__GNUC__) */
+#else /* !defined(__GNUC__) || defined(META_FORCE_FALLBACK) */
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
-#endif /* defined(__GNUC__) */
+#endif /* defined(__GNUC__) && !defined(META_FORCE_FALLBACK) */
 #endif /* ARRAY_SIZE */
 
 #endif /* META_ARRAYSIZE_H */

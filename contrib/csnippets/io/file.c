@@ -6,9 +6,11 @@
 #include "stream.h"
 #include "utils/slog.h"
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* The stream implementation below is plain ISO C: stdio is not required to set
  * errno on failure, so no error code is available beyond the failure itself and
@@ -132,10 +134,16 @@ unsigned char *io_readfile(const char *restrict path, size_t *restrict len)
 	}
 	FILE *fp = fopen(path, "rb");
 	if (!fp) {
+		/* log like the read and fclose failures below: a bare NULL
+		 * conflates a missing file, a permission error and OOM, and
+		 * this function reports no errno */
+		const int err = errno;
+		LOGE_F("fopen \"%s\": (%d) %s", path, err, strerror(err));
 		return NULL;
 	}
 	void *buf = malloc(*len);
 	if (!buf) {
+		LOGOOM();
 		if (fclose(fp) != 0) {
 			LOGE("fclose: failed");
 		}
@@ -170,11 +178,18 @@ bool io_writefile(
 	const char *restrict path, const unsigned char *restrict data,
 	size_t *restrict len)
 {
-	if (!path || !data || !len) {
+	if (!len) {
+		return false;
+	}
+	if (!path || !data) {
+		*len = 0;
 		return false;
 	}
 	FILE *fp = fopen(path, "wb");
 	if (!fp) {
+		/* nothing was written; report the actual count like every other
+		 * path, rather than leaving *len at the requested value */
+		*len = 0;
 		return false;
 	}
 	const size_t nwrite = fwrite(data, 1, *len, fp);

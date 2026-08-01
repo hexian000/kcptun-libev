@@ -26,6 +26,7 @@
 #include "math/intlog2.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -316,6 +317,9 @@ static inline struct mmcache *mmcache_new(
 	const size_t min_shift, const size_t max_shift, const size_t cache_size)
 {
 	assert(min_shift <= max_shift);
+	/* mmcache_get sizes a class with (size_t)1 << shift, which is undefined
+	 * once the shift reaches the type's width */
+	assert(max_shift < sizeof(size_t) * CHAR_BIT);
 	const size_t nclass = max_shift - min_shift + 1;
 	if (cache_size != 0 && nclass > SIZE_MAX / cache_size) {
 		return NULL;

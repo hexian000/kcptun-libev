@@ -680,6 +680,17 @@ int json_marshal_string(
 		} else {
 			need += 1;
 		}
+		/* Stop as soon as the count passes what the int return can
+		 * represent -- the answer is -1 from here on regardless. Testing
+		 * every step is also what keeps need from wrapping: from a value
+		 * no greater than INT_MAX, one more escape adds at most 6, which
+		 * cannot carry past SIZE_MAX even where the two are the same
+		 * width. Without this the counter wrapped to a small positive
+		 * value and marshal_checked_int, which exists to catch exactly
+		 * that, never fired. */
+		if (need > (size_t)INT_MAX) {
+			return -1;
+		}
 	}
 	need += 1; /* NUL terminator */
 
@@ -1368,6 +1379,30 @@ fail:
 	return false;
 }
 
+#ifndef NDEBUG
+/* json_free() releases exactly the array pointers, at every nesting level, and
+ * the failure paths below reach it with fields that were never unmarshaled --
+ * those still hold whatever the defaults image supplied. The image is static
+ * and unowned, so an array pointer in it would be handed to free(). Generated
+ * tables cannot do this (gen_schema.py skips array defaults); assert it so a
+ * hand-authored one cannot either, in the same spirit as the req_bit and
+ * multiplier checks elsewhere in this file. */
+static void assert_defaults_own_nothing(
+	const struct json_schema *restrict schema, const char *restrict img)
+{
+	for (size_t fi = 0; fi < schema->n_fields; fi++) {
+		const struct json_field *const f = &schema->fields[fi];
+		if (f->is_array) {
+			const void *const *const pp =
+				(const void *const *)(img + f->offset);
+			assert(*pp == NULL);
+		} else if (f->kind == JSON_K_OBJECT) {
+			assert_defaults_own_nothing(f->child, img + f->offset);
+		}
+	}
+}
+#endif /* NDEBUG */
+
 /* Recurses for nested JSON_K_OBJECT fields; depth follows the schema's
  * static field nesting (fixed at codegen), not the JSON input, so malformed
  * or adversarial input cannot drive unbounded recursion. */
@@ -1377,6 +1412,9 @@ bool json_unmarshal(
 {
 	char *const base = obj;
 	if (schema->defaults != NULL) {
+#ifndef NDEBUG
+		assert_defaults_own_nothing(schema, schema->defaults);
+#endif
 		memcpy(base, schema->defaults, schema->obj_size);
 	} else {
 		memset(base, 0, schema->obj_size);
@@ -1553,10 +1591,19 @@ static size_t json_emit_value(
 	switch (f->kind) {
 	case JSON_K_STRING: {
 		const struct json_string *const js = slot;
+		/* a required field emits even with no value; "" keeps the
+		 * declared string type, which a bare null would not */
+		if (js->str == NULL) {
+			return json_emit_str(buf, bufsz, n, "", 0);
+		}
 		return json_emit_str(buf, bufsz, n, js->str, js->len);
 	}
 	case JSON_K_DYNAMIC: {
 		const struct json_string *const js = slot;
+		/* a raw fragment has no empty form, so absent becomes null */
+		if (js->str == NULL) {
+			return json_emit_raw(buf, bufsz, n, "null", 4);
+		}
 		return json_emit_raw(buf, bufsz, n, js->str, js->len);
 	}
 	case JSON_K_INT:
@@ -1633,7 +1680,8 @@ static size_t json_marshal_impl(
 			emit = f->required ||
 			       *(const void *const *)slot != NULL;
 		} else if (f->kind == JSON_K_STRING || f->kind == JSON_K_DYNAMIC) {
-			emit = ((const struct json_string *)slot)->str != NULL;
+			emit = f->required ||
+			       ((const struct json_string *)slot)->str != NULL;
 		} else if (f->kind == JSON_K_OBJECT && !f->required) {
 			const int pf = f->child->present_field;
 			if (pf >= 0) {

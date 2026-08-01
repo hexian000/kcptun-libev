@@ -27,19 +27,19 @@
 static inline int log2u(unsigned int x)
 {
 	assert(x > 0);
-	return stdc_bit_width(x) - 1;
+	return (int)stdc_bit_width(x) - 1;
 }
 
 static inline int log2ul(unsigned long x)
 {
 	assert(x > 0);
-	return stdc_bit_width(x) - 1;
+	return (int)stdc_bit_width(x) - 1;
 }
 
 static inline int log2ull(unsigned long long x)
 {
 	assert(x > 0);
-	return stdc_bit_width(x) - 1;
+	return (int)stdc_bit_width(x) - 1;
 }
 
 static inline int countr_zerou(unsigned int x)

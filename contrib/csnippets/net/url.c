@@ -7,7 +7,6 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <string.h>
 
 #define APPEND_STR(str)                                                        \
@@ -193,24 +192,26 @@ int url_escape_query(
 		if (next == NULL) {
 			next = query + strlen(query);
 		}
-		const char *eq = memchr(query, '=', next - query);
+		const char *eq = memchr(query, '=', (size_t)(next - query));
 		int n;
 		if (eq != NULL) {
 			char *p;
 			size_t avail;
 			subbuf(buf, maxlen, written, &p, &avail);
-			n = escape_query(p, avail, query, eq - query);
+			n = escape_query(p, avail, query, (size_t)(eq - query));
 			written += (size_t)n;
 			APPEND_CHAR('=');
 			query = eq + 1;
 			subbuf(buf, maxlen, written, &p, &avail);
-			n = escape_query(p, avail, query, next - query);
+			n = escape_query(
+				p, avail, query, (size_t)(next - query));
 		} else {
 			/* RFC 3986: key without value is a valid query component */
 			char *p;
 			size_t avail;
 			subbuf(buf, maxlen, written, &p, &avail);
-			n = escape_query(p, avail, query, next - query);
+			n = escape_query(
+				p, avail, query, (size_t)(next - query));
 		}
 		written += (size_t)n;
 		if (*next == '\0') {
@@ -331,6 +332,11 @@ static bool unescape(char *str, const bool space)
 			case '\0':
 				return false;
 			case '%':
+				/* deliberate leniency, documented at the
+				 * @defgroup in url.h: "%%" decodes to a
+				 * literal '%' although RFC 3986 requires two
+				 * HEXDIG. The escaping direction never emits
+				 * it (a '%' is encoded as "%25"). */
 				r++;
 				break;
 			default: {

@@ -96,6 +96,39 @@ int io_stream_copy(
 	struct io_stream *restrict dst, struct io_stream *restrict src,
 	void *restrict buf, const size_t bufsize)
 {
+	if (src->vftable->direct_read != NULL) {
+		/* The source can hand out its own bytes, so write them from
+		 * there. Going through io_stream_read instead would stage them
+		 * in buf first -- the very copy direct_read exists to avoid --
+		 * and cost one extra zero-length write at EOF. */
+		for (;;) {
+			const void *span;
+			size_t nread = bufsize;
+			const int srcerr =
+				io_stream_direct_read(src, &span, &nread);
+			if (nread > 0) {
+				size_t nwritten = nread;
+				const int dsterr =
+					io_stream_write(dst, span, &nwritten);
+				if (dsterr != 0) {
+					return dsterr;
+				}
+				if (nwritten < nread) {
+					/* short write: per io_stream_write's
+					 * contract, the caller must treat this
+					 * as an error */
+					return -1;
+				}
+			}
+			if (srcerr != 0) {
+				return srcerr;
+			}
+			if (nread == 0) {
+				return 0;
+			}
+		}
+	}
+
 	size_t nread;
 	do {
 		nread = bufsize;

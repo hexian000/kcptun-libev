@@ -89,8 +89,11 @@ int float_todecimal(double x, int ndigits, char *digits, int *dec_exp);
  * applies the sign. Digits outside '0'-'9' are undefined behavior.
  *
  * @param[in] digits Significant decimal digits as ASCII '0'-'9', no sign/point.
- * @param ndigits Digit count; may be 0 (returns +0).
- * @param dec_exp Power-of-ten exponent K as in float_todecimal.
+ * @param ndigits Digit count; may be 0 (returns +0). Any length is accepted:
+ * digits past the precision that can still affect the result contribute only
+ * to the rounding decision.
+ * @param dec_exp Power-of-ten exponent K as in float_todecimal. Any value is
+ * accepted; magnitudes outside the finite range saturate as described above.
  * @return The rounded nonnegative double.
  */
 double float_fromdecimal(const char *digits, int ndigits, int dec_exp);
