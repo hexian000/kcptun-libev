@@ -744,13 +744,14 @@ static bool obfs_tcp_send(
 	}
 
 	ssize_t nsent;
+	int err;
 	do {
 		nsent =
 			sendto(obfs->raw_fd, pkt, ip_hdr_len + plen, 0,
 			       &daddr.sa, sa_len(&daddr.sa));
-	} while (nsent < 0 && errno == EINTR);
+		err = errno;
+	} while (nsent < 0 && err == EINTR);
 	if (nsent < 0) {
-		const int err = errno;
 		if (err != EAGAIN && err != EWOULDBLOCK) {
 			LOGW_F("obfs tcp raw send: (%d) %s", err,
 			       strerror(err));
@@ -2465,65 +2466,13 @@ static int obfs_http_error(
 		code, reason, (int)date_len, date_str, plen, page);
 }
 
-void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
+/* serve a fully parsed HTTP request: validate the request line and write the
+ * response — a 204 for the expected probe, or an nginx-style error page */
+static void obfs_serve_http(struct obfs_ctx *restrict ctx, struct ev_loop *loop)
 {
-	CHECK_REVENTS(revents, EV_READ);
-
-	struct obfs_ctx *restrict ctx = watcher->data;
 	struct obfs *restrict obfs = ctx->obfs;
-
-	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
-	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
-		     (size_t)1; /* for null-terminator */
-	ssize_t nbrecv;
-	do {
-		nbrecv = recv(watcher->fd, data, cap, 0);
-	} while (nbrecv < 0 && errno == EINTR);
-	if (nbrecv < 0) {
-		const int err = errno;
-		if (err == EAGAIN || err == EWOULDBLOCK) {
-			return;
-		}
-		if (err == ECONNREFUSED || err == ECONNRESET) {
-			OBFS_CTX_LOG_F(
-				DEBUG, ctx, "recv: (%d) %s", err,
-				strerror(err));
-			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(loop, ctx);
-			return;
-		}
-		OBFS_CTX_LOG_F(ERROR, ctx, "recv: (%d) %s", err, strerror(err));
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
-		return;
-	}
-	if (nbrecv == 0) {
-		OBFS_CTX_LOG_F(
-			INFO, ctx, "early eof, %zu bytes discarded",
-			ctx->rbuf.len);
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
-		return;
-	}
-	ctx->rbuf.len += nbrecv;
-	cap -= nbrecv;
-
-	int ret = obfs_parse_http(ctx);
-	if (ret < 0) {
-		obfs_ctx_del(obfs, ctx);
-		obfs_ctx_free(loop, ctx);
-		return;
-	}
-	if (ret > 0) {
-		if (cap == 0) {
-			OBFS_CTX_LOG(DEBUG, ctx, "request too large");
-			obfs_ctx_del(obfs, ctx);
-			obfs_ctx_free(loop, ctx);
-		}
-		return;
-	}
-
 	struct http_message *restrict msg = &ctx->http_msg;
+	int ret;
 	if (strcmp(msg->req.version, "HTTP/1.1") != 0) {
 		OBFS_CTX_LOG_F(
 			DEBUG, ctx, "unsupported protocol %s",
@@ -2580,6 +2529,68 @@ void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 	obfs_ctx_write(ctx, loop);
 }
 
+void obfs_server_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
+{
+	CHECK_REVENTS(revents, EV_READ);
+
+	struct obfs_ctx *restrict ctx = watcher->data;
+	struct obfs *restrict obfs = ctx->obfs;
+
+	unsigned char *data = ctx->rbuf.data + ctx->rbuf.len;
+	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
+		     (size_t)1; /* for null-terminator */
+	ssize_t nbrecv;
+	int err;
+	do {
+		nbrecv = recv(watcher->fd, data, cap, 0);
+		err = errno;
+	} while (nbrecv < 0 && err == EINTR);
+	if (nbrecv < 0) {
+		if (err == EAGAIN || err == EWOULDBLOCK) {
+			return;
+		}
+		if (err == ECONNREFUSED || err == ECONNRESET) {
+			OBFS_CTX_LOG_F(
+				DEBUG, ctx, "recv: (%d) %s", err,
+				strerror(err));
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+			return;
+		}
+		OBFS_CTX_LOG_F(ERROR, ctx, "recv: (%d) %s", err, strerror(err));
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	}
+	if (nbrecv == 0) {
+		OBFS_CTX_LOG_F(
+			INFO, ctx, "early eof, %zu bytes discarded",
+			ctx->rbuf.len);
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	}
+	ctx->rbuf.len += nbrecv;
+	cap -= nbrecv;
+
+	const int ret = obfs_parse_http(ctx);
+	if (ret < 0) {
+		obfs_ctx_del(obfs, ctx);
+		obfs_ctx_free(loop, ctx);
+		return;
+	}
+	if (ret > 0) {
+		if (cap == 0) {
+			OBFS_CTX_LOG(DEBUG, ctx, "request too large");
+			obfs_ctx_del(obfs, ctx);
+			obfs_ctx_free(loop, ctx);
+		}
+		return;
+	}
+
+	obfs_serve_http(ctx, loop);
+}
+
 void obfs_client_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 {
 	CHECK_REVENTS(revents, EV_READ);
@@ -2590,11 +2601,12 @@ void obfs_client_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents
 	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
 		     (size_t)1; /* for null-terminator */
 	ssize_t nbrecv;
+	int err;
 	do {
 		nbrecv = recv(watcher->fd, data, cap, 0);
-	} while (nbrecv < 0 && errno == EINTR);
+		err = errno;
+	} while (nbrecv < 0 && err == EINTR);
 	if (nbrecv < 0) {
-		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
