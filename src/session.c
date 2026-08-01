@@ -14,9 +14,9 @@
 #include "ikcp.h"
 #include "meta/arraysize.h"
 #include "os/socket.h"
+#include "strings/format.h"
 #include "utils/buffer.h"
 #include "utils/debug.h"
-#include "strings/format.h"
 #include "utils/slog.h"
 
 #include <ev.h>
