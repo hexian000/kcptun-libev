@@ -202,11 +202,12 @@ static int tcp_recv(struct session *restrict ss)
 	unsigned char *buf = ss->rbuf->data + TLV_HEADER_SIZE + ss->rbuf->len;
 	/* Receive message from client socket */
 	ssize_t nread;
+	int err;
 	do {
 		nread = recv(fd, buf, cap, 0);
-	} while (nread < 0 && errno == EINTR);
+		err = errno;
+	} while (nread < 0 && err == EINTR);
 	if (nread < 0) {
-		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return 1;
 		}
@@ -280,11 +281,12 @@ static int tcp_send(struct session *restrict ss)
 	const int fd = ss->w_socket.fd;
 	unsigned char *buf = ss->wbuf->data + ss->wbuf_flush;
 	ssize_t ret;
+	int err;
 	do {
 		ret = send(fd, buf, len, 0);
-	} while (ret < 0 && errno == EINTR);
+		err = errno;
+	} while (ret < 0 && err == EINTR);
 	if (ret < 0) {
-		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return 1;
 		}

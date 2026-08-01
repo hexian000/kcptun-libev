@@ -71,11 +71,12 @@ http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	size_t cap = ctx->rbuf.cap - ctx->rbuf.len -
 		     (size_t)1; /* for null-terminator */
 	ssize_t nrecv;
+	int err;
 	do {
 		nrecv = recv(watcher->fd, data, cap, 0);
-	} while (nrecv < 0 && errno == EINTR);
+		err = errno;
+	} while (nrecv < 0 && err == EINTR);
 	if (nrecv < 0) {
-		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
@@ -213,12 +214,13 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	union sockaddr_max addr;
 	socklen_t addrlen;
 	int fd;
+	int err;
 	do {
 		addrlen = sizeof(addr);
 		fd = accept(watcher->fd, &addr.sa, &addrlen);
-	} while (fd < 0 && errno == EINTR);
+		err = errno;
+	} while (fd < 0 && err == EINTR);
 	if (fd < 0) {
-		const int err = errno;
 		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}

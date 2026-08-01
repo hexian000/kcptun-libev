@@ -348,11 +348,12 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		struct iovec iov = SENDMSG_IOV(msg);
 		struct msghdr hdr = SENDMSG_HDR(msg, &iov);
 		ssize_t ret;
+		int err;
 		do {
 			ret = sendmsg(fd, &hdr, 0);
-		} while (ret < 0 && errno == EINTR);
+			err = errno;
+		} while (ret < 0 && err == EINTR);
 		if (ret < 0) {
-			const int err = errno;
 			if (err == EAGAIN || err == EWOULDBLOCK) {
 				*eagain = true;
 				break;
