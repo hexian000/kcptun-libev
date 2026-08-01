@@ -55,20 +55,6 @@ bool io_writefile(
 	const char *restrict path, const unsigned char *restrict data,
 	size_t *restrict len);
 
-/**
- * @brief Read UTF-8 text data, handling the byte order mark (BOM).
- * @param[in] data The data buffer (passed by value; the BOM-adjusted pointer
- *            is returned, not written back through this parameter).
- * @param[in,out] len The length of the data; adjusted for BOM removal.
- * @return A pointer to the UTF-8 text content, or NULL if the data starts with
- *         a UTF-16 or UTF-32 BOM (unsupported encodings).
- * @note Only UTF-8 is supported: a leading UTF-8 BOM (EF BB BF) is stripped,
- *       and any UTF-16/UTF-32 BOM causes a NULL return. Data without a BOM is
- *       assumed to be UTF-8 and returned as-is.
- */
-const char *
-io_readutf8(const unsigned char *restrict data, size_t *restrict len);
-
 /** @} */
 
 #endif /* IO_FILE_H */

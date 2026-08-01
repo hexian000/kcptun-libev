@@ -160,7 +160,7 @@ void daemonize(
 	int fd[2];
 	if (pipe(fd) == -1) {
 		const int err = errno;
-		FAILMSGF("pipe: %s", strerror(err));
+		FAILMSGF("pipe: (%d) %s", err, strerror(err));
 	}
 	/* pipe() returns the lowest free descriptors, so if the caller pre-closed
 	 * a standard fd an end can land on 0/1/2 -- exactly where the
@@ -175,7 +175,7 @@ void daemonize(
 		const int hi = fcntl(fd[i], F_DUPFD, STDERR_FILENO + 1);
 		if (hi < 0) {
 			const int err = errno;
-			FAILMSGF("fcntl(F_DUPFD): %s", strerror(err));
+			FAILMSGF("fcntl(F_DUPFD): (%d) %s", err, strerror(err));
 		}
 		(void)close(fd[i]);
 		fd[i] = hi;
@@ -185,7 +185,7 @@ void daemonize(
 		const pid_t pid = fork();
 		if (pid < 0) {
 			const int err = errno;
-			FAILMSGF("fork: %s", strerror(err));
+			FAILMSGF("fork: (%d) %s", err, strerror(err));
 		} else if (pid > 0) {
 			(void)close(fd[1]);
 			char buf[256];
@@ -217,7 +217,7 @@ void daemonize(
 		const pid_t pid = fork();
 		if (pid < 0) {
 			const int err = errno;
-			FAILMSGF("fork: %s", strerror(err));
+			FAILMSGF("fork: (%d) %s", err, strerror(err));
 		} else if (pid > 0) {
 			/* Terminate the intermediate child with _exit(), not
 			 * exit(): it shares (via fork) the original process's stdio
@@ -226,6 +226,14 @@ void daemonize(
 			 * this throwaway process. */
 			_exit(EXIT_SUCCESS);
 		}
+	}
+	/* In the daemon process, drop privileges. Do this before redirecting
+	   stderr to /dev/null so a privilege-drop failure's specific cause
+	   (reported via FAILMSGF) still reaches the inherited stderr instead of
+	   being discarded, leaving the operator with only the parent's generic
+	   readiness-check failure. */
+	if (identity != NULL) {
+		drop_privileges(identity);
 	}
 	/* In the daemon process, connect /dev/null to standard input, output, and error. */
 	if (!noclose) {
@@ -243,10 +251,6 @@ void daemonize(
 			const int err = errno;
 			LOGW_F("chdir: (%d) %s", err, strerror(err));
 		}
-	}
-	/* In the daemon process, drop privileges */
-	if (identity != NULL) {
-		drop_privileges(identity);
 	}
 	/* From the daemon process, notify the original process started
            that initialization is complete. */

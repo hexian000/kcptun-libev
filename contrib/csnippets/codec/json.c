@@ -1333,6 +1333,14 @@ static bool json_unmarshal_array(
 			if (!json_unmarshal(f->child, slot, av, alen)) {
 				goto fail;
 			}
+		} else if (f->kind == JSON_K_DYNAMIC) {
+			/* borrow the raw fragment, mirroring a scalar dynamic
+			 * field (see json_unmarshal): the element owns nothing,
+			 * so json_free_array leaves it alone -- symmetric with
+			 * json_emit_value's raw emit. */
+			struct json_string *const js = slot;
+			js->str = av;
+			js->len = alen;
 		} else if (!json_parse_scalar(f, slot, av, alen)) {
 			goto fail;
 		}
@@ -1430,6 +1438,11 @@ bool json_unmarshal(
 			goto fail;
 		}
 		if (f->req_bit >= 0) {
+			/* required_mask is 64-bit, so at most 64 required fields;
+			 * a req_bit past that would make the shift undefined. The
+			 * generator keeps req_bit < 64, so this only guards a
+			 * hand-authored table. */
+			assert(f->req_bit < 64);
 			required |= (uint_fast64_t)1 << f->req_bit;
 		}
 	}

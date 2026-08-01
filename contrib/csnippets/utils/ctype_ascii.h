@@ -4,13 +4,18 @@
 #ifndef UTILS_CTYPE_ASCII_H
 #define UTILS_CTYPE_ASCII_H
 
-#if defined(isdigit) || defined(isalpha) || defined(isalnum) ||                \
-	defined(isspace) || defined(iscntrl) || defined(islower) ||            \
-	defined(isupper) || defined(isprint) || defined(isgraph) ||            \
-	defined(ispunct) || defined(isxdigit) || defined(isblank) ||           \
-	defined(tolower) || defined(toupper)
+#if defined(isascii) || defined(isdigit) || defined(isalpha) ||                \
+	defined(isalnum) || defined(isspace) || defined(iscntrl) ||            \
+	defined(islower) || defined(isupper) || defined(isprint) ||            \
+	defined(isgraph) || defined(ispunct) || defined(isxdigit) ||           \
+	defined(isblank) || defined(tolower) || defined(toupper)
 #error "ctype_ascii.h is intended to be a standalone header and should not be included with ctype.h or similar headers that define character classification macros."
 #endif
+
+/* These classification and conversion macros may evaluate their argument
+ * more than once (isalnum up to 6 times, isxdigit 4, tolower/toupper 2-3),
+ * unlike the <ctype.h> functions they substitute for, so the argument must
+ * be side-effect-free: e.g. isspace(*p++) would advance p more than once. */
 
 #define isascii(c) (((c) & ~0x7f) == 0)
 

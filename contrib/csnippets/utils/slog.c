@@ -5,6 +5,13 @@
 
 #include "buffer.h"
 #include "io/stream.h"
+#include "strings/time.h"
+#if SLOG_MT_SAFE
+#include "sync/thrd.h"
+
+#include <stdatomic.h>
+#include <threads.h>
+#endif
 
 #if HAVE_SYSLOG
 #include <syslog.h>
@@ -13,10 +20,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
-#if SLOG_MT_SAFE
-#include <stdatomic.h>
-#include <threads.h>
-#endif
 #include <stddef.h>
 #include <time.h>
 #include <unistd.h>
@@ -68,13 +71,6 @@ static atomic_uint slog_flags_ = 0;
 static _Atomic(slog_printer_fn) slog_printer;
 static _Atomic(const char *) slog_fileprefix;
 
-#define THRD_ASSERT(expr)                                                      \
-	do {                                                                   \
-		const int status = (expr);                                     \
-		(void)status;                                                  \
-		assert(status == thrd_success);                                \
-	} while (0)
-
 #define MTX_LOCK(mu) THRD_ASSERT(mtx_lock(mu))
 #define MTX_UNLOCK(mu) THRD_ASSERT(mtx_unlock(mu))
 
@@ -108,125 +104,33 @@ static const char *slog_fileprefix = NULL;
 #define SLOG_INIT() ((void)(0))
 #endif /* SLOG_MT_SAFE */
 
-#if HAVE_GMTIME_R
-#define GMTIME(timer) gmtime_r((timer), &(struct tm){ 0 })
-#else
-#define GMTIME(timer) gmtime((timer))
-#endif /* HAVE_GMTIME_R */
-
-#if HAVE_LOCALTIME_R
-#define LOCALTIME(timer) localtime_r((timer), &(struct tm){ 0 })
-#else
-#define LOCALTIME(timer) localtime((timer))
-#endif /* HAVE_LOCALTIME_R */
-
 #define STRLEN(s) (sizeof(s "") - sizeof(""))
 
-#define LAYOUT_C "2006-01-02T15:04:05-0700"
-#define LAYOUT_C_UTC "2006-01-02T15:04:05Z"
-
-#define STRFTIME(s, maxlen, timer)                                             \
-	(strftime((s), (maxlen), "%FT%T%z", LOCALTIME(timer)) ==               \
-	 STRLEN(LAYOUT_C))
-
-#define STRFTIME_UTC(s, maxlen, timer)                                         \
-	(strftime((s), (maxlen), "%FT%TZ", GMTIME(timer)) ==                   \
-	 STRLEN(LAYOUT_C_UTC))
-
-#define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
-#define LAYOUT_RFC3339_UTC "2006-01-02T15:04:05Z"
-
-#define LAYOUT_RFC3339NANO "2006-01-02T15:04:05.999999999-07:00"
-#define LAYOUT_RFC3339NANO_UTC "2006-01-02T15:04:05.999999999Z"
-
-static size_t slog_timestamp_nanos(
-	char *restrict s, const size_t maxsize, const unsigned int flags,
-	const struct timespec *restrict tp)
-{
-	if (flags & SLOG_FLAG_UTC) {
-		/* the fixed-offset writes below reach s[sizeof(layout)-1], which
-		 * strftime's own length check does not cover, so guard maxsize
-		 * for the full layout too */
-		if (maxsize < sizeof(LAYOUT_RFC3339NANO_UTC) ||
-		    !STRFTIME_UTC(s, maxsize, &tp->tv_sec)) {
-			return 0;
-		}
-		unsigned char *restrict e =
-			(unsigned char *)s + sizeof(LAYOUT_RFC3339NANO_UTC);
-		int ns = (int)tp->tv_nsec;
-		*--e = '\0';
-		*--e = 'Z';
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10, ns /= 10;
-		*--e = '0' + ns % 10;
-		*--e = '.';
-		return STRLEN(LAYOUT_RFC3339NANO_UTC);
-	}
-
-	if (maxsize < sizeof(LAYOUT_RFC3339NANO) ||
-	    !STRFTIME(s, maxsize, &tp->tv_sec)) {
-		return 0;
-	}
-	const unsigned char *restrict tz =
-		(unsigned char *)s + STRLEN(LAYOUT_C);
-	unsigned char *restrict e =
-		(unsigned char *)s + sizeof(LAYOUT_RFC3339NANO);
-	*--e = '\0';
-	*--e = *--tz;
-	*--e = *--tz;
-	*--e = ':';
-	*--e = *--tz;
-	*--e = *--tz;
-	*--e = *--tz;
-	int ns = (int)tp->tv_nsec;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10, ns /= 10;
-	*--e = '0' + ns % 10;
-	*--e = '.';
-	return STRLEN(LAYOUT_RFC3339NANO);
-}
-
-/* a fixed-length layout conforming to both ISO 8601 and RFC 3339 */
+/* Format the current time as a fixed-length RFC 3339 stamp. The formatting is
+ * shared with the rest of the tree via strings/time.h; format_rfc3339* return
+ * snprintf-style int (-1 for an unrepresentable time, or the would-be length,
+ * which is >= maxsize on truncation), so map that to the byte count actually
+ * written -- BUF_APPENDTS advances the buffer only when the whole stamp fit,
+ * and never by a negative value. */
 static size_t
 slog_timestamp(char *restrict s, const size_t maxsize, const unsigned int flags)
 {
 	if (flags & SLOG_FLAG_NANOS) {
 		struct timespec ts;
 		if (timespec_get(&ts, TIME_UTC) == TIME_UTC) {
-			return slog_timestamp_nanos(s, maxsize, flags, &ts);
+			const int tzoff = (flags & SLOG_FLAG_UTC) ?
+						  0 :
+						  local_tzoff(ts.tv_sec);
+			const int n =
+				format_rfc3339nano(s, maxsize, &ts, tzoff);
+			return (n > 0 && (size_t)n < maxsize) ? (size_t)n : 0;
 		}
 	}
-
 	time_t now;
 	(void)time(&now);
-	if (flags & SLOG_FLAG_UTC) {
-		if (!STRFTIME_UTC(s, maxsize, &now)) {
-			return 0;
-		}
-		return STRLEN(LAYOUT_RFC3339_UTC);
-	}
-	if (maxsize < sizeof(LAYOUT_RFC3339) || !STRFTIME(s, maxsize, &now)) {
-		return 0;
-	}
-	const char *restrict tz = s + STRLEN(LAYOUT_C);
-	char *restrict e = s + sizeof(LAYOUT_RFC3339);
-	*--e = '\0';
-	*--e = *--tz;
-	*--e = *--tz;
-	*--e = ':';
-	return STRLEN(LAYOUT_RFC3339);
+	const int tzoff = (flags & SLOG_FLAG_UTC) ? 0 : local_tzoff(now);
+	const int n = format_rfc3339(s, maxsize, now, tzoff);
+	return (n > 0 && (size_t)n < maxsize) ? (size_t)n : 0;
 }
 
 #define BUF_APPENDTS(buf, flags)                                               \

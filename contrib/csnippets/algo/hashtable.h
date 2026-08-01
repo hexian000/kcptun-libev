@@ -74,7 +74,7 @@ struct hashtable *table_new(const struct table_opts *opts);
  * @brief Free all memory used by a table.
  * @param table Pointer to the table.
  */
-void table_free(struct hashtable *table);
+void table_free(struct hashtable *restrict table);
 
 /**
  * @brief Explicitly reallocate memory for the table.
@@ -85,7 +85,8 @@ void table_free(struct hashtable *table);
  * @details 1. Preallocate memory for faster table filling. <br>
  * 2. Passing any new_size less than current size to shrink a table.
  */
-struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
+struct hashtable *
+table_reserve(struct hashtable *restrict table, size_t new_size);
 
 /**
  * @brief Insert or assign to an element in the table.
@@ -102,7 +103,7 @@ struct hashtable *table_reserve(struct hashtable *table, size_t new_size);
  * (no operation is performed).
  */
 struct hashtable *
-table_set(struct hashtable *table, const void *key, void **element);
+table_set(struct hashtable *restrict table, const void *key, void **element);
 
 /**
  * @brief Delete an element by key.
@@ -113,7 +114,7 @@ table_set(struct hashtable *table, const void *key, void **element);
  * @return Pointer to the modified table, or NULL if table was NULL.
  */
 struct hashtable *
-table_del(struct hashtable *table, const void *key, void **element);
+table_del(struct hashtable *restrict table, const void *key, void **element);
 
 /**
  * @brief Find an element by key.
@@ -123,7 +124,9 @@ table_del(struct hashtable *table, const void *key, void **element);
  * undefined.
  * @return false if not found.
  */
-bool table_find(const struct hashtable *table, const void *key, void **element);
+bool table_find(
+	const struct hashtable *restrict table, const void *key,
+	void **restrict element);
 
 /**
  * @brief Iterate over a table using an external iterator.
@@ -137,8 +140,8 @@ bool table_find(const struct hashtable *table, const void *key, void **element);
  * revisit elements. Prefer table_iterate, or avoid modifying mid-loop.
  */
 bool table_next(
-	const struct hashtable *table, size_t *iter, const void **key,
-	void **element);
+	const struct hashtable *restrict table, size_t *restrict iter,
+	const void **restrict key, void **restrict element);
 
 /**
  * @brief Iterate over a table.
@@ -147,7 +150,8 @@ bool table_next(
  * @param data Transparently passed to f
  */
 void table_iterate(
-	const struct hashtable *table, table_iterate_cb f, void *data);
+	const struct hashtable *restrict table, table_iterate_cb f,
+	void *restrict data);
 
 /**
  * @brief Delete elements while iterating over the table.
@@ -156,15 +160,16 @@ void table_iterate(
  * @param data Transparently passed to f
  * @return Pointer to the modified table.
  */
-struct hashtable *
-table_filter(struct hashtable *table, table_iterate_cb f, void *data);
+struct hashtable *table_filter(
+	struct hashtable *restrict table, table_iterate_cb f,
+	void *restrict data);
 
 /**
  * @brief Get the number of elements in a table.
  * @param table Pointer to a table, can be NULL.
  * @return The number of elements in the table, or 0 if table is NULL.
  */
-size_t table_size(const struct hashtable *table);
+size_t table_size(const struct hashtable *restrict table);
 
 /**
  * @brief Remove all elements from a table.
@@ -173,7 +178,7 @@ size_t table_size(const struct hashtable *table);
  * Does not free the stored elements - caller is responsible for that.
  * @return Pointer to the cleared table, or NULL if table was NULL.
  */
-struct hashtable *table_clear(struct hashtable *table);
+struct hashtable *table_clear(struct hashtable *restrict table);
 
 /** @} */
 

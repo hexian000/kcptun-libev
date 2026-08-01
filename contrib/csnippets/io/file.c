@@ -6,24 +6,16 @@
 #include "stream.h"
 #include "utils/slog.h"
 
-#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-/* Collect a failed stdio transfer's errno (ferror alone is a sticky boolean
- * that discards it) and clear the indicator. errno is zeroed before each
- * transfer below, so a zero here means stdio failed without setting it,
- * mapped to -1 rather than "Success". Deliberately quiet: when this stream is
- * the slog writer sink, write/flush run under slog's output lock and must not
- * log through slog; the caller may log where that cannot happen. */
-static int file_error(FILE *restrict f)
-{
-	const int err = errno;
-	clearerr(f);
-	return err != 0 ? err : -1;
-}
+/* The stream implementation below is plain ISO C: stdio is not required to set
+ * errno on failure, so no error code is available beyond the failure itself and
+ * every failing transfer reports -1. (fd.c is the POSIX counterpart and does
+ * return errno.) These are deliberately quiet: when this stream is the slog
+ * writer sink, write/flush run under slog's output lock and must not log
+ * through slog; the caller may log where that cannot happen. */
 
 static int file_read(void *p, void *buf, size_t *restrict len)
 {
@@ -31,20 +23,12 @@ static int file_read(void *p, void *buf, size_t *restrict len)
 	FILE *f = s->data;
 	const size_t want = *len;
 	/* clear any indicator carried in on this stream (e.g. a logged and
-	 * ignored setvbuf failure) and zero errno, so ferror and errno below
-	 * reflect only this fread */
+	 * ignored setvbuf failure), so ferror below reflects only this fread */
 	clearerr(f);
-	errno = 0;
 	*len = fread(buf, sizeof(unsigned char), want, f);
 	/* a short fread is legitimate EOF; only ferror marks a real failure */
 	if (ferror(f)) {
-		const int err = file_error(f);
-		if (err > 0) {
-			LOGE_F("fread: (%d) %s", err, strerror(err));
-		} else {
-			LOGE("fread: failed");
-		}
-		return err;
+		return -1;
 	}
 	return 0;
 }
@@ -55,12 +39,11 @@ static int file_write(void *p, const void *buf, size_t *restrict len)
 	FILE *f = s->data;
 	const size_t want = *len;
 	clearerr(f);
-	errno = 0;
 	*len = fwrite(buf, sizeof(unsigned char), want, f);
 	/* a short fwrite is unambiguously an error -- decide from the transfer's
 	 * own count rather than the sticky indicator */
 	if (*len < want) {
-		return file_error(f);
+		return -1;
 	}
 	return 0;
 }
@@ -69,9 +52,8 @@ static int file_flush(void *p)
 {
 	struct io_stream *restrict s = p;
 	FILE *f = s->data;
-	errno = 0;
 	if (fflush(f) != 0) {
-		return file_error(f);
+		return -1;
 	}
 	return 0;
 }
@@ -85,7 +67,7 @@ static int file_fclose(FILE *restrict f)
 	if (f == stdin || f == stdout || f == stderr) {
 		return 0;
 	}
-	return fclose(f);
+	return fclose(f) != 0 ? -1 : 0;
 }
 
 static int file_close(void *p)
@@ -102,14 +84,12 @@ struct io_stream *io_filereader(FILE *f)
 		return NULL;
 	}
 	if (setvbuf(f, NULL, _IONBF, 0) != 0) {
-		const int err = errno;
-		LOGE_F("setvbuf: (%d) %s", err, strerror(err));
+		LOGE("setvbuf: failed");
 	}
 	struct io_stream *restrict s = malloc(sizeof(struct io_stream));
 	if (s == NULL) {
 		if (file_fclose(f) != 0) {
-			const int err = errno;
-			LOGE_F("fclose: (%d) %s", err, strerror(err));
+			LOGE("fclose: failed");
 		}
 		return NULL;
 	}
@@ -127,14 +107,12 @@ struct io_stream *io_filewriter(FILE *f)
 		return NULL;
 	}
 	if (setvbuf(f, NULL, _IONBF, 0) != 0) {
-		const int err = errno;
-		LOGE_F("setvbuf: (%d) %s", err, strerror(err));
+		LOGE("setvbuf: failed");
 	}
 	struct io_stream *restrict s = malloc(sizeof(struct io_stream));
 	if (s == NULL) {
 		if (file_fclose(f) != 0) {
-			const int err = errno;
-			LOGE_F("fclose: (%d) %s", err, strerror(err));
+			LOGE("fclose: failed");
 		}
 		return NULL;
 	}
@@ -159,8 +137,7 @@ unsigned char *io_readfile(const char *restrict path, size_t *restrict len)
 	void *buf = malloc(*len);
 	if (!buf) {
 		if (fclose(fp) != 0) {
-			const int err = errno;
-			LOGE_F("fclose: (%d) %s", err, strerror(err));
+			LOGE("fclose: failed");
 		}
 		return NULL;
 	}
@@ -169,8 +146,7 @@ unsigned char *io_readfile(const char *restrict path, size_t *restrict len)
 	 * error; ferror() must be checked before fclose() invalidates fp */
 	const bool read_error = ferror(fp) != 0;
 	if (fclose(fp) != 0) {
-		const int err = errno;
-		LOGE_F("fclose: (%d) %s", err, strerror(err));
+		LOGE("fclose: failed");
 	}
 	if (read_error) {
 		LOGE("io_readfile: read error");
@@ -201,52 +177,19 @@ bool io_writefile(
 	if (!fp) {
 		return false;
 	}
-	errno = 0;
 	const size_t nwrite = fwrite(data, 1, *len, fp);
 	const bool short_write = nwrite != *len;
 	if (short_write) {
-		/* capture errno now, before fclose can overwrite it; a short
-		 * fwrite (e.g. ENOSPC on a full filesystem) is unambiguously an
-		 * error, and every other error site in this module logs, so log
-		 * here too rather than returning a bare false. errno may be 0 if
-		 * stdio failed without setting it. */
-		const int err = errno;
-		if (err != 0) {
-			LOGE_F("fwrite: (%d) %s", err, strerror(err));
-		} else {
-			LOGE_F("%s", "fwrite: failed");
-		}
+		/* a short fwrite (e.g. ENOSPC on a full filesystem) is
+		 * unambiguously an error, and every other error site in this
+		 * module logs, so log here too rather than returning a bare
+		 * false */
+		LOGE("fwrite: failed");
 	}
 	const bool close_failed = fclose(fp) != 0;
 	if (close_failed) {
-		const int err = errno;
-		LOGE_F("fclose: (%d) %s", err, strerror(err));
+		LOGE("fclose: failed");
 	}
 	*len = nwrite;
 	return !short_write && !close_failed;
-}
-
-const char *
-io_readutf8(const unsigned char *restrict data, size_t *restrict len)
-{
-	if (!data || !len) {
-		return NULL;
-	}
-	if (*len >= 3 && data[0] == 0xEF && data[1] == 0xBB &&
-	    data[2] == 0xBF) {
-		*len -= 3;
-		return (const char *)(data + 3);
-	}
-	if (*len >= 2 && ((data[0] == 0xFF && data[1] == 0xFE) ||
-			  (data[0] == 0xFE && data[1] == 0xFF))) {
-		return NULL;
-	}
-	/* UTF-32BE BOM. The UTF-32LE BOM (FF FE 00 00) is already rejected by
-	 * the UTF-16LE check above (its FF FE prefix), so only the BE form
-	 * needs a dedicated test here. */
-	if (*len >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
-	    data[2] == 0xFE && data[3] == 0xFF) {
-		return NULL;
-	}
-	return (const char *)data;
 }

@@ -415,6 +415,7 @@ static uint64_t binint_shr_u64(const struct binint *restrict b, const int sh)
 /* b << sh as a 64-bit value; the caller guarantees b has <= 53 bits */
 static uint64_t binint_shl_u64(const struct binint *restrict b, const int sh)
 {
+	assert(0 <= sh && sh < 64);
 	uint64_t v = 0;
 	for (int i = b->len - 1; i >= 0; i--) {
 		v = (v << 32) | b->limb[i];

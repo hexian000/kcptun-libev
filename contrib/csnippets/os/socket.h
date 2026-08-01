@@ -188,21 +188,30 @@ bool socket_get_peer(int fd, union sockaddr_max *sa);
  * @param buf The data buffer.
  * @param[in,out] len Input: bytes to send. Output: bytes sent; 0 on failure.
  * @return 0 on success; errno on failure (e.g. EAGAIN/EWOULDBLOCK).
+ * @note This calls send() without MSG_NOSIGNAL, so writing to a socket whose
+ * peer has closed its read side raises SIGPIPE, which by default terminates the
+ * process. Callers must ignore SIGPIPE (e.g. signal(SIGPIPE, SIG_IGN)) before
+ * use, after which the send fails with EPIPE instead.
  * @note POSIX version: POSIX.1-2001
  */
 static inline int
 socket_send(const int fd, const void *restrict buf, size_t *restrict len)
 {
-	ssize_t nsend;
-	do {
-		nsend = send(fd, buf, *len, 0);
-	} while (nsend < 0 && errno == EINTR);
-	if (nsend < 0) {
-		*len = 0;
-		return errno;
+	for (;;) {
+		const ssize_t nsend = send(fd, buf, *len, 0);
+		if (nsend < 0) {
+			/* read errno once per failure, before anything else can
+			 * clobber it */
+			const int err = errno;
+			if (err == EINTR) {
+				continue;
+			}
+			*len = 0;
+			return err;
+		}
+		*len = (size_t)nsend;
+		return 0;
 	}
-	*len = (size_t)nsend;
-	return 0;
 }
 
 /**
@@ -217,23 +226,29 @@ socket_send(const int fd, const void *restrict buf, size_t *restrict len)
 static inline int
 socket_recv(const int fd, void *restrict buf, size_t *restrict len)
 {
-	ssize_t nrecv;
-	do {
-		nrecv = recv(fd, buf, *len, 0);
-	} while (nrecv < 0 && errno == EINTR);
-	if (nrecv < 0) {
-		*len = 0;
-		return errno;
+	for (;;) {
+		const ssize_t nrecv = recv(fd, buf, *len, 0);
+		if (nrecv < 0) {
+			/* read errno once per failure, before anything else can
+			 * clobber it */
+			const int err = errno;
+			if (err == EINTR) {
+				continue;
+			}
+			*len = 0;
+			return err;
+		}
+		/* nrecv == 0: EOF */
+		*len = (size_t)nrecv;
+		return 0;
 	}
-	/* nrecv == 0: EOF */
-	*len = (size_t)nrecv;
-	return 0;
 }
 
 /**
  * @brief Returns the length of the sockaddr structure based on its family.
  * @param sa The sockaddr structure.
- * @return The length in bytes.
+ * @return The length in bytes for AF_INET / AF_INET6, or 0 for any other
+ * (unsupported) family. Callers such as sa_copy rely on this 0.
  * @note POSIX version: POSIX.1-2001
  */
 socklen_t sa_len(const struct sockaddr *sa);

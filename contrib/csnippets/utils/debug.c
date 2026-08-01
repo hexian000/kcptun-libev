@@ -620,7 +620,7 @@ int debug_strframes(
 		.indent = indent != NULL ? indent : "",
 	};
 	(void)debug_backtrace_symbols(strframes_cb, &ctx, frames, len);
-	if (maxlen > 0) {
+	if (buf != NULL && maxlen > 0) {
 		buf[ctx.written < maxlen ? ctx.written : maxlen - 1] = '\0';
 	}
 	return (int)ctx.written;

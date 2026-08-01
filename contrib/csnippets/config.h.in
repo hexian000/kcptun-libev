@@ -18,4 +18,9 @@
 #cmakedefine01 WITH_DEBUGINFO
 #cmakedefine01 WITH_SYSTEMD
 
+/* Upstream can back the strings/ Unicode utilities with libicu; this project
+ * does not link libicu, so WITH_ICU stays off and the utf8 codec uses its
+ * self-contained backend. */
+#cmakedefine01 WITH_ICU
+
 #endif /* CSNIPPETS_CONFIG_H */

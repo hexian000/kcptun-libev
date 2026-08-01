@@ -1,12 +1,12 @@
 target_sources(csnippets
     PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/ctype_data.gen.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/format.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/string.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/time.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/utf8.c"
     PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/ctype.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/format.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/string.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/time.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/utf8.h"
 )

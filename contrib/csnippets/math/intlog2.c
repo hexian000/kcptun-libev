@@ -203,7 +203,14 @@ uintmax_t intlog2_find_bsr_const(int w, int k, int table[])
 	return find_rotated_const(w, k, table, verify_bsr);
 }
 
-#if UINTMAX_MAX > ULLONG_MAX
+/* Reference implementation of the runtime De Bruijn bit counting for a
+ * uintmax_t wider than unsigned long long. No mainstream target has such a
+ * uintmax_t -- it is always == unsigned long long -- so this block can be
+ * neither compiled nor tested here; it is deliberately kept as a non-compiled
+ * reference rather than shipped as untested production code (#6). intlog2.h
+ * already declares and _Generic-dispatches to these on a wide platform, so to
+ * target one, change the guard below back to `UINTMAX_MAX > ULLONG_MAX`. */
+#if 0 /* reference only: wide-uintmax_t runtime De Bruijn */
 
 #include <threads.h>
 
@@ -299,6 +306,6 @@ int countl_zeromax(uintmax_t x)
 	return UINTMAX_W - 1 - log2umax(x);
 }
 
-#endif /* UINTMAX_MAX > ULLONG_MAX */
+#endif /* reference only: wide-uintmax_t runtime De Bruijn */
 
 #undef UINTMAX_W

@@ -3,10 +3,19 @@
 
 #include "string.h"
 
-#include "ctype.h"
 #include "math/float.h"
 #include "utf8.h"
 
+#if WITH_ICU
+#include <unicode/uchar.h>
+#include <unicode/udat.h>
+#include <unicode/ustring.h>
+#include <unicode/utypes.h>
+
+#include <time.h>
+#endif /* WITH_ICU */
+
+#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -20,7 +29,7 @@ size_t u8strlen(const char *restrict s)
 	const char *p = s;
 	size_t count = 0;
 	char32_t cp;
-	while (utf8next(&cp, &p) > 0) {
+	while (utf8_next(&cp, &p) > 0) {
 		count++;
 	}
 	return count;
@@ -33,7 +42,7 @@ size_t u8strnlen(const char *restrict s, const size_t n)
 	for (;;) {
 		char32_t cp;
 		const char *next = p;
-		if (utf8next(&cp, &next) == 0) {
+		if (utf8_next(&cp, &next) == 0) {
 			return count; /* terminator */
 		}
 		if ((size_t)(next - s) > n) {
@@ -42,29 +51,6 @@ size_t u8strnlen(const char *restrict s, const size_t n)
 		p = next;
 		count++;
 	}
-}
-
-int utf8next(char32_t *restrict cp, const char **restrict s)
-{
-	const char *restrict p = *s;
-	if (*p == '\0') {
-		*cp = 0;
-		return 0;
-	}
-	/* peek up to a whole sequence without reading past the terminator */
-	size_t avail = 1;
-	while (avail < UTF8_MAX_LEN && p[avail] != '\0') {
-		avail++;
-	}
-	const int n = utf8_decode(cp, p, avail);
-	if (n <= 0) {
-		/* invalid byte: a one-byte unit mapped to the replacement */
-		*cp = 0xFFFDu;
-		*s = p + 1;
-		return 1;
-	}
-	*s = p + n;
-	return n;
 }
 
 /* Append whole units of src after dlen existing bytes of dst with snprintf(3)
@@ -81,7 +67,7 @@ static int copy_units(
 	for (const char *p = src; *p != '\0';) {
 		char32_t cp;
 		const char *next = p;
-		const size_t ulen = (size_t)utf8next(&cp, &next);
+		const size_t ulen = (size_t)utf8_next(&cp, &next);
 		if (!frozen) {
 			if (fill + ulen <= cap) {
 				memcpy(dst + fill, p, ulen);
@@ -113,50 +99,13 @@ int u8strlcat(char *restrict dst, const size_t dstsize, const char *restrict src
 	return copy_units(dst, dstsize, dlen, src);
 }
 
-int u8strcasecmp(const char *restrict a, const char *restrict b)
-{
-	const char *pa = a, *pb = b;
-	for (;;) {
-		char32_t ca, cb;
-		const int na = utf8next(&ca, &pa);
-		const int nb = utf8next(&cb, &pb);
-		const char32_t la = tolower(ca);
-		const char32_t lb = tolower(cb);
-		if (la != lb) {
-			return la < lb ? -1 : 1;
-		}
-		if (na == 0 || nb == 0) {
-			return 0;
-		}
-	}
-}
-
-int u8strncasecmp(const char *restrict a, const char *restrict b, const size_t n)
-{
-	const char *pa = a, *pb = b;
-	for (size_t i = 0; i < n; i++) {
-		char32_t ca, cb;
-		const int na = utf8next(&ca, &pa);
-		const int nb = utf8next(&cb, &pb);
-		const char32_t la = tolower(ca);
-		const char32_t lb = tolower(cb);
-		if (la != lb) {
-			return la < lb ? -1 : 1;
-		}
-		if (na == 0 || nb == 0) {
-			break;
-		}
-	}
-	return 0;
-}
-
 char *u8strchr(char *restrict s, const char32_t cp)
 {
 	const char *p = s;
 	for (;;) {
 		const size_t off = (size_t)(p - s);
 		char32_t c;
-		const int n = utf8next(&c, &p);
+		const int n = utf8_next(&c, &p);
 		if (c == cp) {
 			return s + off;
 		}
@@ -173,39 +122,12 @@ char *u8strrchr(char *restrict s, const char32_t cp)
 	for (;;) {
 		const size_t off = (size_t)(p - s);
 		char32_t c;
-		const int n = utf8next(&c, &p);
+		const int n = utf8_next(&c, &p);
 		if (c == cp) {
 			last = s + off;
 		}
 		if (n == 0) {
 			return last;
-		}
-	}
-}
-
-char *u8strcasestr(char *restrict haystack, const char *restrict needle)
-{
-	const char *h = haystack;
-	for (;;) {
-		const size_t off = (size_t)(h - haystack);
-		char32_t hc;
-		const int n = utf8next(&hc, &h);
-		const char *hp = haystack + off;
-		const char *np = needle;
-		for (;;) {
-			char32_t nc;
-			if (utf8next(&nc, &np) == 0) {
-				return haystack +
-				       off; /* whole needle matched */
-			}
-			char32_t hcc;
-			const int hn = utf8next(&hcc, &hp);
-			if (hn == 0 || tolower(hcc) != tolower(nc)) {
-				break;
-			}
-		}
-		if (n == 0) {
-			return NULL;
 		}
 	}
 }
@@ -252,7 +174,7 @@ static bool in_set(const char32_t c, const char *restrict set)
 {
 	const char *p = set;
 	char32_t sc;
-	while (utf8next(&sc, &p) > 0) {
+	while (utf8_next(&sc, &p) > 0) {
 		if (sc == c) {
 			return true;
 		}
@@ -266,7 +188,7 @@ size_t u8strspn(const char *restrict s, const char *restrict set)
 	for (;;) {
 		const size_t off = (size_t)(p - s);
 		char32_t c;
-		const int n = utf8next(&c, &p);
+		const int n = utf8_next(&c, &p);
 		if (n == 0 || !in_set(c, set)) {
 			return off;
 		}
@@ -279,7 +201,7 @@ size_t u8strcspn(const char *restrict s, const char *restrict set)
 	for (;;) {
 		const size_t off = (size_t)(p - s);
 		char32_t c;
-		const int n = utf8next(&c, &p);
+		const int n = utf8_next(&c, &p);
 		if (n == 0 || in_set(c, set)) {
 			return off;
 		}
@@ -292,7 +214,7 @@ char *u8strpbrk(char *restrict s, const char *restrict set)
 	for (;;) {
 		const size_t off = (size_t)(p - s);
 		char32_t c;
-		const int n = utf8next(&c, &p);
+		const int n = utf8_next(&c, &p);
 		if (n == 0) {
 			return NULL;
 		}
@@ -312,7 +234,7 @@ char *u8strsep(char **restrict s, const char *restrict set)
 	for (;;) {
 		const size_t off = (size_t)(p - tok);
 		char32_t c;
-		const int n = utf8next(&c, &p);
+		const int n = utf8_next(&c, &p);
 		if (n == 0) {
 			*s = NULL;
 			return tok;
@@ -336,12 +258,59 @@ static size_t peek_avail(const char *restrict p)
 	return avail;
 }
 
+/* Unicode White_Space test. The property is a fixed 25-codepoint set, so it is
+ * spelled out here rather than pulled from a table or libicu: this keeps the
+ * whitespace-skipping number parsers and the trim helpers allocation-free,
+ * async-signal-safe, and independent of the WITH_ICU build. */
+static inline bool is_space32(const char32_t c)
+{
+	if (c == 0x20u) {
+		return true;
+	}
+	if (0x09u <= c && c <= 0x0Du) {
+		return true;
+	}
+	if (0x2000u <= c && c <= 0x200Au) {
+		return true;
+	}
+	switch (c) {
+	case 0x85u:
+	case 0xA0u:
+	case 0x1680u:
+	case 0x2028u:
+	case 0x2029u:
+	case 0x202Fu:
+	case 0x205Fu:
+	case 0x3000u:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/* Value of an ASCII hexadecimal digit (0-15), or -1 if c is not one. The number
+ * parsers keep this char32_t-typed helper local rather than pulling in the
+ * byte-typed unhex from utils/ctype_ascii.h. */
+static inline int unhex(const char32_t c)
+{
+	if (U'0' <= c && c <= U'9') {
+		return (int)(c - U'0');
+	}
+	if (U'A' <= c && c <= U'F') {
+		return (int)(c - U'A') + 10;
+	}
+	if (U'a' <= c && c <= U'f') {
+		return (int)(c - U'a') + 10;
+	}
+	return -1;
+}
+
 char *u8strtrimleftspace(char *restrict s)
 {
 	while (*s != '\0') {
 		char32_t cp;
 		const int n = utf8_decode(&cp, s, peek_avail(s));
-		if (n <= 0 || !isspace(cp)) {
+		if (n <= 0 || !is_space32(cp)) {
 			break;
 		}
 		s += n;
@@ -358,7 +327,7 @@ char *u8strtrimrightspace(char *restrict s)
 		/* an invalid byte is a non-space unit of length 1 */
 		const size_t unit = n > 0 ? (size_t)n : 1;
 		p += unit;
-		if (n <= 0 || !isspace(cp)) {
+		if (n <= 0 || !is_space32(cp)) {
 			cut = p;
 		}
 	}
@@ -369,6 +338,85 @@ char *u8strtrimrightspace(char *restrict s)
 char *u8strtrimspace(char *restrict s)
 {
 	return u8strtrimrightspace(u8strtrimleftspace(s));
+}
+
+#if WITH_ICU
+
+/* Simple Unicode case mappings via libicu. u_tolower/u_toupper are defined only
+ * on U+0000..U+10FFFF; a codepoint outside that range, or one with no mapping,
+ * comes back unchanged. These back the u8strcase* family and case_convert. */
+static inline char32_t tolower32(const char32_t c)
+{
+	return c <= 0x10FFFFu ? (char32_t)u_tolower((UChar32)c) : c;
+}
+
+static inline char32_t toupper32(const char32_t c)
+{
+	return c <= 0x10FFFFu ? (char32_t)u_toupper((UChar32)c) : c;
+}
+
+int u8strcasecmp(const char *restrict a, const char *restrict b)
+{
+	const char *pa = a, *pb = b;
+	for (;;) {
+		char32_t ca, cb;
+		const int na = utf8_next(&ca, &pa);
+		const int nb = utf8_next(&cb, &pb);
+		const char32_t la = tolower32(ca);
+		const char32_t lb = tolower32(cb);
+		if (la != lb) {
+			return la < lb ? -1 : 1;
+		}
+		if (na == 0 || nb == 0) {
+			return 0;
+		}
+	}
+}
+
+int u8strncasecmp(const char *restrict a, const char *restrict b, const size_t n)
+{
+	const char *pa = a, *pb = b;
+	for (size_t i = 0; i < n; i++) {
+		char32_t ca, cb;
+		const int na = utf8_next(&ca, &pa);
+		const int nb = utf8_next(&cb, &pb);
+		const char32_t la = tolower32(ca);
+		const char32_t lb = tolower32(cb);
+		if (la != lb) {
+			return la < lb ? -1 : 1;
+		}
+		if (na == 0 || nb == 0) {
+			break;
+		}
+	}
+	return 0;
+}
+
+char *u8strcasestr(char *restrict haystack, const char *restrict needle)
+{
+	const char *h = haystack;
+	for (;;) {
+		const size_t off = (size_t)(h - haystack);
+		char32_t hc;
+		const int n = utf8_next(&hc, &h);
+		const char *hp = haystack + off;
+		const char *np = needle;
+		for (;;) {
+			char32_t nc;
+			if (utf8_next(&nc, &np) == 0) {
+				return haystack +
+				       off; /* whole needle matched */
+			}
+			char32_t hcc;
+			const int hn = utf8_next(&hcc, &hp);
+			if (hn == 0 || tolower32(hcc) != tolower32(nc)) {
+				break;
+			}
+		}
+		if (n == 0) {
+			return NULL;
+		}
+	}
 }
 
 /* Case-map every codepoint of src into buf with snprintf(3) semantics: whole
@@ -389,7 +437,7 @@ static int case_convert(
 		size_t ulen;
 		if (n > 0) {
 			const char32_t mapped =
-				upper ? toupper(cp) : tolower(cp);
+				upper ? toupper32(cp) : tolower32(cp);
 			ulen = (size_t)utf8_encode(unit, mapped);
 			p += n;
 		} else {
@@ -422,6 +470,126 @@ int u8strupper(char *restrict buf, const size_t maxlen, const char *restrict src
 {
 	return case_convert(buf, maxlen, src, true);
 }
+
+int ucwidth(const char32_t c)
+{
+	if (c == 0) {
+		return 0; /* NUL, matching wcwidth(0) */
+	}
+	if (c > 0x10FFFFu) {
+		return -1;
+	}
+	const int8_t gc = u_charType((UChar32)c);
+	if (gc == U_CONTROL_CHAR || gc == U_SURROGATE) {
+		return -1;
+	}
+	if (gc == U_NON_SPACING_MARK || gc == U_ENCLOSING_MARK ||
+	    gc == U_FORMAT_CHAR) {
+		return 0;
+	}
+	if (0x1160u <= c && c <= 0x11FFu) {
+		return 0; /* Hangul conjoining jamo (medial/final) */
+	}
+	const int32_t eaw =
+		u_getIntPropertyValue((UChar32)c, UCHAR_EAST_ASIAN_WIDTH);
+	if (eaw == U_EA_WIDE || eaw == U_EA_FULLWIDTH) {
+		return 2;
+	}
+	return 1;
+}
+
+int u8strwidth(const char *restrict s)
+{
+	int total = 0;
+	const char *p = s;
+	char32_t cp;
+	while (utf8_next(&cp, &p) > 0) {
+		const int w = ucwidth(cp);
+		if (w < 0) {
+			return -1;
+		}
+		total = total > INT_MAX - w ? INT_MAX : total + w;
+	}
+	return total;
+}
+
+int u8strftime(
+	char *restrict buf, const size_t maxlen, const char *restrict pattern,
+	const char *restrict locale, const char *restrict tz, const time_t t)
+{
+	/* keeps the UTF-16 scratch buffers on the stack: a pattern, time zone id,
+	 * or formatted result reaching this many code units is rejected */
+	enum { SCRATCH_CAP = 1024 };
+	UDateFormat *fmt = NULL;
+	int ret = -1;
+	UErrorCode err;
+	int32_t patlen = 0, tzlen = 0, reslen = 0;
+	const char *const loc = (locale != NULL) ? locale : "";
+	const char *const tzsrc = (tz != NULL) ? tz : "UTC";
+	const UDate when = (UDate)t * 1000.0;
+
+	if (pattern == NULL) {
+		goto done;
+	}
+
+	/* pattern and time zone -> UTF-16 preflight (NULL tz selects UTC) */
+	err = U_ZERO_ERROR;
+	u_strFromUTF8(NULL, 0, &patlen, pattern, -1, &err);
+	err = U_ZERO_ERROR;
+	u_strFromUTF8(NULL, 0, &tzlen, tzsrc, -1, &err);
+	if (patlen < 0 || patlen >= SCRATCH_CAP || tzlen < 0 ||
+	    tzlen >= SCRATCH_CAP) {
+		goto done;
+	}
+	{
+		UChar pat[patlen + 1], tzid[tzlen + 1];
+		err = U_ZERO_ERROR;
+		u_strFromUTF8(pat, patlen + 1, NULL, pattern, -1, &err);
+		if (U_FAILURE(err)) {
+			goto done;
+		}
+		err = U_ZERO_ERROR;
+		u_strFromUTF8(tzid, tzlen + 1, NULL, tzsrc, -1, &err);
+		if (U_FAILURE(err)) {
+			goto done;
+		}
+		/* NULL locale selects the root locale */
+		err = U_ZERO_ERROR;
+		fmt = udat_open(
+			UDAT_PATTERN, UDAT_PATTERN, loc, tzid, tzlen, pat,
+			patlen, &err);
+	}
+	if (U_FAILURE(err)) {
+		goto done;
+	}
+
+	err = U_ZERO_ERROR;
+	reslen = udat_format(fmt, when, NULL, 0, NULL, &err);
+	if (reslen < 0 || reslen >= SCRATCH_CAP) {
+		goto done;
+	}
+	{
+		UChar res[reslen + 1];
+		err = U_ZERO_ERROR;
+		udat_format(fmt, when, res, reslen + 1, NULL, &err);
+		if (U_FAILURE(err)) {
+			goto done;
+		}
+		/* UTF-16 result -> UTF-8 (reuses the utf8.h bridge) */
+		ret = utf8_encode16(buf, maxlen, (const char16_t *)res);
+	}
+
+done:
+	if (fmt != NULL) {
+		udat_close(fmt);
+	}
+	if (ret < 0 && buf != NULL && maxlen > 0) {
+		buf[0] = '\0';
+	}
+	return ret;
+}
+
+#endif /* WITH_ICU */
 
 /* --- locale-free, async-signal-safe printf -------------------------------- *
  * No libc function is called on any path: output is copied bytewise, and the
@@ -802,11 +970,7 @@ static void emit_char(
  * the peek never runs past the terminator */
 static size_t unit_len(const char *restrict p)
 {
-	size_t avail = 1;
-	while (avail < UTF8_MAX_LEN && p[avail] != '\0') {
-		avail++;
-	}
-	const int n = utf8_decode(NULL, p, avail);
+	const int n = utf8_decode(NULL, p, peek_avail(p));
 	return n > 0 ? (size_t)n : 1;
 }
 
@@ -1090,7 +1254,12 @@ int u8vsnprintf(
 	va_copy(ap, args);
 	for (const char *f = format; *f != '\0'; f++) {
 		if (*f != '%') {
-			sink_putc(&s, *f);
+			/* copy a literal run as whole UTF-8 units, so a
+			 * multibyte codepoint in the format string is never
+			 * split on truncation (as the %s path already does) */
+			const size_t n = unit_len(f);
+			sink_put(&s, f, n);
+			f += n - 1; /* the loop's f++ advances the last byte */
 			continue;
 		}
 		const char *const start = f;
@@ -1139,15 +1308,17 @@ int u8vsnprintf(
 			break;
 		}
 		/* unknown or unsupported (%n, %lc, ...): echo the raw spec
-		 * and consume no conversion argument */
-		for (const char *q = start; q < f; q++) {
-			sink_putc(&s, *q);
-		}
+		 * and consume no conversion argument. The spec prefix
+		 * [start, f) is ASCII; the conversion char at f may be a
+		 * multibyte lead byte, so echo it as a whole UTF-8 unit. */
+		sink_put(&s, start, (size_t)(f - start));
 		if (sp.conv == '\0') {
 			/* malformed spec hit the terminator */
 			break;
 		}
-		sink_putc(&s, sp.conv);
+		const size_t cn = unit_len(f);
+		sink_put(&s, f, cn);
+		f += cn - 1; /* the loop's f++ advances the last byte */
 	}
 	va_end(ap);
 	if (buf != NULL && maxlen > 0) {
@@ -1252,7 +1423,7 @@ static const char *skip_ws(const char *restrict p)
 	for (;;) {
 		char32_t cp;
 		const char *q = p;
-		if (utf8next(&cp, &q) == 0 || !isspace(cp)) {
+		if (utf8_next(&cp, &q) == 0 || !is_space32(cp)) {
 			return p;
 		}
 		p = q;
@@ -1270,11 +1441,11 @@ static bool scanset_match(
 	while (s < end) {
 		char32_t lo;
 		const char *q = s;
-		(void)utf8next(&lo, &q);
+		(void)utf8_next(&lo, &q);
 		if (q < end && *q == '-' && q + 1 < end) {
 			char32_t hi;
 			const char *r = q + 1;
-			(void)utf8next(&hi, &r);
+			(void)utf8_next(&hi, &r);
 			if (lo <= c && c <= hi) {
 				found = true;
 			}
@@ -1693,8 +1864,8 @@ static enum scan_status read_str(
 	for (int n = 0; n < maxw;) {
 		char32_t cp;
 		const char *q = p;
-		const int len = utf8next(&cp, &q);
-		if (len == 0 || isspace(cp)) {
+		const int len = utf8_next(&cp, &q);
+		if (len == 0 || is_space32(cp)) {
 			break;
 		}
 		if (out != NULL) {
@@ -1722,7 +1893,7 @@ static enum scan_status read_char(
 	for (; got < want; got++) {
 		char32_t cp;
 		const char *q = p;
-		const int len = utf8next(&cp, &q);
+		const int len = utf8_next(&cp, &q);
 		if (len == 0) {
 			break;
 		}
@@ -1754,7 +1925,7 @@ static enum scan_status read_scanset(
 	for (; n < maxw; n++) {
 		char32_t cp;
 		const char *q = p;
-		const int len = utf8next(&cp, &q);
+		const int len = utf8_next(&cp, &q);
 		if (len == 0 || !scanset_match(cp, setb, sete, neg)) {
 			break;
 		}
@@ -1787,15 +1958,15 @@ int u8vsscanf(
 		if (*f != '%') {
 			char32_t fcp;
 			const char *fq = f;
-			(void)utf8next(&fcp, &fq);
-			if (isspace(fcp)) {
+			(void)utf8_next(&fcp, &fq);
+			if (is_space32(fcp)) {
 				in = skip_ws(in);
 				f = fq;
 				continue;
 			}
 			char32_t icp;
 			const char *iq = in;
-			if (utf8next(&icp, &iq) == 0) {
+			if (utf8_next(&icp, &iq) == 0) {
 				input_end = true;
 				break;
 			}
@@ -1905,4 +2076,226 @@ int u8sscanf(const char *restrict str, const char *restrict format, ...)
 	const int ret = u8vsscanf(str, format, args);
 	va_end(args);
 	return ret;
+}
+
+/* --- locale-free strtol/strtoul/strtod ------------------------------------ *
+ * The <stdlib.h> numeric parsers, locale-independent and matching the C
+ * library's endptr + errno=ERANGE contract. They share the number parsing
+ * above: skip_ws for leading whitespace, and float_fromdecimal / read_hexfloat
+ * for u8strtod. Only errno may be touched here; the parse itself calls no libc.
+ */
+
+/* Value of an ASCII base-36 digit (0-9, A-Z, a-z -> 0..35), or -1. */
+static int digit_value(const char c)
+{
+	if ('0' <= c && c <= '9') {
+		return c - '0';
+	}
+	if ('A' <= c && c <= 'Z') {
+		return (c - 'A') + 10;
+	}
+	if ('a' <= c && c <= 'z') {
+		return (c - 'a') + 10;
+	}
+	return -1;
+}
+
+/* Parse the integer subject sequence of s: leading whitespace, an optional sign,
+ * a base prefix, then the digit run. Returns the magnitude (wrapping past
+ * ULONG_MAX), sets *neg for a minus sign and *overflow when the magnitude
+ * exceeds ULONG_MAX. *endptr is left past the last digit, or at s when no digit
+ * is present (no conversion). */
+static unsigned long strtoint(
+	const char *restrict s, char **restrict endptr, int base,
+	bool *restrict neg, bool *restrict overflow)
+{
+	*neg = false;
+	*overflow = false;
+	if (base != 0 && (base < 2 || base > 36)) {
+		if (endptr != NULL) {
+			*endptr = (char *)s;
+		}
+		return 0;
+	}
+	const char *p = skip_ws(s);
+	bool negative = false;
+	if (*p == '+' || *p == '-') {
+		negative = (*p == '-');
+		p++;
+	}
+	if ((base == 0 || base == 16) && p[0] == '0' &&
+	    (p[1] == 'x' || p[1] == 'X') && digit_value(p[2]) >= 0 &&
+	    digit_value(p[2]) < 16) {
+		p += 2;
+		base = 16;
+	} else if (base == 0) {
+		base = p[0] == '0' ? 8 : 10;
+	}
+	unsigned long val = 0;
+	bool any = false, ovf = false;
+	for (;;) {
+		const int d = digit_value(*p);
+		if (d < 0 || d >= base) {
+			break;
+		}
+		any = true;
+		if (val >
+		    (ULONG_MAX - (unsigned long)d) / (unsigned long)base) {
+			ovf = true;
+		}
+		val = val * (unsigned long)base + (unsigned long)d;
+		p++;
+	}
+	if (!any) {
+		if (endptr != NULL) {
+			*endptr = (char *)s;
+		}
+		return 0;
+	}
+	if (endptr != NULL) {
+		*endptr = (char *)p;
+	}
+	*neg = negative;
+	*overflow = ovf;
+	return val;
+}
+
+long u8strtol(const char *restrict s, char **restrict endptr, const int base)
+{
+	bool neg, overflow;
+	const unsigned long mag = strtoint(s, endptr, base, &neg, &overflow);
+	if (neg) {
+		if (overflow || mag > (unsigned long)LONG_MAX + 1UL) {
+			errno = ERANGE;
+			return LONG_MIN;
+		}
+		if (mag == (unsigned long)LONG_MAX + 1UL) {
+			return LONG_MIN;
+		}
+		return -(long)mag;
+	}
+	if (overflow || mag > (unsigned long)LONG_MAX) {
+		errno = ERANGE;
+		return LONG_MAX;
+	}
+	return (long)mag;
+}
+
+unsigned long
+u8strtoul(const char *restrict s, char **restrict endptr, const int base)
+{
+	bool neg, overflow;
+	const unsigned long mag = strtoint(s, endptr, base, &neg, &overflow);
+	if (overflow) {
+		errno = ERANGE;
+		return ULONG_MAX;
+	}
+	return neg ? 0UL - mag : mag;
+}
+
+double u8strtod(const char *restrict s, char **restrict endptr)
+{
+	const char *p = skip_ws(s);
+	bool neg = false;
+	if (*p == '+' || *p == '-') {
+		neg = (*p == '-');
+		p++;
+	}
+	double mag;
+	bool numeric = true; /* false for an inf/nan literal: never ERANGE */
+	bool nonzero = false; /* a nonzero significant decimal digit was seen */
+	if (match_ci(p, "inf") != 0) {
+		p += 3;
+		if (match_ci(p, "inity") != 0) {
+			p += 5;
+		}
+		mag = float_frombits(UINT64_C(0x7FF) << 52);
+		numeric = false;
+	} else if (match_ci(p, "nan") != 0) {
+		p += 3;
+		if (*p == '(') {
+			const char *q = p + 1;
+			while (*q != '\0' && *q != ')') {
+				q++;
+			}
+			if (*q == ')') {
+				p = q + 1;
+			}
+		}
+		mag = float_frombits(UINT64_C(0x7FF8) << 48);
+		numeric = false;
+	} else if (
+		*p == '0' && (p[1] == 'x' || p[1] == 'X') &&
+		(unhex((char32_t)(unsigned char)p[2]) >= 0 ||
+		 (p[2] == '.' && unhex((char32_t)(unsigned char)p[3]) >= 0))) {
+		p += 2;
+		bool ok;
+		mag = read_hexfloat(&p, INT_MAX, 2, &ok);
+		if (!ok) {
+			if (endptr != NULL) {
+				*endptr = (char *)s;
+			}
+			return 0.0;
+		}
+	} else {
+		char digits[FLOAT_DECIMAL_DIGITS];
+		int nd = 0, intdigits = 0;
+		bool dot = false, any = false;
+		for (;;) {
+			if (*p == '.' && !dot) {
+				dot = true;
+				p++;
+				continue;
+			}
+			if (*p < '0' || *p > '9') {
+				break;
+			}
+			any = true;
+			if (*p != '0') {
+				nonzero = true;
+			}
+			if (!dot) {
+				intdigits++;
+			}
+			if (nd < FLOAT_DECIMAL_DIGITS) {
+				digits[nd++] = *p;
+			}
+			p++;
+		}
+		if (!any) {
+			if (endptr != NULL) {
+				*endptr = (char *)s;
+			}
+			return 0.0;
+		}
+		int k = intdigits;
+		if (*p == 'e' || *p == 'E') {
+			const char *q = p + 1;
+			bool eneg = false;
+			if (*q == '+' || *q == '-') {
+				eneg = (*q == '-');
+				q++;
+			}
+			if ('0' <= *q && *q <= '9') {
+				long ev = 0;
+				for (; '0' <= *q && *q <= '9'; q++) {
+					ev = ev < 1000000 ?
+						     ev * 10 + (*q - '0') :
+						     ev;
+				}
+				k += (int)(eneg ? -ev : ev);
+				p = q;
+			}
+		}
+		mag = float_fromdecimal(digits, nd, k);
+	}
+	/* overflow to +-HUGE_VAL, or a nonzero value underflowing to zero */
+	if (numeric &&
+	    (float_classify(mag) == FLOAT_INF || (mag == 0.0 && nonzero))) {
+		errno = ERANGE;
+	}
+	if (endptr != NULL) {
+		*endptr = (char *)p;
+	}
+	return neg ? -mag : mag;
 }
