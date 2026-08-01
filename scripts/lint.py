@@ -41,6 +41,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict, namedtuple
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -107,7 +108,7 @@ def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
 def _accepted_sources(build_dir: Path, accept) -> list[str]:
     """Return the compile_commands.json source files that pass the production
     filter, deduplicated and in database order.  These are passed to
-    run-clang-tidy so only production sources are analyzed."""
+    clang-tidy so only production sources are analyzed."""
     db_path = build_dir / "compile_commands.json"
     if not db_path.exists():
         sys.exit(f"error: {db_path} not found — run cmake first")
@@ -127,38 +128,59 @@ def _accepted_sources(build_dir: Path, accept) -> list[str]:
 # Run clang-tidy
 # ---------------------------------------------------------------------------
 
-def _run(
-    build_dir: Path, check_filter: str | None, jobs: int, sources: list[str]
-) -> str:
-    cmd = ["run-clang-tidy", "-p", str(build_dir), f"-j{jobs}"]
-    if check_filter:
-        cmd += [f"-checks=-*,{check_filter}"]
-    # Pass the accepted production sources explicitly so clang-tidy analyzes
-    # only those, rather than the whole src/ tree (whose test/generated results
-    # would just be discarded during post-filtering, wasting the analysis and
-    # inflating the reported elapsed time).
-    cmd += sources
+def _tidy_one(
+    base: list[str], src: str
+) -> tuple[str, int | None, str]:
+    """Run clang-tidy on a single accepted source and return
+    (src, returncode, stdout).  returncode is None if the binary is missing."""
     try:
         proc = subprocess.run(
-            cmd,
+            base + [src],
             stdout=subprocess.PIPE,
-            stderr=None,  # progress messages flow to the terminal unchanged
+            stderr=subprocess.DEVNULL,  # only the per-file progress noise
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=False,  # returncode is inspected explicitly below
+            check=False,  # returncode is inspected by the caller
         )
     except FileNotFoundError:
-        sys.exit("error: run-clang-tidy not found — install the llvm tools package")
-    # A non-zero status means the driver (or a clang-tidy invocation) errored:
-    # a malformed compile command, an internal crash, a rejected -checks glob.
-    # The captured stdout is then empty or partial, so treating it as "no
-    # warnings" would report a broken run as a clean tree. Fail loudly instead.
-    if proc.returncode != 0:
-        sys.exit(
-            f"error: run-clang-tidy exited with status {proc.returncode}; "
-            "lint results are unreliable (a tool failure is not a clean run)")
-    return proc.stdout
+        return src, None, ""
+    return src, proc.returncode, proc.stdout
+
+
+def _run(
+    build_dir: Path, check_filter: str | None, jobs: int, sources: list[str]
+) -> str:
+    # Drive clang-tidy directly, one process per accepted production source,
+    # fanned out across `jobs` workers. We invoke clang-tidy itself rather than
+    # the run-clang-tidy wrapper so the only tool this needs is clang-tidy;
+    # clang-tidy walks the compile database for each named source and analyzes
+    # it for every compile command, and we concatenate the per-file diagnostics
+    # (emitted on stdout) for the parser below. Passing the accepted sources
+    # explicitly keeps the analysis to production files, rather than the whole
+    # database whose test/generated results would just be discarded during
+    # post-filtering, wasting the analysis and inflating the reported elapsed
+    # time.
+    base = ["clang-tidy", "-p", str(build_dir)]
+    if check_filter:
+        base += [f"-checks=-*,{check_filter}"]
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        results = list(pool.map(lambda src: _tidy_one(base, src), sources))
+    outputs: list[str] = []
+    for src, code, out in results:
+        if code is None:
+            sys.exit(
+                "error: clang-tidy not found — install the llvm tools package")
+        # A non-zero status means clang-tidy errored on that source: a malformed
+        # compile command, an internal crash, a rejected -checks glob, or an
+        # error-level diagnostic. Its stdout is then partial, so treating it as
+        # "no warnings" would report a broken run as a clean tree; fail loudly.
+        if code != 0:
+            sys.exit(
+                f"error: clang-tidy exited with status {code} on {src}; "
+                "lint results are unreliable (a tool failure is not a clean run)")
+        outputs.append(out)
+    return "".join(outputs)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +219,7 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
         line = int(m.group("line"))
         check = m.group("check")
         msg = m.group("msg")
-        # run-clang-tidy repeats a header's warnings once per translation
+        # clang-tidy repeats a header's warnings once per translation
         # unit that includes it; keep only the first occurrence.
         key = (relpath, line, check, msg)
         if key in seen:
@@ -795,7 +817,7 @@ def main() -> int:
     sources = _accepted_sources(build_dir, accept)
     if not sources:
         # No accepted sources: passing zero positional paths would make
-        # run-clang-tidy analyze the entire database, so stop here instead.
+        # clang-tidy analyze the entire database, so stop here instead.
         sys.exit("error: no sources to lint after applying the source filter")
 
     print(f"Linting [{check_label}] ...", file=sys.stderr, flush=True)
