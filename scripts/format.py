@@ -174,6 +174,18 @@ def _utf8_nobom_issue(data: bytes) -> str | None:
 # clang-format pass
 # ---------------------------------------------------------------------------
 
+# The one clang-format release this project's formatting is defined by.
+#
+# It is a single exact version on purpose.  clang-format's output is not
+# stable across patch releases, so accepting a set of versions makes --check
+# depend on which one happens to be installed: no tree state satisfies two
+# versions that disagree, and formatting for one reports drift under the
+# other.  That a candidate version agrees on *this* tree does not generalize
+# -- this script is vendored into the downstream projects, whose sources hit
+# constructs this tree does not.  Bump this deliberately, reformatting the
+# tree in the same commit, rather than widening it into a list.
+_CLANG_FORMAT_VERSION = "22.1.8"
+
 
 def _clang_format_version() -> str | None:
     """Return the installed clang-format's version (e.g. ``"22.1.5"``), or None
@@ -194,10 +206,22 @@ def _clang_format_version() -> str | None:
 
 def _clang_format_file(path: Path, root: Path) -> bytes:
     """Return the clang-format output for *path* (clang-format reads the file)."""
-    return subprocess.run(
+    proc = subprocess.run(
         ["clang-format", str(path)],
-        capture_output=True, check=True, cwd=str(root),
-    ).stdout
+        capture_output=True, cwd=str(root),
+    )
+    # A non-zero status means clang-format could not format this file: a
+    # rejected .clang-format key (which fails every file, and is most likely
+    # right after _CLANG_FORMAT_VERSION is bumped), an unreadable path, or an
+    # internal crash.  Its stdout is then empty or partial, so carrying on
+    # would report the file as needing no change -- a broken run must not look
+    # like a clean one.  Fail loudly, quoting the captured diagnostic that says
+    # what actually went wrong.
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", "replace").strip()
+        sys.exit(f"error: clang-format exited with status {proc.returncode} "
+                 f"on {path}: {detail or 'no diagnostic'}")
+    return proc.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1013,8 +1037,9 @@ def main() -> None:
         help="use NFKC instead of NFC for Unicode normalization",
     )
     parser.add_argument(
-        "--clang-version", default="22.1.5",
-        help="required exact clang-format version (default: 22.1.5)",
+        "--clang-version", default=_CLANG_FORMAT_VERSION,
+        help="required exact clang-format version "
+             f"(default: {_CLANG_FORMAT_VERSION})",
     )
     args = parser.parse_args()
     root = args.root.resolve()
