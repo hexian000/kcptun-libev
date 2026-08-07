@@ -187,6 +187,20 @@ def ensure_tool(name: str) -> str:
     return path
 
 
+def ensure_command(value: str) -> List[str]:
+    """Split *value* into a command, resolving its executable on PATH.
+
+    Accepting arguments rather than a bare executable name is what lets a
+    gcov-compatible reader that is reached through a subcommand be named --
+    LLVM's is ``llvm-cov gcov``, not an ``llvm-cov`` that takes gcov's flags.
+    """
+    command = shlex.split(value)
+    if not command:
+        raise SystemExit(f"not a command: {value!r}")
+    command[0] = ensure_tool(command[0])
+    return command
+
+
 def ensure_project_root(root: Path) -> None:
     """Exit unless *root* looks like the project root (has CMakeLists.txt)."""
     if not (root / "CMakeLists.txt").exists():
@@ -402,7 +416,7 @@ def populate_gcov_work_dir(work_dir: Path) -> None:
 
 
 def collect_coverage(
-        gcov: str,
+        gcov: Sequence[str],
         build_dir: Path,
         object_files: Sequence[Path],
         source_dirs: Sequence[Path],
@@ -417,17 +431,28 @@ def collect_coverage(
             work_dir.mkdir()
             populate_gcov_work_dir(work_dir)
             proc = run_command(
-                [gcov, "-b", "-c", "-p", "-m", str(object_file)],
+                [*gcov, "-b", "-c", "-p", "-m", str(object_file)],
                 cwd=work_dir,
                 check=False,
                 capture_output=True,
                 log_command=False,
             )
             gcov_files = sorted(work_dir.glob("*.gcov"))
-            if proc.returncode != 0 and not gcov_files:
+            # Do not key this on the exit status: it reports how the reader
+            # fared, not whether usable data came back, and the two do not
+            # line up.  GNU gcov 13 exits non-zero on a .gcno/.gcda version
+            # mismatch, yet exits 0 for an object the run never executed --
+            # for which it still writes an all-zero .gcov.  Producing no
+            # .gcov at all is the reliable evidence that nothing was read, so
+            # key the warning on that and pass gcov's own message along: an
+            # object that contributes nothing silently just sinks into the
+            # aggregate as 0/0 rows.  Requiring a .gcda keeps a never-executed
+            # object quiet, which is a normal outcome and not a gcov failure.
+            if not gcov_files and object_file.with_suffix(".gcda").exists():
                 log(
-                    "warning: gcov failed for "
-                    f"{object_file.relative_to(build_dir).as_posix()}"
+                    "warning: gcov produced no coverage data for "
+                    f"{object_file.relative_to(build_dir).as_posix()} "
+                    f"(exit status {proc.returncode})"
                 )
                 if proc.stderr:
                     log(proc.stderr.rstrip())
@@ -645,7 +670,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         help="cmake executable name")
     parser.add_argument("--ctest", default="ctest",
                         help="ctest executable name")
-    parser.add_argument("--gcov", default="gcov", help="gcov executable name")
+    parser.add_argument(
+        "--gcov", default="gcov",
+        help="gcov command; may include arguments so a reader reached through "
+             "a subcommand can be named, e.g. \"llvm-cov gcov\" for a "
+             "clang-built tree (default: gcov)")
     return parser.parse_args(argv)
 
 
@@ -654,7 +683,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     cmake = ensure_tool(args.cmake)
     ctest = ensure_tool(args.ctest)
-    gcov = ensure_tool(args.gcov)
+    gcov = ensure_command(args.gcov)
     ensure_project_root(ROOT)
 
     base_build_dir = resolve_path(ROOT, args.build_dir)
@@ -715,6 +744,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         source_dirs,
         exclude_source_suffixes,
     )
+    # Every expected source missing from the aggregate is filled in as 0/0,
+    # which renders as a well-formed table of 0.00% rows -- so a toolchain that
+    # produced nothing at all would otherwise be reported as a successful run
+    # over a catastrophically uncovered tree, pointing the reader at the wrong
+    # problem.  No line data anywhere means gcov did not work, not that nothing
+    # is covered.
+    if not any(file_coverage.total for file_coverage in coverage.values()):
+        raise SystemExit(
+            f"gcov produced no coverage data for any of {len(object_files)} "
+            f"object files under {coverage_build_dir}; check that "
+            f"{quote_command(gcov)} matches the compiler that built them")
     rows = summarize_rows(
         iter_expected_sources(source_dirs, exclude_source_suffixes), coverage
     )
