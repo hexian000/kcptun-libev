@@ -13,6 +13,7 @@ Usage:
   scripts/lint.py --tests                    # also lint *_test.c files
   scripts/lint.py --generated                # also lint *.gen.c files
   scripts/lint.py --no-denoise               # keep known false positives
+  scripts/lint.py --raw-list PATH            # also write a diffable raw findings list
 
 The CHECK argument is forwarded verbatim as the glob in -checks='-*,CHECK'.
 Use a trailing '*' for prefix matching, e.g. "readability-*".
@@ -37,6 +38,7 @@ import datetime
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -125,60 +127,138 @@ def _accepted_sources(build_dir: Path, accept) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Prune the compilation database to one command per source
+# ---------------------------------------------------------------------------
+
+def _entry_args(entry: dict) -> list[str]:
+    """Return an entry's compiler arguments, in whichever of the two forms
+    the compilation database used."""
+    args = entry.get("arguments")
+    if args is not None:
+        return list(args)
+    return shlex.split(entry.get("command", ""))
+
+
+def _prune_db(build_dir: Path, sources: list[str]) -> Path:
+    """Write a compilation database holding exactly one command per accepted
+    source and return the directory containing it.
+
+    CMake emits one command per (source, target) pair, so a source linked
+    into several test targets appears once per target -- when this was
+    written, 222 commands for 140 files, up to 7 for one source.  clang-tidy
+    analyzes a named source once for *every* matching command, so those
+    repeats re-run the whole check set on identical code: the surplus
+    commands differ only in the output object path and in -D macros that
+    configure other modules.  Keeping one command per source cuts the run by
+    an order of magnitude and leaves the report unchanged.
+    """
+    db_path = build_dir / "compile_commands.json"
+    if not db_path.exists():
+        sys.exit(f"error: {db_path} not found — run cmake first")
+    db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
+    wanted = set(sources)
+    best: dict[str, tuple[int, dict]] = {}
+    for entry in db:
+        fpath = entry["file"]
+        if fpath not in wanted:
+            continue
+        # Of the commands for one source, keep the richest configuration --
+        # the one carrying the most -D/-I flags.  It compiles the most
+        # conditional code, so dropping the others cannot hide a region that
+        # only a target-specific macro enables.  Ties keep the first command
+        # in database order, so the choice is deterministic.
+        rank = sum(a.startswith(("-D", "-I")) for a in _entry_args(entry))
+        chosen = best.get(fpath)
+        if chosen is None or rank > chosen[0]:
+            best[fpath] = (rank, entry)
+    out_dir = build_dir / "tmp" / "lint-db"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pruned = [best[src][1] for src in sources if src in best]
+    (out_dir / "compile_commands.json").write_text(
+        json.dumps(pruned, indent=1), encoding="utf-8")
+    return out_dir
+
+
+# ---------------------------------------------------------------------------
 # Run clang-tidy
 # ---------------------------------------------------------------------------
 
 def _tidy_one(
     base: list[str], src: str
-) -> tuple[str, int | None, str]:
+) -> tuple[str, int | None, str, str]:
     """Run clang-tidy on a single accepted source and return
-    (src, returncode, stdout).  returncode is None if the binary is missing."""
+    (src, returncode, stdout, stderr).  returncode is None if the binary is
+    missing.  stderr is captured rather than discarded: on success it is only
+    per-file progress noise and is dropped by the caller, but on failure it
+    carries the one diagnostic that says what went wrong."""
     try:
         proc = subprocess.run(
             base + [src],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,  # only the per-file progress noise
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             check=False,  # returncode is inspected by the caller
         )
     except FileNotFoundError:
-        return src, None, ""
-    return src, proc.returncode, proc.stdout
+        return src, None, "", ""
+    return src, proc.returncode, proc.stdout, proc.stderr
+
+
+# How much of a failing clang-tidy's stderr to quote: enough for a rejected
+# -checks glob or a malformed compile command, and the tail of a crash
+# backtrace, without pasting a whole dump into the exit message.
+_STDERR_TAIL_LINES = 20
+
+
+def _stderr_tail(text: str) -> str:
+    """Return the last few non-empty lines of *text* for an exit message."""
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "no diagnostic"
+    tail = lines[-_STDERR_TAIL_LINES:]
+    if len(lines) > _STDERR_TAIL_LINES:
+        dropped = len(lines) - _STDERR_TAIL_LINES
+        tail.insert(0, f"... ({dropped} earlier lines)")
+    return "\n".join(tail)
 
 
 def _run(
-    build_dir: Path, check_filter: str | None, jobs: int, sources: list[str]
+    db_dir: Path, check_filter: str | None, jobs: int, sources: list[str]
 ) -> str:
     # Drive clang-tidy directly, one process per accepted production source,
     # fanned out across `jobs` workers. We invoke clang-tidy itself rather than
     # the run-clang-tidy wrapper so the only tool this needs is clang-tidy;
     # clang-tidy walks the compile database for each named source and analyzes
     # it for every compile command, and we concatenate the per-file diagnostics
-    # (emitted on stdout) for the parser below. Passing the accepted sources
-    # explicitly keeps the analysis to production files, rather than the whole
-    # database whose test/generated results would just be discarded during
-    # post-filtering, wasting the analysis and inflating the reported elapsed
-    # time.
-    base = ["clang-tidy", "-p", str(build_dir)]
+    # (emitted on stdout) for the parser below. `db_dir` is the pruned database
+    # from _prune_db, which holds one command per source so no file is analyzed
+    # twice. Passing the accepted sources explicitly keeps the analysis to
+    # production files, rather than the whole database whose test/generated
+    # results would just be discarded during post-filtering, wasting the
+    # analysis and inflating the reported elapsed time.
+    base = ["clang-tidy", "-p", str(db_dir)]
     if check_filter:
         base += [f"-checks=-*,{check_filter}"]
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         results = list(pool.map(lambda src: _tidy_one(base, src), sources))
     outputs: list[str] = []
-    for src, code, out in results:
+    for src, code, out, err in results:
         if code is None:
             sys.exit(
                 "error: clang-tidy not found — install the llvm tools package")
         # A non-zero status means clang-tidy errored on that source: a malformed
         # compile command, an internal crash, a rejected -checks glob, or an
         # error-level diagnostic. Its stdout is then partial, so treating it as
-        # "no warnings" would report a broken run as a clean tree; fail loudly.
+        # "no warnings" would report a broken run as a clean tree; fail loudly,
+        # quoting the captured stderr that says what actually went wrong -- the
+        # file name alone forces a manual re-run to learn the cause.
         if code != 0:
             sys.exit(
                 f"error: clang-tidy exited with status {code} on {src}; "
-                "lint results are unreliable (a tool failure is not a clean run)")
+                "lint results are unreliable (a tool failure is not a clean "
+                f"run)\n{_stderr_tail(err)}")
         outputs.append(out)
     return "".join(outputs)
 
@@ -216,6 +296,14 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
             # e.g. "dispatch.c" or "mux/dispatch.c" — look up by basename
             relpath = name_map.get(pobj.name, fpath)
 
+        # Drop findings outside the repo. A project source always resolves to a
+        # repo-relative path (via name_map), so a still-absolute path here is a
+        # system/third-party header — e.g. <netdb.h> flagged because a test mock
+        # redeclares a libc function. Those are never actionable by the cleanup
+        # skill, which only edits in-repo sources.
+        if os.path.isabs(relpath):
+            continue
+
         line = int(m.group("line"))
         check = m.group("check")
         msg = m.group("msg")
@@ -250,39 +338,49 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
 # include-cleaner maps those names to <ctype.h> unconditionally and reports "no
 # header providing isdigit", a demand that is impossible to satisfy here.
 #
+# strings/uctype.h repeats the pattern one layer up: it is the char32_t/UTF-8
+# counterpart to ctype_ascii.h and, in the WITH_ICU build, claims the very same
+# <ctype.h> names as macros over uctype_* functions. It carries the same
+# mutual-exclusion #error, so a file including it cannot also include <ctype.h>
+# — yet include-cleaner still demands <ctype.h> for every isdigit/tolower/...
+#
 # The same failure recurs for several standard/third-party headers whose symbol
 # supply clang's map misattributes or overlooks: <sys/wait.h> (wait-status
 # macros clang credits to <stdlib.h>), <errno.h>, <netinet/in.h> and <net/if.h>
-# (whose symbols clang can miss), the POSIX types ssize_t/socklen_t (a real
-# provider header is included, yet clang reports none), and single-umbrella
-# libraries such as libsodium (<sodium.h>) and Lua (<lua.h>) that expose an
-# entire prefixed symbol family through one public header. Each surfaces as one
-# of two misc-include-cleaner phrasings: the symbol reads as unprovided ("no
-# header providing ..."), or the header reads as unused ("included header ... is
-# not used directly").
+# (whose symbols clang can miss), <syslog.h> (a one-line wrapper around glibc's
+# <sys/syslog.h>, which is where the decls physically live and where clang
+# points), the POSIX types ssize_t/socklen_t (a real provider header is
+# included, yet clang reports none), and libraries that expose a prefixed symbol
+# family through public headers that are not where the decls end up: libsodium
+# (<sodium.h>) and Lua (<lua.h>) funnel theirs through one umbrella, while ICU
+# rewrites every C symbol through <unicode/urename.h> (u_tolower ->
+# u_tolower_77), so the visible decl never sits in the documented
+# <unicode/*.h>. Each surfaces as one of two misc-include-cleaner phrasings: the
+# symbol reads as unprovided ("no header providing ..."), or the header reads as
+# unused ("included header ... is not used directly").
 #
 # The denoiser withholds only findings it can PROVE are such false positives;
 # it must never drop a finding that could be a real defect. Every rule is a
 # _Provider entry anchored to concrete evidence in the source: a finding is
 # suppressed only when the file actually includes the provider header AND the
-# flagged symbol genuinely belongs to that provider (an exact name, a
-# ctype_ascii.h-defined name, or a library symbol-prefix). A missing include unrelated
-# to a known provider (pid_t, char32_t, openlog, ...) is left untouched, as is a
-# header whose symbols overlap other headers (e.g. <sys/types.h> reported unused
-# — possibly a genuine redundant include — is never suppressed). Suppressed
-# findings are still reported in their own section, and --no-denoise disables the
-# pass, so nothing is silently hidden.
+# flagged symbol genuinely belongs to that provider (an exact name, a name
+# parsed out of one of our own replacement headers, or a library symbol-prefix).
+# A missing include unrelated to a known provider (pid_t, char32_t, ...) is left
+# untouched, as is a header whose symbols overlap other headers (e.g.
+# <sys/types.h> reported unused — possibly a genuine redundant include — is
+# never suppressed) and a name this project itself also defines (LOG_PERROR is
+# both a <syslog.h> option and a utils/slog.h macro, so it is excluded from the
+# <syslog.h> rule). Suppressed findings are still reported in their own section,
+# and --no-denoise disables the pass, so nothing is silently hidden.
 # ---------------------------------------------------------------------------
 
-ASCII_HEADER = "utils/ctype_ascii.h"  # spelling used in #include directives
-
-# Include roots under which the "utils/ctype_ascii.h" spelling resolves on
-# disk, mirroring the build's -I paths. In csnippets itself the header lives
-# under src/; the downstream projects vendor csnippets under contrib/csnippets/,
-# so the same include spelling resolves there instead. Searched in order; the
-# first hit wins (only one root exists in any given tree). Without this the
-# denoiser silently no-ops in the vendored trees and every ctype_ascii.h finding
-# leaks into the report as if it were a real defect.
+# Include roots under which our own headers' spellings ("utils/ctype_ascii.h",
+# "strings/uctype.h") resolve on disk, mirroring the build's -I paths. In
+# csnippets itself they live under src/; the downstream projects vendor
+# csnippets under contrib/csnippets/, so the same include spelling resolves
+# there instead. Searched in order; the first hit wins (only one root exists in
+# any given tree). Without this the denoiser silently no-ops in the vendored
+# trees and every such finding leaks into the report as if it were a real defect.
 _HEADER_INCLUDE_ROOTS = ("src", "contrib/csnippets")
 
 # misc-include-cleaner phrasing for a used-but-not-directly-included symbol.
@@ -295,16 +393,21 @@ _INCLUDE_CLEANER_UNUSED_RE = re.compile(
     r"^included header (?P<hdr>\S+) is not used directly$"
 )
 
-# An #include whose target basename is ctype_ascii.h — e.g.
-# #include "utils/ctype_ascii.h", the bare "ctype_ascii.h" spelling used from
-# within strings/, the vendored "csnippets/utils/ctype_ascii.h", or any <...>
-# form. Anchoring on the basename keeps the rule correct regardless of the
-# include-path prefix a project spells it with, while the leading "/"-or-start
-# requirement rejects unrelated names like "myctype_ascii.h".
-_ASCII_INCLUDE_RE = re.compile(
-    r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^">]*/)?ctype_ascii\.h[">]',
-    re.MULTILINE,
-)
+def _basename_include_re(basename: str) -> re.Pattern:
+    """Compile a regex matching an `#include` of any path ending in `basename`.
+
+    `basename` is a regex fragment for the file name alone, e.g. r'uctype\\.h'.
+    It matches every spelling of our own headers — #include "strings/uctype.h",
+    the bare "uctype.h" used from within strings/, the vendored
+    "csnippets/strings/uctype.h", or any <...> form. Anchoring on the basename
+    keeps the rule correct regardless of the include-path prefix a project
+    spells it with, while the leading "/"-or-start requirement rejects unrelated
+    names like "myuctype.h".
+    """
+    return re.compile(
+        r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^">]*/)?' + basename + r'[">]',
+        re.MULTILINE,
+    )
 
 
 def _include_re(spelling: str) -> re.Pattern:
@@ -415,6 +518,57 @@ _STATIC_PROVIDERS: tuple[_Provider, ...] = (
         prefixes=None,
         note="POSIX type provided by <sys/socket.h> clang overlooks",
     ),
+    # glibc's <syslog.h> is a one-line wrapper that includes <sys/syslog.h>,
+    # where openlog()/syslog() and the LOG_* constants physically live. Without
+    # an IWYU export pragma clang credits the inner header and reports the
+    # POSIX-mandated <syslog.h> as providing nothing. The set is POSIX.1-2008's
+    # complete <syslog.h> surface (facilities, priorities, options, the mask
+    # macros and the four functions) minus LOG_PERROR: utils/slog.h defines a
+    # macro of that name too, so a file missing *that* include must keep its
+    # finding. The set is exact rather than a LOG_ prefix for the same reason —
+    # slog.h's own LOG_LEVEL_*/LOG_F names share the prefix.
+    _Provider(
+        name="<syslog.h>",
+        include=_include_re(r"syslog\.h"),
+        unused_basename="syslog.h",
+        symbols=frozenset({
+            "openlog", "syslog", "closelog", "setlogmask", "vsyslog",
+            "LOG_KERN", "LOG_USER", "LOG_MAIL", "LOG_NEWS", "LOG_UUCP",
+            "LOG_DAEMON", "LOG_AUTH", "LOG_CRON", "LOG_LPR", "LOG_SYSLOG",
+            "LOG_AUTHPRIV", "LOG_FTP", "LOG_LOCAL0", "LOG_LOCAL1",
+            "LOG_LOCAL2", "LOG_LOCAL3", "LOG_LOCAL4", "LOG_LOCAL5",
+            "LOG_LOCAL6", "LOG_LOCAL7",
+            "LOG_EMERG", "LOG_ALERT", "LOG_CRIT", "LOG_ERR", "LOG_WARNING",
+            "LOG_NOTICE", "LOG_INFO", "LOG_DEBUG",
+            "LOG_PID", "LOG_CONS", "LOG_NDELAY", "LOG_ODELAY", "LOG_NOWAIT",
+            "LOG_MASK", "LOG_UPTO", "LOG_PRI", "LOG_MAKEPRI", "LOG_FAC",
+        }),
+        prefixes=None,
+        note="declared in <sys/syslog.h>, which <syslog.h> wraps",
+    ),
+    # ICU rewrites every C symbol through <unicode/urename.h> — u_tolower
+    # becomes u_tolower_77 — so the decl clang sees never sits in the documented
+    # <unicode/uchar.h>, <unicode/unorm2.h>, ... that callers must include. Any
+    # <unicode/*.h> include proves the file is an ICU translation unit; the
+    # prefixes are ICU's own C-module naming (u_* core, plus the modules this
+    # tree uses), and the types are listed exactly because a bare "U" prefix
+    # would swallow unrelated names such as UINT8_C. Extending either as more
+    # ICU modules come into use is the fail-safe direction: an unlisted symbol
+    # keeps its finding rather than losing it. unused_basename is None because
+    # an ICU header that really is redundant (a leftover <unicode/utypes.h>) is
+    # a genuine cleanup worth reporting.
+    _Provider(
+        name="<unicode/*.h>",
+        include=_include_re(r"unicode/\w+\.h"),
+        unused_basename=None,
+        symbols=frozenset({
+            "UChar", "UChar32", "UBool", "UErrorCode", "UNormalizer2",
+            "UDateFormat", "UDateFormatStyle", "UCharCategory", "UProperty",
+            "UVersionInfo",
+        }),
+        prefixes=("u_", "unorm2_", "udat_"),
+        note="ICU symbol renamed through <unicode/urename.h>",
+    ),
     # libsodium exposes its whole API — crypto_*, sodium_*, randombytes_* — only
     # through the umbrella <sodium.h>; include-cleaner wants a per-symbol header
     # that does not exist for callers.
@@ -499,19 +653,19 @@ def _strip_noncode(src: str) -> str:
     return _NONCODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), src)
 
 
-def _ascii_provided_names(root: Path) -> set[str]:
-    """Names that utils/ctype_ascii.h provides (macros and inline functions).
+def _header_provided_names(root: Path, spelling: str) -> set[str]:
+    """Names the header at `spelling` provides (macros and inline functions).
 
     Parsed from the header itself so the set stays correct as the header evolves.
     The header is looked up under each known include root (src/ for csnippets,
     contrib/csnippets/ for the downstream projects that vendor it). Returns an
-    empty set if it cannot be read under any root — the ctype_ascii.h rule then
+    empty set if it cannot be read under any root — that header's rule then
     simply never fires (fail safe: keep every finding).
     """
     text: str | None = None
     for inc_root in _HEADER_INCLUDE_ROOTS:
         try:
-            text = (root / inc_root / ASCII_HEADER).read_text(encoding="utf-8")
+            text = (root / inc_root / spelling).read_text(encoding="utf-8")
         except OSError:
             continue
         break
@@ -525,21 +679,38 @@ def _ascii_provided_names(root: Path) -> set[str]:
     return names
 
 
+# This project's own <ctype.h> replacements: headers that deliberately claim the
+# standard classification names (isdigit, tolower, ...) as macros, so a file
+# including one cannot include <ctype.h> — which is exactly what include-cleaner
+# demands. Both #error out if <ctype.h>'s macros are already defined, so the
+# claim is exclusive and the rule cannot mask a genuine missing <ctype.h>.
+# Fields: (include spelling on disk, basename regex, unused-header basename,
+# reason note). Provided names are parsed from each header at run time.
+_OWN_CTYPE_HEADERS: tuple[tuple[str, str, str, str], ...] = (
+    ("utils/ctype_ascii.h", r"ctype_ascii\.h", "ctype_ascii.h",
+     "ASCII-only <ctype.h> replacement"),
+    ("strings/uctype.h", r"uctype\.h", "uctype.h",
+     "char32_t/Unicode <ctype.h> replacement"),
+)
+
+
 def _providers(root: Path) -> list[_Provider]:
-    """The provider table for `root`: the static entries plus
-    utils/ctype_ascii.h, whose provided-name set is parsed from the (possibly
-    vendored) header. The ctype_ascii.h entry is omitted when the header cannot
-    be read, so its rule simply never fires there (fail safe)."""
+    """The provider table for `root`: the static entries plus this project's own
+    <ctype.h> replacements, whose provided-name sets are parsed from the
+    (possibly vendored) headers. An entry is omitted when its header cannot be
+    read, so its rule simply never fires there (fail safe)."""
     providers = list(_STATIC_PROVIDERS)
-    ascii_names = _ascii_provided_names(root)
-    if ascii_names:
+    for spelling, basename, unused_basename, note in _OWN_CTYPE_HEADERS:
+        names = _header_provided_names(root, spelling)
+        if not names:
+            continue
         providers.append(_Provider(
-            name=ASCII_HEADER,
-            include=_ASCII_INCLUDE_RE,
-            unused_basename="ctype_ascii.h",
-            symbols=frozenset(ascii_names),
+            name=spelling,
+            include=_basename_include_re(basename),
+            unused_basename=unused_basename,
+            symbols=frozenset(names),
             prefixes=None,
-            note="ASCII-only <ctype.h> replacement",
+            note=note,
         ))
     return providers
 
@@ -672,9 +843,77 @@ def _suppressed_section(suppressed: list[dict]) -> list[str]:
     return out
 
 
+def _finding_id(w: dict) -> str:
+    """Stable identity of a finding for the raw list: check, file and message,
+    but NOT the line number — so an unrelated edit that shifts lines never
+    churns the list (and its diff)."""
+    return f"{w['check']}\t{w['file']}\t{w['msg']}"
+
+
+_RAW_LIST_HEADER = """\
+# clang-tidy raw findings list — regenerated by `scripts/lint.py --raw-list`.
+#
+# One actionable finding per line, tab-separated, sorted:
+#     <check>\t<file>\t<message>
+# Line numbers are omitted on purpose so unrelated edits do not churn the diff.
+# Committed so a later run can `git diff` it: added lines are newly-introduced
+# findings to triage, removed lines are findings that were resolved.
+#
+# Which findings appear at all depends on the build configuration named below:
+# the path-sensitive analyzer checks explore different paths at different
+# optimization levels, and NDEBUG turns ASSERT() into a no-op, removing
+# constraints they prune with. Diff two lists only if this line matches.
+#
+# Machine-generated — do not hand-edit.
+"""
+
+
+def _write_raw_list(path: Path, warnings: list[dict], config: str) -> None:
+    """Write `path` with the identities of the current actionable findings,
+    sorted for a stable diff."""
+    ids = sorted({_finding_id(w) for w in warnings})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(ids)
+    path.write_text(
+        _RAW_LIST_HEADER + f"# Build configuration: {config}\n"
+        + (body + "\n" if body else ""), encoding="utf-8")
+
+
+def _build_config(build_dir: Path) -> str:
+    """Describe the configuration in *build_dir*, for the report header.
+
+    The findings depend on it -- the path-sensitive clang-analyzer checks
+    explore different paths at different optimization levels, and NDEBUG turns
+    ASSERT() into a no-op, removing constraints they prune with.  A findings
+    list is therefore only comparable against one taken the same way, so say
+    which way that was rather than leaving it to be guessed.
+    """
+    cache = build_dir / "CMakeCache.txt"
+    wanted = {
+        "CMAKE_BUILD_TYPE": "build",
+        "CMAKE_C_COMPILER": "compiler",
+        "ENABLE_SANITIZERS": "sanitizers",
+    }
+    found: dict[str, str] = {}
+    try:
+        for line in cache.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if not sep:
+                continue
+            name = key.split(":", 1)[0]
+            if name in wanted:
+                found[wanted[name]] = value.strip()
+    except OSError:
+        return "unknown (no CMakeCache.txt)"
+    if "compiler" in found:
+        found["compiler"] = Path(found["compiler"]).name
+    parts = [f"{k}={v}" for k, v in found.items() if v]
+    return ", ".join(parts) if parts else "unknown"
+
+
 def _report(
     warnings: list[dict], suppressed: list[dict], check_filter: str | None,
-    elapsed: float, excluded: list[str],
+    elapsed: float, excluded: list[str], config: str,
 ) -> str:
     title = f"`{check_filter}`" if check_filter else "All Checks"
     total = len(warnings)
@@ -695,6 +934,9 @@ def _report(
         "",
         f"> Source filter: excludes {', '.join(excluded)}",
         "",
+        f"> Build configuration: {config} &mdash; findings are only "
+        "comparable against a list taken under the same one",
+        "",
     ]
 
     if not warnings:
@@ -706,49 +948,31 @@ def _report(
         out += _suppressed_section(suppressed)
         return "\n".join(out)
 
-    # Organise: check → file → [(line, msg)]
-    by_check: dict[str, dict[str, list[tuple[int, str]]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    # Organise by file; within a file the findings are sorted by line so the
+    # report reads top-to-bottom like the source, each row naming its check.
+    by_file: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
     for w in warnings:
-        by_check[w["check"]][w["file"]].append((w["line"], w["msg"]))
+        by_file[w["file"]].append((w["line"], w["check"], w["msg"]))
 
-    check_totals: dict[str, int] = {
-        c: sum(len(ws) for ws in files.values())
-        for c, files in by_check.items()
-    }
-    single_check = len(by_check) == 1
-
-    # --- Summary ---
-    out += ["## Summary", ""]
-    if single_check:
-        files_map = next(iter(by_check.values()))
-        out += ["| File | Warnings |", "|---|---:|"]
-        for f in sorted(files_map, key=lambda k: (-len(files_map[k]), k)):
-            out.append(f"| `{f}` | {len(files_map[f])} |")
-    else:
-        out += ["| Check | Warnings |", "|---|---:|"]
-        for c in sorted(check_totals, key=lambda k: -check_totals[k]):
-            out.append(f"| `{c}` | {check_totals[c]} |")
+    # --- Summary: files, most findings first ---
+    out += ["## Summary", "", "| File | Warnings |", "|---|---:|"]
+    for f in sorted(by_file, key=lambda k: (-len(by_file[k]), k)):
+        out.append(f"| `{f}` | {len(by_file[f])} |")
     out.append("")
 
-    # --- Findings ---
+    # --- Findings: one section per file, findings in line order ---
     out += ["## Findings", ""]
-    for check in sorted(by_check):
-        if not single_check:
-            out += [f"### `{check}`", ""]
-        for fpath in sorted(by_check[check]):
-            entries = sorted(by_check[check][fpath])
-            n = len(entries)
-            noun = "warning" if n == 1 else "warnings"
-            label = f"**`{fpath}`** — {n} {noun}"
-            out.append(f"{'###' if single_check else '####'} {label}")
-            out.append("")
-            out += ["| Line | Message |", "|---:|---|"]
-            for line_no, msg in entries:
-                safe = msg.replace("|", "\\|").replace("`", "\\`")
-                out.append(f"| {line_no} | {safe} |")
-            out.append("")
+    for fpath in sorted(by_file):
+        entries = sorted(by_file[fpath])
+        n = len(entries)
+        noun = "warning" if n == 1 else "warnings"
+        out.append(f"### **`{fpath}`** — {n} {noun}")
+        out.append("")
+        out += ["| Line | Check | Message |", "|---:|---|---|"]
+        for line_no, check, msg in entries:
+            safe = msg.replace("|", "\\|").replace("`", "\\`")
+            out.append(f"| {line_no} | `{check}` | {safe} |")
+        out.append("")
 
     out += _suppressed_section(suppressed)
 
@@ -806,6 +1030,15 @@ def main() -> int:
         help="keep known false positives (e.g. the utils/ctype_ascii.h "
         "include-cleaner noise) instead of withholding them",
     )
+    ap.add_argument(
+        "--raw-list",
+        metavar="PATH",
+        help="also write a raw, line-number-free findings list to PATH (in "
+        "addition to the Markdown report); commit it so a later run can `git "
+        "diff` it to see which findings are newly introduced.  Record the "
+        "build configuration printed alongside it: a list is only comparable "
+        "against one taken under the same configuration",
+    )
     args = ap.parse_args()
 
     build_dir = Path(args.build)
@@ -820,9 +1053,10 @@ def main() -> int:
         # clang-tidy analyze the entire database, so stop here instead.
         sys.exit("error: no sources to lint after applying the source filter")
 
+    lint_db = _prune_db(build_dir, sources)
     print(f"Linting [{check_label}] ...", file=sys.stderr, flush=True)
     t0 = time.monotonic()
-    raw = _run(build_dir, args.check, args.jobs, sources)
+    raw = _run(lint_db, args.check, args.jobs, sources)
     elapsed = time.monotonic() - t0
 
     warnings = _parse(raw, name_map, accept)
@@ -831,18 +1065,32 @@ def main() -> int:
     else:
         kept, suppressed = _denoise(warnings, ROOT)
 
+    config = _build_config(build_dir)
     print(
         f"{len(kept)} warning(s)"
         f"{f', {len(suppressed)} suppressed' if suppressed else ''}"
         f" in {elapsed:.1f} s → {out_path}",
         file=sys.stderr,
     )
+    # the configuration decides which findings appear at all, so name it here
+    # too: a list is only comparable against one taken the same way
+    print(f"  linted {build_dir} [{config}]", file=sys.stderr)
 
     md = _report(
         kept, suppressed, args.check, elapsed,
-        _excluded_labels(args.tests, args.generated),
+        _excluded_labels(args.tests, args.generated), config,
     )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(md, encoding="utf-8")
+
+    if args.raw_list:
+        raw_path = Path(args.raw_list)
+        _write_raw_list(raw_path, kept, config)
+        print(
+            f"{len({_finding_id(w) for w in kept})} finding(s) → {raw_path}"
+            f" [{config}]",
+            file=sys.stderr,
+        )
     return 0
 
 
