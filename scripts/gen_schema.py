@@ -21,7 +21,9 @@ Options:
                                         generates them internally regardless)
                          Default: structs,unmarshal,marshal.
                          Dependency rules:
-                           unmarshal/marshal/lookup each imply structs.
+                           unmarshal/marshal each imply structs; lookup does
+                           not (it emits only the key enums and lookup
+                           functions).
                            lookup tables are always generated internally for
                            unmarshal; lookup only controls whether the enum
                            and lookup function are made public.
@@ -92,7 +94,22 @@ _INT32_MIN = -(2**31)
 _INT32_MAX = 2**31 - 1
 _UINT32_MAX = 2**32 - 1
 _INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
 _UINT64_MAX = 2**64 - 1
+
+# Inclusive value range of each inferred C field type, used to drop a bound
+# comparison that is always true/false for the type (e.g. `x < INT_MIN`), which
+# would otherwise trip -Wtype-limits under -Werror. Unknown types get an
+# unbounded range so every check is kept.
+_C_TYPE_RANGE = {
+    "int": (_INT32_MIN, _INT32_MAX),
+    "unsigned": (0, _UINT32_MAX),
+    "intmax_t": (_INT64_MIN, _INT64_MAX),
+    "uintmax_t": (0, _UINT64_MAX),
+}
+
+# The complete --generate feature set; anything else on that option is a typo.
+_FEATURES = frozenset({"structs", "unmarshal", "marshal", "lookup"})
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,15 +117,20 @@ _UINT64_MAX = 2**64 - 1
 
 
 def to_c_ident(s: str) -> str:
-    """Return *s* sanitized into a valid C identifier."""
+    """Return *s* sanitized into a valid, non-reserved C identifier."""
     ident = re.sub(r"[^A-Za-z0-9_]", "_", s)
-    if not ident:
-        # The empty string is a legal JSON key but not a legal C identifier;
-        # map it to "_".  _make_field_map still resolves any collision this
-        # creates (e.g. with a key like ",") by appending a numeric suffix.
-        return "_"
-    if ident[0].isdigit():
-        ident = "_" + ident
+    # A name that does not start with a letter needs repairing, and the repair
+    # must not be an underscore: ISO C11 §7.1.3 reserves every identifier
+    # beginning with one for file scope -- where the schema prefix seeds the
+    # struct/enum tags and functions -- and reserves '_' + uppercase for any
+    # use, which the uppercased header guard would produce.  A leading letter
+    # keeps the result out of both namespaces.  The same substitution can leave
+    # a leading '_' without any digit involved ('.env' -> '_env'), so key off
+    # "not a letter", not "digit".  The empty string is a legal JSON key and
+    # maps to "x"; _make_field_map still resolves any collision that creates
+    # (e.g. with a key like ",") by appending a numeric suffix.
+    if not ident or not ident[0].isalpha():
+        ident = "x" + ident
     return ident
 
 
@@ -183,6 +205,16 @@ _C_KEYWORDS = (
 )
 
 
+def _escape_keyword(ident: str) -> str:
+    """Return *ident* made safe to use as a C identifier.
+
+    A name that collides with a C keyword, a reserved type name, or one of the
+    object-like macros the generated code pulls in (``bool``, ``NULL``, ...)
+    gets a trailing underscore, which is the same rule ``_make_field_map``
+    applies to property names."""
+    return ident + "_" if ident in _C_KEYWORDS else ident
+
+
 def _make_field_map(keys: list, _node: dict) -> dict:
     """Return a collision-free mapping from JSON property name → C field name.
 
@@ -190,8 +222,8 @@ def _make_field_map(keys: list, _node: dict) -> dict:
     shares the uniform ``(keys, node)`` calling convention.
 
     Handles three cases in order:
-    1. Non-identifier characters replaced with '_'; leading digits prefixed
-       with '_' (both via to_c_ident).
+    1. Non-identifier characters replaced with '_'; a name not starting with
+       a letter prefixed with 'x' (both via to_c_ident).
     2. C reserved-word conflicts: append '_' suffix (e.g. 'int' → 'int_').
     3. Duplicate names after steps 1-2: append '_2', '_3', ... sorted by
        (C identifier, JSON key) so the result is deterministic: all colliding
@@ -201,10 +233,7 @@ def _make_field_map(keys: list, _node: dict) -> dict:
     # Steps 1-2: raw conversion for every key.
     raw = {}
     for key in keys:
-        ident = to_c_ident(key)
-        if ident in _C_KEYWORDS:
-            ident += "_"
-        raw[key] = ident
+        raw[key] = _escape_keyword(to_c_ident(key))
 
     # Step 3: resolve duplicates.  Sort by (C identifier, JSON key) so that
     # colliding keys are grouped together and the assignment of plain name vs
@@ -307,9 +336,17 @@ def collect_scopes(node, prefix: str, path: str = ""):
             child_path = f"{path}.{prop}" if path else prop
             yield from collect_scopes(child, prefix, child_path)
     elif node.get("type") == "array":
-        items = node.get("items", {})
-        if isinstance(items, dict):
-            yield from collect_scopes(items, prefix, path)
+        # Descend only when the array itself becomes a field of that element
+        # type.  An array whose items are not a supported kind -- an
+        # array-of-array-of-object, say -- degrades to a raw JSON fragment in
+        # _infer_c_type, so no struct field would ever name a scope found
+        # beneath it; yielding one anyway emits static functions and tables
+        # with no caller, which -Wunused-function and
+        # -Wunused-const-variable reject under -Werror.
+        if _infer_c_type(node)["kind"] == "array_object":
+            items = node.get("items", {})
+            if isinstance(items, dict):
+                yield from collect_scopes(items, prefix, path)
     # $defs / definitions are intentionally NOT descended into: they are
     # reachable only through $ref, which this generator degrades to a raw JSON
     # fragment, so a def is never referenced by a generated struct.  Emitting a
@@ -362,9 +399,14 @@ def _infer_c_type(prop_schema: dict) -> dict:
             minimum = math.ceil(minimum)
         if maximum is not None:
             maximum = math.floor(maximum)
-        # Bounds exceed 64-bit range → store as a raw JSON fragment.
+        # No single 64-bit C integer type spans the range → store as a raw
+        # JSON fragment. Besides min < INT64_MIN or max > UINT64_MAX, a
+        # negative minimum with a maximum above INT64_MAX fits neither
+        # intmax_t (max too large) nor uintmax_t (minimum negative).
         if (minimum is not None and minimum < _INT64_MIN) or \
-                (maximum is not None and maximum > _UINT64_MAX):
+                (maximum is not None and maximum > _UINT64_MAX) or \
+                (minimum is not None and minimum < 0 and
+                 maximum is not None and maximum > _INT64_MAX):
             return {"kind": "dynamic"}
         # Both bounds explicit → pick the narrowest 32-bit type if possible.
         if minimum is not None and maximum is not None:
@@ -431,10 +473,14 @@ def _lookup_root(pfx: str, scope_name: str) -> str:
     visible at a glance.
 
     The prefix is normalised so a user-supplied trailing underscore
-    (``ex_``) does not produce a double underscore in the output.
+    (``ex_``) does not produce a double underscore in the output.  Empty
+    parts are dropped rather than joined, exactly as ``make_fn_name`` does:
+    with the default empty prefix a naive join would yield ``_lookup_<scope>``,
+    and an identifier beginning with an underscore is reserved to the
+    implementation at file scope (C11 §7.1.3).
     """
     pfx = pfx.rstrip("_")
-    return f"{pfx}_lookup_{scope_name}"
+    return "_".join(p for p in (pfx, "lookup", scope_name) if p)
 
 
 def _make_gperf_input(lookup_name: str, keys: list) -> str:
@@ -740,9 +786,9 @@ def _default_designated_init(
         lit = _c_num_literal(n, kind, c_type)
         return f"{indent}.{fname} = {lit},"
     if kind == "double":
-        c_val = f"{default_val}.0" if isinstance(
-            default_val, int) else repr(float(default_val))
-        return f"{indent}.{fname} = {c_val},"
+        # route through _c_num_literal so a non-finite default is rejected
+        # rather than emitted as the bare token inf/nan
+        return f"{indent}.{fname} = {_c_num_literal(default_val, 'double', '')},"
     if kind == "string" and isinstance(default_val, str):
         escaped, byte_len = _c_string_literal(default_val)
         return f"{indent}.{fname} = {{ .str = \"{escaped}\", .len = {byte_len} }},"
@@ -1185,7 +1231,8 @@ def generate_marshal_h(scopes: list, pfx: str, sub_schema: bool = False) -> list
             " * @param bufsz Size of @p buf in bytes.",
             " * @param obj Object to encode.",
             " * @param indent Per-level indent for pretty output, or NULL for compact.",
-            " * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error.",
+            " * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on",
+            " * error -- including a length this int return cannot represent.",
             " */",
             f"int {make_fn_name('marshal', scope_name, pfx)}(",
             f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj, const char *indent);",
@@ -1239,12 +1286,24 @@ def _scalar_constraint_checks(
         const_v = prop_schema.get("const")
         enum_vs = prop_schema.get("enum")
 
+        # The lengths compare against a size_t, so they are coerced to int
+        # (a JSON Schema integer may legally arrive as 2.0, whose repr would
+        # emit the invalid literal "2.0u") and screened the same way numeric
+        # bounds are: `len < 0u` is always false and `len > <above UINT64_MAX>`
+        # is unspellable, and either would fail the build under -Werror.
         if min_len is not None:
-            lines.append(
-                f"{indent}if ({len_expr} < {min_len}u) {{ {fail_stmt} }}")
+            min_len = int(min_len)
+            if min_len > _UINT64_MAX:
+                lines.append(
+                    f"{indent}{fail_stmt} /* minLength exceeds any length */")
+            elif min_len > 0:
+                lines.append(
+                    f"{indent}if ({len_expr} < {min_len}u) {{ {fail_stmt} }}")
         if max_len is not None:
-            lines.append(
-                f"{indent}if ({len_expr} > {max_len}u) {{ {fail_stmt} }}")
+            max_len = int(max_len)
+            if max_len <= _UINT64_MAX:
+                lines.append(
+                    f"{indent}if ({len_expr} > {max_len}u) {{ {fail_stmt} }}")
 
         def _str_eq(v: str) -> str:
             esc, blen = _c_string_literal(str(v))
@@ -1258,7 +1317,6 @@ def _scalar_constraint_checks(
             lines.append(f"{indent}if (!({conds})) {{ {fail_stmt} }}")
 
     elif kind in ("int", "uint"):
-        is_unsigned = c_type in ("unsigned", "uintmax_t")
         minimum = prop_schema.get("minimum")
         maximum = prop_schema.get("maximum")
         excl_min = prop_schema.get("exclusiveMinimum")
@@ -1284,20 +1342,24 @@ def _scalar_constraint_checks(
             maximum = new_max if maximum is None else min(maximum, new_max)
             excl_max = None
 
-        # Skip minimum <= 0 for unsigned types — the parser already rejects negatives.
-        if minimum is not None and not (is_unsigned and minimum <= 0):
+        # Drop a bound whose comparison is always true/false for the C type
+        # (an int can never be below INT_MIN, an unsigned never < 0) — emitting
+        # it would trip -Wtype-limits under -Werror.
+        type_min, type_max = _C_TYPE_RANGE.get(
+            c_type, (float("-inf"), float("inf")))
+        if minimum is not None and minimum > type_min:
             lines.append(
                 f"{indent}if ({val_expr} < {_c_num_literal(minimum, kind, c_type)})"
                 f" {{ {fail_stmt} }}")
-        if maximum is not None:
+        if maximum is not None and maximum < type_max:
             lines.append(
                 f"{indent}if ({val_expr} > {_c_num_literal(maximum, kind, c_type)})"
                 f" {{ {fail_stmt} }}")
-        if excl_min is not None and not (is_unsigned and excl_min < 0):
+        if excl_min is not None and excl_min >= type_min:
             lines.append(
                 f"{indent}if ({val_expr} <= {_c_num_literal(excl_min, kind, c_type)})"
                 f" {{ {fail_stmt} }}")
-        if excl_max is not None:
+        if excl_max is not None and excl_max <= type_max:
             lines.append(
                 f"{indent}if ({val_expr} >= {_c_num_literal(excl_max, kind, c_type)})"
                 f" {{ {fail_stmt} }}")
@@ -1660,7 +1722,15 @@ def generate_unmarshal_c(
             fname = fname_map[key]
             max_items = prop.get("maxItems") if validate else None
             if max_items is not None:
+                # The in-loop guard compares a size_t, so a limit of 0 would
+                # emit the always-true `count_ >= 0u` and one above UINT64_MAX
+                # an unspellable literal -- both fatal under -Werror. Neither
+                # is dropped silently: maxItems 0 becomes a post-parse
+                # emptiness check below, and a limit no count can reach is
+                # genuinely no limit.
                 max_items = int(max_items)
+                if max_items <= 0 or max_items > _UINT64_MAX:
+                    max_items = None
             if kind == "array_string":
                 item_checks = []
                 if validate:
@@ -1842,11 +1912,23 @@ def generate_unmarshal_c(
                 if validate:
                     # maxItems is enforced inside the helper loop (rejecting
                     # oversized input before it is fully buffered); only
-                    # minItems needs a post-parse check.
+                    # minItems needs a post-parse check -- plus maxItems 0,
+                    # which has no in-loop form that survives -Wtype-limits.
                     min_items = prop.get("minItems")
                     if min_items is not None:
+                        min_items = int(min_items)
+                        if min_items > _UINT64_MAX:
+                            achks.append(
+                                f"{_INDENT * 3}goto fail_;"
+                                " /* minItems exceeds any count */")
+                        elif min_items > 0:
+                            achks.append(
+                                f"{_INDENT * 3}if (obj->{fname}_count"
+                                f" < {min_items}u) {{ goto fail_; }}")
+                    max_items = prop.get("maxItems")
+                    if max_items is not None and int(max_items) <= 0:
                         achks.append(
-                            f"{_INDENT * 3}if (obj->{fname}_count < {int(min_items)}u)"
+                            f"{_INDENT * 3}if (obj->{fname}_count > 0u)"
                             f" {{ goto fail_; }}")
                 arr_fn = make_fn_name(
                     'unmarshal', scope_name, pfx, suffix=f'arr_{fname}')
@@ -1916,7 +1998,18 @@ def generate_marshal_c(
     encode *obj (excluding the terminating NUL) regardless of bufsz; the
     output is NUL-terminated whenever buf != NULL and bufsz > 0 and is
     truncated when the return value >= bufsz.  Returns -1 on error (e.g. a
-    non-finite double, which has no JSON representation).
+    non-finite double, which has no JSON representation, or a length the
+    public int return cannot represent).
+
+    The running length is counted in size_t and converted to the public int
+    return only at the outermost wrapper, by json_checked_int_ -- the same
+    discipline json_marshal() follows with marshal_checked_int() in
+    codec/json.c, so a document longer than INT_MAX yields -1 in both
+    backends instead of an overflowing count.  SIZE_MAX is the internal
+    error sentinel (again as in codec/json.c): every helper and macro that
+    can fail returns it, each caller propagates it, and json_checked_int_
+    maps it to -1 since it exceeds INT_MAX like any other unrepresentable
+    count.
 
     The EMIT* macros compute ``buf + n_`` only while ``n_ < bufsz``; once
     the output is past the end of the buffer they pass NULL/0 instead, so
@@ -1929,8 +2022,7 @@ def generate_marshal_c(
     # source compact.  They carry no inline/noinline attribute: whether they are
     # inlined is the compiler's choice, and the output stays within ISO C.  Each
     # threads the running length counter through (in n_, out return value);
-    # json_emit_str_ returns a negative value to signal an unrepresentable
-    # string.
+    # json_emit_str_ returns SIZE_MAX to signal an unrepresentable string.
     #
     # json_emit_str_ (wrapped by the EMIT_STR macro) is the one marshal helper
     # with a conditional caller: EMIT_STR is generated only for string and
@@ -1941,40 +2033,49 @@ def generate_marshal_c(
     # for double fields (_has_double_fields).
     needs_emit_str = _has_string_fields(scopes)
     str_helper = [
-        "static int json_emit_str_(",
-        f"{_INDENT}char *buf, size_t bufsz, int n_, const char *s, size_t len)",
+        "static size_t json_emit_str_(",
+        f"{_INDENT}char *buf, size_t bufsz, size_t n_, const char *s, size_t len)",
         "{",
-        f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL;",
+        f"{_INDENT}char *dst_ = (buf != NULL && n_ < bufsz) ? buf + n_ : NULL;",
         f"{_INDENT}const int r_ =",
-        f"{_INDENT * 2}json_marshal_string(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, s, len);",
-        f"{_INDENT}if (r_ < 0) {{ return -1; }}",
-        f"{_INDENT}return n_ + r_;",
+        f"{_INDENT * 2}json_marshal_string(dst_, dst_ != NULL ? bufsz - n_ : 0, s, len);",
+        f"{_INDENT}if (r_ < 0) {{ return SIZE_MAX; }}",
+        f"{_INDENT}return n_ + (size_t)r_;",
         "}",
     ] if needs_emit_str else []
     str_macro = [
         "#define EMIT_STR(s, len) do { \\",
         f"{_INDENT}n_ = json_emit_str_(buf, bufsz, n_, (s), (len)); \\",
-        f"{_INDENT}if (n_ < 0) {{ return -1; }} \\",
+        f"{_INDENT}if (n_ == SIZE_MAX) {{ return SIZE_MAX; }} \\",
         "} while (0)",
     ] if needs_emit_str else []
     lines = [
-        "static int json_emit_ch_(char *buf, size_t bufsz, int n_, char c)",
+        # Clamp the internal size_t count to the public snprintf-style int
+        # return, treating an unrepresentable or error-sentinel (SIZE_MAX)
+        # count as failure rather than silently wrapping.  The counterpart of
+        # marshal_checked_int() in codec/json.c.
+        "static int json_checked_int_(size_t n_)",
         "{",
-        f"{_INDENT}if (buf != NULL && (size_t)n_ < bufsz) {{ buf[n_] = c; }}",
+        f"{_INDENT}if (n_ > (size_t)INT_MAX) {{ return -1; }}",
+        f"{_INDENT}return (int)n_;",
+        "}",
+        "static size_t json_emit_ch_(char *buf, size_t bufsz, size_t n_, char c)",
+        "{",
+        f"{_INDENT}if (buf != NULL && n_ < bufsz) {{ buf[n_] = c; }}",
         f"{_INDENT}return n_ + 1;",
         "}",
-        "static int json_emit_raw_(",
-        f"{_INDENT}char *buf, size_t bufsz, int n_, const char *s, size_t len)",
+        "static size_t json_emit_raw_(",
+        f"{_INDENT}char *buf, size_t bufsz, size_t n_, const char *s, size_t len)",
         "{",
-        f"{_INDENT}if (buf != NULL && (size_t)n_ < bufsz) {{",
-        f"{_INDENT * 2}const size_t cap_ = bufsz - (size_t)n_;",
+        f"{_INDENT}if (buf != NULL && n_ < bufsz) {{",
+        f"{_INDENT * 2}const size_t cap_ = bufsz - n_;",
         f"{_INDENT * 2}memcpy(buf + n_, s, len < cap_ ? len : cap_);",
         f"{_INDENT}}}",
-        f"{_INDENT}return n_ + (int)len;",
+        f"{_INDENT}return n_ + len;",
         "}",
     ] + str_helper + [
-        "static int json_emit_indent_(",
-        f"{_INDENT}char *buf, size_t bufsz, int n_, const char *indent,",
+        "static size_t json_emit_indent_(",
+        f"{_INDENT}char *buf, size_t bufsz, size_t n_, const char *indent,",
         f"{_INDENT}size_t ind_len_, int d)",
         "{",
         f"{_INDENT}if (indent == NULL) {{ return n_; }}",
@@ -1988,25 +2089,30 @@ def generate_marshal_c(
         # EMIT appends one character.
         "#define EMIT(c) do { n_ = json_emit_ch_(buf, bufsz, n_, (char)(c)); } while (0)",
         "#define EMITF(fmt, ...) do { \\",
-        f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL; \\",
-        f"{_INDENT}r_ = snprintf(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0,"
+        f"{_INDENT}char *dst_ = (buf != NULL && n_ < bufsz) ? buf + n_ : NULL; \\",
+        f"{_INDENT}r_ = snprintf(dst_, dst_ != NULL ? bufsz - n_ : 0,"
         f" fmt, __VA_ARGS__); \\",
-        f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
-        f"{_INDENT}n_ += r_; \\",
+        f"{_INDENT}if (r_ < 0) {{ return SIZE_MAX; }} \\",
+        f"{_INDENT}n_ += (size_t)r_; \\",
         "} while (0)",
     ] + str_macro + [
+        # The sub-object call returns a size_t count, so it needs its own
+        # block-scope temporary rather than the int r_ that holds snprintf's
+        # return in EMITF.
         "#define EMIT_SUB(fn, arg, d) do { \\",
-        f"{_INDENT}char *dst_ = (buf != NULL && (size_t)n_ < bufsz) ? buf + n_ : NULL; \\",
-        f"{_INDENT}r_ = (fn)(dst_, dst_ != NULL ? bufsz - (size_t)n_ : 0, (arg), indent, (d)); \\",
-        f"{_INDENT}if (r_ < 0) {{ return -1; }} \\",
-        f"{_INDENT}n_ += r_; \\",
+        f"{_INDENT}char *dst_ = (buf != NULL && n_ < bufsz) ? buf + n_ : NULL; \\",
+        f"{_INDENT}const size_t rsub_ ="
+        f" (fn)(dst_, dst_ != NULL ? bufsz - n_ : 0, (arg), indent, (d)); \\",
+        f"{_INDENT}if (rsub_ == SIZE_MAX) {{ return SIZE_MAX; }} \\",
+        f"{_INDENT}n_ += rsub_; \\",
         "} while (0)",
         "#define EMIT_LIT(s) do { \\",
         f"{_INDENT}static const char lit_[] = s; \\",
         f"{_INDENT}n_ = json_emit_raw_(buf, bufsz, n_, lit_, sizeof(lit_) - 1); \\",
         "} while (0)",
-        # EMIT_RAW writes a run of literal bytes (the indent string) verbatim,
-        # without JSON escaping; used only for pretty-print whitespace.
+        # EMIT_RAW writes a run of bytes verbatim, without JSON escaping and
+        # with a length known only at run time; used for a dynamic field's
+        # pre-serialized fragment.  EMIT_LIT is the compile-time counterpart.
         "#define EMIT_RAW(s, len) do { \\",
         f"{_INDENT}n_ = json_emit_raw_(buf, bufsz, n_, (s), (len)); \\",
         "} while (0)",
@@ -2057,12 +2163,14 @@ def generate_marshal_c(
             elif kind in ("array_object", "array_primitive"):
                 emit_fields.append((kind, fname, key, is_req))
 
+        # The impl counts in size_t and reports failure as SIZE_MAX; only the
+        # public wrapper below narrows to the snprintf-style int.
         lines += [
-            f"static int {impl_name}(",
+            f"static size_t {impl_name}(",
             f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj,",
             f"{_INDENT}const char *indent, int depth)",
             "{",
-            f"{_INDENT}int n_ = 0;",
+            f"{_INDENT}size_t n_ = 0;",
             f"{_INDENT}int r_ = 0;",
             f"{_INDENT}(void)r_;",
             f"{_INDENT}const size_t ind_len_ = (indent != NULL) ? strlen(indent) : 0;",
@@ -2074,7 +2182,7 @@ def generate_marshal_c(
         # Opening brace; record n_ after '{' for trailing-comma removal.
         lines += [
             f"{_INDENT}EMIT('{{');",
-            f"{_INDENT}const int n_start_ = n_;",
+            f"{_INDENT}const size_t n_start_ = n_;",
             "",
         ]
 
@@ -2089,12 +2197,14 @@ def generate_marshal_c(
             # Determine the condition under which this field is emitted.
             # Scalar types (bool/int/uint/double) have no NULL sentinel, so
             # they are always emitted regardless of value.
-            # String/array/dynamic fields use NULL to represent "not present".
+            # String/array/dynamic fields use NULL to represent "not present",
+            # but only while optional: a required field always emits, filling a
+            # NULL with the empty form of its type (see the value blocks below).
             # Object fields: required ones are always emitted; optional ones
             # use the first required string sub-field as a presence sentinel —
             # the same NULL-as-absent convention as strings.
             if kind == "string":
-                cond = f"obj->{fname}.str != NULL"
+                cond = None if is_req else f"obj->{fname}.str != NULL"
             elif kind in ("bool", "int", "uint", "double"):
                 cond = None
             elif kind == "object":
@@ -2117,7 +2227,7 @@ def generate_marshal_c(
                     else:
                         cond = None
             elif kind == "dynamic":
-                cond = f"obj->{fname}_json.str != NULL"
+                cond = None if is_req else f"obj->{fname}_json.str != NULL"
             elif kind in ("array_string", "array_object", "array_primitive"):
                 if is_req:
                     cond = None
@@ -2144,8 +2254,20 @@ def generate_marshal_c(
             ]
 
             if kind == "string":
-                field_lines += key_prefix + [
-                    f"{_INDENT * 2}EMIT_STR(obj->{fname}.str, obj->{fname}.len);",
+                emit_str = f"EMIT_STR(obj->{fname}.str, obj->{fname}.len);"
+                if is_req:
+                    # forced out by .required: "" keeps the declared string
+                    # type, which a bare null would not
+                    value_lines = [
+                        f"{_INDENT * 2}if (obj->{fname}.str != NULL) {{",
+                        f"{_INDENT * 3}{emit_str}",
+                        f"{_INDENT * 2}}} else {{",
+                        f'{_INDENT * 3}EMIT_LIT("\\"\\"");',
+                        f"{_INDENT * 2}}}",
+                    ]
+                else:
+                    value_lines = [f"{_INDENT * 2}{emit_str}"]
+                field_lines += key_prefix + value_lines + [
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "int":
@@ -2171,7 +2293,7 @@ def generate_marshal_c(
             elif kind == "double":
                 field_lines += [
                     f"{_INDENT * 2}/* NaN/Inf have no JSON representation */",
-                    f"{_INDENT * 2}if (!isfinite(obj->{fname})) {{ return -1; }}",
+                    f"{_INDENT * 2}if (!isfinite(obj->{fname})) {{ return SIZE_MAX; }}",
                 ] + key_prefix + [
                     f"{_INDENT * 2}EMITF(\"%.17g\", obj->{fname});",
                     f"{_INDENT * 2}EMIT(',');",
@@ -2195,9 +2317,25 @@ def generate_marshal_c(
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "dynamic":
-                field_lines += key_prefix + [
-                    f"{_INDENT * 2}EMITF(\"%.*s\", (int)obj->{fname}_json.len,"
-                    f" obj->{fname}_json.str);",
+                # a memcpy of the fragment, not snprintf("%.*s"): the latter
+                # would narrow the size_t length to int for the precision and
+                # stop at an embedded NUL, where the table backend copies
+                # straight through.
+                emit_dyn = (f"EMIT_RAW(obj->{fname}_json.str,"
+                            f" obj->{fname}_json.len);")
+                if is_req:
+                    # forced out by .required: a raw fragment has no empty
+                    # form, so absent becomes null
+                    value_lines = [
+                        f"{_INDENT * 2}if (obj->{fname}_json.str != NULL) {{",
+                        f"{_INDENT * 3}{emit_dyn}",
+                        f"{_INDENT * 2}}} else {{",
+                        f'{_INDENT * 3}EMIT_LIT("null");',
+                        f"{_INDENT * 2}}}",
+                    ]
+                else:
+                    value_lines = [f"{_INDENT * 2}{emit_dyn}"]
+                field_lines += key_prefix + value_lines + [
                     f"{_INDENT * 2}EMIT(',');",
                 ]
             elif kind == "array_string":
@@ -2252,7 +2390,7 @@ def generate_marshal_c(
                     if c_base == "double":
                         elem_lines += [
                             f"{_INDENT * 3}/* NaN/Inf have no JSON representation */",
-                            f"{_INDENT * 3}if (!isfinite(obj->{fname}[i_])) {{ return -1; }}",
+                            f"{_INDENT * 3}if (!isfinite(obj->{fname}[i_])) {{ return SIZE_MAX; }}",
                         ]
                     elem_lines += [
                         f"{_INDENT * 3}EMITF(\"{fmt}\", obj->{fname}[i_]);",
@@ -2291,7 +2429,7 @@ def generate_marshal_c(
             f"{_INDENT}}}",
             f"{_INDENT}EMIT('}}');",
             f"{_INDENT}if (buf != NULL && bufsz > 0) {{",
-            f"{_INDENT * 2}buf[(size_t)n_ < bufsz ? (size_t)n_ : bufsz - 1] = '\\0';",
+            f"{_INDENT * 2}buf[n_ < bufsz ? n_ : bufsz - 1] = '\\0';",
             f"{_INDENT}}}",
             "",
             f"{_INDENT}return n_;",
@@ -2299,8 +2437,9 @@ def generate_marshal_c(
             "",
         ]
 
-        # Public entry point: a thin wrapper that starts recursion at depth 0.
-        # The depth/recursion bookkeeping is kept out of the public signature,
+        # Public entry point: a thin wrapper that starts recursion at depth 0
+        # and narrows the size_t count to the public int return.  The
+        # depth/recursion bookkeeping is kept out of the public signature,
         # which exposes only the indent string (NULL selects compact output).
         if is_public:
             storage = "" if sub_schema or scope_name == root_scope else "static "
@@ -2309,7 +2448,8 @@ def generate_marshal_c(
                 f"{_INDENT}char *buf, size_t bufsz, const struct {ename} *obj,",
                 f"{_INDENT}const char *indent)",
                 "{",
-                f"{_INDENT}return {impl_name}(buf, bufsz, obj, indent, 0);",
+                f"{_INDENT}return json_checked_int_(",
+                f"{_INDENT * 2}{impl_name}(buf, bufsz, obj, indent, 0));",
                 "}",
                 "",
             ]
@@ -2391,21 +2531,58 @@ def generate_free_c(scopes: list, pfx: str, schema_pfx: str, sub_schema: bool = 
 # Table-driven descriptor generation
 # ---------------------------------------------------------------------------
 
+def _check_literal_range(n: int, c_type: str, lo: int, hi: int) -> None:
+    """Refuse a constraint value the target C type cannot even spell.
+
+    A value outside the widest integer type's range has no C literal form at
+    all, so emitting it produces a source file the compiler rejects.  A bound
+    that is merely vacuous for the type is dropped by the caller long before
+    reaching here, so anything that arrives out of range came from a ``const``
+    or ``enum`` -- values the schema states as significant, which makes
+    silently clamping or dropping them wrong.
+    """
+    if lo <= n <= hi:
+        return
+    sys.exit(
+        f"error: constraint value {n} lies outside the range of the "
+        f"generated field type {c_type} ([{lo}, {hi}]) and has no C literal "
+        "form; widen or remove the constraint")
+
+
 def _c_num_literal(val: "int | float", kind: str, c_type: str) -> str:
-    """Format a numeric schema constraint value as a C literal matching c_type."""
+    """Format a numeric schema constraint value as a C literal matching c_type.
+
+    The most negative value of a signed type has no literal form in C: the
+    source ``-9223372036854775808`` is unary minus applied to the constant
+    9223372036854775808, which exceeds INTMAX_MAX and is rejected ("integer
+    constant is so large that it is unsigned").  It is spelled as one less
+    than the negated maximum instead, which is how <stdint.h> itself defines
+    INT64_MIN.
+    """
     if kind in ("int", "uint"):
         n = int(val)
         if c_type == "intmax_t":
+            _check_literal_range(n, c_type, _INT64_MIN, _INT64_MAX)
+            if n == _INT64_MIN:
+                return f"(-INTMAX_C({_INT64_MAX}) - 1)"
             return f"INTMAX_C({n})"
         if c_type == "uintmax_t":
+            _check_literal_range(n, c_type, 0, _UINT64_MAX)
             return f"UINTMAX_C({n})"
         if c_type == "unsigned":
             return f"{n}u"
+        if n == _INT32_MIN:
+            return f"(-{_INT32_MAX} - 1)"
         return str(n)
     # double
     if isinstance(val, int):
         return f"{val}.0"
-    return repr(float(val))
+    fval = float(val)
+    if not math.isfinite(fval):
+        sys.exit(
+            f"error: non-finite numeric value {val!r} cannot be emitted as a "
+            f"portable C literal (JSON numbers must be finite)")
+    return repr(fval)
 
 
 def _kind_const(desc: dict) -> str:
@@ -2523,17 +2700,25 @@ def _build_constraint_c(
             nm = math.floor(excl_max)
             maximum = nm if maximum is None else min(maximum, nm)
             excl_max = None
+        # Drop a bound that is always true for the width the table stores it
+        # in, exactly as the function backend does via _C_TYPE_RANGE: no
+        # uintmax_t is below 0 and none exceeds UINT64_MAX, so keeping such a
+        # bound would at best waste a comparison and at worst -- above
+        # INT64_MAX for the signed union member -- ask for a literal that
+        # cannot be spelled.
+        type_min, type_max = (0, _UINT64_MAX) if is_unsigned else \
+            (_INT64_MIN, _INT64_MAX)
         um = []
-        if minimum is not None and not (is_unsigned and minimum <= 0):
+        if minimum is not None and minimum > type_min:
             flags.append("JSON_C_MIN")
             um.append(f".min = {lit(minimum)}")
-        if maximum is not None:
+        if maximum is not None and maximum < type_max:
             flags.append("JSON_C_MAX")
             um.append(f".max = {lit(maximum)}")
-        if excl_min is not None and not (is_unsigned and excl_min < 0):
+        if excl_min is not None and excl_min >= type_min:
             flags.append("JSON_C_EXCL_MIN")
             um.append(f".excl_min = {lit(excl_min)}")
-        if excl_max is not None:
+        if excl_max is not None and excl_max <= type_max:
             flags.append("JSON_C_EXCL_MAX")
             um.append(f".excl_max = {lit(excl_max)}")
         if mult_of is not None:
@@ -2832,8 +3017,10 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
     # schema filename is not constrained to be one, so run it through
     # to_c_ident(): a schema named e.g. "9cfg_schema.json" would otherwise emit
     # "struct 9cfg" (a tag starting with a digit) and other non-compiling
-    # identifiers.
-    schema_pfx = to_c_ident(schema_pfx)
+    # identifiers.  A stem that sanitizes to a keyword needs the same defense
+    # the property names get in _make_field_map: "int_schema.json" would
+    # otherwise emit "struct int".
+    schema_pfx = _escape_keyword(to_c_ident(schema_pfx))
     pfx = opts.prefix
     scopes = list(collect_scopes(schema, schema_pfx))
     if not scopes:
@@ -2901,7 +3088,8 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
     # by --prefix -- e.g. a fast and a size variant side by side.  The basename
     # seeds the header guard, so it too is run through to_c_ident(): otherwise a
     # leading-digit --output-name (or schema stem) yields a guard macro that
-    # begins with a digit and will not compile.
+    # begins with a digit and will not compile, and a leading '.' or '-' yields
+    # one beginning with an underscore, which is reserved.
     out_stem = to_c_ident(opts.output_name) if opts.output_name \
         else to_c_ident(stem)
     guard = re.sub(r"[^A-Za-z0-9_]", "_",
@@ -3046,8 +3234,9 @@ def process(schema_path: Path, opts: argparse.Namespace) -> None:
         if do_structs or do_unmarshal or do_lookup:
             c_sys_includes.add("#include <stdlib.h>")
         if do_marshal:
+            c_sys_includes.add("#include <limits.h>")  # INT_MAX
             c_sys_includes.add("#include <stdio.h>")
-            c_sys_includes.add("#include <stdint.h>")
+            c_sys_includes.add("#include <stdint.h>")  # SIZE_MAX
             c_sys_includes.add("#include <string.h>")  # memcpy in EMIT_LIT
             if _has_double_fields(scopes):
                 c_sys_includes.add("#include <math.h>")  # isfinite
@@ -3248,7 +3437,24 @@ def main():
     else:
         _INDENT = " " * int(ind)
 
-    features = {f.strip() for f in opts.generate.split(",")}
+    # A misspelled feature must not be silently dropped: it would remove a
+    # whole generation pass while still exiting 0, and the breakage would
+    # surface much later as an unrelated link error against a function that
+    # was never emitted.
+    features = {f.strip() for f in opts.generate.split(",") if f.strip()}
+    unknown = sorted(features - _FEATURES)
+    if unknown:
+        sys.exit(
+            "error: unknown --generate feature(s): "
+            + ", ".join(repr(f) for f in unknown)
+            + "; known features are "
+            + ", ".join(sorted(_FEATURES))
+        )
+    if not features:
+        sys.exit(
+            "error: --generate names no features; known features are "
+            + ", ".join(sorted(_FEATURES))
+        )
     do_lookup = "lookup" in features
     do_unmarshal = "unmarshal" in features
     do_marshal = "marshal" in features
