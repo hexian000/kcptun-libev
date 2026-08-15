@@ -7,11 +7,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -267,6 +269,38 @@ def open_log(path: Path) -> TextIO:
     return path.open("w", encoding="utf-8")
 
 
+def capture_iperf_server_output(
+        proc: subprocess.Popen[str], log_handle: TextIO,
+        ready: queue.Queue[bool],
+) -> None:
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            log_handle.write(line)
+            log_handle.flush()
+            if line.startswith("Server listening on "):
+                ready.put(True)
+    finally:
+        ready.put(False)
+
+
+def wait_iperf_server_ready(
+        ready: queue.Queue[bool], timeout_seconds: float,
+) -> None:
+    try:
+        listening = ready.get(timeout=timeout_seconds)
+    except queue.Empty:
+        raise SystemExit(
+            "iperf3 server did not become ready within %.1f seconds; "
+            "see iperf3-server.log" % timeout_seconds
+        )
+    if not listening:
+        raise SystemExit(
+            "iperf3 server output ended before it became ready; "
+            "see iperf3-server.log"
+        )
+
+
 def build_scenario_commands(
         iperf3: str,
         scenario: Scenario,
@@ -315,10 +349,8 @@ def run_json_command(
         output = proc.stdout or ""
         stderr_output = proc.stderr or ""
     except subprocess.TimeoutExpired as exc:
-        output = exc.stdout or ""
-        stderr_output = exc.stderr or ""
-        log_path.write_text(output, encoding="utf-8")
-        stderr_path.write_text(stderr_output, encoding="utf-8")
+        log_path.write_bytes(exc.stdout or b"")
+        stderr_path.write_bytes(exc.stderr or b"")
         raise SystemExit(
             "benchmark command timed out after %.1f seconds: %s"
             % (timeout_seconds, quote_command(command))
@@ -429,8 +461,7 @@ def extract_total_throughput(report: Dict[str, object], scenario: Scenario) -> t
             if isinstance(value, (int, float)):
                 seconds = float(value)
                 break
-    total = max(sent, received)
-    return total, sent, received, seconds
+    return received, sent, received, seconds
 
 
 def combine_throughput(
@@ -591,7 +622,9 @@ def render_markdown_report(
         "| Parallel streams | %d |" % parallel,
         "| Crypto | %s |" % ("on" if use_crypto else "off"),
         "| Netem delay | %s |" % (netem_delay or "off"),
-        "| Benchmark timeout | %.1f s per scenario |" % command_timeout_seconds,
+        "| Client command timeout | %.1f s |" % command_timeout_seconds,
+        "| Server readiness timeout | %.1f s before each scenario |"
+        % command_timeout_seconds,
         "| Shutdown grace | SIGINT %.1f s, terminate %.1f s |"
         % (
             shutdown_budget.sigint_wait_seconds,
@@ -601,8 +634,11 @@ def render_markdown_report(
         "",
         "## Throughput",
         "",
-        "| Scenario | Total Throughput | Sent | Received | Duration | Logs |",
-        "| --- | ---: | ---: | ---: | ---: | --- |",
+        "One-way goodput is the receiver-side rate for the single flow. "
+        "Bidirectional aggregate is the sum of the client-side sent and received rates.",
+        "",
+        "| Scenario | One-way Goodput | Bidirectional Aggregate | Sent | Received | Duration | Logs |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for result in results:
         log_parts: List[str] = []
@@ -627,11 +663,14 @@ def render_markdown_report(
                 )
             )
         log_text = ", ".join(log_parts)
+        throughput = format_bits_per_second(result.total_bits_per_second)
+        bidirectional = result.scenario.name in {"bidir", "parallel"}
         lines.append(
-            "| %s | %s | %s | %s | %.2f s | %s |"
+            "| %s | %s | %s | %s | %s | %.2f s | %s |"
             % (
                 result.scenario.label,
-                format_bits_per_second(result.total_bits_per_second),
+                "—" if bidirectional else throughput,
+                throughput if bidirectional else "—",
                 format_bits_per_second(result.sent_bits_per_second),
                 format_bits_per_second(result.received_bits_per_second),
                 result.duration_seconds,
@@ -726,20 +765,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     server_log: Optional[TextIO] = None
     client_log: Optional[TextIO] = None
     iperf_server_log: Optional[TextIO] = None
+    iperf_output_thread: Optional[threading.Thread] = None
+    iperf_ready: queue.Queue[bool] = queue.Queue()
 
     try:
         server_log = open_log(build_dir / "kcptun-libev-server.log")
         client_log = open_log(build_dir / "kcptun-libev-client.log")
         iperf_server_log = open_log(build_dir / "iperf3-server.log")
 
-        log("+ %s" % quote_command([iperf3, "-s", "-p", "5201"]))
+        server_command = [iperf3, "-s", "-p", "5201", "--forceflush"]
+        log("+ %s" % quote_command(server_command))
         iperf_server_proc = subprocess.Popen(
-            [iperf3, "-s", "-p", "5201"],
+            server_command,
             cwd=str(build_dir),
-            stdout=iperf_server_log,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
+        output_thread = threading.Thread(
+            target=capture_iperf_server_output,
+            args=(iperf_server_proc, iperf_server_log, iperf_ready),
+            daemon=True,
+        )
+        output_thread.start()
+        iperf_output_thread = output_thread
 
         log("+ %s" %
             quote_command([str(binary_path), "-c", str(server_config_path)]))
@@ -764,6 +815,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         time.sleep(args.startup_wait)
 
         for scenario in SCENARIOS:
+            wait_iperf_server_ready(iperf_ready, command_timeout_seconds)
             commands = build_scenario_commands(
                 iperf3, scenario, args.duration, args.parallel)
             log_paths = [
@@ -831,6 +883,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "iperf3 server",
                 shutdown_budget=shutdown_budget,
             )
+        if iperf_output_thread is not None:
+            iperf_output_thread.join(
+                timeout=shutdown_budget.terminate_wait_seconds)
+            if iperf_output_thread.is_alive():
+                raise SystemExit("iperf3 server output reader did not stop")
+        if iperf_server_proc is not None and iperf_server_proc.stdout is not None:
+            iperf_server_proc.stdout.close()
         for handle in (iperf_server_log, client_log, server_log):
             if handle is not None:
                 handle.close()
