@@ -5,24 +5,26 @@
 
 #include "utils/ctype_ascii.h"
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
+/* Copy up to strlen(str) bytes into the unused tail of buf and add the full
+ * length to the running total. The amount copied is derived by subtraction
+ * under the `written < maxlen` guard, so the truncation decision never depends
+ * on a sum of the (saturating) counter that could wrap. */
 #define APPEND_STR(str)                                                        \
 	do {                                                                   \
-		size_t n = strlen(str);                                        \
-		if (buf != NULL) {                                             \
-			size_t copy_n =                                        \
-				(written + n <= maxlen) ?                      \
-					n :                                    \
-					(maxlen > written ? maxlen - written : \
-							    0);                \
+		const size_t n = strlen(str);                                  \
+		if (buf != NULL && written < maxlen) {                         \
+			const size_t avail = maxlen - written;                 \
+			const size_t copy_n = n < avail ? n : avail;           \
 			for (size_t i = 0; i < copy_n; i++) {                  \
 				buf[written + i] = (str)[i];                   \
 			}                                                      \
 		}                                                              \
-		written += n;                                                  \
+		written = add_len(written, n);                                 \
 	} while (0)
 
 #define APPEND_CHAR(ch)                                                        \
@@ -30,7 +32,7 @@
 		if (buf != NULL && written < maxlen) {                         \
 			buf[written] = ch;                                     \
 		}                                                              \
-		written++;                                                     \
+		written = add_len(written, 1);                                 \
 	} while (0)
 
 /* Write the terminating NUL for an escape/build result: at buf[written] when
@@ -42,6 +44,29 @@ static void terminate(char *buf, const size_t maxlen, const size_t written)
 		return;
 	}
 	buf[written < maxlen ? written : maxlen - 1] = '\0';
+}
+
+/* Add `n` to the running output length, saturating just past INT_MAX so the
+ * counter can never wrap. A total beyond INT_MAX is not representable in the
+ * snprintf-style int return; result_len turns that into an error. */
+static size_t add_len(const size_t written, const size_t n)
+{
+	if (written > (size_t)INT_MAX || n > (size_t)INT_MAX - written) {
+		return (size_t)INT_MAX + 1;
+	}
+	return written + n;
+}
+
+/* Finish a serializer: NUL-terminate the (possibly truncated) buffer, then
+ * return the snprintf-style length, or -1 when the required length exceeds the
+ * int return type. */
+static int result_len(char *buf, const size_t maxlen, const size_t written)
+{
+	terminate(buf, maxlen, written);
+	if (written > (size_t)INT_MAX) {
+		return -1;
+	}
+	return (int)written;
 }
 
 /* Point (*p, *avail) at the unused tail of buf past `written` bytes, or at
@@ -75,33 +100,33 @@ escape(char *buf, size_t maxlen, const char *str, const size_t len,
 			APPEND_CHAR('+');
 			continue;
 		}
+		/* percent-escape 'ch' as "%XX"; the two hex bytes are guarded
+		 * independently, via the available tail, so an escape straddling
+		 * the end of buf never overflows. */
 		if (written < maxlen) {
+			const size_t avail = maxlen - written;
+			char hex[2];
+			tohex(hex, ch);
 			buf[written] = '%';
+			if (avail > 1) {
+				buf[written + 1] = hex[0];
+			}
+			if (avail > 2) {
+				buf[written + 2] = hex[1];
+			}
 		}
-		/* tohex() writes two bytes; guard each independently so a
-		 * percent-escape straddling the end of buf never overflows. */
-		char hex[2];
-		tohex(hex, ch);
-		if (written + 1 < maxlen) {
-			buf[written + 1] = hex[0];
-		}
-		if (written + 2 < maxlen) {
-			buf[written + 2] = hex[1];
-		}
-		written += 3;
+		written = add_len(written, 3);
 	}
-	terminate(buf, maxlen, written);
-	return (int)written;
+	return result_len(buf, maxlen, written);
 }
 
 #define S_UNRESERVED "-_.~"
-#define S_SUB_DELIMS "!$&'()*+,;="
-#define S_PCHAR S_UNRESERVED S_SUB_DELIMS ":@"
-/* Query sub-delimiters minus '+', '&', '=', which carry form-encoding meaning
- * (space<->'+' and the key/value/pair separators). A literal one of these in a
- * query component must be percent-encoded so it is not decoded back as a space
- * or misread as a parameter separator. */
 #define S_QUERY_SUBDELIMS "!$'()*,;"
+#define S_SUB_DELIMS S_QUERY_SUBDELIMS "&+="
+#define S_GEN_DELIMS ":/?#[]@"
+#define S_PCHAR S_UNRESERVED S_SUB_DELIMS ":@"
+#define S_PATH_CHARS "$&+,/:;=@"
+#define S_PATH_SEGMENT_CHARS "$&+:=@"
 
 static int escape_hostport(
 	char *buf, const size_t maxlen, const char *host, const size_t len)
@@ -137,6 +162,20 @@ static int escape_fragment(
 	return escape(buf, maxlen, fragment, len, S_PCHAR "/?", false);
 }
 
+static int
+escape_path(char *buf, const size_t maxlen, const char *path, const size_t len)
+{
+	return escape(buf, maxlen, path, len, S_UNRESERVED S_PATH_CHARS, false);
+}
+
+static int escape_path_segment(
+	char *buf, const size_t maxlen, const char *segment, const size_t len)
+{
+	return escape(
+		buf, maxlen, segment, len, S_UNRESERVED S_PATH_SEGMENT_CHARS,
+		false);
+}
+
 int url_escape_userinfo(
 	char *restrict buf, size_t maxlen, const char *restrict username,
 	const char *restrict password)
@@ -147,11 +186,13 @@ int url_escape_userinfo(
 	size_t written = 0;
 
 	int n = escape_userinfo(buf, maxlen, username, strlen(username));
-	written += (size_t)n;
+	if (n < 0) {
+		return -1;
+	}
+	written = add_len(written, (size_t)n);
 
 	if (password == NULL) {
-		terminate(buf, maxlen, written);
-		return (int)written;
+		return result_len(buf, maxlen, written);
 	}
 
 	APPEND_CHAR(':');
@@ -160,10 +201,12 @@ int url_escape_userinfo(
 	size_t avail;
 	subbuf(buf, maxlen, written, &p, &avail);
 	n = escape_userinfo(p, avail, password, strlen(password));
-	written += (size_t)n;
+	if (n < 0) {
+		return -1;
+	}
+	written = add_len(written, (size_t)n);
 
-	terminate(buf, maxlen, written);
-	return (int)written;
+	return result_len(buf, maxlen, written);
 }
 
 int url_escape_path(char *restrict buf, size_t maxlen, const char *restrict path)
@@ -171,7 +214,7 @@ int url_escape_path(char *restrict buf, size_t maxlen, const char *restrict path
 	if (buf == NULL) {
 		maxlen = 0;
 	}
-	return escape(buf, maxlen, path, strlen(path), "-_.~$&+,/:;=@", false);
+	return escape_path(buf, maxlen, path, strlen(path));
 }
 
 int url_escape_query(
@@ -193,13 +236,16 @@ int url_escape_query(
 			next = query + strlen(query);
 		}
 		const char *eq = memchr(query, '=', (size_t)(next - query));
+		char *p;
+		size_t avail;
 		int n;
 		if (eq != NULL) {
-			char *p;
-			size_t avail;
 			subbuf(buf, maxlen, written, &p, &avail);
 			n = escape_query(p, avail, query, (size_t)(eq - query));
-			written += (size_t)n;
+			if (n < 0) {
+				return -1;
+			}
+			written = add_len(written, (size_t)n);
 			APPEND_CHAR('=');
 			query = eq + 1;
 			subbuf(buf, maxlen, written, &p, &avail);
@@ -207,21 +253,21 @@ int url_escape_query(
 				p, avail, query, (size_t)(next - query));
 		} else {
 			/* RFC 3986: key without value is a valid query component */
-			char *p;
-			size_t avail;
 			subbuf(buf, maxlen, written, &p, &avail);
 			n = escape_query(
 				p, avail, query, (size_t)(next - query));
 		}
-		written += (size_t)n;
+		if (n < 0) {
+			return -1;
+		}
+		written = add_len(written, (size_t)n);
 		if (*next == '\0') {
 			break;
 		}
 		query = next + 1;
 		APPEND_CHAR('&');
 	}
-	terminate(buf, maxlen, written);
-	return (int)written;
+	return result_len(buf, maxlen, written);
 }
 
 int url_escape_path_segment(
@@ -230,8 +276,7 @@ int url_escape_path_segment(
 	if (buf == NULL) {
 		maxlen = 0;
 	}
-	return escape(
-		buf, maxlen, segment, strlen(segment), "-_.~$&+:=@", false);
+	return escape_path_segment(buf, maxlen, segment, strlen(segment));
 }
 
 int url_escape_query_component(
@@ -270,14 +315,24 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 			char *p;
 			size_t avail;
 			subbuf(buf, maxlen, written, &p, &avail);
-			int n = escape_hostport(
+			const int n = escape_hostport(
 				p, avail, url->host, strlen(url->host));
-			written += (size_t)n;
+			if (n < 0) {
+				return -1;
+			}
+			written = add_len(written, (size_t)n);
 		}
 		if (url->path != NULL) {
-			if (url->path[0] != '/') {
+			/* RFC 3986 3.3: with no authority, a path must not
+			 * begin with "//", or it would reparse as one. A path
+			 * whose first segment is empty therefore gets an empty
+			 * authority, which url_parse() reads back as no host. */
+			if (url->host == NULL && url->path[0] == '/') {
+				APPEND_CHAR('/');
 				APPEND_CHAR('/');
 			}
+			/* the separator url_parse() strips from the path */
+			APPEND_CHAR('/');
 			APPEND_STR(url->path);
 		}
 	}
@@ -291,31 +346,65 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 		char *p;
 		size_t avail;
 		subbuf(buf, maxlen, written, &p, &avail);
-		int n = escape_fragment(
+		const int n = escape_fragment(
 			p, avail, url->fragment, strlen(url->fragment));
-		written += (size_t)n;
+		if (n < 0) {
+			return -1;
+		}
+		written = add_len(written, (size_t)n);
 	}
 
-	terminate(buf, maxlen, written);
-	return (int)written;
+	return result_len(buf, maxlen, written);
 }
 
-/* RFC 3986 admits only these bytes unencoded in a URI: the unreserved set
- * (ALPHA / DIGIT / "-" / "." / "_" / "~"), the reserved gen-delims and
- * sub-delims, and "%" introducing a percent-encoding. Every other byte -- a
- * raw space, one of <>"{}|\^` and backtick, a control character, or a high
- * byte 0x80-0xFF -- is forbidden and makes the whole input an invalid URI, so
- * the "escaped" contract on the parsed path/host/query holds. Cast through
- * unsigned char so a high byte on a signed-char platform is not misread as an
- * allowed one. */
+/* RFC 3986 admits only these bytes unencoded in a URI: the unreserved set,
+ * reserved gen-delims and sub-delims, and "%" introducing a percent-encoding.
+ * Every other byte is forbidden and makes the whole input an invalid URI. The
+ * parsed path and query retain their escaped form; url_parse() decodes the host
+ * and fragment in place. Cast through unsigned char so a high byte on a
+ * signed-char platform is not misread as an allowed one. */
 static bool has_forbidden(const char *s)
 {
-	static const char allowed[] = "-._~:/?#[]@!$&'()*+,;=%";
+	static const char allowed[] =
+		S_UNRESERVED S_GEN_DELIMS S_SUB_DELIMS "%";
 	for (; *s != '\0'; ++s) {
 		const unsigned char c = (unsigned char)*s;
 		if (!isalnum(c) && strchr(allowed, c) == NULL) {
 			return true;
 		}
+	}
+	return false;
+}
+
+/* An authority carries ':', '[' and ']' as structure -- the port separator and
+ * the IP-literal brackets -- and url_parse() decodes it in place, after which a
+ * pct-encoded delimiter could no longer be told from a structural one. Report
+ * whether any pct-encoded byte in str is an RFC 3986 gen-delim. A malformed
+ * escape is left for unescape() to reject. */
+static bool has_encoded_delim(const char *s)
+{
+	for (; *s != '\0'; ++s) {
+		if (s[0] != '%') {
+			continue;
+		}
+		if (s[1] == '%') {
+			/* "%%" decodes to a literal '%', not a gen-delim */
+			++s;
+			continue;
+		}
+		const int hi = unhex(s[1]);
+		if (hi < 0) {
+			return false;
+		}
+		const int lo = unhex(s[2]);
+		if (lo < 0) {
+			return false;
+		}
+		const unsigned char ch = (unsigned char)((hi << 4u) | lo);
+		if (ch != '\0' && strchr(S_GEN_DELIMS, ch) != NULL) {
+			return true;
+		}
+		s += 2;
 	}
 	return false;
 }
@@ -442,10 +531,20 @@ bool url_parse(char *raw, struct url *restrict url)
 		char *at = strrchr(raw, '@');
 		if (at != NULL) {
 			*at = '\0';
+			/* RFC 3986 3.2/3.2.1: '@' is the sole authority
+			 * delimiter and a literal '@' in userinfo must be
+			 * pct-encoded, so reject any raw '@' left in the
+			 * selected userinfo (i.e. the input held several). */
+			if (strchr(raw, '@') != NULL) {
+				return false;
+			}
 			url->userinfo = raw;
 			raw = at + 1;
 		}
 		char *host = raw;
+		if (has_encoded_delim(host)) {
+			return false;
+		}
 		if (!unescape(host, false)) {
 			/* unescape() now also rejects any decoded control char */
 			return false;
@@ -525,7 +624,10 @@ bool url_query_component(
 bool url_unescape_userinfo(
 	char *raw, char **restrict username, char **restrict password)
 {
-	const char valid_chars[] = "-._:~!$&'()*+,;=%@";
+	/* RFC 3986 3.2.1: userinfo is unreserved / pct-encoded / sub-delims /
+	 * ':'. A raw '@' is not admitted -- it is the authority delimiter and
+	 * must be pct-encoded (%40) when it is data. */
+	const char valid_chars[] = S_UNRESERVED ":" S_SUB_DELIMS "%";
 	char *colon = NULL;
 	for (char *p = raw; *p != '\0'; ++p) {
 		const unsigned char c = (unsigned char)*p;

@@ -17,10 +17,103 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Each __has_include/__has_builtin test is split into an outer defined() and an
+ * inner call: a compiler without the operator (MSVC; GCC before 10 lacks
+ * __has_builtin, before 5 __has_include) replaces the unknown identifier with 0
+ * and cannot parse the call syntax that follows it, even behind a false
+ * `defined(...) &&` in the same #if. */
+
 /* If C23 is available, prefer stdc */
-#if defined(__has_include) && __has_include(<stdbit.h>)
+#if defined(__has_include)
+#if __has_include(<stdbit.h>)
 #include <stdbit.h>
 #endif
+#endif /* __has_include */
+
+/* Layer 1: De Bruijn baseline — always available, no guards */
+
+/** @brief De Bruijn lookup table for 32-bit BSR (bit scan reverse). */
+extern const int intlog2_debruijn_bsr32[32];
+
+/** @brief De Bruijn lookup table for 32-bit BSF (bit scan forward). */
+extern const int intlog2_debruijn_bsf32[32];
+
+/** @brief Base-2 logarithm for uint32_t via De Bruijn sequence. */
+static inline int log2u32(uint32_t x)
+{
+	assert(x > 0);
+	x |= x >> 1u;
+	x |= x >> 2u;
+	x |= x >> 4u;
+	x |= x >> 8u;
+	x |= x >> 16u;
+	/* De Bruijn constant for 32-bit BSR; pairs with
+	 * intlog2_debruijn_bsr32[]. */
+	return intlog2_debruijn_bsr32
+		[((x * UINT32_C(0x07C4ACDD)) & UINT32_C(0xFFFFFFFF)) >> 27u];
+}
+
+/** @brief Count trailing zeros for uint32_t using De Bruijn sequence. */
+static inline int countr_zerou32(uint32_t x)
+{
+	assert(x > 0);
+	/* De Bruijn constant for 32-bit BSF; pairs with
+	 * intlog2_debruijn_bsf32[]. */
+	return intlog2_debruijn_bsf32
+		[(((x & -x) * UINT32_C(0x077CB531)) & UINT32_C(0xFFFFFFFF)) >>
+		 27u];
+}
+
+/** @brief Count leading zeros for a 32-bit value (x=0 returns 32). */
+static inline int countl_zerou32(uint32_t x)
+{
+	return x == 0 ? 32 : 31 - log2u32(x);
+}
+
+/** @brief De Bruijn lookup table for 64-bit BSR (bit scan reverse). */
+extern const int intlog2_debruijn_bsr64[64];
+
+/** @brief Base-2 logarithm for uint64_t via De Bruijn sequence. */
+static inline int log2u64(uint64_t x)
+{
+	assert(x > 0);
+	x |= x >> 1u;
+	x |= x >> 2u;
+	x |= x >> 4u;
+	x |= x >> 8u;
+	x |= x >> 16u;
+	x |= x >> 32u;
+	/* De Bruijn constant for 64-bit BSR; pairs with
+	 * intlog2_debruijn_bsr64[] */
+	return intlog2_debruijn_bsr64
+		[((x * UINT64_C(0x03F79D71B4CB0A89)) &
+		  UINT64_C(0xFFFFFFFFFFFFFFFF)) >>
+		 58u];
+}
+
+/** @brief De Bruijn lookup table for 64-bit BSF (bit scan forward). */
+extern const int intlog2_debruijn_bsf64[64];
+
+/** @brief Count trailing zeros for uint64_t using De Bruijn sequence. */
+static inline int countr_zerou64(uint64_t x)
+{
+	assert(x > 0);
+	/* De Bruijn constant for 64-bit BSF; pairs with
+	 * intlog2_debruijn_bsf64[] */
+	return intlog2_debruijn_bsf64
+		[(((x & -x) * UINT64_C(0x0257EDD4D0F22CE3)) &
+		  UINT64_C(0xFFFFFFFFFFFFFFFF)) >>
+		 58u];
+}
+
+/** @brief Count leading zeros for a 64-bit value (x=0 returns 64). */
+static inline int countl_zerou64(uint64_t x)
+{
+	return x == 0 ? 64 : 63 - log2u64(x);
+}
+
+/* Layer 2: Per-type functions — stdc -> __builtin -> De Bruijn */
+
 #if defined(__STDC_VERSION_STDBIT_H__) && __STDC_VERSION_STDBIT_H__ >= 202311L
 /* stdbit.h already included above */
 
@@ -78,220 +171,160 @@ static inline int countl_zeroull(unsigned long long x)
 #else
 /* For C17 or earlier */
 
-/* Layer 1: De Bruijn baseline — always available, no guards */
-
-/** @brief De Bruijn lookup table for 32-bit BSR (bit scan reverse). */
-extern const int intlog2_debruijn_bsr32[32];
-
-/** @brief De Bruijn lookup table for 32-bit BSF (bit scan forward). */
-extern const int intlog2_debruijn_bsf32[32];
-
-/** @brief Base-2 logarithm for uint_fast32_t via De Bruijn sequence. */
-static inline int log2u32(uint_fast32_t x)
-{
-	assert(x > 0);
-	x |= x >> 1u;
-	x |= x >> 2u;
-	x |= x >> 4u;
-	x |= x >> 8u;
-	x |= x >> 16u;
-	/* De Bruijn constant for 32-bit BSR; pairs with
-	 * intlog2_debruijn_bsr32[]. Mask to 32 bits where
-	 * uint_fast32_t is wider than 32 bits. */
-	return intlog2_debruijn_bsr32
-		[((x * (uint_fast32_t)0x07C4ACDDUL) & UINT32_C(0xFFFFFFFF)) >>
-		 27u];
-}
-
-/** @brief Count trailing zeros for uint_fast32_t using De Bruijn sequence. */
-static inline int countr_zerou32(uint_fast32_t x)
-{
-	assert(x > 0);
-	/* De Bruijn constant for 32-bit BSF; pairs with
-	 * intlog2_debruijn_bsf32[]. Mask to 32 bits where
-	 * uint_fast32_t is wider than 32 bits. */
-	return intlog2_debruijn_bsf32
-		[(((x & -x) * (uint_fast32_t)0x077CB531UL) &
-		  UINT32_C(0xFFFFFFFF)) >>
-		 27u];
-}
-
-/** @brief Count leading zeros for a 32-bit value (x=0 returns 32). */
-static inline int countl_zerou32(uint_fast32_t x)
-{
-	return x == 0 ? 32 : 31 - log2u32(x);
-}
-
-/** @brief De Bruijn lookup table for 64-bit BSR (bit scan reverse). */
-extern const int intlog2_debruijn_bsr64[64];
-
-/** @brief Base-2 logarithm for uint_fast64_t via De Bruijn sequence. */
-static inline int log2u64(uint_fast64_t x)
-{
-	assert(x > 0);
-	x |= x >> 1u;
-	x |= x >> 2u;
-	x |= x >> 4u;
-	x |= x >> 8u;
-	x |= x >> 16u;
-	x |= x >> 32u;
-	/* De Bruijn constant for 64-bit BSR; pairs with
-	 * intlog2_debruijn_bsr64[] */
-	return intlog2_debruijn_bsr64
-		[((x * (uint_fast64_t)0x03F79D71B4CB0A89ULL) &
-		  UINT64_C(0xFFFFFFFFFFFFFFFF)) >>
-		 58u];
-}
-
-/** @brief De Bruijn lookup table for 64-bit BSF (bit scan forward). */
-extern const int intlog2_debruijn_bsf64[64];
-
-/** @brief Count trailing zeros for uint_fast64_t using De Bruijn sequence. */
-static inline int countr_zerou64(uint_fast64_t x)
-{
-	assert(x > 0);
-	/* De Bruijn constant for 64-bit BSF; pairs with
-	 * intlog2_debruijn_bsf64[] */
-	return intlog2_debruijn_bsf64
-		[(((x & -x) * (uint_fast64_t)0x0257EDD4D0F22CE3ULL) &
-		  UINT64_C(0xFFFFFFFFFFFFFFFF)) >>
-		 58u];
-}
-
-/** @brief Count leading zeros for a 64-bit value (x=0 returns 64). */
-static inline int countl_zerou64(uint_fast64_t x)
-{
-	return x == 0 ? 64 : 63 - log2u64(x);
-}
-
-/* Layer 2: Per-type functions — stdc -> __builtin -> De Bruijn */
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_clz)
+#define INTLOG2_BUILTIN_CLZ
+#endif
+#if __has_builtin(__builtin_clzl)
+#define INTLOG2_BUILTIN_CLZL
+#endif
+#if __has_builtin(__builtin_clzll)
+#define INTLOG2_BUILTIN_CLZLL
+#endif
+#if __has_builtin(__builtin_ctz)
+#define INTLOG2_BUILTIN_CTZ
+#endif
+#if __has_builtin(__builtin_ctzl)
+#define INTLOG2_BUILTIN_CTZL
+#endif
+#if __has_builtin(__builtin_ctzll)
+#define INTLOG2_BUILTIN_CTZLL
+#endif
+#endif /* __has_builtin */
 
 static inline int log2u(unsigned int x)
 {
 	assert(x > 0);
-#if defined(__has_builtin) && __has_builtin(__builtin_clz)
+#if defined(INTLOG2_BUILTIN_CLZ)
 	return (int)(sizeof(x) * CHAR_BIT) - 1 - __builtin_clz(x);
 #else
 #if UINT_MAX == 0xFFFFFFFF
-	return log2u32((uint_fast32_t)x);
+	return log2u32((uint32_t)x);
 #else
-	return log2u64((uint_fast64_t)x);
+	return log2u64((uint64_t)x);
 #endif
-#endif /* __has_builtin */
+#endif /* INTLOG2_BUILTIN_CLZ */
 }
 
 static inline int log2ul(unsigned long x)
 {
 	assert(x > 0);
-#if defined(__has_builtin) && __has_builtin(__builtin_clzl)
+#if defined(INTLOG2_BUILTIN_CLZL)
 	return (int)(sizeof(x) * CHAR_BIT) - 1 - __builtin_clzl(x);
 #else
 #if ULONG_MAX == 0xFFFFFFFF
-	return log2u32((uint_fast32_t)x);
+	return log2u32((uint32_t)x);
 #else
-	return log2u64((uint_fast64_t)x);
+	return log2u64((uint64_t)x);
 #endif
-#endif /* __has_builtin */
+#endif /* INTLOG2_BUILTIN_CLZL */
 }
 
 static inline int log2ull(unsigned long long x)
 {
 	assert(x > 0);
-#if defined(__has_builtin) && __has_builtin(__builtin_clzll)
+#if defined(INTLOG2_BUILTIN_CLZLL)
 	return (int)(sizeof(x) * CHAR_BIT) - 1 - __builtin_clzll(x);
 #else
-	/* unsigned long long must fit in uint_fast64_t for the
+	/* unsigned long long must fit in uint64_t for the
 	 * fallback cast to be lossless. */
 	static_assert(
-		ULLONG_MAX <= UINT_FAST64_MAX,
-		"unsigned long long exceeds uint_fast64_t range: fallback cast would truncate");
-	return log2u64((uint_fast64_t)x);
-#endif /* __has_builtin */
+		ULLONG_MAX <= UINT64_MAX,
+		"unsigned long long exceeds uint64_t range: fallback cast would truncate");
+	return log2u64((uint64_t)x);
+#endif /* INTLOG2_BUILTIN_CLZLL */
 }
 
 static inline int countr_zerou(unsigned int x)
 {
 	assert(x > 0);
-#if defined(__has_builtin) && __has_builtin(__builtin_ctz)
+#if defined(INTLOG2_BUILTIN_CTZ)
 	return __builtin_ctz(x);
 #else
 #if UINT_MAX == 0xFFFFFFFF
-	return countr_zerou32((uint_fast32_t)x);
+	return countr_zerou32((uint32_t)x);
 #else
-	return countr_zerou64((uint_fast64_t)x);
+	return countr_zerou64((uint64_t)x);
 #endif
-#endif /* __has_builtin */
+#endif /* INTLOG2_BUILTIN_CTZ */
 }
 
 static inline int countr_zeroul(unsigned long x)
 {
 	assert(x > 0);
-#if defined(__has_builtin) && __has_builtin(__builtin_ctzl)
+#if defined(INTLOG2_BUILTIN_CTZL)
 	return __builtin_ctzl(x);
 #else
 #if ULONG_MAX == 0xFFFFFFFF
-	return countr_zerou32((uint_fast32_t)x);
+	return countr_zerou32((uint32_t)x);
 #else
-	return countr_zerou64((uint_fast64_t)x);
+	return countr_zerou64((uint64_t)x);
 #endif
-#endif /* __has_builtin */
+#endif /* INTLOG2_BUILTIN_CTZL */
 }
 
 static inline int countr_zeroull(unsigned long long x)
 {
 	assert(x > 0);
-#if defined(__has_builtin) && __has_builtin(__builtin_ctzll)
+#if defined(INTLOG2_BUILTIN_CTZLL)
 	return __builtin_ctzll(x);
 #else
-	/* unsigned long long must fit in uint_fast64_t for the
+	/* unsigned long long must fit in uint64_t for the
 	 * fallback cast to be lossless. */
 	static_assert(
-		ULLONG_MAX <= UINT_FAST64_MAX,
-		"unsigned long long exceeds uint_fast64_t range: fallback cast would truncate");
-	return countr_zerou64((uint_fast64_t)x);
-#endif /* __has_builtin */
+		ULLONG_MAX <= UINT64_MAX,
+		"unsigned long long exceeds uint64_t range: fallback cast would truncate");
+	return countr_zerou64((uint64_t)x);
+#endif /* INTLOG2_BUILTIN_CTZLL */
 }
 
 /* countl_zero: x=0 is valid and returns the full bit-width. */
 static inline int countl_zerou(unsigned int x)
 {
-#if defined(__has_builtin) && __has_builtin(__builtin_clz)
+#if defined(INTLOG2_BUILTIN_CLZ)
 	return x == 0 ? (int)(sizeof(x) * CHAR_BIT) : __builtin_clz(x);
 #else
 #if UINT_MAX == 0xFFFFFFFF
-	return countl_zerou32((uint_fast32_t)x);
+	return countl_zerou32((uint32_t)x);
 #else
-	return countl_zerou64((uint_fast64_t)x);
+	return countl_zerou64((uint64_t)x);
 #endif
-#endif /* __has_builtin */
+#endif /* INTLOG2_BUILTIN_CLZ */
 }
 
 static inline int countl_zeroul(unsigned long x)
 {
-#if defined(__has_builtin) && __has_builtin(__builtin_clzl)
+#if defined(INTLOG2_BUILTIN_CLZL)
 	return x == 0 ? (int)(sizeof(x) * CHAR_BIT) : __builtin_clzl(x);
 #else
 #if ULONG_MAX == 0xFFFFFFFF
-	return countl_zerou32((uint_fast32_t)x);
+	return countl_zerou32((uint32_t)x);
 #else
-	return countl_zerou64((uint_fast64_t)x);
+	return countl_zerou64((uint64_t)x);
 #endif
-#endif /* __has_builtin */
+#endif /* INTLOG2_BUILTIN_CLZL */
 }
 
 static inline int countl_zeroull(unsigned long long x)
 {
-#if defined(__has_builtin) && __has_builtin(__builtin_clzll)
+#if defined(INTLOG2_BUILTIN_CLZLL)
 	return x == 0 ? (int)(sizeof(x) * CHAR_BIT) : __builtin_clzll(x);
 #else
-	/* unsigned long long must fit in uint_fast64_t for the
+	/* unsigned long long must fit in uint64_t for the
 	 * fallback cast to be lossless. */
 	static_assert(
-		ULLONG_MAX <= UINT_FAST64_MAX,
-		"unsigned long long exceeds uint_fast64_t range: fallback cast would truncate");
-	return countl_zerou64((uint_fast64_t)x);
-#endif /* __has_builtin */
+		ULLONG_MAX <= UINT64_MAX,
+		"unsigned long long exceeds uint64_t range: fallback cast would truncate");
+	return countl_zerou64((uint64_t)x);
+#endif /* INTLOG2_BUILTIN_CLZLL */
 }
+
+#undef INTLOG2_BUILTIN_CLZ
+#undef INTLOG2_BUILTIN_CLZL
+#undef INTLOG2_BUILTIN_CLZLL
+#undef INTLOG2_BUILTIN_CTZ
+#undef INTLOG2_BUILTIN_CTZL
+#undef INTLOG2_BUILTIN_CTZLL
 
 #endif /* __STDC_VERSION_STDBIT_H__ >= 202311L */
 
@@ -314,7 +347,11 @@ static inline int countl_zeromax(uintmax_t x)
 	return countl_zeroull((unsigned long long)x);
 }
 #else
-/* Wide path: defined in intlog2.c using thread-local De Bruijn tables. */
+/* Wide path: declared here and dispatched to by the macros below, but defined
+ * nowhere. Their implementation in intlog2.c is an untested reference kept
+ * under #if 0, so a uintmax_t argument to intlog2(), countr_zero() or
+ * countl_zero() on such a platform fails to link until that block is
+ * re-enabled. */
 int log2umax(uintmax_t x);
 int countr_zeromax(uintmax_t x);
 int countl_zeromax(uintmax_t x);

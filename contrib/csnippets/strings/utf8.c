@@ -4,6 +4,7 @@
 #include "utf8.h"
 
 #include "binary/serialize.h"
+#include "internal.h"
 
 #if WITH_ICU
 #include <unicode/unorm2.h>
@@ -18,7 +19,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 #include <uchar.h>
 
 /* The strict RFC 3629 codec has two interchangeable backends. The WITH_ICU
@@ -155,12 +155,7 @@ int utf8_next(char32_t *restrict cp, const char **restrict s)
 		*cp = 0;
 		return 0;
 	}
-	/* peek up to a whole sequence without reading past the terminator */
-	size_t avail = 1;
-	while (avail < UTF8_MAX_LEN && p[avail] != '\0') {
-		avail++;
-	}
-	const int n = utf8_decode(cp, p, avail);
+	const int n = utf8_decode(cp, p, peek_avail(p));
 	if (n <= 0) {
 		/* invalid byte: a one-byte unit mapped to the replacement */
 		*cp = 0xFFFDu;
@@ -171,17 +166,9 @@ int utf8_next(char32_t *restrict cp, const char **restrict s)
 	return n;
 }
 
-/* snprintf(3)-style UTF-8 sink: each codepoint is encoded and appended as a
- * whole unit, so truncation never splits a sequence. */
-struct u8sink {
-	char *buf; /* NULL allowed only when cap == 0 */
-	size_t cap; /* writable content bytes, the NUL slot excluded */
-	size_t fill; /* bytes stored; the NUL goes at buf[fill] */
-	size_t len; /* would-be content length; may exceed cap */
-	bool frozen; /* a unit did not fit: keep the stored prefix clean */
-};
-
-static void u8sink_putcp(struct u8sink *restrict s, const char32_t cp)
+/* Encode one codepoint into the shared bounded sink, which appends it as a
+ * whole unit so truncation never splits a sequence. */
+static void sink_putcp(struct sink *restrict s, const char32_t cp)
 {
 	char unit[UTF8_MAX_LEN];
 	int n = utf8_encode(unit, cp);
@@ -189,23 +176,14 @@ static void u8sink_putcp(struct u8sink *restrict s, const char32_t cp)
 		/* a surrogate or out-of-range value maps to the replacement */
 		n = utf8_encode(unit, 0xFFFDu);
 	}
-	const size_t ulen = (size_t)n;
-	if (!s->frozen) {
-		if (s->fill + ulen <= s->cap) {
-			memcpy(s->buf + s->fill, unit, ulen);
-			s->fill += ulen;
-		} else {
-			s->frozen = true;
-		}
-	}
-	s->len = ulen <= SIZE_MAX - s->len ? s->len + ulen : SIZE_MAX;
+	sink_put(s, unit, (size_t)n);
 }
 
 int utf8_load(
 	char *restrict buf, const size_t maxlen, const void *restrict data,
 	const size_t len)
 {
-	struct u8sink sink = {
+	struct sink sink = {
 		.buf = buf,
 		.cap = (buf != NULL && maxlen > 0) ? maxlen - 1 : 0,
 	};
@@ -247,10 +225,10 @@ int utf8_load(
 			const int n = utf8_decode(
 				&cp, (const char *)(p + i), total - i);
 			if (n <= 0) {
-				u8sink_putcp(&sink, 0xFFFDu);
+				sink_putcp(&sink, 0xFFFDu);
 				i++;
 			} else {
-				u8sink_putcp(&sink, cp);
+				sink_putcp(&sink, cp);
 				i += (size_t)n;
 			}
 		}
@@ -273,23 +251,22 @@ int utf8_load(
 				}
 				if (lo >= 0xDC00u && lo <= 0xDFFFu) {
 					i += 2;
-					u8sink_putcp(
+					sink_putcp(
 						&sink,
 						0x10000u +
 							(((u - 0xD800u) << 10) |
 							 (lo - 0xDC00u)));
 				} else {
-					u8sink_putcp(&sink, 0xFFFDu);
+					sink_putcp(&sink, 0xFFFDu);
 				}
 			} else if (u >= 0xDC00u && u <= 0xDFFFu) {
-				u8sink_putcp(
-					&sink, 0xFFFDu); /* lone low half */
+				sink_putcp(&sink, 0xFFFDu); /* lone low half */
 			} else {
-				u8sink_putcp(&sink, u);
+				sink_putcp(&sink, u);
 			}
 		}
 		if (i < total) {
-			u8sink_putcp(&sink, 0xFFFDu); /* trailing odd byte */
+			sink_putcp(&sink, 0xFFFDu); /* trailing odd byte */
 		}
 		break;
 	}
@@ -298,14 +275,14 @@ int utf8_load(
 		const bool big = (enc == ENC_UTF32BE);
 		while (i + 4 <= total) {
 			/* an out-of-range or surrogate value is caught by
-			 * u8sink_putcp -> utf8_encode -> U+FFFD */
-			u8sink_putcp(
+			 * sink_putcp -> utf8_encode -> U+FFFD */
+			sink_putcp(
 				&sink, (char32_t)(big ? read_uint32(p + i) :
 							read_uint32_le(p + i)));
 			i += 4;
 		}
 		if (i < total) {
-			u8sink_putcp(&sink, 0xFFFDu); /* trailing bytes */
+			sink_putcp(&sink, 0xFFFDu); /* trailing bytes */
 		}
 		break;
 	}
@@ -318,18 +295,18 @@ int utf8_load(
 }
 
 /* Bulk transcoders between UTF-8 and UTF-16 / UTF-32. All build on the
- * utf8_encode / utf8_next codec and its snprintf(3)-style u8sink, so they need
+ * utf8_encode / utf8_next codec and its snprintf(3)-style sink, so they need
  * no libicu and are available in every build. */
 int utf8_encode32(
 	char *restrict buf, const size_t maxlen, const char32_t *restrict src)
 {
-	struct u8sink sink = {
+	struct sink sink = {
 		.buf = buf,
 		.cap = (buf != NULL && maxlen > 0) ? maxlen - 1 : 0,
 	};
 	for (const char32_t *p = src; *p != 0; p++) {
 		/* a surrogate or out-of-range value maps to U+FFFD in the sink */
-		u8sink_putcp(&sink, *p);
+		sink_putcp(&sink, *p);
 	}
 	if (buf != NULL && maxlen > 0) {
 		buf[sink.fill] = '\0';
@@ -356,14 +333,14 @@ int utf8_decode32(
 	return need <= INT_MAX ? (int)need : -1;
 }
 
-/* Stream UTF-16 units through a u8sink as UTF-8, combining surrogate pairs; a
- * lone or mismatched surrogate maps to U+FFFD in u8sink_putcp. u16len is the
+/* Stream UTF-16 units through a sink as UTF-8, combining surrogate pairs; a
+ * lone or mismatched surrogate maps to U+FFFD in sink_putcp. u16len is the
  * unit count, or (size_t)-1 when u16 is NUL-terminated. */
 static int emit_utf16(
 	char *restrict buf, const size_t maxlen, const char16_t *restrict u16,
 	const size_t u16len)
 {
-	struct u8sink sink = {
+	struct sink sink = {
 		.buf = buf,
 		.cap = (buf != NULL && maxlen > 0) ? maxlen - 1 : 0,
 	};
@@ -379,7 +356,7 @@ static int emit_utf16(
 				i++;
 			}
 		}
-		u8sink_putcp(&sink, cp);
+		sink_putcp(&sink, cp);
 	}
 	if (buf != NULL && maxlen > 0) {
 		buf[sink.fill] = '\0';
@@ -446,10 +423,10 @@ int utf8_decode16(
  * its generated tables were removed in favour of this backend.
  */
 
-/* Fetch each UTF-16 length via a capacity-0 preflight; the expected
- * U_BUFFER_OVERFLOW_ERROR / not-terminated warning is discarded and only the
- * real conversion's status is honoured. Returns -1 on any hard failure, with
- * the snprintf(3)-style empty output written to buf. */
+/* Fetch each UTF-16 length via a capacity-0 preflight, allowing the expected
+ * U_BUFFER_OVERFLOW_ERROR. Reserve a terminator only when its capacity fits
+ * both ICU's int32_t and the allocation size. Returns -1 on any hard failure,
+ * with the snprintf(3)-style empty output written to buf. */
 static int normalize(
 	char *restrict buf, const size_t maxlen, const char *restrict src,
 	const UNormalizer2 *restrict n2)
@@ -468,7 +445,12 @@ static int normalize(
 	UErrorCode err = U_ZERO_ERROR;
 	int32_t in16len = 0;
 	u_strFromUTF8WithSub(NULL, 0, &in16len, src, -1, 0xFFFD, NULL, &err);
-	in16 = malloc((size_t)(in16len + 1) * sizeof(UChar));
+	if ((U_FAILURE(err) && err != U_BUFFER_OVERFLOW_ERROR) || in16len < 0 ||
+	    in16len == INT32_MAX ||
+	    (uintmax_t)in16len >= SIZE_MAX / sizeof(UChar)) {
+		goto done;
+	}
+	in16 = malloc(((size_t)in16len + 1) * sizeof(UChar));
 	if (in16 == NULL) {
 		goto done;
 	}
@@ -482,7 +464,12 @@ static int normalize(
 	err = U_ZERO_ERROR;
 	const int32_t out16len =
 		unorm2_normalize(n2, in16, in16len, NULL, 0, &err);
-	out16 = malloc((size_t)(out16len + 1) * sizeof(UChar));
+	if ((U_FAILURE(err) && err != U_BUFFER_OVERFLOW_ERROR) ||
+	    out16len < 0 || out16len == INT32_MAX ||
+	    (uintmax_t)out16len >= SIZE_MAX / sizeof(UChar)) {
+		goto done;
+	}
+	out16 = malloc(((size_t)out16len + 1) * sizeof(UChar));
 	if (out16 == NULL) {
 		goto done;
 	}

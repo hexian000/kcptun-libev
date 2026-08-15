@@ -13,24 +13,33 @@
 #include <string.h>
 
 /* The stream implementation below is plain ISO C: stdio is not required to set
- * errno on failure, so no error code is available beyond the failure itself and
- * every failing transfer reports -1. (fd.c is the POSIX counterpart and does
- * return errno.) These are deliberately quiet: when this stream is the slog
- * writer sink, write/flush run under slog's output lock and must not log
- * through slog; the caller may log where that cannot happen. */
+ * errno on failure, so each call is made with errno cleared and a failure
+ * reports what the call left there, or EIO when it left nothing -- never a bare
+ * -1, so the code stays in the errno space the fd backend reports in. These are
+ * deliberately quiet: when this stream is the slog writer sink, write/flush run
+ * under slog's output lock and must not log through slog; the caller may log
+ * where that cannot happen. */
+
+/* Read errno exactly once, right after the failing stdio call. */
+static int stdio_error(void)
+{
+	const int err = errno;
+	return err != 0 ? err : EIO;
+}
 
 static int file_read(void *p, void *buf, size_t *restrict len)
 {
 	struct io_stream *restrict s = p;
 	FILE *f = s->data;
 	const size_t want = *len;
-	/* clear any indicator carried in on this stream (e.g. a logged and
-	 * ignored setvbuf failure), so ferror below reflects only this fread */
+	/* clear any indicator the caller's stream carried in, so ferror below
+	 * reflects only this fread */
 	clearerr(f);
+	errno = 0;
 	*len = fread(buf, sizeof(unsigned char), want, f);
 	/* a short fread is legitimate EOF; only ferror marks a real failure */
 	if (ferror(f)) {
-		return -1;
+		return stdio_error();
 	}
 	return 0;
 }
@@ -41,11 +50,12 @@ static int file_write(void *p, const void *buf, size_t *restrict len)
 	FILE *f = s->data;
 	const size_t want = *len;
 	clearerr(f);
+	errno = 0;
 	*len = fwrite(buf, sizeof(unsigned char), want, f);
 	/* a short fwrite is unambiguously an error -- decide from the transfer's
 	 * own count rather than the sticky indicator */
 	if (*len < want) {
-		return -1;
+		return stdio_error();
 	}
 	return 0;
 }
@@ -54,8 +64,9 @@ static int file_flush(void *p)
 {
 	struct io_stream *restrict s = p;
 	FILE *f = s->data;
+	errno = 0;
 	if (fflush(f) != 0) {
-		return -1;
+		return stdio_error();
 	}
 	return 0;
 }
@@ -69,7 +80,8 @@ static int file_fclose(FILE *restrict f)
 	if (f == stdin || f == stdout || f == stderr) {
 		return 0;
 	}
-	return fclose(f) != 0 ? -1 : 0;
+	errno = 0;
+	return fclose(f) != 0 ? stdio_error() : 0;
 }
 
 static int file_close(void *p)
@@ -80,13 +92,26 @@ static int file_close(void *p)
 	return ret;
 }
 
+/* The writer's close: a standard output stream is left open, but it is still
+ * flushed, so close stays the last point that reports a write error the
+ * buffering deferred -- as fclose does for every other file. stdin is excluded:
+ * fflush on an input stream is undefined in ISO C. */
+static int file_writer_close(void *p)
+{
+	struct io_stream *restrict s = p;
+	FILE *f = s->data;
+	if (f == stdout || f == stderr) {
+		free(s);
+		errno = 0;
+		return fflush(f) != 0 ? stdio_error() : 0;
+	}
+	return file_close(p);
+}
+
 struct io_stream *io_filereader(FILE *f)
 {
 	if (f == NULL) {
 		return NULL;
-	}
-	if (setvbuf(f, NULL, _IONBF, 0) != 0) {
-		LOGE("setvbuf: failed");
 	}
 	struct io_stream *restrict s = malloc(sizeof(struct io_stream));
 	if (s == NULL) {
@@ -108,9 +133,6 @@ struct io_stream *io_filewriter(FILE *f)
 	if (f == NULL) {
 		return NULL;
 	}
-	if (setvbuf(f, NULL, _IONBF, 0) != 0) {
-		LOGE("setvbuf: failed");
-	}
 	struct io_stream *restrict s = malloc(sizeof(struct io_stream));
 	if (s == NULL) {
 		if (file_fclose(f) != 0) {
@@ -121,7 +143,7 @@ struct io_stream *io_filewriter(FILE *f)
 	static const struct io_stream_vftable vftable = {
 		.write = file_write,
 		.flush = file_flush,
-		.close = file_close,
+		.close = file_writer_close,
 	};
 	*s = (struct io_stream){ &vftable, f };
 	return s;
@@ -162,6 +184,10 @@ unsigned char *io_readfile(const char *restrict path, size_t *restrict len)
 		return NULL;
 	}
 	if (nread >= *len) {
+		/* log like the siblings: a bare NULL cannot tell this case -- the
+		 * one a larger capacity would cure -- from the others */
+		LOGE_F("io_readfile \"%s\": does not fit in %zu bytes", path,
+		       *len);
 		free(buf);
 		return NULL;
 	}
@@ -187,8 +213,10 @@ bool io_writefile(
 	}
 	FILE *fp = fopen(path, "wb");
 	if (!fp) {
-		/* nothing was written; report the actual count like every other
-		 * path, rather than leaving *len at the requested value */
+		const int err = errno;
+		LOGE_F("fopen \"%s\": (%d) %s", path, err, strerror(err));
+		/* nothing was written; report the actual count rather than leaving
+		 * *len at the requested value */
 		*len = 0;
 		return false;
 	}

@@ -4,6 +4,7 @@
 #ifndef UTILS_BUFFER_H
 #define UTILS_BUFFER_H
 
+#include "meta/format.h"
 #include "meta/minmax.h"
 
 #include <assert.h>
@@ -27,9 +28,17 @@
  * - The fixed `BUF_APPEND` raw-byte helper does not add a null terminator.
  *   The growable `VBUF_APPEND` and the formatting helpers keep data
  *   NUL-terminated in an internal reserved slot without affecting `len`.
+ *   Every growable allocation, append and truncation therefore leaves
+ *   `data[len]` NUL; only `VBUF_SPACE`, which hands out raw space, leaves
+ *   restoring it to the caller.
  * - The formatting helpers use u8vsnprintf (strings/string.h):
  *   locale-independent and async-signal-safe, with its documented divergences
  *   from printf(3); truncation never splits a UTF-8 sequence.
+ * - `BUF_*` and `VBUF_*` macros may evaluate some operands more than once, and
+ *   the count can differ between debug and release builds because of
+ *   assertions. Repeated operands must therefore have no side effects; store
+ *   expressions such as `n++` in a temporary before calling
+ *   `BUF_CONSUME` or `VBUF_APPEND`.
  * - None of the APIs are thread-safe; add external synchronization if shared.
  *
  * Error handling:
@@ -37,6 +46,11 @@
  * - Growable buffers attempt to expand; on allocation failure they append what
  *   fits and record an OOM condition. Further appends are skipped. Check with
  *   `VBUF_HAS_OOM`.
+ * - A NULL vbuffer, which `VBUF_NEW` returns on allocation failure, is an OOM
+ *   condition too: `VBUF_HAS_OOM` reports it, the append, format and resize
+ *   macros skip it (the formatters return negative), `VBUF_RESERVE`
+ *   allocates a new vbuffer from it, and `VBUF_FREE` accepts it. Every other
+ *   VBUF_* macro requires a non-NULL vbuffer.
  * @{
  */
 
@@ -55,6 +69,10 @@
  * @brief Opaque helper type used internally for fixed-size buffers.
  * Do not instantiate directly; embed BUFFER_HDR and a concrete data[N] in
  * your own struct.
+ * @details Such a struct is a distinct type, not compatible with this one
+ * (C11 6.2.7), so it must not be accessed through a `struct buffer *`
+ * (6.5p7). The BUF_* macros therefore hand the internal functions below the
+ * buffer's members rather than a punned pointer to the whole object.
  */
 struct buffer {
 	BUFFER_HDR;
@@ -65,41 +83,47 @@ struct buffer {
 
 /**
  * @internal
- * Append up to n bytes into a fixed buffer.
- * Copies min(n, cap - len) bytes from data into buf->data + buf->len.
+ * Append up to n bytes into a fixed buffer, given as its members: the
+ * capacity, the length to advance, and the data region.
+ * Copies min(n, cap - *len) bytes from src into data + *len.
  * Does not add a trailing NUL.
  * Returns: number of bytes actually appended (may be 0 if no space).
  */
-static inline size_t
-buf_append(struct buffer *restrict buf, const void *restrict data, size_t n)
+static inline size_t buf_append(
+	const size_t cap, size_t *restrict len, unsigned char *restrict data,
+	const void *restrict src, size_t n)
 {
-	n = MIN(n, buf->cap - buf->len);
+	n = MIN(n, cap - *len);
 	if (n == 0) {
 		return 0;
 	}
-	void *restrict dest = buf->data + buf->len;
-	(void)memcpy(dest, data, n);
-	buf->len += n;
+	(void)memcpy(data + *len, src, n);
+	*len += n;
 	return n;
 }
 
 /**
  * @internal
- * Append formatted text into a fixed buffer using a va_list.
+ * Append formatted text into a fixed buffer, given as its members (see
+ * buf_append), using a va_list.
  * Writes at most remaining capacity; output is NUL-terminated in place.
- * len is advanced by the bytes actually stored, which on truncation may fall
+ * *len is advanced by the bytes actually stored, which on truncation may fall
  * up to UTF8_MAX_LEN - 1 short of the capacity (whole codepoints only).
  * Returns: snprintf-style count of chars that would have been written
- * (excluding NUL).
+ * (excluding NUL), or negative when u8vsnprintf cannot represent that count,
+ * in which case nothing is appended.
  */
 int buf_vappendf(
-	struct buffer *restrict buf, const char *restrict format, va_list args);
+	size_t cap, size_t *restrict len, unsigned char *restrict data,
+	const char *restrict format, va_list args) FORMAT_PRINTF(4, 0);
 
 /**
  * @internal
  * Convenience wrapper over buf_vappendf with variadic arguments.
  */
-int buf_appendf(struct buffer *restrict buf, const char *restrict format, ...);
+int buf_appendf(
+	size_t cap, size_t *restrict len, unsigned char *restrict data,
+	const char *restrict format, ...) FORMAT_PRINTF(4, 5);
 
 /* heap allocated buffer */
 /**
@@ -149,7 +173,8 @@ static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
  * @internal
  * Ensure capacity is at least `want` bytes (not counting reserved NUL).
  * Uses a growth strategy tuned for small and large buffers, with overflow
- * checks. On failure, returns the original pointer unchanged.
+ * checks. When vbuf == NULL, allocates a new object and writes the reserved
+ * NUL as vbuf_alloc does. On failure, returns the original pointer unchanged.
  */
 struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want);
 
@@ -158,7 +183,7 @@ struct vbuffer *vbuf_grow(struct vbuffer *vbuf, size_t want);
  * Append up to n bytes to a growable buffer.
  * Attempts to grow to fit; if growth fails, appends as much as possible.
  * Writes a trailing NUL in the reserved byte without affecting len.
- * Precondition: vbuf != NULL. If len == cap, append is skipped.
+ * If vbuf == NULL or len == cap (an OOM condition), append is skipped.
  */
 struct vbuffer *
 vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n);
@@ -168,19 +193,26 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n);
  * Append formatted text using a va_list. Two-pass attempt: write into
  * remaining capacity first, then grow and retry if needed. Keeps a trailing
  * NUL in the reserved byte. On failure, may truncate to what fits.
- * Precondition: *pvbuf != NULL.
+ * Skipped with a negative return when *pvbuf == NULL (an OOM condition).
+ * pvbuf's pointee is restrict-qualified so that the address of a plain or a
+ * restrict-qualified `struct vbuffer *` lvalue converts to it without a cast,
+ * while the address of any other pointer type is diagnosed.
  * Returns vsnprintf-style count (chars that would have been written,
- * excluding NUL). Returns -1 when OOM has already been recorded and the
- * append is skipped.
+ * excluding NUL). A negative return means nothing was appended and the
+ * vbuffer is unchanged: either OOM was already recorded, or u8vsnprintf could
+ * not represent the count; `VBUF_HAS_OOM` tells the two apart.
  */
 int vbuf_vappendf(
-	struct vbuffer **pvbuf, const char *restrict format, va_list args);
+	struct vbuffer *restrict *pvbuf, const char *restrict format,
+	va_list args) FORMAT_PRINTF(2, 0);
 
 /**
  * @internal
  * Convenience wrapper over vbuf_vappendf with variadic arguments.
  */
-int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
+int vbuf_appendf(
+	struct vbuffer *restrict *pvbuf, const char *restrict format, ...)
+	FORMAT_PRINTF(2, 3);
 
 /**
  * @defgroup BUF
@@ -222,20 +254,31 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 
 /**
  * @brief Bind a buffer handle to a literal string without copying.
+ * @param buf Lvalue of type `struct buffer *` to receive the handle.
  * @details The buffer has static storage duration; its content must not be
  * modified.
  */
-#define BUF_CONST(buf, str)                                                    \
-	do {                                                                   \
-		static struct {                                                \
-			BUFFER_HDR;                                            \
-			unsigned char data[sizeof(str)];                       \
+/* The literal is stored through the union's sized member and read back through
+ * its `struct buffer` member: a union may be read through a member other than
+ * the one last stored (C11 6.5.2.3p3), so the handle designates an object of
+ * the type it is accessed as, and the bytes of the flexible array member are
+ * the literal's own. */
+#define BUF_CONST(buf, str)                                                      \
+	do {                                                                     \
+		static union {                                                   \
+			struct buffer view;                                      \
+			struct {                                                 \
+				BUFFER_HDR;                                      \
+				unsigned char data[sizeof(str)];                 \
+			} literal;                                               \
 		} literalbuf = {                                               \
-			.cap = sizeof(str) - 1,                                \
-			.len = sizeof(str) - 1,                                \
-			.data = str,                                           \
-		};                                                             \
-		(buf) = (struct buffer *)&literalbuf;                          \
+			.literal = {                                           \
+				.cap = sizeof(str) - 1,                        \
+				.len = sizeof(str) - 1,                        \
+				.data = str,                                   \
+			},                                                     \
+		}; \
+		(buf) = &literalbuf.view;                                        \
 	} while (0)
 
 /**
@@ -244,10 +287,10 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  * NUL-terminator is added.
  * usage: `BUF_APPEND(buf, data, len);`
  */
-#define BUF_APPEND(buf, data, n)                                               \
+#define BUF_APPEND(buf, src, n)                                                \
 	do {                                                                   \
 		BUF_ASSERT_SANITY(buf);                                        \
-		buf_append((struct buffer *)&(buf), (data), (n));              \
+		buf_append((buf).cap, &(buf).len, (buf).data, (src), (n));     \
 	} while (0)
 
 /**
@@ -260,8 +303,8 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 	do {                                                                   \
 		BUF_ASSERT_SANITY(buf);                                        \
 		buf_append(                                                    \
-			(struct buffer *)&(buf), (const void *)("" str),       \
-			sizeof(str) - 1u);                                     \
+			(buf).cap, &(buf).len, (buf).data,                     \
+			(const void *)("" str), sizeof(str) - 1u);             \
 	} while (0)
 
 /**
@@ -272,7 +315,7 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  */
 #define BUF_APPENDF(buf, format, ...)                                          \
 	(BUF_ASSERT_SANITY(buf),                                               \
-	 buf_appendf((struct buffer *)&(buf), (format), __VA_ARGS__))
+	 buf_appendf((buf).cap, &(buf).len, (buf).data, (format), __VA_ARGS__))
 
 /**
  * @brief Append formatted string to buffer using a va_list.
@@ -282,7 +325,7 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  */
 #define BUF_VAPPENDF(buf, format, args)                                        \
 	(BUF_ASSERT_SANITY(buf),                                               \
-	 buf_vappendf((struct buffer *)&(buf), (format), (args)))
+	 buf_vappendf((buf).cap, &(buf).len, (buf).data, (format), (args)))
 
 /**
  * @brief Remove n bytes from the start of the buffer.
@@ -336,6 +379,11 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 #define VBUF_ASSERT_SANITY(vbuf)                                               \
 	assert((vbuf)->cap > 0 && (vbuf)->len <= (vbuf)->cap)
 
+/* Asserts vbuf is NULL (an OOM condition) or passes VBUF_ASSERT_SANITY. */
+#define VBUF_ASSERT_SANITY_OR_NULL(vbuf)                                       \
+	assert((vbuf) == NULL ||                                               \
+	       ((vbuf)->cap > 0 && (vbuf)->len <= (vbuf)->cap))
+
 /* Asserts at least n bytes of valid data reside in the vbuffer. */
 #define VBUF_ASSERT_LEAST(vbuf, n)                                             \
 	assert((vbuf)->cap > 0 && (n) <= (vbuf)->len &&                        \
@@ -382,7 +430,7 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 
 /**
  * @brief Get raw pointer to the start of the buffered data.
- * @return Pointer to the buffered data.
+ * @return Pointer to the buffered data, NUL-terminated at `VBUF_LEN`.
  */
 #define VBUF_DATA(vbuf) (VBUF_ASSERT_SANITY(vbuf), (void *)((vbuf)->data))
 
@@ -409,7 +457,8 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
  * @details This is the write counterpart of VBUF_VIEW: where VBUF_VIEW exposes
  * existing data for reading, VBUF_SPACE exposes the unused tail for writing.
  * After writing n bytes via the returned pointer, advance len manually with
- * `(vbuf)->len += n`.
+ * `(vbuf)->len += n`, then restore the terminator with
+ * `(vbuf)->data[(vbuf)->len] = '\0'`.
  * usage: `VBUF_SPACE(b, n, vbuf);`
  */
 #define VBUF_SPACE(b, n, vbuf)                                                 \
@@ -437,21 +486,24 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 
 /**
  * @brief Resize the vbuffer to the specified capacity.
- * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
+ * @param vbuf Must be a valid lvalue of type `struct vbuffer *`; NULL is an
+ * OOM condition, which the call skips.
  * @param want New capacity in bytes. If smaller than current length, data is
  * truncated.
  * @details On failure, the allocation remains unchanged. Skipped entirely once
- * an OOM condition is recorded (see `VBUF_HAS_OOM`), so a resize cannot clear
- * the marker while the data stays truncated; use `VBUF_RESET` to clear it.
+ * an OOM condition is recorded (see `VBUF_HAS_OOM`), including a NULL vbuf,
+ * so a resize cannot clear the marker while the data stays truncated; use
+ * `VBUF_RESET` to clear it.
  * usage: `VBUF_RESIZE(vbuf, 1024);`
  */
 #define VBUF_RESIZE(vbuf, want)                                                  \
 	do {                                                                     \
-		VBUF_ASSERT_SANITY(vbuf);                                        \
-		/* An OOM condition is recorded as len == cap; a realloc here  \
-		 * would clear the marker while the data stays truncated, so   \
-		 * skip it, mirroring VBUF_RESERVE. */ \
-		if ((vbuf)->len != (vbuf)->cap && (want) < SIZE_MAX) {           \
+		VBUF_ASSERT_SANITY_OR_NULL(vbuf);                                \
+		/* An OOM condition is recorded as NULL or len == cap; a       \
+		 * realloc here would clear the marker while the data stays    \
+		 * truncated, so skip it, mirroring VBUF_RESERVE. */ \
+		if ((vbuf) != NULL && (vbuf)->len != (vbuf)->cap &&              \
+		    (want) < SIZE_MAX) {                                         \
 			(vbuf) = vbuf_alloc((vbuf), (want) + 1);                 \
 			if ((vbuf) != NULL) {                                    \
 				(vbuf)->len = MIN((vbuf)->len, (want));          \
@@ -500,26 +552,29 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 
 /**
  * @brief Append fixed-length data to vbuffer.
- * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
+ * @param vbuf Must be a valid lvalue of type `struct vbuffer *`; NULL is an
+ * OOM condition, which the call skips.
  * @details vbuf will be expanded if there is not enough space. On allocation
  * failure, data is truncated and OOM is set; check with `VBUF_HAS_OOM`.
+ * Skipped once OOM is set.
  * usage: `VBUF_APPEND(vbuf, data, len);`
  */
 #define VBUF_APPEND(vbuf, data, n)                                             \
 	do {                                                                   \
-		VBUF_ASSERT_SANITY(vbuf);                                      \
+		VBUF_ASSERT_SANITY_OR_NULL(vbuf);                              \
 		(vbuf) = vbuf_append((vbuf), (data), (n));                     \
 	} while (0)
 
 /**
  * @brief Append literal string to vbuffer.
- * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
+ * @param vbuf Must be a valid lvalue of type `struct vbuffer *`; NULL is an
+ * OOM condition, which the call skips.
  * @see VBUF_APPEND
  * @details usage: `VBUF_APPENDSTR(vbuf, "some string");`
  */
 #define VBUF_APPENDSTR(vbuf, str)                                              \
 	do {                                                                   \
-		VBUF_ASSERT_SANITY(vbuf);                                      \
+		VBUF_ASSERT_SANITY_OR_NULL(vbuf);                              \
 		(vbuf) = vbuf_append(                                          \
 			(vbuf), (const void *)("" str),                        \
 			sizeof(str) - sizeof(""));                             \
@@ -527,25 +582,27 @@ int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...);
 
 /**
  * @brief Append formatted string to vbuffer.
- * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
+ * @param vbuf Must be a valid lvalue of type `struct vbuffer *`; NULL is an
+ * OOM condition, which the call skips.
  * @see VBUF_APPEND
- * @return vsnprintf-style count; -1 if OOM was already recorded.
+ * @return vsnprintf-style count; negative if nothing was appended.
  * @details usage: `VBUF_APPENDF(vbuf, "%s: %s\r\n", "Content-Type", "text/plain");`
  */
 #define VBUF_APPENDF(vbuf, format, ...)                                        \
-	(VBUF_ASSERT_SANITY(vbuf),                                             \
-	 vbuf_appendf((struct vbuffer **)&(vbuf), (format), __VA_ARGS__))
+	(VBUF_ASSERT_SANITY_OR_NULL(vbuf),                                     \
+	 vbuf_appendf(&(vbuf), (format), __VA_ARGS__))
 
 /**
  * @brief Append formatted string to vbuffer using a va_list.
- * @param vbuf Must be a valid lvalue of type `struct vbuffer *`.
+ * @param vbuf Must be a valid lvalue of type `struct vbuffer *`; NULL is an
+ * OOM condition, which the call skips.
  * @see VBUF_APPENDF
- * @return vsnprintf-style count; -1 if OOM was already recorded.
+ * @return vsnprintf-style count; negative if nothing was appended.
  * @details usage: `VBUF_VAPPENDF(vbuf, "%s: %s\r\n", args);`
  */
 #define VBUF_VAPPENDF(vbuf, format, args)                                      \
-	(VBUF_ASSERT_SANITY(vbuf),                                             \
-	 vbuf_vappendf((struct vbuffer **)&(vbuf), (format), (args)))
+	(VBUF_ASSERT_SANITY_OR_NULL(vbuf),                                     \
+	 vbuf_vappendf(&(vbuf), (format), (args)))
 
 /**
  * @brief Remove n bytes from the start of the vbuffer.

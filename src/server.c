@@ -47,7 +47,9 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	if (!socket_nonblock_or_close(fd)) {
 		return -1;
 	}
-	(void)socket_set_reuseport(fd, conf->tcp_reuseport);
+	LOG_SOCKOPT(
+		"socket_set_reuseport",
+		socket_set_reuseport(fd, conf->tcp_reuseport));
 	tcp_apply_conf(fd, conf);
 	/* Bind socket to address */
 	if (bind(fd, sa, sa_len(sa)) != 0) {
@@ -137,8 +139,16 @@ static bool udp_socket(
 	if (!socket_nonblock_or_close(fd)) {
 		return false;
 	}
-	(void)socket_set_reuseport(fd, conf->udp_reuseport);
-	(void)socket_set_buffer(fd, conf->udp_sndbuf, conf->udp_rcvbuf);
+	const int reuse_err = socket_set_reuseport(fd, conf->udp_reuseport);
+	const int buffer_err =
+		socket_set_buffer(fd, conf->udp_sndbuf, conf->udp_rcvbuf);
+	if (reuse_err != 0 || buffer_err != 0) {
+		LOGE_F("udp socket options: (%d) %s",
+		       reuse_err != 0 ? reuse_err : buffer_err,
+		       strerror(reuse_err != 0 ? reuse_err : buffer_err));
+		socket_close(fd);
+		return false;
+	}
 	udp->fd = fd;
 	return true;
 }

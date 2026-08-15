@@ -43,6 +43,10 @@ void crashhandler_install(void);
  * @note Restores exactly the signals installed by crashhandler_install.
  * @note Restores the alternate signal stack that was effective before
  *   crashhandler_install(), disabling it only if the thread had none.
+ * @note Must run on the same thread that called crashhandler_install(): the
+ *   alternate signal stack is per-thread, so only that thread can restore and
+ *   release it. Called on any other thread, it leaves the alternate stack
+ *   installed rather than free memory that thread is still using.
  * @note Same caller restrictions as crashhandler_install(): not safe to
  *   call concurrently with itself, with crashhandler_install(), or while
  *   any thread could still raise one of the guarded signals. Call once,

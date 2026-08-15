@@ -72,13 +72,21 @@ uint64_t float_decompose(double x, int *e2);
  * unless ndigits == 0 and |x| rounds up to 10^K (returns the single digit 1).
  * Digits beyond the returned count are zeros; callers zero-extend.
  *
- * @param x A finite nonzero double; the sign is ignored.
+ * @param x A finite double; the sign is ignored. For either signed zero,
+ * returns 0 and sets *dec_exp to 0.
  * @param ndigits Requested significant digits.
  * @param[out] digits Output buffer with room for FLOAT_DECIMAL_DIGITS bytes.
  * @param[out] dec_exp Decimal exponent K.
  * @return Number of digits written, in [0, FLOAT_DECIMAL_DIGITS].
  */
 int float_todecimal(double x, int ndigits, char *digits, int *dec_exp);
+
+/**
+ * Significant decimal digits that can affect rounding to binary64: a midpoint's
+ * exact expansion, one digit longer than a value's. A caller bounding its own
+ * buffer keeps this many, then one nonzero digit standing for a dropped tail.
+ */
+#define FLOAT_ROUND_DIGITS 768
 
 /**
  * @brief Correctly-rounded decimal → binary64 (round-half-even).

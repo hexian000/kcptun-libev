@@ -19,7 +19,9 @@
  * @brief Create reader from a file object.
  * @param[in] f Transfer ownership of the file object.
  * @return If malloc failed or f == NULL, returns NULL.
- * @details The stream is unbuffered.
+ * @details Reads through the file object's own buffering, which is left
+ * exactly as the caller set it. `stdin`/`stdout`/`stderr` are not closed by
+ * io_stream_close().
  */
 struct io_stream *io_filereader(FILE *f);
 
@@ -27,7 +29,11 @@ struct io_stream *io_filereader(FILE *f);
  * @brief Create writer from a file object.
  * @param[in] f Transfer ownership of the file object.
  * @return If malloc failed or f == NULL, returns NULL.
- * @details The stream is unbuffered.
+ * @details Writes through the file object's own buffering, which is left
+ * exactly as the caller set it, so io_stream_flush() is what pushes data out
+ * and reports a write error the buffering deferred; io_stream_close() reports
+ * one too. `stdin`/`stdout`/`stderr` are not closed by io_stream_close(), but
+ * `stdout`/`stderr` are flushed by it.
  */
 struct io_stream *io_filewriter(FILE *f);
 
@@ -39,8 +45,8 @@ struct io_stream *io_filewriter(FILE *f);
  *                    read; on error, unchanged.
  * @return A null-terminated buffer containing `*len` bytes of data,
  *         which the caller must free. NULL on error.
- * @details Never truncates: if the data is too large, the function
- *          returns NULL.
+ * @details Never truncates: if the data does not fit the capacity, the
+ *          function logs it and returns NULL.
  */
 unsigned char *io_readfile(const char *restrict path, size_t *restrict len);
 

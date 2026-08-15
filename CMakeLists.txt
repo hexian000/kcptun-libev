@@ -142,4 +142,8 @@ if(ENABLE_SYSTEMD)
 endif()
 
 add_subdirectory(contrib)
+if(FORCE_POSIX)
+    # csnippets needs BSD declarations for its signal and privilege helpers.
+    target_compile_definitions(csnippets PRIVATE _DEFAULT_SOURCE)
+endif()
 add_subdirectory(src)

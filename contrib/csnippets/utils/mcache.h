@@ -21,6 +21,11 @@
  *
  * @note Thread safety: These implementations are NOT thread-safe
  * @note Memory alignment: No special alignment guarantees beyond malloc()
+ * @note Define MCACHE_STATS to a nonzero integer (for example,
+ *       -DMCACHE_STATS=1) to enable request/hit counters. Leave it undefined
+ *       or define it as 0 to disable them. Because this option changes the
+ *       mcache/mmcache struct layouts, all translation units sharing a cache
+ *       object must use the same setting.
  */
 
 #include "math/intlog2.h"
@@ -119,7 +124,7 @@ static inline void mcache_free(struct mcache *restrict cache)
  *
  * @note The returned object is uninitialized - caller must initialize it
  * @note Cache operates as LIFO - most recently returned element is reused first
- * @note Statistics are updated if MCACHE_STATS is defined; read them back
+ * @note Statistics are updated when MCACHE_STATS is nonzero; read them back
  * with mcache_getstats()
  */
 static inline void *mcache_get(struct mcache *restrict cache)
@@ -195,7 +200,7 @@ mcache_shrink(struct mcache *restrict cache, const size_t count)
  * @param hit If non-NULL, set to the number of mcache_get() calls served
  * from the cache instead of malloc()
  *
- * @note Both are set to 0 when built without MCACHE_STATS
+ * @note Both are set to 0 when MCACHE_STATS is undefined or 0
  */
 static inline void mcache_getstats(
 	const struct mcache *restrict cache, size_t *restrict request,
@@ -387,7 +392,7 @@ static inline void mmcache_free(struct mmcache *restrict cache)
  *
  * @note The returned block is uninitialized
  * @note The same size must be passed to mmcache_put() when returning the block
- * @note Statistics are updated if MCACHE_STATS is defined; read them back
+ * @note Statistics are updated when MCACHE_STATS is nonzero; read them back
  * with mmcache_getstats()
  */
 static inline void *
@@ -483,7 +488,7 @@ mmcache_shrink(struct mmcache *restrict cache, const size_t count)
  * @param hit If non-NULL, set to the number of mmcache_get() calls served
  * from the cache instead of malloc()
  *
- * @note Both are set to 0 when built without MCACHE_STATS
+ * @note Both are set to 0 when MCACHE_STATS is undefined or 0
  */
 static inline void mmcache_getstats(
 	const struct mmcache *restrict cache, size_t *restrict request,

@@ -291,10 +291,10 @@ static const uint32_t pow5[] = {
 	78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125,
 };
 
-/* the significand fills at most FLOAT_DECIMAL_DIGITS digits (~2548 bits); the
+/* the significand fills at most FLOAT_ROUND_DIGITS digits (~2552 bits); the
  * e < 0 path shifts it left by ~5^-e's bit length before the divide, so ~2600
  * bits with margin */
-enum { BINLIMBS = FLOAT_DECIMAL_DIGITS / 8 + 32 };
+enum { BINLIMBS = FLOAT_ROUND_DIGITS / 8 + 32 };
 
 struct binint {
 	uint32_t limb[BINLIMBS]; /* base-2^32, least significant at limb[0] */
@@ -492,19 +492,19 @@ double float_fromdecimal(
 	if (mag < -323) {
 		return 0.0; /* below 2^-1075, rounds to zero */
 	}
-	/* Correct rounding never needs more significant digits than
-	 * float_todecimal can emit; beyond that the tail only has to be known to
-	 * be nonzero, which sticky carries into assemble(). Dropping it is also
-	 * what holds the binint inside BINLIMBS, sized for exactly that many
-	 * digits. Trailing zeros are already gone, so a dropped tail ends in a
-	 * nonzero digit and is never all zero. */
+	/* Rounding compares against a midpoint, whose exact expansion runs one
+	 * digit past a value's; beyond that the tail only has to be known to be
+	 * nonzero, which sticky carries into assemble(). The cap is also what
+	 * holds the binint inside BINLIMBS, sized for exactly that many digits.
+	 * Trailing zeros are already gone, so a dropped tail ends in a nonzero
+	 * digit and is never all zero. */
 	bool sticky = false;
-	if (hi - lo > FLOAT_DECIMAL_DIGITS) {
-		hi = lo + FLOAT_DECIMAL_DIGITS;
+	if (hi - lo > FLOAT_ROUND_DIGITS) {
+		hi = lo + FLOAT_ROUND_DIGITS;
 		sticky = true;
 	}
 	/* value = D * 10^e10, D = integer(digits[lo..hi)); mag is within
-	 * [-323, 309] and nd within [1, FLOAT_DECIMAL_DIGITS], so e10 lands
+	 * [-323, 309] and nd within [1, FLOAT_ROUND_DIGITS], so e10 lands
 	 * well inside int */
 	const int nd = hi - lo;
 	const int e10 = (int)(mag - nd);

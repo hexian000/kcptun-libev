@@ -4,6 +4,8 @@
 #ifndef STRINGS_STRING_H
 #define STRINGS_STRING_H
 
+#include "meta/format.h"
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -17,9 +19,14 @@
  * A char32_t/UTF-8 companion to <string.h> for plain `char *` strings, filling
  * the gap left by utf8.h (codec) and uctype.h (classification + case mapping).
  * Every function treats an invalid byte as a one-byte unit, so no input stalls
- * or reads past the terminator. Copy/concatenate follow snprintf(3) semantics:
- * always NUL-terminated when the buffer is non-empty, truncation never splits a
- * codepoint, and the return is the length that would be needed.
+ * or reads past the terminator. Where units are compared (a set, a search, a
+ * scanf literal or scanset, a case-insensitive compare), an invalid byte equals
+ * only the same byte, never another invalid byte or a genuine U+FFFD; where they
+ * are ordered, it sorts right after U+FFFD and invalid bytes by byte value.
+ * Copy/concatenate follow snprintf(3) semantics: always NUL-terminated when the
+ * buffer is non-empty (except that u8strlcat leaves a destination holding no
+ * NUL untouched), truncation never splits a codepoint, and the return is the
+ * length that would be needed.
  *
  * Most functions mirror a <string.h> counterpart under a `u8str` prefix
  * (u8strchr, u8strspn, ...); the prefix keeps every symbol distinct from libc,
@@ -35,9 +42,10 @@
  * Unicode case fold can change the encoded length.
  *
  * The case-aware operations (u8strcasecmp, u8strncasecmp, u8strcasestr,
- * u8strlower, u8strupper), u8strwidth and u8strftime are backed by libicu and
- * are only declared in the WITH_ICU build; the codec, copy/search/trim, and the
- * locale-independent format/scan/number-parse helpers are always available.
+ * u8strlower, u8strupper), ucwidth, u8strwidth and u8strftime are backed by
+ * libicu and are only declared in the WITH_ICU build; the codec,
+ * copy/search/trim, and the locale-independent format/scan/number-parse helpers
+ * are always available.
  * @{
  */
 
@@ -64,8 +72,16 @@ int u8strlcpy(char *restrict dst, size_t dstsize, const char *restrict src);
 
 /**
  * @brief Append a UTF-8 string with snprintf(3) semantics.
+ * @param[in,out] dst Buffer holding a string; may be NULL only when
+ *                    dstsize == 0. At most dstsize bytes of it are read.
+ * @param dstsize Size of dst in bytes, including the NUL terminator.
+ * @param[in] src NUL-terminated UTF-8 string.
+ * @return Bytes needed for the concatenation, excluding the NUL; a value
+ *         >= dstsize indicates truncation (never mid-codepoint). Negative if
+ *         the length > INT_MAX. When dst holds no NUL within its first dstsize
+ *         bytes, dst is left untouched (no terminator is written) and the
+ *         result is dstsize + strlen(src).
  * @see u8strlcpy
- * @return Bytes needed for the concatenation, excluding the NUL.
  */
 int u8strlcat(char *restrict dst, size_t dstsize, const char *restrict src);
 
@@ -127,7 +143,8 @@ char *u8strtrimspace(char *restrict s);
 /** @brief Compare two UTF-8 strings, case-insensitive (simple case mapping).
  *  @param[in] a First string.
  *  @param[in] b Second string.
- *  @return Sign of the codepoint difference at the first case-differing unit.
+ *  @return Sign of the codepoint difference at the first case-differing unit
+ *          (an invalid byte ordered as described above).
  *  @note Requires the WITH_ICU build; folds by the linked libicu Unicode
  *        version. */
 int u8strcasecmp(const char *restrict a, const char *restrict b);
@@ -171,9 +188,12 @@ int u8strupper(char *restrict buf, size_t maxlen, const char *restrict src);
 /**
  * @brief Display width of a codepoint, a locale-free wcwidth(3) analogue.
  * @return 2 for wide or fullwidth East Asian codepoints; 0 for zero-width ones
- *         (combining marks, format controls, Hangul conjoining jamo, and NUL);
- *         -1 for other non-printable codepoints (controls, surrogates, and
- *         values above U+10FFFF); 1 otherwise.
+ *         (non-spacing and enclosing combining marks, format controls,
+ *         conjoining Hangul medial and final jamo, and NUL); -1 for every
+ *         other codepoint uctype_isprint() rejects (controls, surrogates, line
+ *         and paragraph separators, and unassigned codepoints including
+ *         noncharacters) and for values above U+10FFFF, as wcwidth(3) does;
+ *         1 otherwise.
  * @note Requires the WITH_ICU build.
  */
 int ucwidth(char32_t c);
@@ -204,8 +224,14 @@ int u8strwidth(const char *restrict s);
  * @param[in] tz A libicu time zone id, e.g. "America/New_York"; NULL selects
  *            UTC.
  * @param t Seconds since the Unix epoch.
+ * @details libicu formats in UTF-16, and the scratch buffers for that are kept
+ * on the stack, so the pattern, the time zone id and the whole formatted result
+ * must each stay below 1024 UTF-16 code units (a codepoint above U+FFFF counts
+ * as two). Reaching the cap fails with -1 however large maxlen is, leaving buf
+ * an empty string when maxlen > 0.
  * @return Bytes needed excluding the NUL; a value >= maxlen indicates
- *         truncation. Negative if the length exceeds INT_MAX or on failure.
+ *         truncation. Negative if the pattern, time zone id or result
+ *         reaches the 1024-unit cap, or on any other failure.
  * @note Requires the WITH_ICU build.
  */
 int u8strftime(
@@ -249,10 +275,16 @@ char *u8strsep(char **restrict s, const char *restrict set);
  * Divergences from vsnprintf(3):
  * - Truncation never splits a multibyte UTF-8 sequence: the buffer always
  *   holds a valid UTF-8 prefix of the full output.
- * - For %%s, precision and field width count codepoints instead of bytes.
+ * - For %%s, precision and field width count codepoints instead of bytes, and
+ *   the argument is read no further than the codepoints it emits. A precision
+ *   therefore bounds the read as in vsnprintf(3), where the array need not be
+ *   NUL-terminated -- except that the bound is that many codepoints, which may
+ *   span up to four bytes each: an argument without a terminator must hold
+ *   whole codepoints for the whole precision.
  * - %%p formats as "0x" followed by lowercase hex digits.
  * - %%n, %%lc and %%ls are unsupported; an unsupported or malformed
- *   conversion is echoed literally and consumes no argument.
+ *   conversion is echoed literally and its own argument is not consumed,
+ *   but any `*` width or precision it names still consumes its int.
  * - %%zd reads ptrdiff_t; long double arguments are narrowed to double.
  *
  * @param[out] buf Output buffer, always NUL-terminated when maxlen > 0;
@@ -265,14 +297,15 @@ char *u8strsep(char **restrict s, const char *restrict set);
  */
 int u8vsnprintf(
 	char *restrict buf, size_t maxlen, const char *restrict format,
-	va_list args);
+	va_list args) FORMAT_PRINTF(3, 0);
 
 /**
  * @brief Format a string like snprintf(3), independent of libc and locale.
  * @see u8vsnprintf
  */
 int u8snprintf(
-	char *restrict buf, size_t maxlen, const char *restrict format, ...);
+	char *restrict buf, size_t maxlen, const char *restrict format, ...)
+	FORMAT_PRINTF(3, 4);
 
 /**
  * @brief Parse a string like vsscanf(3), independent of libc and locale.
@@ -282,7 +315,8 @@ int u8snprintf(
  * the conversions d i u o x X c s p f F e E g G a A [ %%, assignment suppression
  * `*`, a maximum field width, and the length modifiers hh h l ll j z t L. A
  * whitespace directive matches zero or more input whitespace codepoints, and a
- * literal directive matches the same codepoint.
+ * literal directive matches the same codepoint. A %%[ range 'lo-hi' spans the
+ * units ordered between its bounds (invalid bytes placed as described above).
  *
  * Divergences from vsscanf(3):
  * - Whitespace and codepoint matching are Unicode-aware (any isspace()
@@ -290,19 +324,21 @@ int u8snprintf(
  * - %%p reads "0x" followed by hex digits, the inverse of u8snprintf's %%p.
  * - %%n, %%ls, %%lc and other unsupported conversions stop the scan.
  * - A float conversion consumes the whole "nan(n-char-sequence)" spelling,
- *   which C11 7.21.6.2 calls for (the item is the strtod subject sequence) but
- *   glibc's scanf leaves after "nan". An unterminated or width-truncated
- *   sequence backs off to plain "nan" in both.
+ *   while glibc's scanf leaves after "nan". An unterminated or width-truncated
+ *   payload backs off to plain "nan" here; C11 7.21.6.2 paragraphs 9-10 instead
+ *   require matching failure for an incomplete matching prefix.
  * - Two hex-float shapes differ from glibc in opposite directions: "0xg"
- *   assigns 0 here, its strtod subject sequence being "0", where glibc reports
- *   a matching failure; and a width cutting the prefix short, %%3lf on "0x.5",
- *   is a matching failure here, where glibc assigns 0.
+ *   assigns 0 here, where glibc reports a matching failure; and a width cutting
+ *   the prefix short, %%3lf on "0x.5", is a matching failure here, where glibc
+ *   assigns 0. A bare integer "0x" also assigns 0 here; C11's incomplete-prefix
+ *   rule requires matching failure.
  * - A float conversion parses at double precision, so %%Lf assigns a long double
  *   carrying only the double result; glibc parses at long double precision.
  * - An exponent marker with no digits behind it, whether absent outright or cut
  *   off by the field width, is left unconsumed: "1ex" and %%2le on "1e10" both
- *   read 1 and stop at the 'e', as C11 7.21.6.2 calls for (the item is the
- *   strtod subject sequence). glibc absorbs the marker and any sign.
+ *   read 1 and stop at the 'e'. C11's input item includes the incomplete
+ *   exponent prefix and requires matching failure. glibc absorbs the marker
+ *   and any sign without reporting that failure.
  *
  * @param[in] str NUL-terminated UTF-8 input string.
  * @param[in] format scanf-style format string.

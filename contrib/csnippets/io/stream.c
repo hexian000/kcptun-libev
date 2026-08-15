@@ -5,6 +5,7 @@
 
 #include "io.h"
 
+#include <errno.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,7 @@ int io_stream_direct_read(
 		/* direct_read is optional; report unsupported instead of
 		 * dereferencing a NULL vftable entry */
 		*len = 0;
-		return -1;
+		return ENOTSUP;
 	}
 	return direct_read(s, buf, len);
 }
@@ -37,7 +38,7 @@ int io_stream_read(
 		/* neither read slot is supported; report unsupported instead of
 		 * dereferencing a NULL vftable entry */
 		*len = 0;
-		return -1;
+		return ENOTSUP;
 	}
 	int err = 0;
 	size_t nread = 0;
@@ -68,7 +69,7 @@ int io_stream_write(
 		/* write is optional; report unsupported instead of
 		 * dereferencing a NULL vftable entry */
 		*len = 0;
-		return -1;
+		return ENOTSUP;
 	}
 	return write(s, buf, len);
 }
@@ -96,6 +97,13 @@ int io_stream_copy(
 	struct io_stream *restrict dst, struct io_stream *restrict src,
 	void *restrict buf, const size_t bufsize)
 {
+	if (bufsize == 0) {
+		/* Both paths use bufsize as the per-iteration read cap, so a
+		 * zero-length buffer reads nothing yet would report a
+		 * successful copy of an unconsumed source. Reject it. */
+		return EINVAL;
+	}
+
 	if (src->vftable->direct_read != NULL) {
 		/* The source can hand out its own bytes, so write them from
 		 * there. Going through io_stream_read instead would stage them
@@ -106,22 +114,23 @@ int io_stream_copy(
 			size_t nread = bufsize;
 			const int srcerr =
 				io_stream_direct_read(src, &span, &nread);
+			int dsterr = 0;
+			size_t nwritten = nread;
 			if (nread > 0) {
-				size_t nwritten = nread;
-				const int dsterr =
-					io_stream_write(dst, span, &nwritten);
-				if (dsterr != 0) {
-					return dsterr;
-				}
-				if (nwritten < nread) {
-					/* short write: per io_stream_write's
-					 * contract, the caller must treat this
-					 * as an error */
-					return -1;
-				}
+				dsterr = io_stream_write(dst, span, &nwritten);
 			}
 			if (srcerr != 0) {
 				return srcerr;
+			}
+			if (dsterr != 0) {
+				return dsterr;
+			}
+			if (nwritten < nread) {
+				/* short write: per io_stream_write's
+				 * contract, the caller must treat this
+				 * as an error; the sink ran out of
+				 * room without naming a cause */
+				return ENOSPC;
 			}
 			if (nread == 0) {
 				return 0;
@@ -129,9 +138,8 @@ int io_stream_copy(
 		}
 	}
 
-	size_t nread;
-	do {
-		nread = bufsize;
+	for (;;) {
+		size_t nread = bufsize;
 		const int srcerr = io_stream_read(src, buf, &nread);
 		size_t nwritten = nread;
 		const int dsterr = io_stream_write(dst, buf, &nwritten);
@@ -143,9 +151,15 @@ int io_stream_copy(
 		}
 		if (nwritten < nread) {
 			/* short write: per io_stream_write's contract, the
-			 * caller must treat this as an error */
-			return -1;
+			 * caller must treat this as an error; the sink ran out
+			 * of room without naming a cause */
+			return ENOSPC;
 		}
-	} while (nread > 0);
-	return 0;
+		if (nread < bufsize) {
+			/* short read: per io_stream_read's contract, EOF. Reading
+			 * again would block a terminal, whose EOF is not sticky,
+			 * until the user sent a second one. */
+			return 0;
+		}
+	}
 }

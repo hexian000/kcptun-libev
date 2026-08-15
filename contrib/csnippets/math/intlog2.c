@@ -40,11 +40,11 @@ const int intlog2_debruijn_bsf64[64] = {
  * --- Width-generic De Bruijn generator ---
  *
  * Builds a binary De Bruijn sequence B(2, k) and the BSR/BSF lookup tables
- * derived from it, for any width w = 2^k with w <= UINTMAX_W. Used at
- * runtime by the wide-uintmax_t path below (only compiled when uintmax_t
- * is wider than unsigned long long), and exercised directly by
- * intlog2_test.c at several widths on every platform, regardless of
- * native uintmax_t width. External linkage with an intlog2_ prefix (but
+ * derived from it, for any width w = 2^k with w <= UINTMAX_W. Its one
+ * consumer is the wide-uintmax_t reference implementation below, which is
+ * kept under #if 0 and never compiled; what runs it is intlog2_test.c,
+ * which drives it directly at several widths on every platform,
+ * regardless of native uintmax_t width. External linkage with an intlog2_ prefix (but
  * no public header entry) so the test binary, which links this
  * translation unit directly, can call them without exposing them as
  * public API.

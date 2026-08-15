@@ -17,29 +17,41 @@
  * the NUL it writes in place marks the exact fill (an embedded NUL from %c
  * undercounts -- accepted as pathological). */
 int buf_vappendf(
-	struct buffer *restrict buf, const char *restrict format, va_list args)
+	const size_t cap, size_t *restrict len, unsigned char *restrict data,
+	const char *restrict format, va_list args)
 {
-	const size_t maxlen = buf->cap - buf->len;
-	char *restrict s = (char *)(buf->data + buf->len);
+	const size_t maxlen = cap - *len;
+	char *restrict s = (char *)(data + *len);
 	/* Even when the buffer is full (maxlen == 0) u8vsnprintf writes
 	 * nothing but still returns the would-be length, so the caller can
 	 * detect the truncation -- do not short-circuit to 0. */
 	const int ret = u8vsnprintf(s, maxlen, format, args);
-	if (ret > 0 && maxlen > 0) {
+	if (maxlen == 0) {
+		return ret;
+	}
+	if (ret < 0) {
+		/* the length is unrepresentable, so nothing is appended;
+		 * discard the stored prefix by terminating at len */
+		*s = '\0';
+		return ret;
+	}
+	if (ret > 0) {
 		if ((size_t)ret < maxlen) {
-			buf->len += (size_t)ret;
+			*len += (size_t)ret;
 		} else {
-			buf->len += strlen(s);
+			*len += strlen(s);
 		}
 	}
 	return ret;
 }
 
-int buf_appendf(struct buffer *restrict buf, const char *restrict format, ...)
+int buf_appendf(
+	const size_t cap, size_t *restrict len, unsigned char *restrict data,
+	const char *restrict format, ...)
 {
 	va_list args;
 	va_start(args, format);
-	const int ret = buf_vappendf(buf, format, args);
+	const int ret = buf_vappendf(cap, len, data, format, args);
 	va_end(args);
 	return ret;
 }
@@ -93,6 +105,9 @@ struct vbuffer *vbuf_grow(struct vbuffer *vbuf, const size_t want)
 	}
 	newbuf->cap = cap;
 	newbuf->len = len; /* initialize the new buffer */
+	/* an allocating grow starts from uninitialized memory, so write the
+	 * reserved NUL here as vbuf_alloc does */
+	newbuf->data[len] = '\0';
 	return newbuf;
 }
 
@@ -102,7 +117,7 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 	if (n == 0) {
 		return vbuf;
 	}
-	if (vbuf->cap == vbuf->len) {
+	if (vbuf == NULL || vbuf->cap == vbuf->len) {
 		/* allocation failure occurred, skip */
 		return vbuf;
 	}
@@ -124,10 +139,11 @@ vbuf_append(struct vbuffer *restrict vbuf, const void *restrict data, size_t n)
 }
 
 int vbuf_vappendf(
-	struct vbuffer **pvbuf, const char *restrict format, va_list args)
+	struct vbuffer *restrict *pvbuf, const char *restrict format,
+	va_list args)
 {
 	struct vbuffer *restrict vbuf = *pvbuf;
-	if (vbuf->cap == vbuf->len) {
+	if (vbuf == NULL || vbuf->cap == vbuf->len) {
 		/* allocation failure occurred, skip */
 		return -1;
 	}
@@ -145,17 +161,23 @@ int vbuf_vappendf(
 		va_end(args0);
 	}
 	if (ret <= 0) {
+		/* nothing is appended; the pass may have stored a prefix of
+		 * the formatted text, so terminate at len again */
+		vbuf->data[vbuf->len] = '\0';
 		return ret;
 	}
-	/* 1 extra byte is reserved for detecting allocation failures */
-	const size_t want = vbuf->len + (size_t)ret + 1;
-	if (want <= vbuf->cap) {
-		/* first try success */
-		vbuf->len += (size_t)ret;
-		return ret;
+	/* 1 extra byte is reserved for detecting allocation failures; guard the
+	 * addition so a len near SIZE_MAX cannot wrap want below cap */
+	if ((size_t)ret < SIZE_MAX - vbuf->len - 1) {
+		const size_t want = vbuf->len + (size_t)ret + 1;
+		if (want <= vbuf->cap) {
+			/* first try success */
+			vbuf->len += (size_t)ret;
+			return ret;
+		}
+		*pvbuf = vbuf_grow(vbuf, want);
+		vbuf = *pvbuf;
 	}
-	*pvbuf = vbuf_grow(vbuf, want);
-	vbuf = *pvbuf;
 	/* when failed, append as much as possible */
 	{
 		char *restrict s = (char *)(vbuf->data + vbuf->len);
@@ -175,7 +197,8 @@ int vbuf_vappendf(
 	return ret;
 }
 
-int vbuf_appendf(struct vbuffer **pvbuf, const char *restrict format, ...)
+int vbuf_appendf(
+	struct vbuffer *restrict *pvbuf, const char *restrict format, ...)
 {
 	va_list args;
 	va_start(args, format);

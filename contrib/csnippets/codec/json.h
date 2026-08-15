@@ -75,12 +75,20 @@ struct json_val {
  *   - ARRAY / OBJECT: the offset just past the opening bracket (== .iter);
  *     the body is parsed lazily, so the container's true end is obtained from
  *     the final iterator returned by json_arr_next() / json_obj_next().
- *   - JSON_ERROR: the offset at which parsing stopped.
+ *   - JSON_ERROR: the offset where parsing attempted the value, after leading
+ *     whitespace (or the end of the buffer for empty/whitespace-only input).
  *
  * To reject trailing content after a scalar value, skip JSON whitespace from
  * *len and check that the offset reached the end of the buffer.
  * Strings are decoded in-place: str points into json and is NUL-terminated.
  * Numbers: str points to the raw text in json (NOT NUL-terminated).
+ *
+ * Decoding is destructive: the NUL that terminates a decoded string overwrites
+ * its input (usually the closing quote), so once a string -- a key or a value,
+ * decoded by this function, json_parse_string() or json_obj_next() -- has been
+ * returned, its bytes and those of every container enclosing it are no longer
+ * valid JSON. Parse or iterate each value at most once, e.g. do not scan an
+ * object for one key and then iterate it again; to re-scan, parse a copy.
  *
  * @param[inout] json JSON buffer, modified in-place.
  * @param[inout] len On entry, bytes available in json; on return, bytes consumed.
@@ -96,7 +104,8 @@ struct json_val json_parse(char *restrict json, size_t *restrict len);
  * must consist of exactly one JSON string — any trailing non-whitespace
  * content causes the call to return false.
  *
- * Strings are decoded in-place on the mutable @p val buffer.
+ * Strings are decoded in-place on the mutable @p val buffer, which then no
+ * longer holds valid JSON: see json_parse() on destructive decoding.
  *
  * @param[in] val Mutable JSON fragment (need not be NUL-terminated).
  * @param[in] vlen Bytes available in val.
@@ -227,11 +236,16 @@ bool json_parse_double(char *restrict val, size_t vlen, double *restrict out);
  * Follows snprintf semantics: if buf is NULL, returns the required length
  * (excluding NUL) without writing anything.
  *
+ * RFC 8259 §8.1 requires UTF-8, so @p s must be well-formed UTF-8; ill-formed
+ * input is rejected instead of emitted.  utf8_load() sanitizes it beforehand
+ * where the caller prefers U+FFFD substitution to an error.
+ *
  * @param[out] buf Output buffer, or NULL to query length.
  * @param bufsz Size of the output buffer.
  * @param s Input string to encode (need not be NUL-terminated).
  * @param len Byte length of s.
- * @return Number of bytes written (excluding NUL), or a negative value on error.
+ * @return Number of bytes written (excluding NUL), or a negative value on error
+ *         (ill-formed UTF-8, or a length beyond INT_MAX).
  *         If the return value is >= bufsz, the output was truncated.
  */
 int json_marshal_string(
@@ -252,6 +266,13 @@ enum {
 
 /**
  * @brief Advance an object iterator to the next key-value pair.
+ *
+ * Each key is decoded in-place, so a pass over the object is destructive:
+ * iterate it once. A second pass over the same buffer, even from a fresh
+ * json_parse(), is invalid: it usually fails with JSON_NEXT_ERROR at the
+ * first decoded key, but a key that held escapes can leave bytes that parse
+ * as different members (see json_parse()).
+ *
  * @param[inout] json The same buffer passed to json_parse().
  * @param[in] len Total bytes available in json (the original buffer length,
  * not the position). This value must remain the same across repeated calls.
@@ -271,6 +292,12 @@ int json_obj_next(
 
 /**
  * @brief Advance an array iterator to the next element.
+ *
+ * The iterator itself decodes nothing, but an element string the caller has
+ * decoded (or a key of a nested object it has iterated) leaves the array no
+ * longer valid JSON, so iterate it once: a second pass usually fails, but may
+ * instead yield different elements (see json_parse()).
+ *
  * @param[inout] json The same buffer passed to json_parse().
  * @param[in] len Total bytes available in json (the original buffer length,
  * not the position). This value must remain the same across repeated calls.
@@ -419,7 +446,8 @@ bool json_unmarshal(
  * @param bufsz Size of @p buf in bytes.
  * @param obj Object to encode.
  * @param indent Per-level indent for pretty output, or NULL for compact.
- * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error.
+ * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error,
+ * including a string field that is not well-formed UTF-8.
  * @note An optional array is carried as a NULL buffer with count 0, which is
  * exactly what an explicit `[]` unmarshals to, so the two are indistinguishable
  * by the time marshalling runs: an optional array that was present but empty in

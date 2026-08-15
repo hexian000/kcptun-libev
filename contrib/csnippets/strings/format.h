@@ -4,7 +4,6 @@
 #ifndef STRINGS_FORMAT_H
 #define STRINGS_FORMAT_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

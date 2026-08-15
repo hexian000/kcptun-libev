@@ -5,7 +5,6 @@
 #define STRINGS_UTF8_H
 
 #include <stddef.h>
-#include <stdint.h>
 #include <uchar.h>
 
 /**

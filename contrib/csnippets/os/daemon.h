@@ -43,6 +43,12 @@ void drop_privileges(const char *identity);
  * @param identity The user and group to drop privileges to, or NULL.
  * @param nochdir If true, do not change the current directory to /.
  * @param noclose If true, do not redirect stdin, stdout, stderr to /dev/null.
+ * @warning Must be called before the process creates any thread: fork() carries
+ *     only the calling thread into the child, and POSIX confines that child to
+ *     async-signal-safe operations until it execs, which this never does. The
+ *     post-fork path logs, and may reopen the standard streams or query the
+ *     account database, so a lock a vanished thread still owns can hang the
+ *     daemon process instead of starting it.
  * @note Performs the classic double-fork idiom (fork, setsid, fork
  *     again), so the final daemon process is never a session leader and
  *     cannot inadvertently reacquire a controlling terminal.
@@ -54,10 +60,16 @@ void drop_privileges(const char *identity);
  *     security-relevant: a file the daemon later creates with the customary
  *     0666 lands world-writable, so callers that care must set their own
  *     umask after this returns.
+ * @note Flushes every stdio stream (fflush(NULL)) before the first fork, so
+ *     output the caller buffered beforehand is written once, not once per
+ *     process that inherits the buffer. A failing flush is logged, not fatal.
  * @note Does not return on failure: a failing pipe, fork or freopen, a failing
+ *     fcntl(F_DUPFD) while moving the readiness pipe off fds 0-2, a failing
  *     read of the readiness message, or a daemon process that dies before
  *     confirming startup, aborts the process. If identity is non-NULL,
- *     drop_privileges' own fatal failures apply too.
+ *     drop_privileges' own fatal failures apply too. In the daemon process, a
+ *     readiness write that fails with any error other than EINTR (retried) or
+ *     EPIPE (see below) aborts the daemon.
  * @note Survives losing the original process: if it dies before reading the
  *     readiness message, the already-started daemon logs LOGW and carries on
  *     rather than being killed by SIGPIPE, which is ignored across that write

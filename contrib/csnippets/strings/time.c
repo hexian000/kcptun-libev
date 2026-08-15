@@ -3,6 +3,7 @@
 
 #include "time.h"
 
+#include "meta/strlen.h"
 #include "utils/ctype_ascii.h"
 
 #include <assert.h>
@@ -24,8 +25,6 @@
 #else
 #define LOCALTIME(timer) localtime((timer))
 #endif /* HAVE_LOCALTIME_R */
-
-#define STRLEN(s) (sizeof(s "") - sizeof(""))
 
 #define LAYOUT_RFC3339 "2006-01-02T15:04:05-07:00"
 #define LAYOUT_RFC3339_UTC "2006-01-02T15:04:05Z"
@@ -96,9 +95,10 @@ static void put_datetime(char *restrict s, const struct tm *restrict tm)
 	s[18] = (char)('0' + tm->tm_sec % 10);
 }
 
-/* Write the zone suffix ('Z' for UTC, else minute-granular "±HH:MM") and return
- * its length. The magnitude is taken through unsigned so tzoff == INT_MIN cannot
- * overflow. */
+/* Write the zone suffix ('Z' for a zero offset, else "±HH:MM") and return its
+ * length. tzoff is pre-normalized by norm_tzoff to whole minutes under 24 h, so
+ * hh is exactly two digits; the magnitude still goes through unsigned to keep
+ * the negation well-defined. */
 static int put_zone(char *restrict s, const int tzoff)
 {
 	if (tzoff == 0) {
@@ -117,21 +117,38 @@ static int put_zone(char *restrict s, const int tzoff)
 	return (int)STRLEN("+07:00");
 }
 
+/* Reduce a timezone offset to what RFC 3339 §5.6 time-numoffset can express:
+ * whole minutes (the sub-minute part is dropped) with a magnitude under 24 h.
+ * Returns false when the magnitude is 24 h or more, which has no conforming
+ * '±HH:MM' suffix. On success *out is the minute-granular offset both the
+ * calendar shift and the suffix use, so the applied instant and the emitted
+ * zone can never disagree. */
+static bool norm_tzoff(const int tzoff, int *restrict out)
+{
+	const int off = tzoff / 60 * 60;
+	if (off <= -86400 || off >= 86400) {
+		return false;
+	}
+	*out = off;
+	return true;
+}
+
 int format_rfc3339(
 	char *restrict s, const size_t maxlen, const time_t t, const int tzoff)
 {
-	/* Check representability before the buffer size so an unrepresentable
-	 * time returns -1 even on a size query, instead of being masked by the
-	 * snprintf-style needed-size return. */
+	/* Normalize the offset and check representability before the buffer
+	 * size, so an unrepresentable request returns -1 even on a size query,
+	 * instead of being masked by the snprintf-style needed-size return. */
+	int off;
 	struct tm tm;
-	if (!break_down(t, tzoff, &tm)) {
+	if (!norm_tzoff(tzoff, &off) || !break_down(t, off, &tm)) {
 		if (maxlen > 0) {
 			s[0] = '\0';
 		}
 		return -1;
 	}
-	const size_t need = tzoff == 0 ? STRLEN(LAYOUT_RFC3339_UTC) :
-					 STRLEN(LAYOUT_RFC3339);
+	const size_t need =
+		off == 0 ? STRLEN(LAYOUT_RFC3339_UTC) : STRLEN(LAYOUT_RFC3339);
 	if (maxlen < need + 1) {
 		if (maxlen > 0) {
 			s[0] = '\0';
@@ -139,7 +156,7 @@ int format_rfc3339(
 		return (int)need;
 	}
 	put_datetime(s, &tm);
-	const int len = (int)STRLEN(LAYOUT_DATETIME) + put_zone(s + 19, tzoff);
+	const int len = (int)STRLEN(LAYOUT_DATETIME) + put_zone(s + 19, off);
 	s[len] = '\0';
 	return len;
 }
@@ -154,16 +171,17 @@ int format_rfc3339nano(
 		}
 		return -1;
 	}
-	/* representability before buffer size (see format_rfc3339) */
+	/* normalize + representability before buffer size (see format_rfc3339) */
+	int off;
 	struct tm tm;
-	if (!break_down(tp->tv_sec, tzoff, &tm)) {
+	if (!norm_tzoff(tzoff, &off) || !break_down(tp->tv_sec, off, &tm)) {
 		if (maxlen > 0) {
 			s[0] = '\0';
 		}
 		return -1;
 	}
-	const size_t need = tzoff == 0 ? STRLEN(LAYOUT_RFC3339NANO_UTC) :
-					 STRLEN(LAYOUT_RFC3339NANO);
+	const size_t need = off == 0 ? STRLEN(LAYOUT_RFC3339NANO_UTC) :
+				       STRLEN(LAYOUT_RFC3339NANO);
 	if (maxlen < need + 1) {
 		if (maxlen > 0) {
 			s[0] = '\0';
@@ -178,7 +196,7 @@ int format_rfc3339nano(
 		ns /= 10;
 	}
 	const int len = (int)STRLEN(LAYOUT_DATETIME ".999999999") +
-			put_zone(s + 29, tzoff);
+			put_zone(s + 29, off);
 	s[len] = '\0';
 	return len;
 }

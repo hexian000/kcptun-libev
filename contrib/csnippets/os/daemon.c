@@ -62,8 +62,14 @@ void drop_privileges(const char *const identity)
 	const struct passwd *pw = NULL;
 	if (user != NULL) {
 		char *endptr;
+		/* strtoimax saturates an out-of-range value to INTMAX_MAX/MIN and
+		 * sets errno = ERANGE; clear errno first, then reject that
+		 * saturation so an overflowing id cannot pass INTCAST_CHECK on a
+		 * target whose id type is wide enough to hold the saturated value. */
+		errno = 0;
 		const intmax_t uidvalue = strtoimax(user, &endptr, 10);
-		if (endptr == user || *endptr ||
+		const bool range_error = errno == ERANGE;
+		if (endptr == user || *endptr || range_error ||
 		    !INTCAST_CHECK(uid, uidvalue)) {
 			/* Search the user database for the user name. POSIX
 			 * marks a miss with NULL and errno untouched, and a
@@ -95,8 +101,12 @@ void drop_privileges(const char *const identity)
 
 	if (group != NULL) {
 		char *endptr;
+		/* clear errno so an ERANGE overflow can be rejected below, matching
+		 * the user path above */
+		errno = 0;
 		const intmax_t gidvalue = strtoimax(group, &endptr, 10);
-		if (endptr == group || *endptr ||
+		const bool range_error = errno == ERANGE;
+		if (endptr == group || *endptr || range_error ||
 		    !INTCAST_CHECK(gid, gidvalue)) {
 			/* search group database for group name */
 			errno = 0;
@@ -236,6 +246,16 @@ static void notify_ready(const int fd)
 void daemonize(
 	const char *const identity, const bool nochdir, const bool noclose)
 {
+	/* Flush every stdio stream before forking. Each fork child inherits a
+	 * copy of whatever output is still buffered, and both the original
+	 * process (its exit()) and the daemon (the freopen below, or its own
+	 * eventual exit()) would flush that copy, writing it twice. A failed
+	 * flush is logged rather than fatal: at worst, the bytes it could not
+	 * write are the ones still duplicated. */
+	if (fflush(NULL) != 0) {
+		const int err = errno;
+		LOGW_F("fflush: (%d) %s", err, strerror(err));
+	}
 	/* Create an anonymous pipe for communicating with daemon process. */
 	int fd[2];
 	if (pipe(fd) == -1) {
@@ -299,6 +319,10 @@ void daemonize(
 			(void)close(fd[0]);
 		}
 	}
+	/* Everything below runs in a fork child and is not async-signal-safe: it
+	 * logs, and may reopen the standard streams or query the account
+	 * database. daemon.h requires a single-threaded caller, which is what
+	 * makes those operations sound here. */
 	/* In the child, call setsid(). */
 	if (setsid() < 0) {
 		const int err = errno;
@@ -312,10 +336,11 @@ void daemonize(
 			FAILMSGF("fork: (%d) %s", err, strerror(err));
 		} else if (pid > 0) {
 			/* Terminate the intermediate child with _exit(), not
-			 * exit(): it shares (via fork) the original process's stdio
-			 * buffers and atexit registrations, so a full exit() would
-			 * double-flush any buffered output and run those handlers in
-			 * this throwaway process. */
+			 * exit(): it inherits (via fork) the original process's
+			 * atexit registrations and any stdio output buffered since
+			 * the flush above, so a full exit() would run those
+			 * handlers in this throwaway process and write that output
+			 * a second time. */
 			_exit(EXIT_SUCCESS);
 		}
 	}

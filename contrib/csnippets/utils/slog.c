@@ -5,6 +5,8 @@
 
 #include "buffer.h"
 #include "io/stream.h"
+#include "meta/strlen.h"
+#include "os/clock.h"
 #include "strings/time.h"
 #if SLOG_MT_SAFE
 #include "sync/thrd.h"
@@ -20,6 +22,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <time.h>
 #include <unistd.h>
@@ -71,12 +74,19 @@ static atomic_uint slog_flags_ = 0;
 static _Atomic(slog_printer_fn) slog_printer;
 static _Atomic(const char *) slog_fileprefix;
 
+static_assert(
+	ATOMIC_POINTER_LOCK_FREE == 2,
+	"slog_fileprefix is read by slog_panicf() from a crash handler, where "
+	"ISO C11 7.14.1.1p5 admits an atomic access only if it is lock-free");
+
 #define MTX_LOCK(mu) THRD_ASSERT(mtx_lock(mu))
 #define MTX_UNLOCK(mu) THRD_ASSERT(mtx_unlock(mu))
 
 #define ATOMIC_STORE(object, desired)                                          \
 	atomic_store_explicit(object, desired, memory_order_release)
 #define ATOMIC_LOAD(object) atomic_load_explicit(object, memory_order_acquire)
+
+#define THREAD_LOCAL thread_local
 
 static once_flag slog_init_flag = ONCE_FLAG_INIT;
 static void slog_init(void)
@@ -103,10 +113,34 @@ static const char *slog_fileprefix = NULL;
 #define ATOMIC_STORE(object, desired) *(object) = (desired)
 #define ATOMIC_LOAD(object) (*(object))
 
+/* this arm carries no per-thread state: the whole logger is single-threaded */
+#define THREAD_LOCAL
+
 #define SLOG_INIT() ((void)(0))
 #endif /* SLOG_MT_SAFE */
 
-#define STRLEN(s) (sizeof(s "") - sizeof(""))
+/* Local UTC offset at t, memoized for the one second t names. The offset is a
+ * function of the instant, so a repeat within that second is exact and a DST
+ * transition -- always on a second boundary -- misses and recomputes; a TZ
+ * change under the process is stale until the second rolls over. Per-thread, so
+ * the log path stays lock-free. */
+static THREAD_LOCAL struct {
+	time_t sec;
+	int tzoff;
+	bool valid;
+} slog_tzcache;
+
+static int slog_tzoff(const time_t t)
+{
+	if (slog_tzcache.valid && slog_tzcache.sec == t) {
+		return slog_tzcache.tzoff;
+	}
+	const int tzoff = local_tzoff(t);
+	slog_tzcache.sec = t;
+	slog_tzcache.tzoff = tzoff;
+	slog_tzcache.valid = true;
+	return tzoff;
+}
 
 /* Format the current time as a fixed-length RFC 3339 stamp. The formatting is
  * shared with the rest of the tree via strings/time.h; format_rfc3339* return
@@ -119,10 +153,10 @@ slog_timestamp(char *restrict s, const size_t maxsize, const unsigned int flags)
 {
 	if (flags & SLOG_FLAG_NANOS) {
 		struct timespec ts;
-		if (timespec_get(&ts, TIME_UTC) == TIME_UTC) {
+		if (clock_unix(&ts)) {
 			const int tzoff = (flags & SLOG_FLAG_UTC) ?
 						  0 :
-						  local_tzoff(ts.tv_sec);
+						  slog_tzoff(ts.tv_sec);
 			const int n =
 				format_rfc3339nano(s, maxsize, &ts, tzoff);
 			return (n > 0 && (size_t)n < maxsize) ? (size_t)n : 0;
@@ -133,7 +167,7 @@ slog_timestamp(char *restrict s, const size_t maxsize, const unsigned int flags)
 	 * through the pointer, so the return carries nothing the argument does
 	 * not; an unrepresentable time is caught by format_rfc3339 below. */
 	(void)time(&now);
-	const int tzoff = (flags & SLOG_FLAG_UTC) ? 0 : local_tzoff(now);
+	const int tzoff = (flags & SLOG_FLAG_UTC) ? 0 : slog_tzoff(now);
 	const int n = format_rfc3339(s, maxsize, now, tzoff);
 	return (n > 0 && (size_t)n < maxsize) ? (size_t)n : 0;
 }
@@ -161,28 +195,6 @@ static const char *slog_filename(const char *restrict file)
 	return s;
 }
 
-/* write the whole buffer, retrying short writes and EINTR. Like the printers'
- * stream writes, output errors are best-effort and unescalated -- a logger has
- * no lower channel to report its own I/O failures through. Async-signal-safe. */
-static void slog_write_all(const int fd, const void *restrict data, size_t n)
-{
-	const unsigned char *restrict p = data;
-	while (n > 0) {
-		const ssize_t nw = write(fd, p, n);
-		if (nw < 0) {
-			if (errno == EINTR) {
-				continue;
-			}
-			break;
-		}
-		if (nw == 0) {
-			break;
-		}
-		p += (size_t)nw;
-		n -= (size_t)nw;
-	}
-}
-
 static void slog_print_terminal(
 	const int level, const char *restrict file, const int line,
 	const struct slog_extra *restrict extra, const char *restrict format,
@@ -192,34 +204,24 @@ static void slog_print_terminal(
 
 	struct slog_linebuf buf;
 	BUF_INIT(buf, 0);
+	const size_t cap = buf.cap;
+	const size_t trailer_len = STRLEN(ANSI_CSI_RESET "\n");
+	static_assert(
+		SLOG_BUFSIZE > STRLEN(ANSI_CSI_RESET "\n"),
+		"line buffer must hold the color reset and newline");
+	buf.cap = cap - trailer_len;
 	BUF_APPENDF(
 		buf, "%s%c ", slog_level_color[level], slog_level_char[level]);
 	BUF_APPENDTS(buf, flags);
 	BUF_APPENDF(buf, " %s:%d ", slog_filename(file), line);
 
-	/* Reserve the trailer before formatting the message, so the color reset
-	 * and newline always fit even when an overlong message truncates (a
-	 * chopped-off reset would leave the terminal colored); the engine
-	 * truncates at whatever cap it sees without splitting a UTF-8 sequence. */
-	const size_t cap = buf.cap;
-	const size_t trailer_len = STRLEN(ANSI_CSI_RESET "\n");
-	buf.cap = cap - buf.len > trailer_len ? cap - trailer_len : buf.len;
+	/* The prefix and message share the reduced cap, so UTF-8 truncation
+	 * leaves room for the color reset and newline. */
 	const int ret = BUF_VAPPENDF(buf, format, args);
 	if (ret < 0) {
 		BUF_APPENDSTR(buf, "(log format error)");
 	}
 	buf.cap = cap;
-	/* The reservation above only helps once the prefix itself leaves room:
-	 * a prefix within trailer_len of the end (a pathologically long
-	 * __FILE__ or file prefix) would otherwise truncate the trailer, and a
-	 * chopped-off reset is precisely what must never be emitted. Give the
-	 * trailer its bytes back out of the prefix. */
-	static_assert(
-		SLOG_BUFSIZE > STRLEN(ANSI_CSI_RESET "\n"),
-		"line buffer must hold the color reset and newline");
-	if (cap - buf.len < trailer_len) {
-		buf.len = cap - trailer_len;
-	}
 	/* overwriting the null terminator is not an issue */
 	BUF_APPENDSTR(buf, ANSI_CSI_RESET "\n");
 	size_t len = buf.len;
@@ -227,9 +229,11 @@ static void slog_print_terminal(
 	/* a logger has no lower channel to report its own I/O failures
 	 * through, so output errors below are best-effort and unescalated */
 	MTX_LOCK(&slog_output_mu);
-	/* re-check under the lock: a concurrent slog_setoutput may have cleared
-	 * the stream after this printer was selected */
-	if (slog_stream != NULL) {
+	/* re-check under the lock that this printer is still the installed one:
+	 * a concurrent slog_setoutput may have replaced the sink after it was
+	 * selected, and a stream sink shares slog_stream, so a line colored here
+	 * must not reach the plain stream installed in its place */
+	if (ATOMIC_LOAD(&slog_printer) == slog_print_terminal) {
 		(void)io_stream_write(slog_stream, buf.data, &len);
 		if (extra != NULL) {
 			extra->func(slog_stream, extra->data);
@@ -272,9 +276,9 @@ static void slog_print_stream(
 	size_t len = buf.len;
 
 	MTX_LOCK(&slog_output_mu);
-	/* re-check under the lock: a concurrent slog_setoutput may have cleared
-	 * the stream after this printer was selected */
-	if (slog_stream != NULL) {
+	/* re-check under the lock that this printer is still the installed one,
+	 * as slog_print_terminal does */
+	if (ATOMIC_LOAD(&slog_printer) == slog_print_stream) {
 		(void)io_stream_write(slog_stream, buf.data, &len);
 		if (extra != NULL) {
 			extra->func(slog_stream, extra->data);
@@ -303,9 +307,9 @@ static void slog_print_writer(
 	const size_t len = buf.len;
 
 	MTX_LOCK(&slog_output_mu);
-	/* re-check under the lock: a concurrent slog_setoutput may have cleared
-	 * the writer after this printer was selected */
-	if (slog_writer != NULL) {
+	/* re-check under the lock that this printer is still the installed one,
+	 * as slog_print_terminal does */
+	if (ATOMIC_LOAD(&slog_printer) == slog_print_writer) {
 		slog_writer(slog_writer_ud, buf.data, len);
 	}
 	/* like the syslog sink, the writer function sink ignores extra */
@@ -333,10 +337,9 @@ static void slog_print_syslog(
 	}
 
 	MTX_LOCK(&slog_output_mu);
-	/* re-check under the lock, as the other printers do -- but on the
-	 * installed printer, not on slog_syslog: a NULL slog_syslog is this
-	 * sink's own sentinel for the libc syslog() fallback, so it cannot also
-	 * mean "the sink was replaced" */
+	/* re-check under the lock that this printer is still the installed one,
+	 * as slog_print_terminal does; slog_syslog itself cannot answer that, as
+	 * a NULL one is this sink's sentinel for the libc syslog() fallback */
 	if (ATOMIC_LOAD(&slog_printer) == slog_print_syslog) {
 		if (slog_syslog != NULL) {
 			slog_syslog(
@@ -363,11 +366,21 @@ void slog_setlevel(const int level)
 /* Drop every sink, so that replacing one sink type with another leaves no
  * pointer behind for the printers to find. Call under slog_output_mu, before
  * installing the selected sink: slog.h lets a caller close or free the previous
- * sink the moment slog_setoutput returns, and a printer that has already loaded
- * slog_printer but not yet taken the lock re-checks its sink pointer there --
- * a check only a cleared pointer can fail. */
+ * sink the moment slog_setoutput returns. A printer that has already loaded
+ * slog_printer but not yet taken the lock re-checks there that it is still the
+ * installed printer; a sink pointer alone could not tell it, since the terminal
+ * and stream sinks share slog_stream and a swap between them re-sets it to a
+ * new non-NULL stream. */
 static void slog_dropsinks(void)
 {
+#if HAVE_SYSLOG
+	/* the libc syslog arm is the one with this printer and no function;
+	 * balance its openlog() so the connection does not outlive the sink */
+	if (ATOMIC_LOAD(&slog_printer) == slog_print_syslog &&
+	    slog_syslog == NULL) {
+		closelog();
+	}
+#endif
 	slog_stream = NULL;
 	slog_writer = NULL;
 	slog_writer_ud = NULL;
@@ -435,9 +448,11 @@ void slog_setoutput(const int type, ...)
 			break;
 		}
 #if HAVE_SYSLOG
-		openlog(ident, LOG_PID | LOG_NDELAY, LOG_USER);
 		MTX_LOCK(&slog_output_mu);
 		slog_dropsinks();
+		/* after slog_dropsinks(), whose closelog() would otherwise drop
+		 * the connection just opened */
+		openlog(ident, LOG_PID | LOG_NDELAY, LOG_USER);
 		ATOMIC_STORE(&slog_printer, slog_print_syslog);
 		MTX_UNLOCK(&slog_output_mu);
 #else /* HAVE_SYSLOG */
@@ -507,6 +522,28 @@ void slog_printf(
  * stack -- no thread_local, no output mutex (a crash may have interrupted a
  * thread already holding it) -- and emits it to stderr with a single write(2).
  */
+
+/* write the whole buffer, retrying short writes and EINTR. Like the printers'
+ * stream writes, output errors are best-effort and unescalated -- a logger has
+ * no lower channel to report its own I/O failures through. Async-signal-safe. */
+static void slog_write_all(const int fd, const void *restrict data, size_t n)
+{
+	const unsigned char *restrict p = data;
+	while (n > 0) {
+		const ssize_t nw = write(fd, p, n);
+		if (nw < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			break;
+		}
+		if (nw == 0) {
+			break;
+		}
+		p += (size_t)nw;
+		n -= (size_t)nw;
+	}
+}
 
 void slog_panicf(
 	const int level, const char *restrict file, const int line,

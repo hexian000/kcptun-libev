@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -40,6 +41,20 @@ extern struct mcache *msgpool;
 		if ((x) != NULL) {                                             \
 			free((x));                                             \
 			(x) = NULL;                                            \
+		}                                                              \
+	} while (0)
+
+/* Report a best-effort socket option failure at the call site. The csnippets
+ * option setters now return 0 or an errno and no longer log themselves (see
+ * contrib/csnippets os/socket), so a caller that discards the result must log
+ * it here. Stay quiet when the option is simply unsupported on this platform
+ * (ENOPROTOOPT), which is expected rather than an error. */
+#define LOG_SOCKOPT(what, expr)                                                \
+	do {                                                                   \
+		const int sockopt_err_ = (expr);                               \
+		if (sockopt_err_ != 0 && sockopt_err_ != ENOPROTOOPT) {        \
+			LOGW_F("%s: (%d) %s", (what), sockopt_err_,            \
+			       strerror(sockopt_err_));                        \
 		}                                                              \
 	} while (0)
 
@@ -103,6 +118,9 @@ bool check_rate_limit(ev_tstamp *restrict last, ev_tstamp now, double interval);
 #define FORMAT_IEC_BYTES(name, value)                                          \
 	char name[16];                                                         \
 	(void)format_iec_bytes(name, sizeof(name), (value))
+
+/* Borrowed process-lifetime writer for stdout or stderr. */
+struct io_stream *log_filewriter(FILE *f);
 
 /** Process-level initializations. */
 void init(void);

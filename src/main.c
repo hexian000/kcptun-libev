@@ -62,21 +62,6 @@ static void print_usage(const char *argv0)
 	(void)fflush(stderr);
 }
 
-/* io_filewriter() heap-allocates a stream that slog only borrows for the
- * process lifetime; cache one per standard stream so switching the log sink
- * neither leaks the prior sink nor dangles. */
-static struct io_stream *log_filewriter(FILE *const f)
-{
-	static struct io_stream *stdout_writer = NULL;
-	static struct io_stream *stderr_writer = NULL;
-	struct io_stream **restrict slot =
-		(f == stdout) ? &stdout_writer : &stderr_writer;
-	if (*slot == NULL) {
-		*slot = io_filewriter(f);
-	}
-	return *slot;
-}
-
 static void set_log_config(const struct config *restrict conf, const int level)
 {
 	slog_setlevel(CLAMP(level, LOG_LEVEL_SILENCE, LOG_LEVEL_VERYVERBOSE));
@@ -91,7 +76,8 @@ static void set_log_config(const struct config *restrict conf, const int level)
 	} else if (strcmp(log, "terminal") == 0) {
 		slog_setoutput(SLOG_OUTPUT_TERMINAL, log_filewriter(stderr));
 	} else if (strcmp(log, "syslog") == 0) {
-		slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME, NULL);
+		slog_setoutput(
+			SLOG_OUTPUT_SYSLOG, PROJECT_NAME, (slog_syslog_fn)NULL);
 	} else if (strcmp(log, "discard") == 0) {
 		slog_setoutput(SLOG_OUTPUT_DISCARD);
 	} else {
@@ -284,7 +270,9 @@ int main(int argc, char **argv)
 			 * inherited loop (e.g. kqueue fds are not inherited
 			 * across fork) */
 			ev_loop_fork(loop);
-			slog_setoutput(SLOG_OUTPUT_SYSLOG, PROJECT_NAME, NULL);
+			slog_setoutput(
+				SLOG_OUTPUT_SYSLOG, PROJECT_NAME,
+				(slog_syslog_fn)NULL);
 		} else if (user_name != NULL) {
 			drop_privileges(user_name);
 		}

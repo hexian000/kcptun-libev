@@ -21,14 +21,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-bool socket_shutdown(const int fd, const int how)
+int socket_shutdown(const int fd, const int how)
 {
 	if (shutdown(fd, how) != 0) {
-		const int err = errno;
-		LOGW_F("shutdown [fd:%d]: (%d) %s", fd, err, strerror(err));
-		return false;
+		return errno;
 	}
-	return true;
+	return 0;
 }
 
 void socket_close(const int fd)
@@ -39,214 +37,182 @@ void socket_close(const int fd)
 	}
 }
 
-bool socket_set_cloexec(const int fd)
+int socket_set_cloexec(const int fd)
 {
 	const int flags = fcntl(fd, F_GETFD, 0);
 	if (flags == -1) {
-		const int err = errno;
-		LOGE_F("fcntl [fd:%d]: F_GETFD (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+		return errno;
 	}
 	if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
-		const int err = errno;
-		LOGE_F("fcntl [fd:%d]: F_SETFD (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+		return errno;
 	}
-	return true;
+	return 0;
 }
 
-bool socket_set_nonblock(const int fd)
+int socket_set_nonblock(const int fd)
 {
 	const int flags = fcntl(fd, F_GETFL, 0);
 	if (flags == -1) {
-		const int err = errno;
-		LOGE_F("fcntl [fd:%d]: F_GETFL (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+		return errno;
 	}
 	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-		const int err = errno;
-		LOGE_F("fcntl [fd:%d]: F_SETFL (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+		return errno;
 	}
-	return true;
+	return 0;
 }
 
-bool socket_set_buffer(const int fd, const int sndbuf, const int rcvbuf)
+int socket_set_buffer(const int fd, const int sndbuf, const int rcvbuf)
 {
-	bool ok = true;
+	int err = 0;
 	if (sndbuf > 0) {
 		if (setsockopt(
 			    fd, SOL_SOCKET, SO_SNDBUF, &sndbuf,
-			    sizeof(sndbuf)) != 0) {
-			const int err = errno;
-			LOGW_F("setsockopt [fd:%d]: SO_SNDBUF (%d) %s", fd, err,
-			       strerror(err));
-			ok = false;
+			    (socklen_t)sizeof(sndbuf)) != 0) {
+			err = errno;
 		}
 	}
 	if (rcvbuf > 0) {
 		if (setsockopt(
 			    fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf,
-			    sizeof(rcvbuf)) != 0) {
-			const int err = errno;
-			LOGW_F("setsockopt [fd:%d]: SO_RCVBUF (%d) %s", fd, err,
-			       strerror(err));
-			ok = false;
+			    (socklen_t)sizeof(rcvbuf)) != 0) {
+			/* the first failure is the reported one */
+			if (err == 0) {
+				err = errno;
+			}
 		}
 	}
-	return ok;
+	return err;
 }
 
-bool socket_set_reuseport(const int fd, const bool reuseport)
+int socket_set_reuseport(const int fd, const bool reuseport)
 {
-	bool ok = true;
+	int err = 0;
 	const int opt = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
-		const int err = errno;
-		LOGE_F("setsockopt [fd:%d]: SO_REUSEADDR (%d) %s", fd, err,
-		       strerror(err));
-		ok = false;
+	if (setsockopt(
+		    fd, SOL_SOCKET, SO_REUSEADDR, &opt,
+		    (socklen_t)sizeof(opt)) != 0) {
+		err = errno;
 	}
 #ifdef SO_REUSEPORT
 	/* only touch SO_REUSEPORT when it is wanted: the contract is "otherwise
 	 * only SO_REUSEADDR" */
 	if (reuseport) {
 		if (setsockopt(
-			    fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) !=
-		    0) {
-			const int err = errno;
-			LOGE_F("setsockopt [fd:%d]: SO_REUSEPORT (%d) %s", fd,
-			       err, strerror(err));
-			ok = false;
+			    fd, SOL_SOCKET, SO_REUSEPORT, &opt,
+			    (socklen_t)sizeof(opt)) != 0) {
+			/* the first failure is the reported one */
+			if (err == 0) {
+				err = errno;
+			}
 		}
 	}
 #else
 	/* headers lack SO_REUSEPORT: reject a request for it rather than report
 	 * success on SO_REUSEADDR alone, matching the sibling setters */
-	if (reuseport) {
-		ok = false;
+	if (reuseport && err == 0) {
+		err = ENOPROTOOPT;
 	}
 #endif /* SO_REUSEPORT */
-	return ok;
+	return err;
 }
 
-bool socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
+int socket_set_tcp(const int fd, const bool nodelay, const bool keepalive)
 {
-	bool ok = true;
+	int err = 0;
 	{
 		const int opt = nodelay ? 1 : 0;
 		if (setsockopt(
-			    fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) !=
-		    0) {
-			const int err = errno;
-			LOGW_F("setsockopt [fd:%d]: TCP_NODELAY (%d) %s", fd,
-			       err, strerror(err));
-			ok = false;
+			    fd, IPPROTO_TCP, TCP_NODELAY, &opt,
+			    (socklen_t)sizeof(opt)) != 0) {
+			err = errno;
 		}
 	}
 	{
 		const int opt = keepalive ? 1 : 0;
 		if (setsockopt(
-			    fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) !=
-		    0) {
-			const int err = errno;
-			LOGW_F("setsockopt [fd:%d]: SO_KEEPALIVE (%d) %s", fd,
-			       err, strerror(err));
-			ok = false;
+			    fd, SOL_SOCKET, SO_KEEPALIVE, &opt,
+			    (socklen_t)sizeof(opt)) != 0) {
+			/* the first failure is the reported one */
+			if (err == 0) {
+				err = errno;
+			}
 		}
 	}
-	return ok;
+	return err;
 }
 
-bool socket_set_linger(const int fd, const bool enabled, const int seconds)
+int socket_set_linger(const int fd, const bool enabled, const int seconds)
 {
 	const struct linger val = {
 		.l_onoff = enabled ? 1 : 0,
 		.l_linger = seconds,
 	};
-	if (setsockopt(fd, SOL_SOCKET, SO_LINGER, &val, sizeof(val)) != 0) {
-		const int err = errno;
-		LOGW_F("setsockopt [fd:%d]: SO_LINGER (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+	if (setsockopt(
+		    fd, SOL_SOCKET, SO_LINGER, &val, (socklen_t)sizeof(val)) !=
+	    0) {
+		return errno;
 	}
-	return true;
+	return 0;
 }
 
-bool socket_set_fastopen(const int fd, const int backlog)
+int socket_set_fastopen(const int fd, const int backlog)
 {
 #ifdef TCP_FASTOPEN
 	if (setsockopt(
-		    fd, IPPROTO_TCP, TCP_FASTOPEN, &backlog, sizeof(backlog)) !=
-	    0) {
-		const int err = errno;
-		LOGW_F("setsockopt [fd:%d]: TCP_FASTOPEN (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+		    fd, IPPROTO_TCP, TCP_FASTOPEN, &backlog,
+		    (socklen_t)sizeof(backlog)) != 0) {
+		return errno;
 	}
-	return true;
+	return 0;
 #else
 	(void)fd;
 	(void)backlog;
-	return false;
+	return ENOPROTOOPT;
 #endif /* TCP_FASTOPEN */
 }
 
-bool socket_set_fastopen_connect(const int fd, const bool enabled)
+int socket_set_fastopen_connect(const int fd, const bool enabled)
 {
 #ifdef TCP_FASTOPEN_CONNECT
 	const int val = enabled ? 1 : 0;
 	if (setsockopt(
-		    fd, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, &val, sizeof(val)) !=
-	    0) {
-		const int err = errno;
-		LOGW_F("setsockopt [fd:%d]: TCP_FASTOPEN_CONNECT (%d) %s", fd,
-		       err, strerror(err));
-		return false;
+		    fd, IPPROTO_TCP, TCP_FASTOPEN_CONNECT, &val,
+		    (socklen_t)sizeof(val)) != 0) {
+		return errno;
 	}
-	return true;
+	return 0;
 #else
 	(void)fd;
 	(void)enabled;
-	return false;
+	return ENOPROTOOPT;
 #endif /* TCP_FASTOPEN_CONNECT */
 }
 
-bool socket_notsent_lowat(const int fd, const int bytes)
+int socket_notsent_lowat(const int fd, const int bytes)
 {
 #ifdef TCP_NOTSENT_LOWAT
 	if (setsockopt(
 		    fd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, &bytes,
-		    sizeof(bytes)) != 0) {
-		const int err = errno;
-		LOGW_F("setsockopt [fd:%d]: TCP_NOTSENT_LOWAT (%d) %s", fd, err,
-		       strerror(err));
-		return false;
+		    (socklen_t)sizeof(bytes)) != 0) {
+		return errno;
 	}
-	return true;
+	return 0;
 #else
 	(void)fd;
 	(void)bytes;
-	return false;
+	return ENOPROTOOPT;
 #endif /* TCP_NOTSENT_LOWAT */
 }
 
-bool socket_rcvlowat(const int fd, const int bytes)
+int socket_rcvlowat(const int fd, const int bytes)
 {
 	if (bytes > 0) {
 		const socklen_t len = (socklen_t)sizeof(bytes);
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVLOWAT, &bytes, len) != 0) {
-			const int err = errno;
-			LOGE_F("setsockopt [fd:%d]: SO_RCVLOWAT (%d) %s", fd,
-			       err, strerror(err));
-			return false;
+			return errno;
 		}
 	}
-	return true;
+	return 0;
 }
 
 int socket_get_error(const int fd)
@@ -259,35 +225,31 @@ int socket_get_error(const int fd)
 	return err;
 }
 
-bool socket_get_addr(const int fd, union sockaddr_max *const sa)
+int socket_get_addr(const int fd, union sockaddr_max *const sa)
 {
 	socklen_t len = (socklen_t)sizeof(union sockaddr_max);
 	if (getsockname(fd, &sa->sa, &len) != 0) {
-		const int err = errno;
-		LOGE_F("getsockname [fd:%d]: (%d) %s", fd, err, strerror(err));
-		return false;
+		return errno;
 	}
-	return true;
+	return 0;
 }
 
-bool socket_get_peer(const int fd, union sockaddr_max *const sa)
+int socket_get_peer(const int fd, union sockaddr_max *const sa)
 {
 	socklen_t len = (socklen_t)sizeof(union sockaddr_max);
 	if (getpeername(fd, &sa->sa, &len) != 0) {
-		const int err = errno;
-		LOGE_F("getpeername [fd:%d]: (%d) %s", fd, err, strerror(err));
-		return false;
+		return errno;
 	}
-	return true;
+	return 0;
 }
 
 socklen_t sa_len(const struct sockaddr *sa)
 {
 	switch (sa->sa_family) {
 	case AF_INET:
-		return sizeof(struct sockaddr_in);
+		return (socklen_t)sizeof(struct sockaddr_in);
 	case AF_INET6:
-		return sizeof(struct sockaddr_in6);
+		return (socklen_t)sizeof(struct sockaddr_in6);
 	default:
 		break;
 	}
@@ -418,6 +380,14 @@ static bool sa_matches_inet6(
 		   sizeof(struct in6_addr)) != 0) {
 		return false;
 	}
+	/* RFC 4007 zone index: the same non-global address on different zones is
+	 * a different destination. scope_id 0 is the unspecified/default zone and
+	 * matches any zone (mirroring the wildcard port/address above); a nonzero
+	 * bind zone must equal the destination's */
+	if (bind->sin6_scope_id != 0 &&
+	    bind->sin6_scope_id != dest->sin6_scope_id) {
+		return false;
+	}
 	return true;
 }
 
@@ -495,6 +465,12 @@ static enum ipclass ipclassify_inet4(const uint32_t addr)
 		return IPCLASS_SITELOCAL;
 	default:
 		break;
+	}
+	/* IANA marks 192.0.0.9/32 (PCP anycast, RFC 7723) and 192.0.0.10/32
+	 * (TURN anycast, RFC 8155) globally reachable, so they escape the
+	 * enclosing 192.0.0.0/24 special-purpose block below */
+	if (addr == UINT32_C(0xc0000009) || addr == UINT32_C(0xc000000a)) {
+		return IPCLASS_GLOBAL;
 	}
 	switch (addr & UINT32_C(0xffffff00)) {
 	case 0xc0000000: /* 192.0.0.0/24 */

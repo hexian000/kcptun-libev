@@ -11,6 +11,8 @@
 #include <stdlib.h>
 
 struct slog_extra_txt {
+	/** UTF-8 text, read as UTF-8 whatever the locale; rendering stops at a NUL
+	 * or an ill-formed sequence and reports how many bytes it left out. */
 	const char *data;
 	size_t len;
 	/** Column at which to wrap; a value < 4 selects the default of 80. */
@@ -26,12 +28,37 @@ struct slog_extra_bin {
 };
 void slog_extra_bin(struct io_stream *restrict s, void *restrict data);
 
+/**
+ * @brief Stack trace payload for struct slog_extra.
+ * @details pc carries no storage of its own. Back it with an object of this
+ * type spanning at least sizeof(struct slog_extra_stack) + len * sizeof(void *)
+ * bytes -- either malloc'd at that size, or a union of this struct with a byte
+ * array of it.
+ */
 struct slog_extra_stack {
 	size_t len;
 	void *pc[];
 };
 void slog_extra_stack(struct io_stream *restrict s, void *restrict data);
 
+/**
+ * @brief Capture the calling thread's stack as an array of program counters.
+ * @details Stores at most len frames, innermost first, after dropping the skip
+ * innermost caller frames (a negative skip drops none); debug_backtrace()'s own
+ * frame is never stored. Every stored entry is a program counter the unwinder
+ * reported for a frame, never the marker it yields past the outermost one. An
+ * entry may still be 0: a trace ending at a signal frame that interrupted
+ * execution at address 0 -- control transferred through a null function pointer
+ * -- reports that 0 as the faulting address, and it is kept rather than
+ * filtered, since it is exactly what such a crash report has to show.
+ * The glibc execinfo backend captures through a bounded window of the
+ * max(len, DEBUG_STACK_MAXDEPTH + 32) innermost frames, which also holds
+ * debug_backtrace()'s own frame and the skipped ones, so a request with
+ * skip + len + 1 above that bound yields fewer than len frames even from a
+ * deeper stack.
+ * @return The number of frames stored; 0 if nothing was captured, e.g. no
+ * backtrace backend is available or skip exceeded the stack depth.
+ */
 int debug_backtrace(void **restrict frames, int skip, int len);
 
 /**
@@ -46,7 +73,30 @@ int debug_backtrace(void **restrict frames, int skip, int len);
  */
 bool debug_backtrace_init(void);
 
+/**
+ * @brief Receives one symbolized stack-trace line.
+ * @param ctx The ctx passed to debug_backtrace_symbols().
+ * @param line A NUL-terminated line with no trailing newline, valid only for
+ * the duration of the call.
+ */
 typedef void (*debug_backtrace_symbols_cb)(void *ctx, const char *line);
+
+/**
+ * @brief Symbolize captured frames, handing each line to a callback.
+ * @details Lines are numbered consecutively from "#1", innermost first. The
+ * libbacktrace backend emits one line per inlined function at a program
+ * counter, so a frame may yield several lines; the other backends emit exactly
+ * one line per frame. A frame that cannot be symbolized still yields a line
+ * carrying its raw address. A no-op when len <= 0, in which case frames may be
+ * NULL. Not async-signal-safe in general -- the glibc backend allocates through
+ * backtrace_symbols() -- so a signal handler should use debug_backtrace_fd().
+ * @param cb Called once per line, synchronously; must not be NULL.
+ * @param ctx Passed through to cb unchanged.
+ * @param frames Program counters, e.g. from debug_backtrace().
+ * @param len Number of entries in frames.
+ * @return The number of lines passed to cb, which may exceed len; 0 when
+ * len <= 0.
+ */
 int debug_backtrace_symbols(
 	debug_backtrace_symbols_cb cb, void *ctx, void **restrict frames,
 	int len);
@@ -64,29 +114,52 @@ int debug_backtrace_symbols(
  */
 void debug_backtrace_fd(int fd, void **restrict frames, int len);
 
+/**
+ * @brief Format a symbolized stack trace into a string buffer.
+ * @details Each line debug_backtrace_symbols() produces is written as indent,
+ * the line, then '\n'. Follows snprintf(3) semantics: the output is truncated
+ * to fit maxlen, and buf is always NUL-terminated when it is non-NULL and
+ * maxlen > 0. A NULL buf is a pure measuring call for any maxlen: nothing is
+ * written. A no-op producing "" when len <= 0, in which case frames may be
+ * NULL. Not async-signal-safe (see debug_backtrace_symbols()).
+ * @param[out] buf Output buffer, or NULL to measure only.
+ * @param maxlen Size of buf in bytes, including the NUL terminator.
+ * @param frames Program counters, e.g. from debug_backtrace().
+ * @param len Number of entries in frames.
+ * @param indent Prefix for every line; NULL is treated as "".
+ * @return The length of the full, untruncated output excluding the NUL
+ * terminator; a value >= maxlen indicates truncation.
+ */
 int debug_strframes(
 	char *restrict buf, size_t maxlen, void **restrict frames, int len,
 	const char *restrict indent);
 
 #define DEBUG_STACK_MAXDEPTH 256
 
+/* The statement macros below expand their arguments inside their own scope, so
+ * their locals are uglified with a trailing underscore to keep a caller's
+ * `frames`, `extra` or `extradata` from binding to the macro's instead.
+ * LOG_STACK_F's union gives the flexible array member real storage, so the
+ * object slog_extra_stack() reads carries the declared type it accesses. */
 #define LOG_STACK_F(level, skip, format, ...)                                  \
 	do {                                                                   \
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
 		}                                                              \
-		struct {                                                       \
-			size_t len;                                            \
-			void *pc[DEBUG_STACK_MAXDEPTH];                        \
-		} frames;                                                      \
-		frames.len = (size_t)debug_backtrace(                          \
-			frames.pc, (skip), DEBUG_STACK_MAXDEPTH);              \
-		struct slog_extra extra = {                                    \
+		union {                                                        \
+			struct slog_extra_stack stack;                         \
+			unsigned char                                          \
+				space[DEBUG_STACK_MAXDEPTH * sizeof(void *) +  \
+				      sizeof(struct slog_extra_stack)];        \
+		} frames_;                                                     \
+		frames_.stack.len = (size_t)debug_backtrace(                   \
+			frames_.stack.pc, (skip), DEBUG_STACK_MAXDEPTH);       \
+		struct slog_extra extra_ = {                                   \
 			.func = slog_extra_stack,                              \
-			.data = &frames,                                       \
+			.data = &frames_.stack,                                \
 		};                                                             \
 		slog_printf(                                                   \
-			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
+			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra_,      \
 			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_STACK(level, skip, msg)                                            \
@@ -98,17 +171,17 @@ int debug_strframes(
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
 		}                                                              \
-		struct slog_extra_txt extradata = {                            \
+		struct slog_extra_txt extradata_ = {                           \
 			.data = (txt),                                         \
 			.len = (txtsize),                                      \
 			.hardwrap = (wrap),                                    \
 		};                                                             \
-		struct slog_extra extra = {                                    \
+		struct slog_extra extra_ = {                                   \
 			.func = slog_extra_txt,                                \
-			.data = &extradata,                                    \
+			.data = &extradata_,                                   \
 		};                                                             \
 		slog_printf(                                                   \
-			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
+			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra_,      \
 			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_TXT(level, txt, txtsize, msg)                                      \
@@ -119,17 +192,17 @@ int debug_strframes(
 		if (!LOGLEVEL(level)) {                                        \
 			break;                                                 \
 		}                                                              \
-		struct slog_extra_bin extradata = {                            \
+		struct slog_extra_bin extradata_ = {                           \
 			.data = (bin),                                         \
 			.len = (binsize),                                      \
 			.binwrap = (wrap),                                     \
 		};                                                             \
-		struct slog_extra extra = {                                    \
+		struct slog_extra extra_ = {                                   \
 			.func = slog_extra_bin,                                \
-			.data = &extradata,                                    \
+			.data = &extradata_,                                   \
 		};                                                             \
 		slog_printf(                                                   \
-			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra,       \
+			(LOG_LEVEL_##level), __FILE__, __LINE__, &extra_,      \
 			(format), __VA_ARGS__);                                \
 	} while (0)
 #define LOG_BIN(level, bin, binsize, msg)                                      \
@@ -145,7 +218,8 @@ int debug_strframes(
 #define FAIL() FAILMSG("program encountered an unexpected state (bug?)")
 
 /* CHECK*: check a runtime condition or FAIL.
- * Use assert() for our own bugs or conditions that don't always crash;
+ * Use ASSERT() or assert() for our own bugs or conditions that don't
+ * always crash;
  * use CHECK() when bad external behavior will definitely cause failure. */
 #define CHECKMSGF(cond, format, ...)                                           \
 	do {                                                                   \
@@ -165,7 +239,9 @@ int debug_strframes(
 #define CHECK(cond) CHECKMSGF(cond, "runtime check failed: `%s'", #cond)
 #endif /* NDEBUG */
 
-/* ASSERT: an alternative to assert() */
+/* ASSERT: an internal invariant with a fatal log and stack trace on failure.
+ * Use only where logging and its dependencies are safe to call. NDEBUG disables
+ * predicate evaluation; CHECK above remains active in every build. */
 #ifdef NDEBUG
 #define ASSERT(cond) ((void)(0))
 #else

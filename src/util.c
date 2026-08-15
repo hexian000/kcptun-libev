@@ -56,19 +56,26 @@ bool check_rate_limit(
 #define PATH_SEPARATOR '/'
 #endif
 
+/* slog borrows these heap-allocated wrappers, so keep one per standard
+ * stream reachable for the process lifetime across log-sink changes. */
+struct io_stream *log_filewriter(FILE *const f)
+{
+	static struct io_stream *stdout_writer = NULL;
+	static struct io_stream *stderr_writer = NULL;
+	struct io_stream **restrict slot =
+		(f == stdout) ? &stdout_writer : &stderr_writer;
+	if (*slot == NULL) {
+		*slot = io_filewriter(f);
+	}
+	return *slot;
+}
+
 void init(void)
 {
 	if (setlocale(LC_ALL, "") == NULL) {
 		LOGW("setlocale: failed to set the locale from environment");
 	}
-	/* io_filewriter() heap-allocates a stream that slog only borrows; keep
-	 * it in a static so it stays reachable (and stdout unbuffered) for the
-	 * process lifetime rather than dangling once the sink is later replaced. */
-	static struct io_stream *log_writer = NULL;
-	if (log_writer == NULL) {
-		log_writer = io_filewriter(stdout);
-	}
-	slog_setoutput(SLOG_OUTPUT_STREAM, log_writer);
+	slog_setoutput(SLOG_OUTPUT_STREAM, log_filewriter(stdout));
 	{
 		static char prefix[] = __FILE__;
 		char *s = strrchr(prefix, PATH_SEPARATOR);
@@ -168,7 +175,9 @@ void socket_bind_netdev(const int fd, const char *restrict netdev)
 
 bool socket_nonblock_or_close(const int fd)
 {
-	if (!socket_set_nonblock(fd)) {
+	const int err = socket_set_nonblock(fd);
+	if (err != 0) {
+		LOGE_F("socket_set_nonblock: (%d) %s", err, strerror(err));
 		socket_close(fd);
 		return false;
 	}
@@ -189,8 +198,12 @@ void accept_backoff(
 
 void tcp_apply_conf(const int fd, const struct config *restrict conf)
 {
-	(void)socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive);
-	(void)socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf);
+	LOG_SOCKOPT(
+		"socket_set_tcp",
+		socket_set_tcp(fd, conf->tcp_nodelay, conf->tcp_keepalive));
+	LOG_SOCKOPT(
+		"socket_set_buffer",
+		socket_set_buffer(fd, conf->tcp_sndbuf, conf->tcp_rcvbuf));
 }
 
 static bool split_addrstr(

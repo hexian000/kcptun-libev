@@ -344,8 +344,8 @@ static void socket_tcp_quickack(const int fd, const bool enabled)
 
 static void obfs_tcp_setup(const int fd)
 {
-	(void)socket_set_buffer(fd, 1, 1);
-	(void)socket_set_tcp(fd, true, false);
+	LOG_SOCKOPT("socket_set_buffer", socket_set_buffer(fd, 1, 1));
+	LOG_SOCKOPT("socket_set_tcp", socket_set_tcp(fd, true, false));
 	if (setsockopt(
 		    fd, SOL_TCP, TCP_WINDOW_CLAMP, &(int){ 1 }, sizeof(int))) {
 		const int err = errno;
@@ -613,11 +613,16 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		LOG_PERROR("cap socket");
 		return false;
 	}
-	if (!socket_set_nonblock(obfs->cap_fd)) {
+	const int nonblock_err = socket_set_nonblock(obfs->cap_fd);
+	if (nonblock_err != 0) {
+		LOGE_F("socket_set_nonblock: (%d) %s", nonblock_err,
+		       strerror(nonblock_err));
 		obfs_raw_close(obfs);
 		return false;
 	}
-	(void)socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf);
+	LOG_SOCKOPT(
+		"socket_set_buffer",
+		socket_set_buffer(obfs->cap_fd, 0, conf->udp_rcvbuf));
 
 	obfs->raw_fd = socket(domain, SOCK_RAW, IPPROTO_RAW);
 	if (obfs->raw_fd < 0) {
@@ -625,7 +630,10 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		obfs_raw_close(obfs);
 		return false;
 	}
-	if (!socket_set_nonblock(obfs->raw_fd)) {
+	const int raw_nonblock_err = socket_set_nonblock(obfs->raw_fd);
+	if (raw_nonblock_err != 0) {
+		LOGE_F("socket_set_nonblock: (%d) %s", raw_nonblock_err,
+		       strerror(raw_nonblock_err));
 		obfs_raw_close(obfs);
 		return false;
 	}
@@ -651,7 +659,9 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 	default:
 		FAILMSGF("invalid address family: %d", domain);
 	}
-	(void)socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0);
+	LOG_SOCKOPT(
+		"socket_set_buffer",
+		socket_set_buffer(obfs->raw_fd, conf->udp_sndbuf, 0));
 	return true;
 }
 
@@ -1212,12 +1222,26 @@ obfs_tcp_listen(struct obfs *restrict obfs, const struct sockaddr *restrict sa)
 		LOG_PERROR("tcp socket");
 		return false;
 	}
-	if (!socket_set_nonblock(obfs->fd)) {
+	const int nonblock_err = socket_set_nonblock(obfs->fd);
+	if (nonblock_err != 0) {
+		LOGE_F("socket_set_nonblock: (%d) %s", nonblock_err,
+		       strerror(nonblock_err));
 		socket_close(obfs->fd);
 		obfs->fd = -1;
 		return false;
 	}
-	(void)socket_set_reuseport(obfs->fd, conf->tcp_reuseport);
+	if (obfs->domain == AF_INET6 &&
+	    setsockopt(
+		    obfs->fd, IPPROTO_IPV6, IPV6_V6ONLY, &(int){ 1 },
+		    sizeof(int))) {
+		LOG_PERROR("IPV6_V6ONLY");
+		socket_close(obfs->fd);
+		obfs->fd = -1;
+		return false;
+	}
+	LOG_SOCKOPT(
+		"socket_set_reuseport",
+		socket_set_reuseport(obfs->fd, conf->tcp_reuseport));
 	obfs_tcp_setup(obfs->fd);
 	if (bind(obfs->fd, sa, sa_len(sa))) {
 		LOG_PERROR("tcp bind");
@@ -1314,7 +1338,10 @@ static bool obfs_ctx_dial(struct obfs *restrict obfs, const struct sockaddr *sa)
 			obfs_ctx_free(loop, ctx);
 			return false;
 		}
-		if (!socket_set_nonblock(fd)) {
+		const int nonblock_err = socket_set_nonblock(fd);
+		if (nonblock_err != 0) {
+			LOGE_F("socket_set_nonblock: (%d) %s", nonblock_err,
+			       strerror(nonblock_err));
 			return obfs_tcp_wnd_fail(loop, ctx, fd);
 		}
 		obfs_tcp_setup(fd);

@@ -120,6 +120,11 @@ struct hashtable {
 	elemid_type freelist;
 	uint_least32_t seed;
 	int flags;
+	/* a reseed already ran at the current capacity: a hash that ignores the
+	 * seed cannot shorten a chain by reseeding, so allowing one per capacity
+	 * bounds the full-table rehashes by the resizes, instead of paying one on
+	 * every set that lands in the over-long chain */
+	bool reseeded;
 	uint_fast32_t (*hash_fn)(const void *key, uint_fast32_t seed);
 	bool (*eq_fn)(const void *a, const void *b);
 #ifndef NDEBUG
@@ -293,6 +298,7 @@ table_realloc(struct hashtable *restrict table, const size_t new_capacity)
 		return table;
 	}
 	set_capacity(m, new_capacity);
+	m->reseeded = false;
 
 	if (new_capacity > old_capacity) {
 		/* init newly allocated memory */
@@ -319,6 +325,10 @@ static inline struct hashtable *table_grow(struct hashtable *restrict table)
 
 static inline void table_reseed(struct hashtable *restrict table)
 {
+	if (table->reseeded) {
+		return;
+	}
+	table->reseeded = true;
 	table->seed = (uint_least32_t)rand64n(UINT32_C(0xFFFFFFFF));
 	LOGD_F("table reseed: size=%zu new_seed=%" PRIXLEAST32, table->size,
 	       table->seed);
@@ -342,6 +352,7 @@ struct hashtable *table_new(const struct table_opts *opts)
 		.freelist = ID_NIL,
 		.seed = (uint_least32_t)rand64n(UINT32_C(0xFFFFFFFF)),
 		.flags = opts->flags,
+		.reseeded = false,
 		.hash_fn = opts->hash != NULL ? opts->hash : default_hash,
 		.eq_fn = opts->eq != NULL ? opts->eq : default_eq,
 #ifndef NDEBUG
@@ -406,7 +417,7 @@ table_set(struct hashtable *restrict table, const void *key, void **element)
 	if (table == NULL) {
 		return NULL;
 	}
-	assert(element != NULL);
+	assert(element != NULL && *element != NULL);
 	const uint_fast32_t hash =
 		table->hash_fn(key, table->seed) & UINT32_C(0xFFFFFFFF);
 	size_t bucket = bucket_index(table, hash);

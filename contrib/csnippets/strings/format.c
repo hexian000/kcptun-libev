@@ -94,13 +94,26 @@ int format_iec_bytes(char *restrict s, const size_t maxlen, const double value)
 	}
 	const double absvalue = fabs(value);
 	const int e = absvalue > 1.0 ? ((int)log2(absvalue) - 1) / 10 : 0;
-	const int i = MIN(e, (int)ARRAY_SIZE(iec_units) - 1);
-	const double v = ldexp(value, i * -10);
+	int i = MIN(e, (int)ARRAY_SIZE(iec_units) - 1);
+	double v = ldexp(value, i * -10);
+	/* the scaled mantissa stays below 2048, but "%.0f" rounds a value in
+	 * [2047.5, 2048) up to "2048"; promote to the next unit so it reads
+	 * "2.00<next>" like an exact 2048 */
+	if (fabs(v) >= 2047.5 && i < (int)ARRAY_SIZE(iec_units) - 1) {
+		i++;
+		v = ldexp(v, -10);
+	}
 	if (i > 0) {
-		if (-10.0 < v && v < 10.0) {
+		/* choose the precision on the rounded mantissa: "%.2f" rounds a
+		 * value above 9.995 up to "10.00", and "%.1f" one from 99.95 up
+		 * to "100.0"; neither literal is exact in binary, and each
+		 * comparison matches the side its double falls on (9.995 is
+		 * stored just below the decimal, 99.95 just above) */
+		const double absv = fabs(v);
+		if (absv <= 9.995) {
 			return u8snprintf(s, maxlen, "%.2f%s", v, iec_units[i]);
 		}
-		if (-100.0 < v && v < 100.0) {
+		if (absv < 99.95) {
 			return u8snprintf(s, maxlen, "%.1f%s", v, iec_units[i]);
 		}
 	}
@@ -223,6 +236,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		 * would, then carry a rounded-up 60 through minute->hour->day so
 		 * no field is ever printed as "60" */
 		struct duration t = d;
+		uintmax_t day = d.day;
 		unsigned int sec = (unsigned int)nearbyint(t.second + frac);
 		if (sec >= 60) {
 			sec -= 60;
@@ -230,14 +244,14 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 				t.minute = 0;
 				if (++t.hour >= 24) {
 					t.hour = 0;
-					t.day++;
+					day++;
 				}
 			}
 		}
-		if (t.day) {
+		if (day) {
 			return u8snprintf(
 				s, maxlen,
-				SIGNED_STR(d.sign, "%ud%02u:%02u:%02u"), t.day,
+				SIGNED_STR(d.sign, "%jud%02u:%02u:%02u"), day,
 				t.hour, t.minute, sec);
 		}
 		if (t.hour) {

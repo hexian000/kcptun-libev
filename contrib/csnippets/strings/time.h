@@ -9,25 +9,31 @@
 
 /**
  * @brief Format a time_t as a fixed-length RFC 3339 stamp.
- * @param tzoff Timezone offset in seconds east of UTC. 0 renders 'Z'; any other
- * value renders a minute-granular '±HH:MM' (the sub-minute part is dropped).
+ * @param tzoff Timezone offset in seconds east of UTC, truncated to whole
+ * minutes -- RFC 3339 §5.6 has no finer grain -- and required to be under 24 h
+ * in magnitude. An offset that truncates to zero renders 'Z'; any other renders
+ * '±HH:MM'.
  * @return Same as snprintf, except that -1 is returned (with `s` set to "" when
  * maxlen > 0) if the time cannot be represented as a conforming RFC 3339 stamp:
- * t + tzoff overflows time_t, does not fit a struct tm, or its year falls
- * outside [1000, 9999].
- * @details On success the output length depends only on whether tzoff is zero.
+ * t plus the offset overflows time_t, does not fit a struct tm, its year falls
+ * outside [1000, 9999], or |tzoff| is 24 h or more.
+ * @details On success the output length depends only on whether the offset
+ * renders as 'Z'.
  */
 int format_rfc3339(char *restrict s, size_t maxlen, time_t t, int tzoff);
 
 /**
  * @brief Format a timespec as a fixed-length RFC 3339 stamp with nanosecond
  * precision.
- * @param tzoff Timezone offset in seconds east of UTC. 0 renders 'Z'; any other
- * value renders a minute-granular '±HH:MM' (the sub-minute part is dropped).
+ * @param tzoff Timezone offset in seconds east of UTC, truncated to whole
+ * minutes -- RFC 3339 §5.6 has no finer grain -- and required to be under 24 h
+ * in magnitude. An offset that truncates to zero renders 'Z'; any other renders
+ * '±HH:MM'.
  * @return Same as snprintf, except that -1 is returned (with `s` set to "" when
  * maxlen > 0) if the time cannot be represented as a conforming RFC 3339 stamp:
- * tv_sec + tzoff overflows time_t or does not fit a struct tm, its year falls
- * outside [1000, 9999], or tv_nsec is outside the POSIX-required [0, 999999999].
+ * tv_sec plus the offset overflows time_t or does not fit a struct tm, its year
+ * falls outside [1000, 9999], |tzoff| is 24 h or more, or tv_nsec is outside the
+ * POSIX-required [0, 999999999].
  */
 int format_rfc3339nano(
 	char *restrict s, size_t maxlen, const struct timespec *restrict tp,

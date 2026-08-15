@@ -32,6 +32,12 @@ bool splithostport(char *str, char **restrict host, char **restrict port)
 	if (!bracketed && strchr(hostname, ':') != NULL) {
 		return false;
 	}
+	/* No host name or address literal contains a bracket, so any bracket
+	 * left after stripping one enclosing pair is unbalanced or misplaced
+	 * (e.g. "[a:80", "a]:80", "[::1]]:80") and the input is malformed. */
+	if (strpbrk(hostname, "[]") != NULL) {
+		return false;
+	}
 
 	if (host != NULL) {
 		*host = hostname;

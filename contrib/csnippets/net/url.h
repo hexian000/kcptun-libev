@@ -20,16 +20,26 @@
  * before handing the string over. The escaping direction never produces the
  * form -- it encodes `'%'` as `"%25"` -- so a value that made the round trip
  * through this module is unaffected.
+ *
+ * The serializers return the would-be length excluding the NUL, like snprintf;
+ * a required length that cannot be represented by the `int` return (greater
+ * than `INT_MAX`) yields a negative result.
  * @{
  */
 
 struct url {
 	char *scheme;
 	char *userinfo; /* escaped */
+	/* The whole authority after any userinfo, port included: "host[:port]",
+	 * an IPv6 literal kept in its brackets ("[::1]:8080"), percent-decoded.
+	 * splithostport() (net/addr.h) separates the host from the port. */
 	char *host;
-	char *path; /* escaped */
+	/* Escaped, and without the '/' that separates it from the authority
+	 * or makes it absolute: "http://h/a/b" stores "a/b", and "http://h//a"
+	 * stores "/a". url_build() always emits that '/' in front of it. */
+	char *path;
 	char *query; /* escaped */
-	char *fragment;
+	char *fragment; /* decoded */
 	/* RFC 3986 path-rootless: set when the URL has no authority and no
 	 * absolute path, e.g. "mailto:user@example.com". Opaque and
 	 * scheme-defined -- url_parse() returns it verbatim and does not decode
@@ -96,6 +106,12 @@ int url_escape_query_component(
 
 /**
  * @brief Build a URL string from structured data.
+ * @details Writes the path after a '/' separator, as url_parse() stores it,
+ * so a caller passing "/a" gets the path "//a". When host is NULL and path
+ * begins with '/', an empty authority `"//"` is written first, so the path's
+ * empty first segment is not reparsed as an authority (RFC 3986 3.3): path
+ * `"//x"` builds `"/////x"`, which url_parse() reads back as no host and path
+ * `"//x"`.
  * @param[out] buf Out buffer. Can be NULL if maxlen is 0.
  * @param maxlen Buffer size in bytes. If 0, no output is written.
  * @param[in] url URL struct.
@@ -107,7 +123,10 @@ int url_build(char *restrict buf, size_t maxlen, const struct url *restrict url)
 
 /**
  * @brief Parse a URL string into structured data.
- * @details No allocations, the raw URL string is destructed.
+ * @details No allocations, the raw URL string is destructed. The host is
+ * percent-decoded, so an authority holding a pct-encoded gen-delim
+ * (`":/?#[]@"`, e.g. `"example.com%3A8443"`) is rejected: once decoded, it
+ * could not be told from the port separator or an IP-literal bracket.
  * @param[inout] raw Raw URL string.
  * @param[out] url URL struct.
  * @return true if successful.
@@ -117,7 +136,14 @@ bool url_parse(char *raw, struct url *restrict url);
 
 /**
  * @brief Parse a URL path into segments.
- * @details The escaped path string will be destructed.
+ * @details The escaped path string will be destructed. A run of `'/'` is one
+ * separator and a leading run is skipped, so leading and interior empty
+ * segments are dropped -- `"a///b"` yields `"a"`, `"b"`. The remainder after
+ * the last separator is always returned, so a trailing `'/'` yields a trailing
+ * empty segment -- `"a/"` yields `"a"`, `""` -- and every non-NULL path yields
+ * at least one segment, `""` and `"///"` alike yielding a single empty one.
+ * Splitting precedes unescaping, so an escaped `"%2F"` is never a separator.
+ * RFC 3986 section 3.3 instead keeps every empty segment.
  * @param[inout] path Pointer to URL path string, will be moved to next segment.
  * @param[out] segment Unescaped URL path segment string.
  * @return true if successful.

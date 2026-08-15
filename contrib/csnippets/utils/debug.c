@@ -3,19 +3,23 @@
 
 #include "debug.h"
 
+#include "buffer.h"
+#include "ctype_ascii.h"
 #include "io/stream.h"
 #include "strings/string.h"
 #include "strings/utf8.h"
-#include "utils/buffer.h"
-#include "utils/ctype_ascii.h"
 
 #if WITH_LIBBACKTRACE
 #include <backtrace.h>
 #elif WITH_LIBUNWIND
+/* only the local unwinder is used below; without this, libunwind's unw_*
+ * names resolve to the remote-capable entry points that live in the
+ * arch-specific libunwind-<arch>, not in the libunwind we link */
+#define UNW_LOCAL_ONLY
 #include <libunwind.h>
 #elif HAVE_BACKTRACE
 #include <execinfo.h>
-#endif
+#endif /* WITH_LIBBACKTRACE */
 
 /* debug_backtrace_fd() writes each frame itself with write(2) on the
  * libbacktrace/libunwind and raw-address paths; the glibc path delegates to
@@ -30,6 +34,7 @@
 #endif
 
 #include <assert.h>
+#include <limits.h>
 #if DEBUG_FD_RAW_WRITE
 #include <errno.h>
 #endif
@@ -48,12 +53,18 @@
 #include <unistd.h>
 #endif
 #include <wchar.h>
-#include <wctype.h>
 
 #define TAB_SPACE "    "
 #define TAB_WIDTH (sizeof(TAB_SPACE) - 1)
 
 #define INDENT "  "
+
+#if !WITH_LIBBACKTRACE && !WITH_LIBUNWIND && HAVE_BACKTRACE
+/* slots of debug_backtrace()'s local capture window on the execinfo backend: a
+ * full DEBUG_STACK_MAXDEPTH capture plus room for the skipped frames; debug.h
+ * states this size in debug_backtrace()'s contract */
+#define DEBUG_BACKTRACE_WINDOW (DEBUG_STACK_MAXDEPTH + 32)
+#endif
 
 /* best-effort write to the log sink: like slog's own printers, an extra
  * renderer has no channel to report its I/O failures through */
@@ -61,6 +72,46 @@ static void
 put(struct io_stream *restrict s, const void *restrict data, size_t len)
 {
 	(void)io_stream_write(s, data, &len);
+}
+
+/* The text renderer reads its input as UTF-8 whatever the locale, as the rest
+ * of the library does. Printability is decided here rather than by iswprint(),
+ * whose "C" locale classes reject every non-ASCII codepoint: a control
+ * character (C0, DEL, C1), a line or paragraph separator, or a noncharacter
+ * would disturb the rendered layout or is not meant for interchange, so it is
+ * shown as '?'; every other codepoint is copied through. */
+static bool is_printable(const char32_t cp)
+{
+	if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F)) {
+		return false;
+	}
+	if (cp == 0x2028 || cp == 0x2029) {
+		return false;
+	}
+	if ((cp >= 0xFDD0 && cp <= 0xFDEF) || (cp & 0xFFFE) == 0xFFFE) {
+		return false;
+	}
+	return true;
+}
+
+/* Column width of a printable codepoint. wcwidth() is the only width table
+ * available without ICU, and it answers by the current locale: outside a
+ * Unicode locale it knows no non-ASCII codepoint and returns -1, which is
+ * taken as one column, so wide characters only wrap late rather than being
+ * lost. Even a Unicode locale may report -1 for a codepoint it knows; casting
+ * that to size_t would corrupt the running column counter used for wrap
+ * decisions. */
+static size_t display_width(const char32_t cp)
+{
+#if HAVE_WCWIDTH
+	if (cp <= (char32_t)WCHAR_MAX) {
+		const int w = wcwidth((wchar_t)cp);
+		return (w < 0) ? 1 : (size_t)w;
+	}
+#else
+	(void)cp;
+#endif /* HAVE_WCWIDTH */
+	return 1;
 }
 
 void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
@@ -77,30 +128,29 @@ void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
 	bool newline = true;
 	bool cr = false;
 	size_t line = 0, column = 0;
-	/* thread one conversion state across the whole decode so a
-	 * state-dependent multibyte encoding is not mis-decoded */
-	mbstate_t mbs = { 0 };
 	while (n > 0) {
-		wchar_t wc;
-		const size_t clen = mbrtowc(&wc, text, n, &mbs);
-		if (clen == 0 || clen == (size_t)-1 || clen == (size_t)-2) {
+		char32_t cp;
+		const int clen = utf8_decode(&cp, text, n);
+		if (clen <= 0 || cp == 0) {
 			break;
 		}
-		text += clen, n -= clen;
-		if (cr && wc == L'\n') {
+		const char *unit = text;
+		size_t unitlen = (size_t)clen;
+		text += clen, n -= (size_t)clen;
+		if (cr && cp == U'\n') {
 			/* skip CRLF */
 			cr = false;
 			continue;
 		}
-		cr = (wc == L'\r');
+		cr = (cp == U'\r');
 		if (newline) {
 			BUF_APPENDF(buf, INDENT "%4zu ", ++line);
 			newline = false;
 		}
 		size_t width;
-		switch (wc) {
-		case L'\r':
-		case L'\n':
+		switch (cp) {
+		case U'\r':
+		case U'\n':
 			/* soft wrap */
 			BUF_APPENDSTR(buf, "\n");
 			put(s, buf.data, buf.len);
@@ -108,26 +158,16 @@ void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
 			column = 0;
 			newline = true;
 			continue;
-		case L'\t':
+		case U'\t':
 			width = TAB_WIDTH - column % TAB_WIDTH;
 			break;
 		default:
-			if (!iswprint(wc)) {
-				wc = L'?';
+			if (is_printable(cp)) {
+				width = display_width(cp);
+			} else {
+				unit = "?", unitlen = 1;
+				width = 1;
 			}
-#if HAVE_WCWIDTH
-			{
-				/* wcwidth() can return -1 for a code point some
-				 * libc implementations consider undefined-width
-				 * even when iswprint() is true; casting that to
-				 * size_t would silently corrupt the running
-				 * column counter used for wrap decisions. */
-				const int w = wcwidth(wc);
-				width = (w < 0) ? 1 : (size_t)w;
-			}
-#else
-			width = 1;
-#endif /* HAVE_WCWIDTH */
 		}
 		if (column + width > hardwrap) {
 			/* hard wrap */
@@ -135,23 +175,16 @@ void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
 			put(s, buf.data, buf.len);
 			buf.len = 0;
 			column = 0;
-			if (wc == L'\t') {
+			if (cp == U'\t') {
 				/* recalculate tab width */
 				width = TAB_WIDTH;
 			}
 		}
-		if (wc == L'\t') {
+		if (cp == U'\t') {
 			BUF_APPEND(buf, TAB_SPACE, width);
 		} else {
-			char u8[UTF8_MAX_LEN];
-			const int n8 = utf8_encode(u8, (char32_t)wc);
-			if (n8 > 0) {
-				BUF_APPEND(buf, u8, (size_t)n8);
-			} else {
-				/* unencodable (e.g. a surrogate half where
-				 * wchar_t is 16-bit): keep the column count */
-				BUF_APPENDSTR(buf, "?");
-			}
+			/* a well-formed sequence is copied through verbatim */
+			BUF_APPEND(buf, unit, unitlen);
 		}
 		column += width;
 		if (buf.cap - buf.len < 16) {
@@ -159,7 +192,7 @@ void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
 			buf.len = 0;
 		}
 	}
-	if (column > 0) {
+	if (!newline) {
 		BUF_APPENDSTR(buf, "\n");
 	}
 	if (buf.len > 0) {
@@ -167,7 +200,7 @@ void slog_extra_txt(struct io_stream *restrict s, void *restrict data)
 		buf.len = 0;
 	}
 	if (n > 0) {
-		/* omit bytes after the null terminator or undecodable code point */
+		/* omit bytes from the null terminator or ill-formed sequence on */
 		BUF_APPENDF(buf, INDENT " ... (omitting %zu bytes)\n", n);
 		put(s, buf.data, buf.len);
 	}
@@ -195,14 +228,19 @@ void slog_extra_bin(struct io_stream *restrict s, void *restrict data)
 			buf.len = 0;                                           \
 		}                                                              \
 	} while (0)
-	for (size_t i = 0; i < n; i += binwrap) {
+	for (size_t i = 0; i < n;) {
+		/* i < n, so remaining never underflows; the row spans
+		 * min(binwrap, remaining) real bytes, and every j < rowlen keeps
+		 * i + j within [i, n), so no index can wrap past SIZE_MAX */
+		const size_t remaining = n - i;
+		const size_t rowlen = remaining < binwrap ? remaining : binwrap;
 		/* INDENT + "0x" + up to two hex digits per pointer byte + ": " */
 		BIN_FLUSH_IF(sizeof(INDENT) + 2 + 2 * sizeof(void *) + 2);
 		BUF_APPENDF(buf, INDENT "%p: ", (void *)(b + i));
 		for (size_t j = 0; j < binwrap; j++) {
 			/* "%02hhX " is 3 chars, +1 for buf_appendf's in-place NUL */
 			BIN_FLUSH_IF(4);
-			if ((i + j) < n) {
+			if (j < rowlen) {
 				BUF_APPENDF(buf, "%02hhX ", b[i + j]);
 			} else {
 				BUF_APPENDSTR(buf, "   ");
@@ -212,7 +250,7 @@ void slog_extra_bin(struct io_stream *restrict s, void *restrict data)
 		BUF_APPENDSTR(buf, " ");
 		for (size_t j = 0; j < binwrap; j++) {
 			unsigned char ch = ' ';
-			if ((i + j) < n) {
+			if (j < rowlen) {
 				ch = b[i + j];
 				if (!isascii(ch) || !isprint(ch)) {
 					ch = '.';
@@ -225,6 +263,9 @@ void slog_extra_bin(struct io_stream *restrict s, void *restrict data)
 		BUF_APPENDSTR(buf, "\n");
 		put(s, buf.data, buf.len);
 		buf.len = 0;
+		/* advance by the proven byte count (>= 1), so i rises to exactly n
+		 * and the loop always terminates */
+		i += rowlen;
 	}
 #undef BIN_FLUSH_IF
 }
@@ -251,8 +292,34 @@ struct bt_context {
 	size_t i, n;
 };
 
+#if defined(DEBUG_TEST) && SLOG_MT_SAFE
+static atomic_int g_backtrace_create_state_calls;
+#endif
+
 static int backtrace_cb(void *data, const uintptr_t pc)
 {
+	/* backtrace_simple() promises nothing but "pc is the program counter",
+	 * so the end of the stack has to be recognized from the value itself:
+	 * _Unwind_Backtrace() runs its trace function once more past the
+	 * outermost frame, with a return address of 0, and libbacktrace's
+	 * simple_unwind() forwards that after its "the ip is not before the
+	 * instruction" fixup (`if (!ip_before_insn) --pc;`) has wrapped it to
+	 * UINTPTR_MAX. No instruction can live at that address, so it is the
+	 * unwinder's terminator rather than a frame; returning non-zero also
+	 * stops backtrace_simple() there.
+	 *
+	 * That fixup is conditional, so UINTPTR_MAX is not the only value the
+	 * last call can carry: libgcc sets ip_before_insn from
+	 * _Unwind_IsSignalFrame(), skipping the decrement for a signal frame,
+	 * whose pc is the interrupted instruction rather than a return address.
+	 * The trace can therefore end with pc == 0, but only when that
+	 * interrupted instruction sits at address 0 -- control was transferred
+	 * through a null function pointer -- which is the faulting address the
+	 * crash handler exists to report rather than a terminator. Such a 0 is
+	 * stored like any other frame; see debug_backtrace() in debug.h. */
+	if (pc == UINTPTR_MAX) {
+		return 1;
+	}
 	struct bt_context *restrict ctx = data;
 	if (ctx->i < ctx->n) {
 		ctx->frames[ctx->i++] = (void *)pc;
@@ -269,11 +336,20 @@ static struct backtrace_state *bt_state(void)
 	 * a state every thread can reuse, since backtrace_create_state() is
 	 * not async-signal-safe and a crash can land on any thread */
 	static _Atomic(struct backtrace_state *) state = NULL;
+	static_assert(
+		ATOMIC_POINTER_LOCK_FREE == 2,
+		"the cached state is read by debug_backtrace() from a crash "
+		"handler, where ISO C11 7.14.1.1p5 admits an atomic access "
+		"only if it is lock-free");
 	struct backtrace_state *cur =
 		atomic_load_explicit(&state, memory_order_acquire);
 	if (cur != NULL) {
 		return cur;
 	}
+#if defined(DEBUG_TEST)
+	(void)atomic_fetch_add_explicit(
+		&g_backtrace_create_state_calls, 1, memory_order_relaxed);
+#endif
 	cur = backtrace_create_state(NULL, 1, NULL, NULL);
 	struct backtrace_state *expected = NULL;
 	if (!atomic_compare_exchange_strong_explicit(
@@ -295,10 +371,29 @@ static struct backtrace_state *bt_state(void)
 }
 #endif /* WITH_LIBBACKTRACE */
 
+#if defined(DEBUG_TEST) && WITH_LIBBACKTRACE && SLOG_MT_SAFE
+/* Test instrumentation, compiled only into debug_test's own build of this file.
+ * Not static so debug_test.c can read the counter from its separate translation
+ * unit; kept out of debug.h so test hooks stay off the public header, and
+ * debug_test.c declares it by hand. */
+int debug_test_backtrace_create_state_calls(void)
+{
+	return atomic_load_explicit(
+		&g_backtrace_create_state_calls, memory_order_relaxed);
+}
+#endif
+
 int debug_backtrace(void **restrict frames, int skip, const int len)
 {
 	assert(frames != NULL && len > 0);
-	skip++;
+	/* skip counts caller frames to drop; clamp a negative request and add
+	 * this function's own frame without signed-overflowing the count */
+	if (skip < 0) {
+		skip = 0;
+	}
+	if (skip < INT_MAX) {
+		skip++;
+	}
 #if WITH_LIBBACKTRACE
 	struct bt_context ctx = {
 		.state = bt_state(),
@@ -309,7 +404,13 @@ int debug_backtrace(void **restrict frames, int skip, const int len)
 	if (ctx.state == NULL) {
 		return 0;
 	}
-	(void)backtrace_simple(ctx.state, skip, backtrace_cb, NULL, &ctx);
+	/* backtrace_simple() adds one to skip internally (skip + 1, to drop its
+	 * own frame), so a skip of INT_MAX overflows that signed count and, once
+	 * negative, skips nothing at all. Cap the argument at INT_MAX - 1: an
+	 * unreachably deep skip still drops every captured frame. */
+	(void)backtrace_simple(
+		ctx.state, skip < INT_MAX ? skip : INT_MAX - 1, backtrace_cb,
+		NULL, &ctx);
 	return (int)ctx.i;
 #elif WITH_LIBUNWIND /* WITH_LIBBACKTRACE */
 	unw_context_t uc;
@@ -339,10 +440,26 @@ int debug_backtrace(void **restrict frames, int skip, const int len)
 	} while (unw_step(&cursor) > 0);
 	return w;
 #elif HAVE_BACKTRACE /* WITH_LIBBACKTRACE */
-	int n = backtrace(frames, len);
+	/* backtrace() takes no skip: it fills its buffer from this very frame
+	 * outward, so the skipped frames need slots of their own on top of the
+	 * len frames kept. Capture into whichever is larger, a local window or
+	 * the caller's array, then move the kept range to the front. The window
+	 * is fixed-size (this runs from crash handlers: no VLA, no malloc), so a
+	 * capture needing more than that many slots loses its outermost frames;
+	 * see debug_backtrace() in debug.h. */
+	void *window[DEBUG_BACKTRACE_WINDOW];
+	void **buf = window;
+	int cap = DEBUG_BACKTRACE_WINDOW;
+	if (len > cap) {
+		buf = frames;
+		cap = len;
+	}
+	/* cap >= len, so cap - len cannot overflow and bounds skip + len */
+	const int n = backtrace(buf, skip < cap - len ? skip + len : cap);
 	int w = 0;
+	/* w never passes i, so the forward copy is safe when buf is frames */
 	for (int i = skip; i < n; i++) {
-		frames[w++] = frames[i];
+		frames[w++] = buf[i];
 	}
 	return w;
 #else /* WITH_LIBBACKTRACE */
@@ -426,6 +543,28 @@ static int nosym_lines(
 		cb(ctx, line);
 	}
 	return len;
+}
+
+static void
+debug_backtrace_warmup_cb(void *restrict ctx, const char *restrict line)
+{
+	(void)ctx;
+	(void)line;
+}
+
+bool debug_backtrace_init(void)
+{
+	void *frames[DEBUG_STACK_MAXDEPTH];
+	const int n = debug_backtrace(frames, 0, DEBUG_STACK_MAXDEPTH);
+	if (n <= 0) {
+		return false;
+	}
+	/* warm the symbolization path too (symbol table / DWARF parse and the
+	 * backend's caches): debug_backtrace() alone only warms the unwinder, so
+	 * a first debug_backtrace_fd() would still allocate/parse otherwise */
+	(void)debug_backtrace_symbols(
+		debug_backtrace_warmup_cb, NULL, frames, n);
+	return true;
 }
 
 int debug_backtrace_symbols(
@@ -534,28 +673,6 @@ static void debug_fd_write(const int fd, const void *restrict data, size_t n)
 }
 #endif /* DEBUG_FD_RAW_WRITE */
 
-static void
-debug_backtrace_warmup_cb(void *restrict ctx, const char *restrict line)
-{
-	(void)ctx;
-	(void)line;
-}
-
-bool debug_backtrace_init(void)
-{
-	void *frames[DEBUG_STACK_MAXDEPTH];
-	const int n = debug_backtrace(frames, 0, DEBUG_STACK_MAXDEPTH);
-	if (n <= 0) {
-		return false;
-	}
-	/* warm the symbolization path too (symbol table / DWARF parse and the
-	 * backend's caches): debug_backtrace() alone only warms the unwinder, so
-	 * a first debug_backtrace_fd() would still allocate/parse otherwise */
-	(void)debug_backtrace_symbols(
-		debug_backtrace_warmup_cb, NULL, frames, n);
-	return true;
-}
-
 #if WITH_LIBBACKTRACE || WITH_LIBUNWIND
 /* line sink for debug_backtrace_symbols(): route each formatted frame to the fd
  * captured in ctx. Reuses the libbacktrace/libunwind symbolizers, which draw
@@ -572,15 +689,23 @@ static void debug_fd_line_cb(void *restrict ctx, const char *restrict line)
 static void debug_fd_nosym(const int fd, void **restrict frames, const int len)
 {
 	for (int i = 0; i < len; i++) {
-		char line[2 + 3 + 2 + 2 * sizeof(void *) + 2];
+		/* '#', the widest int index, ' ', "0x" and two hex digits per
+		 * pointer byte, '\n', NUL */
+		char line[1 + 11 + 1 + 2 + 2 * sizeof(void *) + 1 + 1];
 		const int r = u8snprintf(
 			line, sizeof(line), "#%-3d %p\n", i + 1, frames[i]);
-		if (r > 0) {
-			const size_t w = (size_t)r < sizeof(line) ?
-						 (size_t)r :
-						 sizeof(line);
-			debug_fd_write(fd, line, w);
+		if (r <= 0) {
+			continue;
 		}
+		size_t w = (size_t)r;
+		if (w >= sizeof(line)) {
+			/* unreachable with the sizing above; should it ever
+			 * truncate, send what was kept but never the NUL, and
+			 * still end the line so it cannot merge with the next */
+			w = sizeof(line) - 1;
+			line[w - 1] = '\n';
+		}
+		debug_fd_write(fd, line, w);
 	}
 }
 #endif
