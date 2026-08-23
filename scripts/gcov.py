@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
 # This code is licensed under MIT license (see LICENSE for details)
+"""Build gcov coverage data and write a Markdown coverage report to a file.
 
-"""Build gcov coverage data and print a Markdown coverage report.
+The report defaults to ``build/gcov.md``; progress messages are written to
+stderr.
 
 This script uses only the Python standard library and external tools that are
 normally present on a development system: cmake, ctest, and gcov.
@@ -27,9 +29,10 @@ ROOT = Path.cwd().resolve()
 DEFAULT_BUILD_DIR = ROOT / "build"
 DEFAULT_COVERAGE_BUILD_DIR = DEFAULT_BUILD_DIR / "gcov"
 DEFAULT_MARKDOWN_OUTPUT = DEFAULT_BUILD_DIR / "gcov.md"
+SCRATCH_DIR = DEFAULT_BUILD_DIR / "tmp"
 DEFAULT_SOURCE_DIRS = ("src",)
 DEFAULT_EXCLUDE_SOURCE_SUFFIXES = ("_test.c",)
-CACHE_LINE_RE = re.compile(r"^([A-Za-z0-9_]+):[^=]+=(.*)$")
+CACHE_LINE_RE = re.compile(r"^([^\s:=]+):([^=]+)=(.*)$")
 HIT_COUNT_RE = re.compile(r"^([0-9]+)")
 
 
@@ -162,21 +165,52 @@ def should_track_source(
     return any(is_relative_to(rel_path, source_dir) for source_dir in source_dirs)
 
 
-def parse_cmake_cache(cache_path: Path) -> Dict[str, str]:
-    """Parse a CMakeCache.txt file into a ``{name: value}`` dict."""
+def parse_cmake_cache(
+        cache_path: Path, *, external_only: bool = False
+) -> Dict[str, str]:
+    """Read cache values, optionally excluding internal/probe metadata."""
     cache: Dict[str, str] = {}
     if not cache_path.exists():
         return cache
     with cache_path.open("r", encoding="utf-8", errors="replace") as handle:
         for raw_line in handle:
-            line = raw_line.strip()
+            line = raw_line.rstrip("\r\n")
             if not line or line.startswith("#") or line.startswith("//"):
                 continue
             match = CACHE_LINE_RE.match(line)
             if match is None:
                 continue
-            cache[match.group(1)] = match.group(2)
+            if external_only and match.group(2) in {"INTERNAL", "STATIC"}:
+                continue
+            cache[match.group(1)] = match.group(3)
     return cache
+
+
+def cache_configure_options(cache: Dict[str, str]) -> List[str]:
+    """Carry configuration to a new tree without flags or tree metadata.
+
+    Call with the external entries from parse_cmake_cache(external_only=True).
+    Each analysis mode supplies its own instrumentation, optimization and link
+    flags; CMake must re-discover internal probes and source/build locations.
+    """
+    options = []
+    for name, value in cache.items():
+        if name in {
+            "CMAKE_BUILD_TYPE", "CMAKE_CONFIGURATION_TYPES",
+            "CMAKE_EXPORT_COMPILE_COMMANDS", "CMAKE_MAKE_PROGRAM",
+            "CMAKE_CACHEFILE_DIR", "CMAKE_HOME_DIRECTORY",
+        }:
+            continue
+        if name.startswith("CMAKE_GENERATOR"):
+            continue
+        if name.endswith(("-ADVANCED", "-STRINGS")):
+            continue
+        if re.match(r"^CMAKE_.*_FLAGS(?:_|$)", name):
+            continue
+        if name.startswith("CMAKE_INTERPROCEDURAL_OPTIMIZATION"):
+            continue
+        options.append(f"-D{name}={value}")
+    return options
 
 
 def ensure_tool(name: str) -> str:
@@ -222,22 +256,23 @@ def build_configure_command(
         str(ROOT),
         "-B",
         str(coverage_build_dir),
+        *cache_configure_options(base_cache),
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DBUILD_TESTING=ON",
         "-DENABLE_SANITIZERS=OFF",
+        "-DENABLE_TSAN=OFF",
         # Config-agnostic so every --build-type is instrumented: CMAKE_C_FLAGS
         # applies to all configurations, whereas CMAKE_C_FLAGS_<CONFIG> would
         # carry --coverage only for that one configuration (Debug), leaving any
         # other build type with no .gcno files.
+        "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
         "-DCMAKE_C_FLAGS=-O0 -g --coverage",
+        f"-DCMAKE_C_FLAGS_{build_type.upper()}=",
         "-DCMAKE_EXE_LINKER_FLAGS=--coverage",
         "-DCMAKE_SHARED_LINKER_FLAGS=--coverage",
         "-DCMAKE_MODULE_LINKER_FLAGS=--coverage",
         f"-DCMAKE_BUILD_TYPE={build_type}",
     ]
-    compiler = base_cache.get("CMAKE_C_COMPILER")
-    if compiler:
-        command.append(f"-DCMAKE_C_COMPILER={compiler}")
     return command
 
 
@@ -424,7 +459,8 @@ def collect_coverage(
 ) -> Dict[str, FileCoverage]:
     """Run gcov on every object file and aggregate per-source coverage."""
     coverage: Dict[str, FileCoverage] = {}
-    with tempfile.TemporaryDirectory(prefix="gcov-py-") as temp_root:
+    SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="gcov-py-", dir=SCRATCH_DIR) as temp_root:
         temp_root_path = Path(temp_root)
         for index, object_file in enumerate(object_files, start=1):
             work_dir = temp_root_path / f"obj-{index:04d}"
@@ -594,7 +630,7 @@ def render_markdown_report(
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments for the coverage run."""
     parser = argparse.ArgumentParser(
-        description="Run gcov coverage and print a Markdown report."
+        description="Run gcov coverage and write a Markdown report to a file."
     )
     parser.add_argument(
         "--build-dir",
@@ -681,10 +717,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Configure, build, test, collect gcov data, and write the Markdown report."""
     args = parse_args(argv)
-    cmake = ensure_tool(args.cmake)
-    ctest = ensure_tool(args.ctest)
-    gcov = ensure_command(args.gcov)
     ensure_project_root(ROOT)
+    gcov = ensure_command(args.gcov)
+    # cmake configures and builds; ctest runs the suite. Resolve each only when
+    # its stage runs, so a report-only run (--skip-configure --skip-build
+    # --skip-test) works from existing coverage data with gcov alone.
+    cmake = (
+        ensure_tool(args.cmake)
+        if not (args.skip_configure and args.skip_build)
+        else None
+    )
+    ctest = ensure_tool(args.ctest) if not args.skip_test else None
 
     base_build_dir = resolve_path(ROOT, args.build_dir)
     coverage_build_dir = resolve_path(ROOT, args.coverage_build_dir)
@@ -702,7 +745,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     exclude_source_suffixes = parse_exclude_source_suffixes(
         args.exclude_source_suffixes
     )
-    base_cache = parse_cmake_cache(base_build_dir / "CMakeCache.txt")
+    base_cache = parse_cmake_cache(
+        base_build_dir / "CMakeCache.txt", external_only=True
+    )
 
     if not args.skip_configure:
         configure_command = build_configure_command(

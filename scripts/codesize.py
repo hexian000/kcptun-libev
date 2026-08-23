@@ -52,8 +52,13 @@ DEFAULT_BUILD_DIR = ROOT / "build"
 DEFAULT_ANALYSIS_BUILD_DIR = DEFAULT_BUILD_DIR / "codesize"
 DEFAULT_OUTPUT = DEFAULT_BUILD_DIR / "codesize.md"
 MAP_NAME = "codesize.map"
+# Every executable links through the same map path (set once via
+# CMAKE_EXE_LINKER_FLAGS), so this stamp beside it records which target the
+# map was last linked for; --no-rebuild refuses to pair it with another
+# target's binary.
+MAP_STAMP_NAME = MAP_NAME + ".target"
 
-CACHE_LINE_RE = re.compile(r"^([A-Za-z0-9_]+):[^=]+=(.*)$")
+CACHE_LINE_RE = re.compile(r"^([^\s:=]+):([^=]+)=(.*)$")
 
 # GNU ld map-file grammar (section "Linker script and memory map").
 _MAP_GATE = "Linker script and memory map"
@@ -143,20 +148,51 @@ def ensure_project_root(root: Path) -> None:
         )
 
 
-def parse_cmake_cache(cache_path: Path) -> dict[str, str]:
-    """Parse a CMakeCache.txt file into a ``{name: value}`` dict."""
+def parse_cmake_cache(
+    cache_path: Path, *, external_only: bool = False
+) -> dict[str, str]:
+    """Read cache values, optionally excluding internal/probe metadata."""
     cache: dict[str, str] = {}
     if not cache_path.exists():
         return cache
     with cache_path.open("r", encoding="utf-8", errors="replace") as fh:
         for raw_line in fh:
-            line = raw_line.strip()
+            line = raw_line.rstrip("\r\n")
             if not line or line.startswith("#") or line.startswith("//"):
                 continue
             m = CACHE_LINE_RE.match(line)
             if m:
-                cache[m.group(1)] = m.group(2)
+                if external_only and m.group(2) in {"INTERNAL", "STATIC"}:
+                    continue
+                cache[m.group(1)] = m.group(3)
     return cache
+
+
+def cache_configure_options(cache: dict[str, str]) -> list[str]:
+    """Carry configuration to a new tree without flags or tree metadata.
+
+    Call with the external entries from parse_cmake_cache(external_only=True).
+    Each analysis mode supplies its own instrumentation, optimization and link
+    flags; CMake must re-discover internal probes and source/build locations.
+    """
+    options = []
+    for name, value in cache.items():
+        if name in {
+            "CMAKE_BUILD_TYPE", "CMAKE_CONFIGURATION_TYPES",
+            "CMAKE_EXPORT_COMPILE_COMMANDS", "CMAKE_MAKE_PROGRAM",
+            "CMAKE_CACHEFILE_DIR", "CMAKE_HOME_DIRECTORY",
+        }:
+            continue
+        if name.startswith("CMAKE_GENERATOR"):
+            continue
+        if name.endswith(("-ADVANCED", "-STRINGS")):
+            continue
+        if re.match(r"^CMAKE_.*_FLAGS(?:_|$)", name):
+            continue
+        if name.startswith("CMAKE_INTERPROCEDURAL_OPTIMIZATION"):
+            continue
+        options.append(f"-D{name}={value}")
+    return options
 
 
 def _human(n: int) -> str:
@@ -378,8 +414,10 @@ def configure(
         # user's own build generator.
         "-G", "Unix Makefiles",
         f"-DCMAKE_BUILD_TYPE={config}",
+        *cache_configure_options(base_cache),
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DENABLE_SANITIZERS=OFF",
+        "-DENABLE_TSAN=OFF",
         f"-DCMAKE_EXE_LINKER_FLAGS=-Wl,-Map={map_path}",
     ]
     if lto == "on":
@@ -387,12 +425,11 @@ def configure(
     elif lto == "off":
         command.append("-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF")
     else:  # auto: inherit the reference build's setting when it has one
-        ipo = base_cache.get("CMAKE_INTERPROCEDURAL_OPTIMIZATION")
+        ipo = base_cache.get(
+            f"CMAKE_INTERPROCEDURAL_OPTIMIZATION_{config.upper()}",
+            base_cache.get("CMAKE_INTERPROCEDURAL_OPTIMIZATION"))
         if ipo:
             command.append(f"-DCMAKE_INTERPROCEDURAL_OPTIMIZATION={ipo}")
-    compiler = base_cache.get("CMAKE_C_COMPILER")
-    if compiler:
-        command.append(f"-DCMAKE_C_COMPILER={compiler}")
     _run(command)
 
 
@@ -525,6 +562,23 @@ def _data_kind(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# How much of a failing `size` diagnostic to quote without pasting a whole
+# backtrace or tool dump into the exit message.
+_STDERR_TAIL_LINES = 20
+
+
+def _stderr_tail(text: str) -> str:
+    """Return the last few non-empty lines of *text* for an exit message."""
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "no diagnostic"
+    tail = lines[-_STDERR_TAIL_LINES:]
+    if len(lines) > _STDERR_TAIL_LINES:
+        dropped = len(lines) - _STDERR_TAIL_LINES
+        tail.insert(0, f"... ({dropped} earlier lines)")
+    return "\n".join(tail)
+
+
 def _section_kind(name: str) -> str:
     """Bucket an ELF output section into code/data/bss/ro-data for display."""
     if name.startswith(".text") or name in (".init", ".fini", ".plt") \
@@ -549,7 +603,9 @@ def size_sections(size_tool: str, binary: Path) -> list[tuple[str, str, int]]:
         [size_tool, "-A", "-d", str(binary)],
         capture_output=True, text=True, check=False)
     if proc.returncode != 0:
-        sys.exit(f"error: size failed on {_display_path(binary)}")
+        sys.exit(
+            f"error: size failed on {_display_path(binary)}\n"
+            f"{_stderr_tail(proc.stderr)}")
     rows: list[tuple[str, str, int]] = []
     for line in proc.stdout.splitlines():
         fields = line.split()
@@ -562,6 +618,34 @@ def size_sections(size_tool: str, binary: Path) -> list[tuple[str, str, int]]:
         if size and addr:
             rows.append((fields[0], _section_kind(fields[0]), size))
     return rows
+
+
+def _load_compile_db(build_dir: Path) -> list[dict]:
+    """Load the analysis build's compile database with diagnosed failures."""
+    db_path = build_dir / "compile_commands.json"
+    try:
+        text = db_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        sys.exit(
+            f"error: compile database not found: {_display_path(db_path)} "
+            "(configure with CMAKE_EXPORT_COMPILE_COMMANDS=ON; "
+            "drop --no-rebuild)")
+    except (OSError, UnicodeError) as exc:
+        sys.exit(
+            f"error: cannot read compile database: {_display_path(db_path)}: "
+            f"{exc}")
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        sys.exit(
+            f"error: invalid compile database: {_display_path(db_path)}: "
+            f"{exc}")
+    if not isinstance(data, list) or not all(
+            isinstance(entry, dict) for entry in data):
+        sys.exit(
+            f"error: invalid compile database: {_display_path(db_path)} "
+            "(expected a JSON array of command objects)")
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +706,7 @@ def build_tables(
 
 
 def _table(
-    title: str, note: str, headers: list[str], aligns: str,
+    title: str, headers: list[str], aligns: str,
     rows: list[tuple], total: int,
 ) -> list[str]:
     """Render one titled Markdown table; the last column is bytes + percent.
@@ -631,8 +715,6 @@ def _table(
     columns, the last is the byte count rendered with a percent-of-*total*.
     """
     lines = [title, ""]
-    if note:
-        lines += [note, ""]
     lines.append("| " + " | ".join(headers) + " |")
     lines.append("|" + aligns + "|")
     for row in rows:
@@ -674,19 +756,19 @@ def render_report(meta: dict[str, str], tables: Tables) -> str:
         "",
     ]
     lines += _table(
-        "## Sections", "",
+        "## Sections",
         ["Section", "Kind", "Bytes", "%"], "---|:-:|---:|---:",
         [(s, k, sz) for s, k, sz in tables.sections], sec_total)
     lines += _table(
-        "## Modules", "",
+        "## Modules",
         ["Module", "Bytes", "%"], "---|---:|---:",
         list(tables.modules), mod_total)
     lines += _table(
-        "## Functions", "",
+        "## Functions",
         ["Function", "Module", "Bytes", "%"], "---|---|---:|---:",
         list(tables.functions), fn_total)
     lines += _table(
-        "## Data", meta.get("data_note", ""),
+        "## Data",
         ["Symbol", "Sec", "Module", "Bytes", "%"], "---|:-:|---|---:|---:",
         list(tables.data), data_total)
     if meta.get("lto_note"):
@@ -734,8 +816,10 @@ def main() -> int:
     args = ap.parse_args()
 
     ensure_project_root(ROOT)
-    cmake = ensure_tool("cmake")
     size_tool = ensure_tool("size")
+    # cmake only configures and builds the analysis tree; --no-rebuild reuses
+    # existing artifacts and never invokes it, so resolve it only when rebuilding.
+    cmake = ensure_tool("cmake") if not args.no_rebuild else None
 
     build_dir = Path(args.build)
     if not build_dir.is_absolute():
@@ -746,7 +830,8 @@ def main() -> int:
     map_path = build_dir / MAP_NAME
 
     t0 = time.monotonic()
-    base_cache = parse_cmake_cache(DEFAULT_BUILD_DIR / "CMakeCache.txt")
+    base_cache = parse_cmake_cache(
+        DEFAULT_BUILD_DIR / "CMakeCache.txt", external_only=True)
     if not args.no_rebuild:
         log(f"Configuring {args.config} in {_display_path(build_dir)} ...")
         configure(cmake, build_dir, base_cache, args.config, args.lto, map_path)
@@ -758,12 +843,47 @@ def main() -> int:
                  "-- configure first (drop --no-rebuild)")
     target = select_target(targets, cache, args.target)
 
+    map_stamp = build_dir / MAP_STAMP_NAME
     if not args.no_rebuild:
         log(f"Building target {target.name} ...")
         if map_path.exists():
             map_path.unlink()
         _run([cmake, "--build", str(build_dir),
               "--target", target.name, f"-j{os.cpu_count() or 1}"])
+        if map_path.exists():
+            st = map_path.stat()
+            map_stamp.write_text(
+                f"{target.name}\n{st.st_mtime_ns} {st.st_size}\n",
+                encoding="utf-8")
+    elif map_path.exists():
+        # The shared map holds whatever executable linked last -- possibly
+        # not this target: every link overwrites it, including manual builds
+        # in the analysis directory. Pairing this target's binary with
+        # another target's map would silently report the wrong
+        # modules/functions, so refuse unless the stamp written after the
+        # last codesize.py link names this target and the map is untouched
+        # since.
+        try:
+            stamp_lines = map_stamp.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            stamp_lines = []
+        producer = stamp_lines[0] if stamp_lines else ""
+        fingerprint = stamp_lines[1] if len(stamp_lines) > 1 else ""
+        st = map_path.stat()
+        current = f"{st.st_mtime_ns} {st.st_size}"
+        if not producer:
+            why = "has no record of which target linked it"
+        elif fingerprint != current:
+            why = "changed since codesize.py linked it (a later build relinked)"
+        elif producer != target.name:
+            why = f"was last linked for target {producer!r}"
+        else:
+            why = None
+        if why is not None:
+            sys.exit(
+                f"error: {_display_path(map_path)} {why}; analyzing "
+                f"{target.name!r} could pair its binary with another "
+                "target's map -- drop --no-rebuild to relink")
 
     binary = target_binary(target)
     lto = detect_lto(target) or args.lto == "on"
@@ -772,9 +892,7 @@ def main() -> int:
     log("Parsing map and section sizes ...")
     sections = parse_map(map_path)
     size_rows = size_sections(size_tool, binary)
-    index = build_object_index(
-        json.loads((build_dir / "compile_commands.json").read_text(
-            encoding="utf-8")))
+    index = build_object_index(_load_compile_db(build_dir))
     tables = build_tables(sections, size_rows, index, link_dir)
 
     meta = {
