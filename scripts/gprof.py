@@ -31,6 +31,7 @@ KNOWN_BOOL_OPTIONS = {
     "ENABLE_SYSTEMD": "OFF",
 }
 CACHE_LINE_RE = re.compile(r"^([A-Za-z0-9_]+):[^=]+=(.*)$")
+PER_CALL_MICROSECONDS = {"s": 1e6, "ms": 1e3, "us": 1.0, "ns": 1e-3}
 
 
 @dataclass
@@ -407,14 +408,28 @@ def run_benchmark(
 
 
 def parse_flat_profile(gprof_output: str) -> List[FlatProfileRow]:
+    """Parse the flat profile, normalizing per-call times to microseconds."""
     rows: List[FlatProfileRow] = []
     in_table = False
+    call_scales: Optional[tuple[float, float]] = None
     for raw_line in gprof_output.splitlines():
         line = raw_line.rstrip()
         if line.startswith("  %   cumulative"):
             in_table = True
             continue
         if not in_table:
+            continue
+        header = re.search(r"\bcalls\s+(\S+)/call\s+(\S+)/call\s+name\b", line)
+        if header is not None:
+            try:
+                call_scales = (
+                    PER_CALL_MICROSECONDS[header.group(1)],
+                    PER_CALL_MICROSECONDS[header.group(2)],
+                )
+            except KeyError as exc:
+                raise ValueError(
+                    "unsupported gprof per-call unit: %s" % exc.args[0]
+                ) from exc
             continue
         if not line.strip():
             if rows:
@@ -436,11 +451,16 @@ def parse_flat_profile(gprof_output: str) -> List[FlatProfileRow]:
         if len(parts) >= 7:
             try:
                 calls = int(parts[3])
-                self_us_per_call = float(parts[4])
-                total_us_per_call = float(parts[5])
-                name = parts[6]
+                self_per_call = float(parts[4])
+                total_per_call = float(parts[5])
             except ValueError:
                 name = parts[3]
+            else:
+                if call_scales is None:
+                    raise ValueError("gprof flat profile has no per-call unit header")
+                self_us_per_call = self_per_call * call_scales[0]
+                total_us_per_call = total_per_call * call_scales[1]
+                name = parts[6]
         else:
             name = parts[3]
         rows.append(
