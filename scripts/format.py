@@ -5,7 +5,8 @@
 
 Apply formatting conventions to the repository:
 
-  * clang-format to .c/.h files under src/;
+  * clang-format to tracked, non-generated .c/.h files under the build source
+    roots (src/, examples/, and tools/);
   * a cpp-cleanup pass on the same files: #include reordering/classification,
     #endif conditional annotation, and an include-dependency lint
     (see below);
@@ -18,17 +19,22 @@ never processed -- it is left untouched and reported with a warning instead.
 
 Include classification is derived, not hardcoded: each #include is resolved
 against the compilation database (compile_commands.json) and bucketed by
-*where the header actually lives* (project tree vs in-tree contrib vs an
-installed/system directory); a built-in table of C-standard/POSIX headers
-separates the standard group from installed third-party libraries.  When the
-database is absent, resolution falls back to structural heuristics.
+*where the header actually lives* and its include-search kind (project tree
+vs in-tree contrib vs an installed/system directory); a built-in table of
+C-standard/POSIX headers separates the standard group from installed
+third-party libraries. Telling a project header from an in-tree contrib one
+needs that resolution -- the #include spelling alone does not carry it -- so
+when no compilation database is available the include-reordering step is
+skipped (with a warning, and reported by --check) rather than guessing and
+silently merging the two groups tree-wide; clang-format, #endif annotation
+and Unicode normalization still run.
 
 Include groups (blank-line separated, alphabetically sorted within each):
 
   1. associated header (foo.h for foo.c, or foo_test.c; omitted in headers) "..."
-  2. project headers (resolve inside the repo)                        "..."
+  2. project headers (resolve inside the repo via non-system paths)   "..."
   3. in-tree contrib / third-party (resolve under contrib/ etc.)       "..."
-  4. platform / installed third-party (angle-bracket, not recognized)  <...>
+  4. platform / third-party system paths (not recognized)             <...>
   5. standard C / POSIX (angle-bracket, recognized)                    <...>
 
 Conditional #include blocks (#if ... #endif) stay contiguous and sort by
@@ -45,7 +51,13 @@ the convention:
     internal/ convention).
 
 Usage:
-    python3 scripts/format.py [--check] [--nfkc] [ROOT]
+    python3 scripts/format.py [--check] [--nfkc]
+        [--clang-version VERSION] [ROOT]
+
+ROOT is the repository to format when omitted (or ``.``), or a scope filter
+(one source-root subdirectory or a single tracked .c/.h file).  The C formatter
+only visits tracked, non-generated files in the build source roots; the
+normalization pass visits every tracked text file outside contrib/.
 """
 
 from __future__ import annotations
@@ -67,6 +79,9 @@ from pathlib import Path
 # File iteration
 # ---------------------------------------------------------------------------
 
+_SOURCE_ROOTS = frozenset(("src", "examples", "tools"))
+_C_SUFFIXES = frozenset((".c", ".h"))
+
 
 def _is_within(path: Path, scope: Path) -> bool:
     """True if *path* is *scope* itself or lies under *scope* (a directory).
@@ -82,30 +97,33 @@ def _is_within(path: Path, scope: Path) -> bool:
 def iter_c_files(repo_root: Path, scope: Path | None = None):
     """Yield .c/.h files to format, excluding *.gen.[ch].
 
-    Directory coverage is the repository's ``src/`` tree (per the module
-    docstring).  *scope*, when given, narrows the run: a directory restricts
-    the src/ walk to that subtree, while a file selects exactly that source --
-    even one outside src/ that the caller named explicitly -- so
-    ``format.py src/codec`` and ``format.py src/main.c`` both work rather than
-    silently matching nothing.
+    The source roots are the build-included ``src/``, ``examples/`` and
+    ``tools/`` trees.  The tracked-file list is the source oracle: filesystem
+    globbing would include ignored generated output (and any other untracked
+    source) that the formatter must leave alone.  *scope*, when given, narrows
+    the roots to a subdirectory or a single tracked source file.
     """
-    def is_source(p: Path) -> bool:
-        return p.suffix in (".c", ".h") and not p.name.endswith(
-            (".gen.c", ".gen.h"))
-
-    if scope is not None and scope.is_file():
-        if is_source(scope):
-            yield scope.resolve()
-        return
-
-    src = repo_root / "src"
-    for pattern in ("**/*.c", "**/*.h"):
-        for p in src.glob(pattern):
-            if not is_source(p):
-                continue
-            if scope is not None and not _is_within(p, scope):
-                continue
-            yield p
+    out = subprocess.run(
+        ["git", "ls-files", "-z"],
+        capture_output=True, check=True, cwd=str(repo_root),
+    ).stdout
+    scope_resolved = scope.resolve() if scope is not None else None
+    for raw in out.split(b"\x00"):
+        if not raw:
+            continue
+        rel = os.fsdecode(raw)
+        path = repo_root / rel
+        in_source_root = rel.split("/", 1)[0] in _SOURCE_ROOTS
+        explicitly_selected = (
+            scope_resolved is not None and path.resolve() == scope_resolved)
+        if (path.suffix not in _C_SUFFIXES
+                or path.name.endswith((".gen.c", ".gen.h"))
+                or (not in_source_root and not explicitly_selected)
+                or not path.is_file()):
+            continue
+        if scope_resolved is not None and not _is_within(path, scope_resolved):
+            continue
+        yield path
 
 
 def iter_text_files(repo_root: Path, scope: Path | None = None):
@@ -396,19 +414,23 @@ class CompileDB:
         return self._per_file.get(file_abs, self._aggregate)
 
     def resolve(self, includer_abs, name, is_angle):
-        """Return the absolute path *name* resolves to, or None."""
+        """Return (absolute path, search kind) for *name*, or None."""
         entry_dirs = self._dirs_for(includer_abs)
+        # GCC ignores -I for a directory also marked as a system directory.
+        system_dirs = {Path(d).resolve() for k, d in entry_dirs
+                       if k in ("isystem", "idirafter")}
         search = []
         if not is_angle:
-            search.append(os.path.dirname(includer_abs))
-            search += [d for k, d in entry_dirs if k == "iquote"]
-        search += [d for k, d in entry_dirs if k == "I"]
-        search += [d for k, d in entry_dirs if k == "isystem"]
-        search += [d for k, d in entry_dirs if k == "idirafter"]
-        for d in search:
-            cand = _norm(os.path.join(d, name))
+            search.append(("local", os.path.dirname(includer_abs)))
+            search += [(k, d) for k, d in entry_dirs if k == "iquote"]
+        search += [(k, d) for k, d in entry_dirs
+                   if k == "I" and Path(d).resolve() not in system_dirs]
+        search += [(k, d) for k, d in entry_dirs if k == "isystem"]
+        search += [(k, d) for k, d in entry_dirs if k == "idirafter"]
+        for kind, directory in search:
+            cand = _norm(os.path.join(directory, name))
             if os.path.isfile(cand):
-                return cand
+                return cand, kind
         return None
 
 
@@ -443,13 +465,22 @@ def classify(target, includer_abs, cfg):
     is_angle = target[0] == "<"
     name = target[1:-1].strip()
     db = cfg.db
-    resolved = db.resolve(includer_abs, name, is_angle) if db else None
+    resolution = db.resolve(includer_abs, name, is_angle) if db else None
+    resolved, kind = resolution if resolution is not None else (None, None)
 
     # 1. associated header: foo.h for foo.c, with or without a path prefix
     # (e.g. x/foo_test.c including "x/foo.h") as long as the prefix names the
     # includer's own directory.  foo_test.c additionally treats foo.h (its
     # subject under test, with the "_test" suffix stripped) as associated,
     # alongside foo_test.h itself.
+    #
+    # This is decided structurally, from the include's own directory prefix
+    # naming the includer's directory, and needs no compilation database: the
+    # name-based pairing holds regardless of where the header resolves.  The
+    # structural test is therefore authoritative -- a database that resolves the
+    # header under a different-but-equivalent path (e.g. a build tree recorded at
+    # a symlinked mount point, so the resolved string differs from includer_dir)
+    # must not demote the associated header out of group 1.
     if not is_angle and includer_abs.endswith(_C_SOURCE_EXTS):
         stem = os.path.splitext(os.path.basename(includer_abs))[0]
         candidates = [stem]
@@ -458,23 +489,30 @@ def classify(target, includer_abs, cfg):
         inc_dir, base = os.path.split(name)
         includer_dir = os.path.dirname(includer_abs)
         if base in (c + ".h" for c in candidates) and (
-                os.path.dirname(resolved) == includer_dir if resolved is not None
-                else _dir_suffix_matches(includer_dir, inc_dir)):
+                _dir_suffix_matches(includer_dir, inc_dir)
+                or (resolved is not None
+                    and os.path.dirname(resolved) == includer_dir)):
             return GROUP_ASSOCIATED
 
-    # 2/3. first-party: resolves somewhere inside the repository
+    # 2/3. Explicitly vendored headers retain their own group even when the
+    # compiler treats their directory as system. Other system search paths
+    # can hold external dependencies built inside the repository's scratch
+    # area; their location does not make them first-party headers.
     if resolved is not None and cfg.root is not None \
             and _is_inside(resolved, cfg.root):
         if _has_contrib_component(resolved, cfg.root, cfg.contrib_dirs):
             return GROUP_CONTRIB
-        return GROUP_PROJECT
+        if kind not in ("isystem", "idirafter"):
+            return GROUP_PROJECT
 
-    # 4/5. angle brackets: recognized C/POSIX headers -> 5; anything else
-    # (platform / installed third-party) -> 4.
-    if is_angle:
+    # 4/5. System search paths and angle brackets: recognized C/POSIX
+    # headers -> 5; anything else (platform / third-party) -> 4.
+    if is_angle or kind in ("isystem", "idirafter"):
         return GROUP_STANDARD if _is_standard(name) else GROUP_PLATFORM
 
-    # quoted but not resolved in-repo (typically: no database) -> heuristics
+    # quoted, database present but this header did not resolve in-repo (e.g. an
+    # -I path the database omits) -> best-effort by spelling.  The no-database
+    # case never reaches here: reordering is skipped entirely without one.
     if any(part in cfg.contrib_dirs for part in name.split("/")[:-1]):
         return GROUP_CONTRIB
     return GROUP_PROJECT
@@ -699,10 +737,11 @@ def _reorder_includes(lines, includer_abs, cfg):
 
     result = list(lines[:start])
     result.extend(new_block)
-    result.append("\n")
     body = end
     while body < len(lines) and lines[body].strip() == "":
         body += 1
+    if body < len(lines):
+        result.append("\n")
     result.extend(lines[body:])
     return result
 
@@ -712,27 +751,44 @@ def _reorder_includes(lines, includer_abs, cfg):
 # ---------------------------------------------------------------------------
 
 def _block_comment_mask(lines):
-    """Mark lines that *begin* inside a ``/* ... */`` block comment."""
+    """Mark lines that *begin* inside a ``/* ... */`` block comment.
+
+    The scan tracks string and character literals so a ``/*`` inside one
+    (e.g. ``"Accept: */*"``) does not open a phantom comment that would mask
+    the following lines from the annotation and include passes.  A literal
+    cannot span lines in C, so its state never carries over."""
     mask = [False] * len(lines)
     in_comment = False
     for i, s in enumerate(lines):
         mask[i] = in_comment
         j = 0
         while j < len(s):
-            if not in_comment:
-                if s.startswith("//", j):
-                    break
-                if s.startswith("/*", j):
-                    in_comment = True
-                    j += 2
-                    continue
-                j += 1
-            else:
+            if in_comment:
                 k = s.find("*/", j)
                 if k == -1:
                     break
                 in_comment = False
                 j = k + 2
+                continue
+            if s.startswith("//", j):
+                break
+            if s.startswith("/*", j):
+                in_comment = True
+                j += 2
+                continue
+            if s[j] in ('"', "'"):
+                quote = s[j]
+                j += 1
+                while j < len(s):
+                    if s[j] == "\\":
+                        j += 2
+                    elif s[j] == quote:
+                        j += 1
+                        break
+                    else:
+                        j += 1
+                continue
+            j += 1
     return mask
 
 
@@ -838,14 +894,21 @@ def _collect_includes(lines):
 
 def _resolve_in_repo(includer_abs, target, cfg):
     """Resolve ``#include`` *target*; return (resolved_abs, rel, name) if it
-    lands inside the repo (*rel* relative to cfg.root), else None."""
+    lands inside the repo (*rel* relative to cfg.root) and is not an external
+    system header, else None."""
     db = cfg.db
     if db is None or cfg.root is None:
         return None
     is_angle = target[0] == "<"
     name = target[1:-1].strip()
-    resolved = db.resolve(includer_abs, name, is_angle)
-    if not resolved or not _is_inside(resolved, cfg.root):
+    resolution = db.resolve(includer_abs, name, is_angle)
+    if resolution is None:
+        return None
+    resolved, kind = resolution
+    if not _is_inside(resolved, cfg.root):
+        return None
+    if kind in ("isystem", "idirafter") and not _has_contrib_component(
+            resolved, cfg.root, cfg.contrib_dirs):
         return None
     rel = Path(resolved).resolve().relative_to(Path(cfg.root).resolve())
     return resolved, str(rel), name
@@ -987,8 +1050,8 @@ def _build_cpp_cleanup_config(root: Path):
         cfg.root = db.root
     if cfg.root is None:
         cfg.root = _find_repo_root(root) or root
-    # Build the cycle-detection graph over the whole src/ tree (cfg.root), not
-    # just a scoped subtree, so a scoped run still sees cross-subtree edges.
+    # Build the cycle-detection graph over all build source roots (cfg.root),
+    # not just a scoped subtree, so a scoped run still sees cross-subtree edges.
     cfg.include_dep_graph = _collect_include_dependency_graph(cfg.root, cfg)
     return cfg
 
@@ -1002,7 +1065,16 @@ def _cpp_cleanup_text(
     Pure: it neither reads nor writes files.
     """
     lines = text.splitlines(keepends=True)
-    new_lines = _reorder_includes(lines, includer_abs, cfg)
+    if cfg.db is not None:
+        new_lines = _reorder_includes(lines, includer_abs, cfg)
+    else:
+        # Without a compilation database, a project header cannot be told from
+        # an in-tree contrib one -- that distinction is where the header
+        # resolves on disk, not how the #include spells it -- so reordering
+        # would merge groups 2 and 3 into one alphabetical block and rewrite
+        # includes across every file.  Skip it (the caller warns once); the
+        # remaining steps need no database.
+        new_lines = lines
     new_lines = annotate_conditionals(new_lines, _COND_MIN_LINES)
     includes = _collect_includes(lines)
     dep_warnings = check_include_dependencies(includer_abs, includes, cfg)
@@ -1025,8 +1097,15 @@ def _normalize_unicode_bytes(data: bytes, form: str) -> bytes:
 
 def main() -> None:
     """Parse arguments and run the formatting passes over the repository."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("root", nargs="?", default=".", type=Path)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "root", nargs="?", default=".", type=Path, metavar="ROOT",
+        help="repository root or scope filter: a source-root directory or a "
+             "single tracked .c/.h file (default: current directory)",
+    )
     parser.add_argument(
         "--check", action="store_true",
         help="check for formatting changes without writing them; "
@@ -1050,7 +1129,14 @@ def main() -> None:
     # run never silently matches nothing.
     cpp_cleanup_cfg = _build_cpp_cleanup_config(root)
     repo_root = cpp_cleanup_cfg.root
+    # A path with no repository above it degrades the root to the argument
+    # itself, and the passes cannot run without one: the text pass lists
+    # files with git, and every reported path is repo-relative.  Say so
+    # instead of crashing on the degraded root further down.
+    if not (repo_root / ".git").exists():
+        sys.exit(f"error: {root} is not inside a git repository")
     scope = None if root == repo_root else root
+    have_db = cpp_cleanup_cfg.db is not None
 
     found_clang = _clang_format_version()
     have_clang = found_clang == args.clang_version
@@ -1066,9 +1152,9 @@ def main() -> None:
     # Each file is visited once.  A single original copy is read for change
     # detection and to seed the passes that apply to it (clang-format reads the
     # file itself, so a C source is read at most twice); the file is written
-    # back at most once, only if a pass changed it.  C sources under src/ take
-    # the clang-format + cpp-cleanup passes; every git-tracked text file takes
-    # the Unicode-normalization pass; a file in both sets takes all three but
+    # back at most once, only if a pass changed it.  C sources under the build
+    # source roots take the clang-format + cpp-cleanup passes; every tracked
+    # text file takes the Unicode-normalization pass; a file in both sets takes
     # is still handled once.
     c_by_key = {_norm(str(p)): p for p in iter_c_files(repo_root, scope)}
     text_by_key = {_norm(str(p)): p for p in iter_text_files(repo_root, scope)}
@@ -1076,6 +1162,15 @@ def main() -> None:
     text_total = len(text_by_key)
     if scope is not None and not c_by_key and not text_by_key:
         _warn(f"no files matched {root}")
+    # Include reordering needs a compilation database to classify each header by
+    # where it resolves; without one the step is skipped rather than guessing
+    # (see _cpp_cleanup_text).  Warn once when there are C sources it covers.
+    if not have_db and c_total > 0:
+        _warn("no compilation database found; skipping include reordering for "
+              f"{c_total} C file(s) (project vs. contrib headers cannot be "
+              "classified without it). Generate compile_commands.json with "
+              "cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON and place it at the "
+              "repository root or under build/ (see m.sh).")
 
     clang_changed = clang_lines = 0
     cpp_cleanup_changed = cpp_cleanup_warned = 0
@@ -1143,8 +1238,13 @@ def main() -> None:
               f"{clang_changed}/{c_total} files changed")
     else:
         print(f"clang-format: skipped ({c_total} C file(s) not checked)")
-    print(f"cpp-cleanup: {cpp_cleanup_changed}/{c_total} files changed, "
-          f"{cpp_cleanup_warned} warning(s)")
+    if have_db:
+        print(f"cpp-cleanup: {cpp_cleanup_changed}/{c_total} files changed, "
+              f"{cpp_cleanup_warned} warning(s)")
+    else:
+        print("cpp-cleanup: include reordering skipped (no compilation "
+              f"database); {cpp_cleanup_changed}/{c_total} files changed, "
+              f"{cpp_cleanup_warned} warning(s)")
     print(f"normalize {form}: {norm_lines} lines in "
           f"{norm_changed}/{text_total} files changed")
 
@@ -1161,6 +1261,12 @@ def main() -> None:
         if not have_clang and c_total > 0:
             print("format --check: clang-format did not run, so "
                   f"{c_total} C file(s) are unverified")
+            failed = True
+        # Likewise, without a compilation database include ordering was not
+        # checked -- report it rather than exiting clean.
+        if not have_db and c_total > 0:
+            print("format --check: no compilation database, so include "
+                  f"ordering for {c_total} C file(s) is unverified")
             failed = True
         if failed:
             sys.exit(1)
