@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
 # This code is licensed under MIT license (see LICENSE for details)
-
 """Run clang-tidy on production sources and write build/lint.md.
 
 Usage:
@@ -11,17 +10,34 @@ Usage:
   scripts/lint.py -j N                       # parallel jobs (default: nproc)
   scripts/lint.py --build DIR                # custom build directory
   scripts/lint.py --tests                    # also lint *_test.c files
-  scripts/lint.py --generated                # also lint *.gen.c files
+  scripts/lint.py --generated                # also lint generated *.gen.[ch]
   scripts/lint.py --no-denoise               # keep known false positives
   scripts/lint.py --raw-list PATH            # also write a diffable raw findings list
+  scripts/lint.py --path src/net             # analyze only these files
+  scripts/lint.py --path 'src/net/*.c' --path src/os/socket.c
+
+Path globs use slash-aware shell semantics: '*', '?' and '[...]' match within
+one directory; '**' matches zero or more directories.
 
 The CHECK argument is forwarded verbatim as the glob in -checks='-*,CHECK'.
 Use a trailing '*' for prefix matching, e.g. "readability-*".
 
-Production code is defined as all C sources under src/ that are not test
-files (*_test.c) and not generated files (*.gen.c). The third-party tree
-(contrib/) is always excluded; --tests and --generated opt the respective
-file groups back in.
+CHECK narrows by check name; --path narrows by file, so an edit can be linted
+without re-analyzing the whole tree. A narrowed run keeps the same filters and
+denoising and reports every finding in the files it covers -- it withholds
+nothing -- but it says nothing about the rest of the tree, so its findings list
+is not comparable against a full sweep's. The scope is recorded in the "Build
+configuration" line of both the report and the raw list so the two cannot be
+mistaken for each other.
+
+Production code is defined as all non-test, non-generated C sources listed in
+the compilation database. In this project that covers the build-included
+src/, examples/, and tools/ trees. The compilation database is authoritative
+for which sources are build-included. Generated headers count too: clang-tidy
+attributes diagnostics from a header to that header, so a warning in a *.gen.h
+pulled in by an accepted translation unit must be dropped just like its
+*.gen.c sibling. The third-party tree (contrib/) is always excluded; --tests
+and --generated opt the respective file groups back in.
 
 Denoising: some valuable checks fire false positives on this project's own
 facilities (the archetype is misc-include-cleaner on utils/ctype_ascii.h, an
@@ -35,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import fnmatch
 import json
 import os
 import re
@@ -57,7 +74,7 @@ DEFAULT_OUTPUT = DEFAULT_BUILD_DIR / "lint.md"
 
 _EXCL_CONTRIB = re.compile(r"(?:^|/)contrib/")  # third-party tree
 _EXCL_TEST = re.compile(r"_test\.c$")            # unit-test files
-_EXCL_GEN = re.compile(r"\.gen\.c$")             # generated files
+_EXCL_GEN = re.compile(r"\.gen\.[ch]$")          # generated sources & headers
 
 
 def _make_filter(include_tests: bool, include_generated: bool):
@@ -75,27 +92,51 @@ def _make_filter(include_tests: bool, include_generated: bool):
 
 
 # ---------------------------------------------------------------------------
+# Compilation database
+# ---------------------------------------------------------------------------
+
+def _load_db(build_dir: Path) -> list[dict]:
+    """Load compile_commands.json from *build_dir*, exiting when it is
+    missing.  The database drives everything below — the basename map, the
+    accepted-source list and the pruned lint database — so it is loaded once
+    and handed to those consumers."""
+    db_path = build_dir / "compile_commands.json"
+    if not db_path.exists():
+        sys.exit(f"error: {db_path} not found — run cmake first")
+    return json.loads(db_path.read_text(encoding="utf-8"))
+
+
+def _root_relative(fpath: str) -> str | None:
+    """Return *fpath* relative to ROOT after resolving symlinks, or None when
+    it does not lie under ROOT.
+
+    Resolution matters: the database records whatever spelling cmake was
+    configured with, and a checkout reachable through a symlink (two mount
+    aliases of one tree) may be recorded under the other alias.  Comparing
+    lexically would classify every such path as external and silently drop
+    its findings."""
+    try:
+        return str(Path(fpath).resolve().relative_to(ROOT))
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Build a basename → canonical-relative-path lookup from compile_commands.json
 # so that prefix-mapped paths like "dispatch.c" are shown as "src/mux/dispatch.c".
 # ---------------------------------------------------------------------------
 
-def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
-    db_path = build_dir / "compile_commands.json"
-    if not db_path.exists():
-        sys.exit(f"error: {db_path} not found — run cmake first")
-    db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
+def _build_name_map(db: list[dict], accept) -> dict[str, str]:
     mapping: dict[str, str] = {}
     ambiguous: set[str] = set()
     for entry in db:
         fpath = entry["file"]
         if not accept(fpath):
             continue
-        pobj = Path(fpath)
-        try:
-            rel = str(pobj.relative_to(ROOT))
-        except ValueError:
-            rel = str(pobj)
-        name = pobj.name
+        rel = _root_relative(fpath)
+        if rel is None:
+            rel = fpath
+        name = Path(fpath).name
         if name in mapping and mapping[name] != rel:
             ambiguous.add(name)
         mapping[name] = rel  # basename → "src/mux/dispatch.c"
@@ -107,14 +148,10 @@ def _build_name_map(build_dir: Path, accept) -> dict[str, str]:
     return mapping
 
 
-def _accepted_sources(build_dir: Path, accept) -> list[str]:
+def _accepted_sources(db: list[dict], accept) -> list[str]:
     """Return the compile_commands.json source files that pass the production
     filter, deduplicated and in database order.  These are passed to
     clang-tidy so only production sources are analyzed."""
-    db_path = build_dir / "compile_commands.json"
-    if not db_path.exists():
-        sys.exit(f"error: {db_path} not found — run cmake first")
-    db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
     sources: list[str] = []
     seen: set[str] = set()
     for entry in db:
@@ -124,6 +161,67 @@ def _accepted_sources(build_dir: Path, accept) -> list[str]:
         seen.add(fpath)
         sources.append(fpath)
     return sources
+
+
+def _norm_pattern(pattern: str) -> str:
+    """Reduce a --path pattern to the repository-relative form paths are
+    matched in.  An absolute path inside the tree is made relative; one outside
+    it is left alone and simply matches nothing."""
+    path = Path(pattern)
+    if path.is_absolute():
+        try:
+            pattern = str(path.resolve().relative_to(ROOT))
+        except ValueError:
+            return pattern
+    else:
+        pattern = os.path.normpath(pattern)
+    return pattern.replace(os.sep, "/")
+
+
+def _glob_match(path: str, pattern: str) -> bool:
+    """Match a repository path against a slash-aware shell-style glob.
+
+    ``fnmatch`` treats ``*`` as matching every character, including ``/``.
+    Split both paths into components so ordinary wildcards stay within one
+    directory; ``**`` is the explicit recursive wildcard.
+    """
+    path_parts = tuple(path.split("/"))
+    pattern_parts = tuple(pattern.split("/"))
+
+    def match(path_index: int, pattern_index: int) -> bool:
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+        component = pattern_parts[pattern_index]
+        if component == "**":
+            if match(path_index, pattern_index + 1):
+                return True
+            return path_index < len(path_parts) and match(
+                path_index + 1, pattern_index)
+        return (
+            path_index < len(path_parts)
+            and fnmatch.fnmatchcase(path_parts[path_index], component)
+            and match(path_index + 1, pattern_index + 1)
+        )
+
+    return match(0, 0)
+
+
+def _select_sources(sources: list[str], patterns: list[str]) -> list[str]:
+    """Keep the sources selected by any --path pattern: an exact
+    repository-relative path, a directory holding it, or a slash-aware glob
+    matching it.  Ordinary wildcards stay within one directory; ``**`` is
+    recursive."""
+    wanted = [_norm_pattern(p) for p in patterns]
+    kept: list[str] = []
+    for fpath in sources:
+        rel = _root_relative(fpath)
+        if rel is None:
+            continue
+        rel = rel.replace(os.sep, "/")
+        if any(rel == p or rel.startswith(p + "/") or _glob_match(rel, p)
+               for p in wanted):
+            kept.append(fpath)
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +237,7 @@ def _entry_args(entry: dict) -> list[str]:
     return shlex.split(entry.get("command", ""))
 
 
-def _prune_db(build_dir: Path, sources: list[str]) -> Path:
+def _prune_db(build_dir: Path, db: list[dict], sources: list[str]) -> Path:
     """Write a compilation database holding exactly one command per accepted
     source and return the directory containing it.
 
@@ -152,10 +250,6 @@ def _prune_db(build_dir: Path, sources: list[str]) -> Path:
     configure other modules.  Keeping one command per source cuts the run by
     an order of magnitude and leaves the report unchanged.
     """
-    db_path = build_dir / "compile_commands.json"
-    if not db_path.exists():
-        sys.exit(f"error: {db_path} not found — run cmake first")
-    db: list[dict] = json.loads(db_path.read_text(encoding="utf-8"))
     wanted = set(sources)
     best: dict[str, tuple[int, dict]] = {}
     for entry in db:
@@ -288,10 +382,8 @@ def _parse(raw: str, name_map: dict[str, str], accept) -> list[dict]:
         # Resolve the (possibly prefix-mapped) path to a canonical relative path.
         pobj = Path(fpath)
         if pobj.is_absolute():
-            try:
-                relpath = str(pobj.relative_to(ROOT))
-            except ValueError:
-                relpath = str(pobj)
+            rel = _root_relative(fpath)
+            relpath = rel if rel is not None else fpath
         else:
             # e.g. "dispatch.c" or "mux/dispatch.c" — look up by basename
             relpath = name_map.get(pobj.name, fpath)
@@ -452,15 +544,44 @@ _STATIC_PROVIDERS: tuple[_Provider, ...] = (
         prefixes=None,
         note="POSIX wait-status symbol clang maps to <stdlib.h>",
     ),
-    # `errno` is a macro (*__errno_location()); clang can miss macro-only use
-    # and report <errno.h> unused even where errno is read.
+    # <errno.h> supplies `errno` and the whole E* error-value family, every one
+    # of them a macro. clang's standard-symbol map carries no entry for the E*
+    # names, so no header is ever credited for them and none is ever demanded
+    # either (a file using EAGAIN without <errno.h> draws a compiler error, not
+    # a "no header providing" finding) -- but a file that includes <errno.h>
+    # purely for those values and never reads `errno` is told its include is
+    # unused, when <errno.h> is the only header that portably provides them.
+    # `errno` itself stays listed: it is a macro too (*__errno_location()), and
+    # a clang that misses macro-only use would report the same for it.
+    # The set is POSIX.1-2017's complete <errno.h> value list, spelled out
+    # rather than matched by an "E" prefix because unrelated names share it
+    # (EOF, EVENT, EXPRDEBUG, ... all appear in this tree). A non-POSIX
+    # extension (ESHUTDOWN, EPFNOSUPPORT, ...) is absent by the same fail-safe
+    # rule the ICU entry follows: an unlisted symbol keeps its finding.
     _Provider(
         name="<errno.h>",
         include=_include_re(r"errno\.h"),
         unused_basename="errno.h",
-        symbols=frozenset({"errno"}),
+        symbols=frozenset({
+            "errno", "E2BIG", "EACCES", "EADDRINUSE", "EADDRNOTAVAIL",
+            "EAFNOSUPPORT", "EAGAIN", "EALREADY", "EBADF", "EBADMSG", "EBUSY",
+            "ECANCELED", "ECHILD", "ECONNABORTED", "ECONNREFUSED",
+            "ECONNRESET", "EDEADLK", "EDESTADDRREQ", "EDOM", "EDQUOT",
+            "EEXIST", "EFAULT", "EFBIG", "EHOSTUNREACH", "EIDRM", "EILSEQ",
+            "EINPROGRESS", "EINTR", "EINVAL", "EIO", "EISCONN", "EISDIR",
+            "ELOOP", "EMFILE", "EMLINK", "EMSGSIZE", "EMULTIHOP",
+            "ENAMETOOLONG", "ENETDOWN", "ENETRESET", "ENETUNREACH", "ENFILE",
+            "ENOBUFS", "ENODATA", "ENODEV", "ENOENT", "ENOEXEC", "ENOLCK",
+            "ENOLINK", "ENOMEM", "ENOMSG", "ENOPROTOOPT", "ENOSPC", "ENOSR",
+            "ENOSTR", "ENOSYS", "ENOTCONN", "ENOTDIR", "ENOTEMPTY",
+            "ENOTRECOVERABLE", "ENOTSOCK", "ENOTSUP", "ENOTTY", "ENXIO",
+            "EOPNOTSUPP", "EOVERFLOW", "EOWNERDEAD", "EPERM", "EPIPE",
+            "EPROTO", "EPROTONOSUPPORT", "EPROTOTYPE", "ERANGE", "EROFS",
+            "ESPIPE", "ESRCH", "ESTALE", "ETIME", "ETIMEDOUT", "ETXTBSY",
+            "EWOULDBLOCK", "EXDEV",
+        }),
         prefixes=None,
-        note="clang can miss macro-only <errno.h> use",
+        note="macro clang's symbol map does not credit to <errno.h>",
     ),
     # The socket-address structures and IP protocol/address constants are
     # declared only in <netinet/in.h>; clang misattributes them.
@@ -815,7 +936,7 @@ def _excluded_labels(include_tests: bool, include_generated: bool) -> list[str]:
     if not include_tests:
         labels.append("`*_test.c`")
     if not include_generated:
-        labels.append("`*.gen.c`")
+        labels.append("`*.gen.[ch]`")
     return labels
 
 
@@ -879,15 +1000,19 @@ def _write_raw_list(path: Path, warnings: list[dict], config: str) -> None:
         + (body + "\n" if body else ""), encoding="utf-8")
 
 
-def _build_config(build_dir: Path) -> str:
+def _build_config(build_dir: Path, paths: list[str] | None = None) -> str:
     """Describe the configuration in *build_dir*, for the report header.
 
     The findings depend on it -- the path-sensitive clang-analyzer checks
     explore different paths at different optimization levels, and NDEBUG turns
     ASSERT() into a no-op, removing constraints they prune with.  A findings
     list is therefore only comparable against one taken the same way, so say
-    which way that was rather than leaving it to be guessed.
+    which way that was rather than leaving it to be guessed.  A --path scope
+    belongs here for the same reason: it decides which files are analyzed at
+    all, so a narrowed list must not be read as a whole-tree one.
     """
+    scope = [f"scope={' '.join(_norm_pattern(p) for p in paths)}"] if paths \
+        else []
     cache = build_dir / "CMakeCache.txt"
     wanted = {
         "CMAKE_BUILD_TYPE": "build",
@@ -904,10 +1029,10 @@ def _build_config(build_dir: Path) -> str:
             if name in wanted:
                 found[wanted[name]] = value.strip()
     except OSError:
-        return "unknown (no CMakeCache.txt)"
+        return ", ".join(["unknown (no CMakeCache.txt)"] + scope)
     if "compiler" in found:
         found["compiler"] = Path(found["compiler"]).name
-    parts = [f"{k}={v}" for k, v in found.items() if v]
+    parts = [f"{k}={v}" for k, v in found.items() if v] + scope
     return ", ".join(parts) if parts else "unknown"
 
 
@@ -1015,6 +1140,18 @@ def main() -> int:
         help="build directory with compile_commands.json (default: %(default)s)",
     )
     ap.add_argument(
+        "--path",
+        action="append",
+        metavar="PATTERN",
+        help="analyze only the sources PATTERN selects -- a repository-"
+        "relative file (src/os/socket.c), a directory holding them (src/net), "
+        "or a slash-aware glob (src/net/*.c; use ** for recursive matches).  "
+        "Repeatable.  Filters and denoising are "
+        "unchanged and every finding in the covered files is reported, but "
+        "the run says nothing about the rest of the tree, so the scope is "
+        "recorded in the report and the raw list",
+    )
+    ap.add_argument(
         "--tests",
         action="store_true",
         help="also lint test files (*_test.c)",
@@ -1022,7 +1159,7 @@ def main() -> int:
     ap.add_argument(
         "--generated",
         action="store_true",
-        help="also lint generated files (*.gen.c)",
+        help="also lint generated files (*.gen.[ch])",
     )
     ap.add_argument(
         "--no-denoise",
@@ -1046,14 +1183,33 @@ def main() -> int:
     check_label = args.check or "all checks"
 
     accept = _make_filter(args.tests, args.generated)
-    name_map = _build_name_map(build_dir, accept)
-    sources = _accepted_sources(build_dir, accept)
+    db = _load_db(build_dir)
+    name_map = _build_name_map(db, accept)
+    sources = _accepted_sources(db, accept)
     if not sources:
         # No accepted sources: passing zero positional paths would make
         # clang-tidy analyze the entire database, so stop here instead.
         sys.exit("error: no sources to lint after applying the source filter")
+    if all(_root_relative(src) is None for src in sources):
+        # The report keeps only findings that resolve under ROOT, so a
+        # database whose sources all lie elsewhere can produce nothing but a
+        # bogus clean report; refuse to write one.
+        sys.exit(
+            f"error: no source in {build_dir / 'compile_commands.json'} "
+            f"resolves under {ROOT} — the database describes a different "
+            "tree; run from the checkout it was configured for, or re-run "
+            "cmake here")
+    if args.path:
+        sources = _select_sources(sources, args.path)
+        if not sources:
+            sys.exit(
+                "error: no accepted source matches "
+                f"{', '.join(args.path)} — check the spelling, and note "
+                "that a path the source filter already excludes (a *_test.c "
+                "without --tests, contrib/, generated code) cannot be "
+                "selected back in")
 
-    lint_db = _prune_db(build_dir, sources)
+    lint_db = _prune_db(build_dir, db, sources)
     print(f"Linting [{check_label}] ...", file=sys.stderr, flush=True)
     t0 = time.monotonic()
     raw = _run(lint_db, args.check, args.jobs, sources)
@@ -1065,7 +1221,7 @@ def main() -> int:
     else:
         kept, suppressed = _denoise(warnings, ROOT)
 
-    config = _build_config(build_dir)
+    config = _build_config(build_dir, args.path)
     print(
         f"{len(kept)} warning(s)"
         f"{f', {len(suppressed)} suppressed' if suppressed else ''}"
