@@ -106,7 +106,7 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		const int fd = accept(watcher->fd, &addr.sa, &addrlen);
 		if (fd < 0) {
 			const int err = errno;
-			if (err == EINTR) {
+			if (accept_retry(err)) {
 				continue;
 			}
 			if (err == EAGAIN || err == EWOULDBLOCK) {

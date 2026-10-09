@@ -14,12 +14,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define HTTP_MAX_CONNECTIONS 32
+
+struct http_ctx;
+
 struct listener {
 	ev_io w_accept;
 	ev_io w_accept_http;
 	ev_timer w_timer;
 	int fd;
 	int fd_http;
+	struct http_ctx *http[HTTP_MAX_CONNECTIONS];
 };
 
 /* plain data object */

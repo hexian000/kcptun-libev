@@ -340,7 +340,16 @@ Then run the commands below from shell:
 watch curl -sX POST http://127.0.1.1:8081/stats
 ```
 
-The URI "/healthy" always responds with HTTP 200; use it for health checks.
+Use `GET /healthy` or `HEAD /healthy` for health checks. The endpoint returns HTTP
+200 when healthy and HTTP 503 when unhealthy. In client mode, health requires a
+packet received from the peer within the peer timeout; a client that has not yet
+heard from its peer or whose last response has expired is unhealthy. A rendezvous
+client is also unhealthy until it has located its peer. In modes without a client,
+the endpoint reports healthy without checking an upstream peer.
+
+`GET` includes a short status message; `HEAD` returns only the headers. Other
+methods return HTTP 405, and nested paths such as `/healthy/details` return HTTP
+404.
 
 ## Credits
 

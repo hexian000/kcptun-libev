@@ -33,6 +33,7 @@
 struct http_ctx {
 	struct ev_loop *loop;
 	void *data;
+	struct http_ctx **slot;
 	int fd;
 	struct http_message http_msg;
 	char *http_nxt;
@@ -56,10 +57,21 @@ static void http_ctx_free(struct http_ctx *restrict ctx)
 	ev_timer *restrict w_timeout = &ctx->w_timeout;
 	ev_timer_stop(loop, w_timeout);
 	UTIL_SAFE_FREE(ctx->wbuf);
+	*ctx->slot = NULL;
 	free(ctx);
 }
 
-static void http_serve(struct http_ctx *ctx);
+void http_stop(struct server *restrict s)
+{
+	for (size_t i = 0; i < HTTP_MAX_CONNECTIONS; i++) {
+		struct http_ctx *ctx = s->listener.http[i];
+		if (ctx != NULL) {
+			http_ctx_free(ctx);
+		}
+	}
+}
+
+static void http_serve(struct http_ctx *restrict ctx);
 
 static void
 http_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
@@ -219,12 +231,20 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		addrlen = sizeof(addr);
 		fd = accept(watcher->fd, &addr.sa, &addrlen);
 		err = errno;
-	} while (fd < 0 && err == EINTR);
+	} while (fd < 0 && accept_retry(err));
 	if (fd < 0) {
 		if (err == EAGAIN || err == EWOULDBLOCK) {
 			return;
 		}
 		accept_backoff(loop, watcher, &s->listener.w_timer, err);
+		return;
+	}
+	size_t slot = 0;
+	while (slot < HTTP_MAX_CONNECTIONS && s->listener.http[slot] != NULL) {
+		slot++;
+	}
+	if (slot == HTTP_MAX_CONNECTIONS) {
+		socket_close(fd);
 		return;
 	}
 	if (!socket_nonblock_or_close(fd)) {
@@ -238,6 +258,8 @@ void http_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	}
 	ctx->loop = loop;
 	ctx->data = s;
+	ctx->slot = &s->listener.http[slot];
+	*ctx->slot = ctx;
 	ctx->fd = fd;
 	ctx->http_msg = (struct http_message){ 0 };
 	ctx->http_nxt = NULL;
@@ -277,13 +299,14 @@ static void http_set_wbuf(struct http_ctx *restrict ctx, struct vbuffer *buf)
 			VBUF_RESET((buf));                                     \
 		}                                                              \
 		VBUF_APPENDF(                                                  \
-			(buf),                                                 \
-			"HTTP/1.1 %" PRIu16 " %s\r\n"                          \
-			"Date: %.*s\r\n"                                       \
-			"Connection: close\r\n"                                \
-			"%s\r\n",                                              \
-			code, status ? status : "", (int)date_len, date_str,   \
-			(hdr));                                                \
+			(buf), "HTTP/1.1 %" PRIu16 " %s\r\n", (code),          \
+			status ? status : "");                                 \
+		if (date_len != 0) {                                           \
+			VBUF_APPENDF(                                          \
+				(buf), "Date: %.*s\r\n", (int)date_len,        \
+				date_str);                                     \
+		}                                                              \
+		VBUF_APPENDF((buf), "Connection: close\r\n%s\r\n", (hdr));     \
 	} while (0)
 
 #define RESPHDR_CODE(buf, code) RESPHDR_WRITE((buf), (code), "")
@@ -317,6 +340,21 @@ http_resp_errpage(struct http_ctx *restrict ctx, const uint16_t code)
 		return;
 	}
 	buf->len = len;
+	http_set_wbuf(ctx, buf);
+}
+
+static void
+http_resp_method_not_allowed(struct http_ctx *restrict ctx, const char *allow)
+{
+	struct vbuffer *restrict buf = VBUF_NEW(512);
+	if (buf == NULL) {
+		LOGOOM();
+		return;
+	}
+	RESPHDR_CODE(buf, HTTP_METHOD_NOT_ALLOWED);
+	/* Insert the required Allow field before the end of the header. */
+	buf->len -= 2;
+	VBUF_APPENDF(buf, "Allow: %s\r\n\r\n", allow);
 	http_set_wbuf(ctx, buf);
 }
 
@@ -390,7 +428,7 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 		stateless = false;
 	} else {
 		VBUF_FREE(buf);
-		http_resp_errpage(ctx, HTTP_METHOD_NOT_ALLOWED);
+		http_resp_method_not_allowed(ctx, "GET, POST");
 		return;
 	}
 
@@ -402,10 +440,14 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	{
 		const time_t server_time = time(NULL);
 		char timestamp[32];
-		(void)strftime(
-			timestamp, sizeof(timestamp), "%FT%T%z",
-			localtime(&server_time));
-		VBUF_APPENDF(buf, "server time: %s\n\n", timestamp);
+		const struct tm *local = localtime(&server_time);
+		const char *value = "(unknown)";
+		if (local != NULL &&
+		    strftime(timestamp, sizeof(timestamp), "%FT%T%z", local) !=
+			    0) {
+			value = timestamp;
+		}
+		VBUF_APPENDF(buf, "server time: %s\n\n", value);
 	}
 
 	struct server *restrict s = ctx->data;
@@ -430,18 +472,28 @@ http_serve_stats(struct http_ctx *restrict ctx, struct url *restrict uri)
 	if (msgpool != NULL) {
 		static size_t last_hit = 0;
 		static size_t last_request = 0;
-		const size_t hit = msgpool->hit - last_hit;
-		const size_t request = msgpool->request - last_request;
+		size_t total_hit, total_request;
+		mcache_getstats(msgpool, &total_request, &total_hit);
+		const size_t hit = total_hit - last_hit;
+		const size_t request = total_request - last_request;
+		const double ratio =
+			request != 0 ? (double)hit / (double)request * 100.0 :
+				       0.0;
+		const double total_ratio =
+			total_request != 0 ?
+				(double)total_hit / (double)total_request *
+					100.0 :
+				0.0;
 		VBUF_APPENDF(
 			buf,
 			"msgpool: %zu/%zu; %zu hit, %zu miss (%.1lf%%); total %zu hit, %zu miss (%.1lf%%)\n",
 			msgpool->num_elem, msgpool->cache_size, hit,
-			request - hit, (double)hit / ((double)request) * 100.0,
-			msgpool->hit, msgpool->request - msgpool->hit,
-			(double)msgpool->hit / ((double)msgpool->request) *
-				100.0);
-		last_hit = msgpool->hit;
-		last_request = msgpool->request;
+			request - hit, ratio, total_hit,
+			total_request - total_hit, total_ratio);
+		if (!stateless) {
+			last_hit = total_hit;
+			last_request = total_request;
+		}
 	}
 #endif /* MCACHE_STATS */
 
@@ -452,9 +504,9 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 {
 	const struct http_message *restrict hdr = &ctx->http_msg;
 	struct url uri;
-	LOGV_F("api: serve uri `%s'", hdr->req.url);
+	LOGV_F("http: serve uri `%s'", hdr->req.url);
 	if (!url_parse(hdr->req.url, &uri)) {
-		LOGW("api: failed parsing url");
+		LOGW("http: failed parsing url");
 		http_resp_errpage(ctx, HTTP_BAD_REQUEST);
 		return;
 	}
@@ -472,6 +524,11 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 			http_resp_errpage(ctx, HTTP_NOT_FOUND);
 			return;
 		}
+		const bool head = strcmp(hdr->req.method, "HEAD") == 0;
+		if (!head && strcmp(hdr->req.method, "GET") != 0) {
+			http_resp_method_not_allowed(ctx, "GET, HEAD");
+			return;
+		}
 		const struct server *restrict s = ctx->data;
 		char status[64];
 		const bool healthy = server_healthy(s, status, sizeof(status));
@@ -483,19 +540,29 @@ static void http_handle_request(struct http_ctx *restrict ctx)
 			return;
 		}
 		RESPHDR_GET(buf, code);
-		VBUF_APPENDF(buf, "%s\n", status);
+		if (!head) {
+			VBUF_APPENDF(buf, "%s\n", status);
+		}
 		http_set_wbuf(ctx, buf);
 		return;
 	}
 	http_resp_errpage(ctx, HTTP_NOT_FOUND);
 }
 
-void http_serve(struct http_ctx *restrict ctx)
+static void http_serve(struct http_ctx *restrict ctx)
 {
 	http_handle_request(ctx);
 	if (ctx->wbuf == NULL) {
 		http_ctx_free(ctx);
 		return;
+	}
+	if (strcmp(ctx->http_msg.req.method, "HEAD") == 0) {
+		/* HEAD suppresses content even when routing produced an error. */
+		char *end = strstr((char *)ctx->wbuf->data, "\r\n\r\n");
+		if (end != NULL) {
+			ctx->wbuf->len =
+				(size_t)(end + 4 - (char *)ctx->wbuf->data);
+		}
 	}
 	http_ctx_write(ctx);
 }

@@ -872,6 +872,7 @@ static void server_watchers_stop(struct server *restrict s)
 {
 	struct ev_loop *loop = s->loop;
 	listener_stop(loop, &s->listener);
+	http_stop(s);
 	ev_timer_stop(loop, &s->w_kcp_update);
 	ev_timer_stop(loop, &s->w_keepalive);
 	ev_timer_stop(loop, &s->w_resolve);

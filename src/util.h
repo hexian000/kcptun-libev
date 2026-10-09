@@ -149,6 +149,30 @@ bool socket_nonblock_or_close(int fd);
 /** @brief Apply per-connection TCP tuning (nodelay, keepalive, buffers) from conf. */
 void tcp_apply_conf(int fd, const struct config *restrict conf);
 
+/* Per-connection failures leave the listener ready to accept another peer. */
+static inline bool accept_retry(const int err)
+{
+	switch (err) {
+	case EINTR:
+	case ECONNABORTED:
+	case ENETDOWN:
+	case EPROTO:
+	case ENOPROTOOPT:
+#ifdef EHOSTDOWN
+	case EHOSTDOWN:
+#endif
+#ifdef ENONET
+	case ENONET:
+#endif
+	case EHOSTUNREACH:
+	case EOPNOTSUPP:
+	case ENETUNREACH:
+		return true;
+	default:
+		return false;
+	}
+}
+
 /**
  * @brief Back off after a hard accept() error: log it, stop the accept
  * watcher, and arm the listener timer so its callback retries accept later.
