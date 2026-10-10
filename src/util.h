@@ -69,9 +69,9 @@ static inline uint32_t tstamp2ms(const ev_tstamp t)
 /**
  * @brief Validate revents against accepted mask, log EV_ERROR, and early-return.
  *
- * If `revents` contains EV_ERROR, logs the error; asserts that only
- * `(accept | EV_ERROR)` bits are present; returns from the current function
- * when none of the accepted bits are set.
+ * If `revents` contains EV_ERROR, logs the unspecified watcher error and
+ * returns immediately. Otherwise, asserts that only accepted bits are present
+ * and returns when none of them are set.
  *
  * @param revents Event bits received from libev callbacks.
  * @param accept Accepted event mask (any libev event-type bitmask, e.g.
@@ -80,10 +80,10 @@ static inline uint32_t tstamp2ms(const ev_tstamp t)
 #define CHECK_REVENTS(revents, accept)                                         \
 	do {                                                                   \
 		if (((revents) & EV_ERROR) != 0) {                             \
-			const int err = errno;                                 \
-			LOGE_F("io error: (%d) %s", err, strerror(err));       \
+			LOGE("libev watcher error");                           \
+			return;                                                \
 		}                                                              \
-		ASSERT(((revents) & ((accept) | EV_ERROR)) == (revents));      \
+		ASSERT(((revents) & (accept)) == (revents));                   \
 		if (((revents) & (accept)) == 0) {                             \
 			return;                                                \
 		}                                                              \

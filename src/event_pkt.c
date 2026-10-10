@@ -70,10 +70,11 @@ static struct mmsghdr mmsgs[MMSG_BATCH_SIZE];
 
 #if HAVE_RECVMMSG
 
-static size_t pkt_recv(struct server *restrict s, const int fd)
+static size_t
+pkt_recv(struct server *restrict s, const int fd, const size_t limit)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
-	size_t navail = q->mq_recv_cap - q->mq_recv_len;
+	size_t navail = MIN(q->mq_recv_cap - q->mq_recv_len, limit);
 	if (navail == 0) {
 		return 0;
 	}
@@ -155,6 +156,9 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		}
 		nrecv += n;
 		navail -= n;
+		if (n < populated) {
+			break;
+		}
 	} while (navail > 0);
 	s->stats.pkt_rx += (uint_least64_t)nbrecv;
 	return nrecv;
@@ -162,10 +166,11 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 
 #else /* HAVE_RECVMMSG */
 
-static size_t pkt_recv(struct server *restrict s, const int fd)
+static size_t
+pkt_recv(struct server *restrict s, const int fd, const size_t limit)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
-	size_t navail = q->mq_recv_cap - q->mq_recv_len;
+	size_t navail = MIN(q->mq_recv_cap - q->mq_recv_len, limit);
 	if (navail == 0) {
 		return 0;
 	}
@@ -176,7 +181,7 @@ static size_t pkt_recv(struct server *restrict s, const int fd)
 		struct msgframe *restrict msg = msgframe_new(q);
 		if (msg == NULL) {
 			LOGOOM();
-			return 0;
+			return nrecv;
 		}
 		struct iovec iov = RECVMSG_IOV(msg);
 		struct msghdr hdr = RECVMSG_HDR(msg, &iov);
@@ -225,20 +230,30 @@ void pkt_read_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_READ);
 	struct server *restrict s = watcher->data;
-	while (pkt_recv(s, watcher->fd) > 0) {
-		(void)queue_dispatch(s);
+	/* Yield to timers and other watchers even under continuous UDP traffic.
+	 * Level-triggered EV_READ will resume any datagrams left on the socket. */
+	size_t remaining = (size_t)MMSG_BATCH_SIZE * 4;
+	while (remaining > 0) {
+		const size_t limit = MIN(s->pkt.queue->mq_recv_cap, remaining);
+		const size_t nrecv = pkt_recv(s, watcher->fd, limit);
+		queue_dispatch(s);
+		if (nrecv == 0 || nrecv < limit) {
+			break;
+		}
+		remaining -= nrecv;
 	}
 }
 
-static size_t pkt_send_drop(struct pktqueue *restrict q)
+static void udp_log_send_error(
+	const struct server *restrict s, const char *operation, const int err)
 {
-	const size_t count = q->mq_send_len;
-	for (size_t i = 0; i < count; i++) {
-		msgframe_delete(q, q->mq_send[i]);
+	if (err == ECONNREFUSED || err == ECONNRESET) {
+		udp_log_refused(s);
+		return;
 	}
-	q->mq_send_len = 0;
-	LOGV_F("pkt send: dropping %zu packets", count);
-	return count;
+	LOG_RATELIMITED_F(
+		ERROR, ev_now(s->loop), 1.0, "%s: (%d) %s", operation, err,
+		strerror(err));
 }
 
 #define SENDMSG_IOV(msg)                                                       \
@@ -269,13 +284,13 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 	if (navail == 0) {
 		return 0;
 	}
-	bool drop = false;
-	size_t nsend = 0, nbsend = 0;
+	size_t nprocessed = 0, nsend = 0, nbsend = 0;
 	size_t nbatch;
 	do {
 		nbatch = MIN(navail, MMSG_BATCH_SIZE);
 		for (size_t i = 0; i < nbatch; i++) {
-			struct msgframe *restrict msg = q->mq_send[nsend + i];
+			struct msgframe *restrict msg =
+				q->mq_send[nprocessed + i];
 			iovecs[i] = SENDMSG_IOV(msg);
 			mmsgs[i] = (struct mmsghdr){
 				.msg_hdr = SENDMSG_HDR(msg, &iovecs[i]),
@@ -293,10 +308,10 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 				*eagain = true;
 				break;
 			}
-			LOGE_F("sendmmsg: (%d) %s", err, strerror(err));
-			/* clear the send queue if the error is persistent */
-			drop = true;
-			break;
+			udp_log_send_error(s, "sendmmsg", err);
+			msgframe_delete(q, q->mq_send[nprocessed++]);
+			navail--;
+			continue;
 		}
 		if (ret == 0) {
 			break;
@@ -304,18 +319,20 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		const size_t n = (size_t)ret;
 		/* delete sent messages */
 		for (size_t i = 0; i < n; i++) {
-			struct msgframe *restrict msg = q->mq_send[nsend + i];
+			struct msgframe *restrict msg =
+				q->mq_send[nprocessed + i];
 			nbsend += msg->len;
 			PKT_LOGVV("pkt send", msg);
 			msgframe_delete(q, msg);
 		}
+		nprocessed += n;
 		nsend += n;
 		navail -= n;
 	} while (navail > 0);
 
 	/* move remaining messages */
 	for (size_t i = 0; i < navail; i++) {
-		q->mq_send[i] = q->mq_send[nsend + i];
+		q->mq_send[i] = q->mq_send[nprocessed + i];
 	}
 	q->mq_send_len = navail;
 	if (nsend > 0) {
@@ -324,10 +341,7 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		s->stats.pkt_tx += (uint_least64_t)nbsend;
 		s->pkt.last_send_time = ev_now(s->loop);
 	}
-	if (drop) {
-		nsend += pkt_send_drop(q);
-	}
-	return nsend;
+	return nprocessed;
 }
 
 #else /* HAVE_SENDMMSG */
@@ -341,8 +355,7 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 	if (count == 0) {
 		return 0;
 	}
-	bool drop = false;
-	size_t nsend = 0, nbsend = 0;
+	size_t nprocessed = 0, nsend = 0, nbsend = 0;
 	for (size_t i = 0; i < count; i++) {
 		struct msgframe *restrict msg = q->mq_send[i];
 		struct iovec iov = SENDMSG_IOV(msg);
@@ -358,26 +371,19 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 				*eagain = true;
 				break;
 			}
-			LOGE_F("sendmsg: (%d) %s", err, strerror(err));
-			/* clear the send queue if the error is persistent */
-			drop = true;
-			break;
+			udp_log_send_error(s, "sendmsg", err);
+			msgframe_delete(q, msg);
+			nprocessed++;
+			continue;
 		}
+		nprocessed++;
 		nsend++, nbsend += ret;
-	}
-	/* on a persistent error nsend can still be 0 (the head packet failed);
-	   fall through so the drop-cleanup below runs and unwedges the queue */
-	if (nsend == 0 && !drop) {
-		return 0;
-	}
-	for (size_t i = 0; i < nsend; i++) {
-		struct msgframe *restrict msg = q->mq_send[i];
 		PKT_LOGVV("pkt send", msg);
 		msgframe_delete(q, msg);
 	}
-	const size_t remain = count - nsend;
+	const size_t remain = count - nprocessed;
 	for (size_t i = 0; i < remain; i++) {
-		q->mq_send[i] = q->mq_send[nsend + i];
+		q->mq_send[i] = q->mq_send[nprocessed + i];
 	}
 	q->mq_send_len = remain;
 	if (nsend > 0) {
@@ -385,10 +391,7 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 		s->stats.pkt_tx += (uint_least64_t)nbsend;
 		s->pkt.last_send_time = ev_now(s->loop);
 	}
-	if (drop) {
-		nsend += pkt_send_drop(q);
-	}
-	return nsend;
+	return nprocessed;
 }
 
 #endif /* HAVE_SENDMMSG */
@@ -396,6 +399,9 @@ pkt_send(struct server *restrict s, const int fd, bool *restrict eagain)
 static void pkt_flush(struct server *restrict s)
 {
 	const int fd = s->pkt.w_write.fd;
+	if (fd == -1) {
+		return;
+	}
 	bool eagain = false;
 	while (!eagain && pkt_send(s, fd, &eagain) > 0) {
 		;
@@ -416,7 +422,10 @@ void pkt_write_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 
 void pkt_notify_send(struct server *restrict s)
 {
-	const struct pktqueue *restrict q = s->pkt.queue;
+	if (s->pkt.w_write.fd == -1) {
+		return;
+	}
+	const struct pktqueue *q = s->pkt.queue;
 	pkt_flush(s);
 	ev_io *restrict w_write = &s->pkt.w_write;
 	if (q->mq_send_len > 0 && !ev_is_active(w_write)) {

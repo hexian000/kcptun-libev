@@ -38,7 +38,11 @@ bool check_rate_limit(
 	ev_tstamp *restrict last, const ev_tstamp now, const double interval)
 {
 	const ev_tstamp last_tick = *last;
-	if (last_tick == TSTAMP_NIL || now < last_tick) {
+	if (last_tick == TSTAMP_NIL) {
+		*last = now;
+		return true;
+	}
+	if (now < last_tick) {
 		*last = now;
 		return false;
 	}

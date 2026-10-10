@@ -90,16 +90,14 @@ void noncegen_free(struct noncegen *g)
 	free(g);
 }
 
-const unsigned char *noncegen_next(struct noncegen *restrict g)
-{
-	return g->next_fn(g);
-}
-
 static bool
 check_add(struct ppbloom *restrict b, const void *buffer, const size_t len)
 {
 	const uint8_t i = b->current & UINT8_C(1);
 	const uint8_t j = i ^ UINT8_C(1);
+	if (bloom_check(&b->bloom[j], buffer, (int)len) != 0) {
+		return true;
+	}
 	const int added = bloom_add(&b->bloom[i], buffer, (int)len);
 	if (added == 0) {
 		b->bloom_count[i]++;
@@ -111,7 +109,15 @@ check_add(struct ppbloom *restrict b, const void *buffer, const size_t len)
 			b->current = j;
 		}
 	}
-	return added != 0 || bloom_check(&b->bloom[j], buffer, (int)len) != 0;
+	return added != 0;
+}
+
+const unsigned char *noncegen_next(struct noncegen *restrict g)
+{
+	const unsigned char *nonce = g->next_fn(g);
+	/* Sent and received nonces share the same bounded reflection/replay window. */
+	(void)check_add(&g->ppbloom, nonce, g->buf.len);
+	return nonce;
 }
 
 bool noncegen_verify(struct noncegen *restrict g, const unsigned char *nonce)

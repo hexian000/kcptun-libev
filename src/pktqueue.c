@@ -112,14 +112,10 @@ static bool queue_new_crypto(
 	}
 	if (conf->psk) {
 		if (!crypto_b64psk(q->crypto, conf->psk)) {
-			crypto_free(q->crypto);
-			q->crypto = NULL;
 			return false;
 		}
 	} else if (conf->password) {
 		if (!crypto_password(q->crypto, conf->password)) {
-			crypto_free(q->crypto);
-			q->crypto = NULL;
 			return false;
 		}
 	}
@@ -127,8 +123,6 @@ static bool queue_new_crypto(
 		q->crypto->noncegen_method, q->crypto->nonce_size,
 		(conf->mode & MODE_SERVER) != 0);
 	if (q->noncegen == NULL) {
-		crypto_free(q->crypto);
-		q->crypto = NULL;
 		return false;
 	}
 	if (q->crypto->noncegen_method == noncegen_counter) {
@@ -261,6 +255,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 		.data = sskey,
 	};
 	struct session *restrict ss;
+	bool created = false;
 	if (!table_find(s->sessions, &hkey, (void **)&ss)) {
 		if ((s->conf->mode & MODE_SERVER) == 0) {
 			LOG_RATELIMITED_F(
@@ -292,6 +287,7 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			      conv, addr_str);
 		}
 		ss->kcp_state = KCP_STATE_CONNECT;
+		created = true;
 	}
 
 	const ev_tstamp now = ev_now(s->loop);
@@ -312,8 +308,6 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	}
 	switch (ss->kcp_state) {
 	case KCP_STATE_CONNECT:
-		ss->kcp_state = KCP_STATE_ESTABLISHED;
-		/* fallthrough */
 	case KCP_STATE_ESTABLISHED:
 	case KCP_STATE_LINGER:
 		break;
@@ -331,8 +325,16 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	const int r =
 		ikcp_input(ss->kcp, (const char *)kcp_packet, (long)msg->len);
 	if (r < 0) {
-		LOGW_F("ikcp_input: %d", r);
+		LOG_RATELIMITED_F(WARNING, now, 1.0, "ikcp_input: %d", r);
+		if (created) {
+			s->sessions = table_del(
+				s->sessions, SESSION_GETKEY(ss), NULL);
+			session_free(ss);
+		}
 		return;
+	}
+	if (ss->kcp_state == KCP_STATE_CONNECT) {
+		ss->kcp_state = KCP_STATE_ESTABLISHED;
 	}
 	ss->stats.kcp_rx += msg->len;
 	s->stats.kcp_rx += msg->len;
@@ -343,14 +345,12 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 	session_read_cb(ss);
 }
 
-size_t queue_dispatch(struct server *restrict s)
+void queue_dispatch(struct server *restrict s)
 {
 	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->mq_recv_len == 0) {
-		return 0;
+		return;
 	}
-	s->pkt.last_recv_time = ev_now(s->loop);
-	size_t nbrecv = 0;
 	for (size_t i = 0; i < q->mq_recv_len; i++) {
 		struct msgframe *restrict msg = q->mq_recv[i];
 #if WITH_OBFS
@@ -381,18 +381,26 @@ size_t queue_dispatch(struct server *restrict s)
 			obfs_ctx_auth(ctx, true);
 		}
 #endif
+		s->pkt.last_recv_time = ev_now(s->loop);
 		queue_recv(s, msg);
-		nbrecv += msg->len;
 		msgframe_delete(q, msg);
 	}
 	q->mq_recv_len = 0;
-	return nbrecv;
 }
 
-bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
+bool queue_send(struct server *restrict s, struct msgframe *msg)
 {
-	struct pktqueue *restrict q = s->pkt.queue;
+	struct pktqueue *q = s->pkt.queue;
 	MSG_LOGVV("queue_send", msg);
+	const ev_tstamp now = ev_now(s->loop);
+	if (q->mq_send_len >= q->mq_send_cap) {
+		LOG_RATELIMITED_F(
+			WARNING, now, 1.0,
+			"send queue full, %" PRIu16 " bytes discarded",
+			msg->len);
+		msgframe_delete(q, msg);
+		return false;
+	}
 #if WITH_CRYPTO
 	if (q->crypto != NULL) {
 		const size_t cap = MAX_PACKET_SIZE - (size_t)msg->off;
@@ -424,15 +432,6 @@ bool queue_send(struct server *restrict s, struct msgframe *restrict msg)
 	}
 #endif
 
-	const ev_tstamp now = ev_now(s->loop);
-	if (q->mq_send_len >= q->mq_send_cap) {
-		LOG_RATELIMITED_F(
-			WARNING, now, 1.0,
-			"send queue full, %" PRIu16 " bytes discarded",
-			msg->len);
-		msgframe_delete(q, msg);
-		return false;
-	}
 	msg->ts = now;
 	q->mq_send[q->mq_send_len++] = msg;
 	pkt_notify_send(s);

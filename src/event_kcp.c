@@ -37,9 +37,12 @@ int kcp_output(const char *buf, const int len, ikcpcb *kcp, void *user)
 	unsigned char *dst = msg->buf + msg->off;
 	memcpy(dst, buf, len);
 	msg->len = (uint16_t)len;
+	if (!queue_send(s, msg)) {
+		return -1;
+	}
 	s->stats.kcp_tx += (uint_least64_t)len;
 	ss->stats.kcp_tx += (uint_least64_t)len;
-	return queue_send(s, msg) ? len : -1;
+	return len;
 }
 
 bool kcp_cansend(const struct session *restrict ss)

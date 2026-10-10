@@ -129,7 +129,9 @@ void tcp_accept_cb(struct ev_loop *loop, ev_io *watcher, const int revents)
 		tcp_apply_conf(fd, conf);
 
 		if (!s->pkt.connected) {
-			LOGE("packet connection not ready, refusing");
+			LOG_RATELIMITED(
+				ERROR, ev_now(loop), 1.0,
+				"packet connection not ready, refusing");
 			socket_close(fd);
 			return;
 		}
