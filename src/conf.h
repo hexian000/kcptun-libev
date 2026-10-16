@@ -13,6 +13,8 @@ enum runmode {
 	MODE_RENDEZVOUS = 1 << 2,
 };
 
+#define SERVICE_ID_MAX_LENGTH ((size_t)256)
+
 struct config {
 	char *listen;
 	char *connect;
@@ -46,6 +48,7 @@ struct config {
 #endif
 
 	int timeout, linger, keepalive, time_wait;
+	int max_services;
 	int log_level;
 	char *log;
 	char *user;

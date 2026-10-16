@@ -153,14 +153,14 @@ void genpsk(const char *restrict method)
 }
 #endif /* WITH_CRYPTO */
 
-void socket_bind_netdev(const int fd, const char *restrict netdev)
+bool socket_bind_netdev(const int fd, const char *restrict netdev)
 {
 #ifdef SO_BINDTODEVICE
 	char ifname[IFNAMSIZ];
 	if (strlen(netdev) >= sizeof(ifname)) {
 		LOGW_F("SO_BINDTODEVICE: interface name too long: `%s'",
 		       netdev);
-		return;
+		return false;
 	}
 	(void)strncpy(ifname, netdev, sizeof(ifname) - 1);
 	ifname[sizeof(ifname) - 1] = '\0';
@@ -168,13 +168,16 @@ void socket_bind_netdev(const int fd, const char *restrict netdev)
 		    fd, SOL_SOCKET, SO_BINDTODEVICE, ifname, sizeof(ifname))) {
 		const int err = errno;
 		LOGW_F("SO_BINDTODEVICE: (%d) %s", err, strerror(err));
+		return false;
 	}
 #else
 	(void)fd;
 	if (netdev[0] != '\0') {
 		LOGW("SO_BINDTODEVICE: not supported in current build");
+		return false;
 	}
 #endif /* SO_BINDTODEVICE */
+	return true;
 }
 
 bool socket_nonblock_or_close(const int fd)

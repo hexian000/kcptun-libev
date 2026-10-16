@@ -24,6 +24,7 @@
         "listen": { "type": "string" },
         "log": { "type": "string" },
         "loglevel": { "type": "integer", "minimum": 0, "maximum": 8, "default": 4 },
+        "max_services": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 1024 },
         "method": { "type": "string" },
         "netdev": { "type": "string" },
         "obfs": { "type": "string" },

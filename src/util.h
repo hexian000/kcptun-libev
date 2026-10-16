@@ -136,7 +136,7 @@ void genpsk(const char *restrict method);
 #endif
 
 /* socket utilities */
-void socket_bind_netdev(int fd, const char *restrict netdev);
+bool socket_bind_netdev(int fd, const char *restrict netdev);
 
 struct config;
 

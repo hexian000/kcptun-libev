@@ -234,6 +234,12 @@ bool crypto_b64psk(struct crypto *restrict crypto, char *psk)
 	return true;
 }
 
+bool crypto_same_key(const struct crypto *a, const struct crypto *b)
+{
+	return a->key_size == b->key_size &&
+	       sodium_memcmp(a->impl->key, b->impl->key, a->key_size) == 0;
+}
+
 static void free_impl(struct crypto *restrict crypto)
 {
 	struct crypto_impl *restrict impl = crypto->impl;
@@ -264,15 +270,20 @@ uint32_t crypto_rand32(void)
 bool crypto_keygen(
 	const struct crypto *restrict crypto, char *b64, const size_t b64_len)
 {
-	unsigned char *key = crypto->impl->key;
 	const size_t key_size = crypto->key_size;
 	if (b64_len < sodium_base64_encoded_len(
 			      key_size, sodium_base64_VARIANT_ORIGINAL)) {
 		return false;
 	}
+	unsigned char *key = sodium_malloc(key_size);
+	if (key == NULL) {
+		LOGE("crypto: failed to allocate secure memory");
+		return false;
+	}
 	crypto->impl->keygen(key);
 	(void)sodium_bin2base64(
 		b64, b64_len, key, key_size, sodium_base64_VARIANT_ORIGINAL);
+	sodium_free(key);
 	return true;
 }
 

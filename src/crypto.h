@@ -27,6 +27,8 @@ struct crypto *crypto_new(const char *method);
 bool crypto_password(struct crypto *, char *password);
 bool crypto_b64psk(struct crypto *, char *b64);
 void crypto_free(struct crypto *);
+/* Compare effective keys; callers compare encryption methods separately. */
+bool crypto_same_key(const struct crypto *a, const struct crypto *b);
 
 uint32_t crypto_rand32(void);
 bool crypto_keygen(const struct crypto *, char *b64, size_t b64_len);

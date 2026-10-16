@@ -9,6 +9,10 @@
 #include "codec/json.h"
 #include "utils/slog.h"
 
+#if WITH_CRYPTO
+#include <sodium.h>
+#endif
+
 #include <errno.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -16,7 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define SERVICE_ID_MAX_LENGTH ((size_t)256)
 #define MIN_SOCKBUF_SIZE 4096
 
 static bool conf_check(struct config *restrict conf)
@@ -66,11 +69,16 @@ static bool conf_check(struct config *restrict conf)
 
 #if WITH_CRYPTO
 	/* 2. crypto check */
+	if (conf->method != NULL && conf->psk == NULL &&
+	    conf->password == NULL) {
+		LOGE("config: method requires psk or password");
+		return false;
+	}
 	if (conf->psk != NULL && conf->password != NULL) {
 		LOGE("config: psk and password cannot be specified at the same time");
 		return false;
 	}
-#endif
+#endif /* WITH_CRYPTO */
 
 	/* 3. buffer-size sanity check; the numeric ranges of every scalar
 	   field are enforced at parse time by the JSON schema constraints
@@ -185,6 +193,7 @@ static bool conf_apply(
 	}
 
 	/* copy top-level integer settings */
+	conf->max_services = narrow_uint_to_int(parsed->max_services);
 	conf->timeout = narrow_uint_to_int(parsed->timeout);
 	conf->linger = narrow_uint_to_int(parsed->linger);
 	conf->keepalive = narrow_uint_to_int(parsed->keepalive);
@@ -230,6 +239,7 @@ static char *read_alloc(const char *path, size_t *out_len)
 		(void)fclose(f);
 		return NULL;
 	}
+	buf[cap] = '\0';
 	const size_t n = fread(buf, 1, cap, f);
 	(void)fclose(f);
 	if (n != cap) {
@@ -238,7 +248,6 @@ static char *read_alloc(const char *path, size_t *out_len)
 		free(buf);
 		return NULL;
 	}
-	buf[n] = '\0';
 	*out_len = n;
 	return buf;
 }
@@ -292,9 +301,9 @@ const char *conf_modestr(const struct config *restrict conf)
 		return "client";
 	}
 	if (conf->mode & MODE_RENDEZVOUS) {
-		return "rendezvous server";
+		return "rendezvous peer";
 	}
-	return "relay";
+	return "rendezvous server";
 }
 
 void conf_free(struct config *conf)
@@ -314,9 +323,15 @@ void conf_free(struct config *conf)
 	UTIL_SAFE_FREE(conf->user);
 #if WITH_CRYPTO
 	UTIL_SAFE_FREE(conf->method);
+	if (conf->password != NULL) {
+		sodium_memzero(conf->password, strlen(conf->password));
+	}
+	if (conf->psk != NULL) {
+		sodium_memzero(conf->psk, strlen(conf->psk));
+	}
 	UTIL_SAFE_FREE(conf->password);
 	UTIL_SAFE_FREE(conf->psk);
-#endif
+#endif /* WITH_CRYPTO */
 #if WITH_OBFS
 	UTIL_SAFE_FREE(conf->obfs);
 #endif

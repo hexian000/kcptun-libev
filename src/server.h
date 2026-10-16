@@ -41,6 +41,12 @@ struct pktconn {
 	struct pktqueue *queue;
 	int fd;
 	int domain;
+	/* resolved configuration, separate from the discovered rendezvous peer */
+	union sockaddr_max kcp_bind;
+	union sockaddr_max configured_connect;
+	char *netdev;
+	int sndbuf, rcvbuf;
+	bool reuseport;
 	union sockaddr_max kcp_connect;
 	ev_tstamp last_send_time;
 	ev_tstamp last_recv_time;
@@ -93,11 +99,14 @@ struct server {
 		ev_tstamp started;
 		ev_tstamp last_stats_time;
 		ev_tstamp last_resolve_time;
+		bool resolve_failed;
 	};
 };
 
 struct server *server_new(struct ev_loop *loop, const struct config *conf);
-void server_loadconf(struct server *s, const struct config *conf);
+/* Commit a compatible, fully prepared configuration; failure leaves live state
+ * unchanged. The caller retains ownership of both configuration objects. */
+bool server_loadconf(struct server *s, const struct config *conf);
 bool server_start(struct server *s);
 void server_ping(struct server *s);
 struct vbuffer *
@@ -114,6 +123,5 @@ void server_free(struct server *s);
 struct sockaddr;
 
 uint32_t conv_new(struct server *s, const struct sockaddr *sa);
-size_t udp_overhead(const struct pktconn *udp);
 
 #endif /* SERVER_H */

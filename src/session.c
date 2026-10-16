@@ -649,11 +649,9 @@ ss0_on_reset(struct server *restrict s, struct msgframe *restrict msg)
 	return true;
 }
 
-/* decode the rendezvous LISTEN/CONNECT payload: the peer address followed by
-   an optional length-prefixed service id. On success fills addr and key (key
-   points into msg's buffer) and returns true; returns false when the address
-   is missing or malformed. Requires msg->len >= SESSION0_HEADER_SIZE, which
-   the session0 dispatcher guarantees. */
+/* Decode the peer address and length-prefixed service id. On success key
+ * points into the message, including for an empty id. The dispatcher ensures
+ * msg->len >= SESSION0_HEADER_SIZE. */
 static bool ss0_parse_service(
 	const struct msgframe *restrict msg, union sockaddr_max *restrict addr,
 	struct hashkey *restrict key)
@@ -667,21 +665,24 @@ static bool ss0_parse_service(
 		return false;
 	}
 	msgbuf += n, msglen -= n;
-	*key = (struct hashkey){ .data = NULL, .len = 0 };
-	if (msglen >= sizeof(uint16_t)) {
-		const size_t idlen = read_uint16(msgbuf);
-		msgbuf += sizeof(uint16_t), msglen -= sizeof(uint16_t);
-		if (msglen >= idlen) {
-			key->data = msgbuf;
-			key->len = idlen;
-		}
+	if (msglen < sizeof(uint16_t)) {
+		return false;
 	}
+	const size_t idlen = read_uint16(msgbuf);
+	msgbuf += sizeof(uint16_t), msglen -= sizeof(uint16_t);
+	if (idlen > SERVICE_ID_MAX_LENGTH || msglen < idlen) {
+		return false;
+	}
+	*key = (struct hashkey){ .data = msgbuf, .len = idlen };
 	return true;
 }
 
 static bool
 ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 {
+	if (s->conf->mode != 0) {
+		return false;
+	}
 	union sockaddr_max addr;
 	struct hashkey key;
 	if (!ss0_parse_service(msg, &addr, &key)) {
@@ -706,6 +707,10 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 			}
 		}
 	} else {
+		if (table_size(s->pkt.services) >=
+		    (size_t)s->conf->max_services) {
+			return true;
+		}
 		svc = malloc(sizeof(struct service) + key.len);
 		if (svc == NULL) {
 			LOGOOM();
@@ -744,9 +749,29 @@ ss0_on_listen(struct server *restrict s, struct msgframe *restrict msg)
 	return true;
 }
 
+static bool ss0_send_punch(
+	struct server *s, const struct sockaddr *target,
+	const struct sockaddr *first, const struct sockaddr *second)
+{
+	unsigned char b[INET6ADDR_LENGTH + INET6ADDR_LENGTH];
+	const size_t n = inetaddr_write(b, first, sizeof(b));
+	if (n == 0) {
+		return false;
+	}
+	const size_t next = inetaddr_write(b + n, second, sizeof(b) - n);
+	if (next == 0) {
+		return false;
+	}
+	(void)ss0_send(s, target, S0MSG_PUNCH, b, n + next);
+	return true;
+}
+
 static bool
 ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 {
+	if (s->conf->mode != 0) {
+		return false;
+	}
 	union sockaddr_max addr;
 	struct hashkey key;
 	if (!ss0_parse_service(msg, &addr, &key)) {
@@ -756,8 +781,10 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 	if (!table_find(s->pkt.services, &key, (void **)&svc)) {
 		char addr_str[64];
 		sa_format(addr_str, sizeof(addr_str), &msg->addr.sa);
-		LOGW_F("rendezvous connect from %s: no matching service",
-		       addr_str);
+		LOG_RATELIMITED_F(
+			WARNING, ev_now(s->loop), 1.0,
+			"rendezvous connect from %s: no matching service",
+			addr_str);
 		return true;
 	}
 	if (LOGLEVEL(INFO)) {
@@ -778,39 +805,13 @@ ss0_on_connect(struct server *restrict s, struct msgframe *restrict msg)
 			saddr2_str);
 	}
 
-	/* notify the server */
-	unsigned char b[INET6ADDR_LENGTH + INET6ADDR_LENGTH];
-	unsigned char *p = b;
-	size_t len = sizeof(b);
-	size_t n = inetaddr_write(p, &addr.sa, len);
-	if (n == 0) {
+	if (!ss0_send_punch(
+		    s, &svc->server_addr[1].sa, &addr.sa, &msg->addr.sa)) {
 		return false;
 	}
-	p += n, len -= n;
-	n = inetaddr_write(p, &msg->addr.sa, len);
-	if (n == 0) {
-		return false;
-	}
-	len -= n;
-	n = sizeof(b) - len;
-	ss0_send(s, &svc->server_addr[1].sa, S0MSG_PUNCH, b, n);
-
-	/* notify the client */
-	p = b;
-	len = sizeof(b);
-	n = inetaddr_write(p, &svc->server_addr[0].sa, len);
-	if (n == 0) {
-		return false;
-	}
-	p += n, len -= n;
-	n = inetaddr_write(p, &svc->server_addr[1].sa, len);
-	if (n == 0) {
-		return false;
-	}
-	len -= n;
-	n = sizeof(b) - len;
-	ss0_send(s, &msg->addr.sa, S0MSG_PUNCH, b, n);
-	return true;
+	return ss0_send_punch(
+		s, &msg->addr.sa, &svc->server_addr[0].sa,
+		&svc->server_addr[1].sa);
 }
 
 static bool is_punch_addr(const struct sockaddr *sa)
@@ -880,7 +881,9 @@ static const ss0_handler_type ss0_handler[] = {
 void session0(struct server *restrict s, struct msgframe *restrict msg)
 {
 	if (msg->len < SESSION0_HEADER_SIZE) {
-		LOGW_F("session0: short message, %" PRIu16 " bytes", msg->len);
+		LOG_RATELIMITED_F(
+			WARNING, ev_now(s->loop), 1.0,
+			"session0: short message, %" PRIu16 " bytes", msg->len);
 		return;
 	}
 	const unsigned char *packet = msg->buf + msg->off;
@@ -891,8 +894,14 @@ void session0(struct server *restrict s, struct msgframe *restrict msg)
 			return;
 		}
 	}
-	LOG_BIN_F(
-		WARNING, msg->buf + msg->off, msg->len, 0,
-		"session0: invalid message: what=%04" PRIX16 ", len=%zu",
-		header.what, (size_t)(msg->len - SESSION0_HEADER_SIZE));
+	if (LOGLEVEL(WARNING)) {
+		RATELIMIT(
+			ev_now(s->loop), 1.0,
+			LOG_BIN_F(
+				WARNING, msg->buf + msg->off, msg->len, 0,
+				"session0: invalid message: what=%04" PRIX16
+				", len=%zu",
+				header.what,
+				(size_t)(msg->len - SESSION0_HEADER_SIZE)));
+	}
 }

@@ -201,7 +201,10 @@ Common fields in `server.json`/`client.json`:
 - Client: `listen` defines the local TCP address; traffic is sent to `kcp_connect`.
 - Server: receives on `kcp_bind` and forwards connections to `connect`.
 - Setting `password` or `psk` is strongly recommended on public networks.
+- `max_services`: rendezvous brokers admit up to 1–65,535 service IDs (default 1,024). Existing registrations can refresh or change address at capacity; new IDs are ignored until entries expire or the limit is raised.
 - `loglevel`: 0–8 map to Silence, Fatal, Error, Warning, Notice, Info, Debug, Verbose, VeryVerbose. The default is 4 (Notice). Higher levels can affect performance.
+
+SIGHUP reloads compatible settings transactionally. Mode, TCP/HTTP listener, encryption method/key, and obfs transport changes require a restart. Failed reloads retain the running configuration and sessions. An unchanged password or equivalent PSK is accepted without resetting replay protection. Lowering `max_services` retains existing registrations and blocks new IDs until the count falls below the new limit.
 
 First, generate a random key for encryption:
 

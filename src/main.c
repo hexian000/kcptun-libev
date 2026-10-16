@@ -7,6 +7,7 @@
 #include "util.h"
 
 #include "io/file.h"
+#include "io/stream.h"
 #include "meta/minmax.h"
 #include "os/daemon.h"
 #include "utils/debug.h"
@@ -65,7 +66,7 @@ static void print_usage(const char *argv0)
 static void set_log_config(const struct config *restrict conf, const int level)
 {
 	slog_setlevel(CLAMP(level, LOG_LEVEL_SILENCE, LOG_LEVEL_VERYVERBOSE));
-	if (conf->log == NULL) {
+	if (args.daemonize || conf->log == NULL) {
 		return;
 	}
 	const char *log = conf->log;
@@ -154,6 +155,68 @@ static void parse_args(int argc, char **argv)
 		      LOG_LEVEL_VERYVERBOSE));
 }
 
+struct reload_log {
+	struct io_stream *stream;
+	int output;
+};
+
+static bool
+prepare_reload_log(const struct config *conf, struct reload_log *log)
+{
+	if (args.daemonize || conf->log == NULL) {
+		return true;
+	}
+	const char *name = conf->log;
+	FILE *file = NULL;
+	if (strcmp(name, "stdout") == 0) {
+		file = stdout;
+		log->output = SLOG_OUTPUT_STREAM;
+	} else if (strcmp(name, "stderr") == 0 || strcmp(name, "terminal") == 0) {
+		file = stderr;
+		log->output = strcmp(name, "terminal") == 0 ?
+				      SLOG_OUTPUT_TERMINAL :
+				      SLOG_OUTPUT_STREAM;
+	} else if (strcmp(name, "syslog") == 0) {
+		log->output = SLOG_OUTPUT_SYSLOG;
+	} else if (strcmp(name, "discard") == 0) {
+		log->output = SLOG_OUTPUT_DISCARD;
+	} else {
+		LOGE_F("unknown log output: `%s'", name);
+		return false;
+	}
+	if (file != NULL) {
+		log->stream = io_filewriter(file);
+		if (log->stream == NULL) {
+			LOGOOM();
+			return false;
+		}
+	}
+	return true;
+}
+
+static void commit_reload_log(const struct config *conf, struct reload_log *log)
+{
+	static struct io_stream *writer;
+	slog_setlevel(
+		CLAMP(conf->log_level + args.verbosity, LOG_LEVEL_SILENCE,
+		      LOG_LEVEL_VERYVERBOSE));
+	if (args.daemonize || conf->log == NULL) {
+		return;
+	}
+	if (log->stream != NULL) {
+		slog_setoutput(log->output, log->stream);
+	} else if (log->output == SLOG_OUTPUT_SYSLOG) {
+		slog_setoutput(log->output, PROJECT_NAME, (slog_syslog_fn)NULL);
+	} else {
+		slog_setoutput(log->output);
+	}
+	if (writer != NULL) {
+		(void)io_stream_close(writer);
+	}
+	writer = log->stream;
+	log->stream = NULL;
+}
+
 static void reload_config(struct server *restrict s)
 {
 	struct config *conf = conf_read(args.conf_path);
@@ -161,22 +224,19 @@ static void reload_config(struct server *restrict s)
 		LOGE_F("failed to read config `%s'", args.conf_path);
 		return;
 	}
-	if (s->conf->mode != conf->mode) {
-		LOGE_F("incompatible config: mode %s (0x%x) -> %s (0x%x)",
-		       conf_modestr(s->conf), s->conf->mode, conf_modestr(conf),
-		       conf->mode);
+	struct reload_log log = { 0 };
+	const struct config *old = s->conf;
+	if (!prepare_reload_log(conf, &log) || !server_loadconf(s, conf)) {
+		if (log.stream != NULL) {
+			(void)io_stream_close(log.stream);
+		}
+		LOGE("config reload failed; running configuration retained");
 		conf_free(conf);
 		return;
 	}
-	set_log_config(conf, conf->log_level + args.verbosity);
-	conf_free((struct config *)s->conf);
-	server_loadconf(s, conf);
-	if (server_resolve(s)) {
-		s->last_resolve_time = ev_now(s->loop);
-		LOGN("config successfully reloaded");
-	} else {
-		LOGW("config reloaded, but failed to resolve server address");
-	}
+	commit_reload_log(conf, &log);
+	conf_free((struct config *)old);
+	LOGN("config successfully reloaded");
 }
 
 static void

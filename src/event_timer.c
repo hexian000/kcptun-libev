@@ -110,13 +110,15 @@ void resolve_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	struct server *restrict s = watcher->data;
 	const ev_tstamp now = ev_now(loop);
 
+	const double resolve_interval = s->resolve_failed ? 5.0 : s->timeout;
 	if (s->last_resolve_time != TSTAMP_NIL &&
 	    timer_defer_until(
-		    loop, watcher, now, s->last_resolve_time + s->timeout)) {
+		    loop, watcher, now,
+		    s->last_resolve_time + resolve_interval)) {
 		return;
 	}
 
-	if (s->pkt.last_recv_time != TSTAMP_NIL &&
+	if (!s->resolve_failed && s->pkt.last_recv_time != TSTAMP_NIL &&
 	    timer_defer_until(
 		    loop, watcher, now, s->pkt.last_recv_time + s->timeout)) {
 		return;
@@ -134,10 +136,6 @@ void resolve_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 		noncegen_init(noncegen);
 	}
 #endif
-	s->last_resolve_time = now;
-
-	watcher->repeat = (s->pkt.fd == -1) ? 5.0 : s->timeout;
-	ev_timer_again(loop, watcher);
 }
 
 static bool timeout_filt(

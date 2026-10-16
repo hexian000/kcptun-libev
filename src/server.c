@@ -66,60 +66,48 @@ tcp_listen(const struct config *restrict conf, const struct sockaddr *sa)
 	return fd;
 }
 
+static bool listener_open(
+	struct server *restrict s, const char *addrstr,
+	void (*callback)(struct ev_loop *, ev_io *, int), ev_io *watcher,
+	int *fd_slot, const char *label)
+{
+	union sockaddr_max addr;
+	if (!resolve_bindaddr(&addr, addrstr, SA_RESOLVE_TCP)) {
+		return false;
+	}
+	const int fd = tcp_listen(s->conf, &addr.sa);
+	if (fd == -1) {
+		return false;
+	}
+	ev_io_init(watcher, callback, fd, EV_READ);
+	ev_set_priority(watcher, EV_MINPRI);
+	watcher->data = s;
+	ev_io_start(s->loop, watcher);
+	*fd_slot = fd;
+	if (LOGLEVEL(NOTICE)) {
+		char addr_str[64];
+		(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
+		LOG_F(NOTICE, "%s listen: %s", label, addr_str);
+	}
+	return true;
+}
+
 static bool listener_start(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
 	struct listener *restrict l = &s->listener;
-
-	if (conf->listen != NULL) {
-		union sockaddr_max addr;
-		if (!resolve_bindaddr(&addr, conf->listen, SA_RESOLVE_TCP)) {
-			return false;
-		}
-
-		const int fd = tcp_listen(conf, &addr.sa);
-		if (fd == -1) {
-			return false;
-		}
-		/* Initialize and start a watcher to accepts client requests */
-		ev_io *restrict w_accept = &l->w_accept;
-		ev_io_init(w_accept, tcp_accept_cb, fd, EV_READ);
-		ev_set_priority(w_accept, EV_MINPRI);
-		w_accept->data = s;
-		ev_io_start(s->loop, w_accept);
-		l->fd = fd;
-		if (LOGLEVEL(NOTICE)) {
-			char addr_str[64];
-			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
-			LOG_F(NOTICE, "tcp listen: %s", addr_str);
-		}
+	if (conf->listen != NULL && !listener_open(
+					    s, conf->listen, tcp_accept_cb,
+					    &l->w_accept, &l->fd, "tcp")) {
+		return false;
 	}
-
-	if (conf->http_listen != NULL) {
-		union sockaddr_max addr;
-		if (!resolve_bindaddr(
-			    &addr, conf->http_listen, SA_RESOLVE_TCP)) {
-			return false;
-		}
-
-		const int fd = tcp_listen(conf, &addr.sa);
-		if (fd == -1) {
-			return false;
-		}
-		ev_io *restrict w_accept = &l->w_accept_http;
-		ev_io_init(w_accept, http_accept_cb, fd, EV_READ);
-		ev_set_priority(w_accept, EV_MINPRI);
-		w_accept->data = s;
-		ev_io_start(s->loop, w_accept);
-		l->fd_http = fd;
-		if (LOGLEVEL(NOTICE)) {
-			char addr_str[64];
-			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
-			LOG_F(NOTICE, "http listen: %s", addr_str);
-		}
+	if (conf->http_listen != NULL &&
+	    !listener_open(
+		    s, conf->http_listen, http_accept_cb, &l->w_accept_http,
+		    &l->fd_http, "http")) {
+		return false;
 	}
-
-	ev_timer *restrict w_listener = &s->listener.w_timer;
+	ev_timer *restrict w_listener = &l->w_timer;
 	ev_timer_init(w_listener, listener_cb, 0.5, 0.0);
 	ev_set_priority(w_listener, EV_MINPRI);
 	w_listener->data = l;
@@ -172,12 +160,29 @@ static void addr_set_any(union sockaddr_max *addr, const int family)
 	FAILMSGF("invalid address family: %d", family);
 }
 
-static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
+static bool addr_set_local(
+	union sockaddr_max *addr, const struct sockaddr *sa,
+	const int transport_fd, const char *netdev)
 {
+	socklen_t len = sizeof(*addr);
+	if (getsockname(transport_fd, &addr->sa, &len) != 0) {
+		LOG_PERROR("udp getsockname");
+		return false;
+	}
+	if ((addr->sa.sa_family == AF_INET &&
+	     addr->in.sin_addr.s_addr != INADDR_ANY) ||
+	    (addr->sa.sa_family == AF_INET6 &&
+	     !IN6_IS_ADDR_UNSPECIFIED(&addr->in6.sin6_addr))) {
+		return true;
+	}
 	const int fd = socket(sa->sa_family, SOCK_DGRAM, IPPROTO_UDP);
 	if (fd < 0) {
 		const int err = errno;
 		LOGW_F("socket: (%d) %s", err, strerror(err));
+		return false;
+	}
+	if (netdev != NULL && !socket_bind_netdev(fd, netdev)) {
+		socket_close(fd);
 		return false;
 	}
 	if (connect(fd, sa, sa_len(sa))) {
@@ -186,7 +191,7 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 		socket_close(fd);
 		return false;
 	}
-	socklen_t len = sizeof(*addr);
+	len = sizeof(*addr);
 	if (getsockname(fd, &addr->sa, &len)) {
 		const int err = errno;
 		LOGW_F("getsockname: (%d) %s", err, strerror(err));
@@ -197,92 +202,148 @@ static bool addr_set_local(union sockaddr_max *addr, const struct sockaddr *sa)
 	return true;
 }
 
-static bool udp_ensure_socket(
-	struct pktconn *restrict udp, const struct config *restrict conf,
-	const int family)
+static bool
+udp_resolve(struct pktconn *restrict udp, const struct config *restrict conf)
 {
-	if (udp->fd != -1) {
-		return true;
+	if (conf->kcp_bind != NULL &&
+	    !resolve_bindaddr(&udp->kcp_bind, conf->kcp_bind, SA_RESOLVE_UDP)) {
+		return false;
 	}
-	return udp_socket(udp, conf, family);
+	if (conf->kcp_connect != NULL &&
+	    !resolve_addr(
+		    &udp->configured_connect, conf->kcp_connect,
+		    SA_RESOLVE_UDP)) {
+		return false;
+	}
+	if ((conf->mode & MODE_RENDEZVOUS) != 0 &&
+	    !resolve_addr(
+		    &udp->rendezvous_server, conf->rendezvous_server,
+		    SA_RESOLVE_UDP)) {
+		return false;
+	}
+	const struct sockaddr *addresses[] = {
+		&udp->kcp_bind.sa,
+		&udp->configured_connect.sa,
+		&udp->rendezvous_server.sa,
+	};
+	for (size_t i = 0; i < sizeof(addresses) / sizeof(addresses[0]); i++) {
+		const int family = addresses[i]->sa_family;
+		if (family == AF_UNSPEC) {
+			continue;
+		}
+		if (udp->domain != AF_UNSPEC && udp->domain != family) {
+			LOGE("udp addresses must use the same address family");
+			return false;
+		}
+		udp->domain = family;
+	}
+	return true;
 }
 
-static bool
-udp_bind(struct pktconn *restrict udp, const struct config *restrict conf)
+static bool udp_local_port(struct pktconn *restrict udp)
 {
-	if (conf->kcp_bind != NULL) {
-		union sockaddr_max addr;
-		if (!resolve_bindaddr(&addr, conf->kcp_bind, SA_RESOLVE_UDP)) {
+	union sockaddr_max local = { 0 };
+	socklen_t len = sizeof(local);
+	if (getsockname(udp->fd, &local.sa, &len) != 0) {
+		LOG_PERROR("udp getsockname");
+		return false;
+	}
+	switch (udp->domain) {
+	case AF_INET:
+		udp->rendezvous_local.in.sin_port = local.in.sin_port;
+		break;
+	case AF_INET6:
+		udp->rendezvous_local.in6.sin6_port = local.in6.sin6_port;
+		break;
+	default:
+		FAILMSGF("invalid address family: %d", udp->domain);
+	}
+	return true;
+}
+
+static bool udp_bind(
+	struct pktconn *restrict udp, const struct config *restrict conf,
+	bool strict)
+{
+	if (!udp_socket(udp, conf, udp->domain)) {
+		return false;
+	}
+	udp->sndbuf = conf->udp_sndbuf;
+	udp->rcvbuf = conf->udp_rcvbuf;
+	udp->reuseport = conf->udp_reuseport;
+	if (conf->netdev != NULL) {
+		udp->netdev = strdup(conf->netdev);
+		if (udp->netdev == NULL) {
+			LOGOOM();
 			return false;
 		}
-		udp->domain = addr.sa.sa_family;
-		if (!udp_ensure_socket(udp, conf, addr.sa.sa_family)) {
+		if (!socket_bind_netdev(udp->fd, udp->netdev)) {
 			return false;
 		}
-		/* on failure, udp->fd is intentionally left open: the next
-		 * udp_restart() call closes it before retrying */
-		if (bind(udp->fd, &addr.sa, sa_len(&addr.sa))) {
+	}
+	if (udp->kcp_bind.sa.sa_family != AF_UNSPEC) {
+		const struct sockaddr *sa = &udp->kcp_bind.sa;
+		if (bind(udp->fd, sa, sa_len(sa)) != 0) {
 			LOG_PERROR("udp bind");
 			return false;
 		}
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), sa);
 			LOG_F(NOTICE, "udp bind: %s", addr_str);
 		}
 	}
-	if (conf->kcp_connect != NULL) {
-		union sockaddr_max addr;
-		if (!resolve_addr(&addr, conf->kcp_connect, SA_RESOLVE_UDP)) {
-			return false;
-		}
-
-		udp->domain = addr.sa.sa_family;
-		if (!udp_ensure_socket(udp, conf, addr.sa.sa_family)) {
-			return false;
-		}
-		/* on failure, udp->fd is intentionally left open: the next
-		 * udp_restart() call closes it before retrying */
-		if (connect(udp->fd, &addr.sa, sa_len(&addr.sa))) {
+	if (udp->configured_connect.sa.sa_family != AF_UNSPEC) {
+		const struct sockaddr *sa = &udp->configured_connect.sa;
+		if (connect(udp->fd, sa, sa_len(sa)) != 0) {
 			LOG_PERROR("udp connect");
 			return false;
 		}
-		sa_copy(&udp->kcp_connect.sa, &addr.sa);
+		udp->kcp_connect = udp->configured_connect;
+		udp->connected = true;
 		if (LOGLEVEL(NOTICE)) {
 			char addr_str[64];
-			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
+			(void)sa_format(addr_str, sizeof(addr_str), sa);
 			LOG_F(NOTICE, "udp connect: %s", addr_str);
 		}
-		udp->connected = true;
 	}
 	if ((conf->mode & MODE_RENDEZVOUS) != 0) {
-		union sockaddr_max addr, laddr;
-		if (!resolve_addr(
-			    &addr, conf->rendezvous_server, SA_RESOLVE_UDP)) {
+		if (!addr_set_local(
+			    &udp->rendezvous_local, &udp->rendezvous_server.sa,
+			    udp->fd, udp->netdev)) {
+			if (strict) {
+				return false;
+			}
+			addr_set_any(&udp->rendezvous_local, udp->domain);
+		}
+		if (!udp_local_port(udp) && strict) {
 			return false;
 		}
-		udp->domain = addr.sa.sa_family;
-		if (!udp_ensure_socket(udp, conf, addr.sa.sa_family)) {
-			return false;
-		}
-		udp->rendezvous_server = addr;
-		if (!addr_set_local(&laddr, &addr.sa)) {
-			addr_set_any(&laddr, addr.sa.sa_family);
-		}
-		udp->rendezvous_local = laddr;
 		if (LOGLEVEL(INFO)) {
 			char addr_str[64], laddr_str[64];
-			(void)sa_format(addr_str, sizeof(addr_str), &addr.sa);
 			(void)sa_format(
-				laddr_str, sizeof(laddr_str), &laddr.sa);
+				addr_str, sizeof(addr_str),
+				&udp->rendezvous_server.sa);
+			(void)sa_format(
+				laddr_str, sizeof(laddr_str),
+				&udp->rendezvous_local.sa);
 			LOG_F(INFO, "rendezvous mode: %s -> %s", laddr_str,
 			      addr_str);
 		}
 	}
-	if (conf->netdev != NULL) {
-		socket_bind_netdev(udp->fd, conf->netdev);
-	}
 	return true;
+}
+
+static size_t udp_overhead(const struct pktconn *restrict udp)
+{
+	switch (udp->domain) {
+	case AF_INET:
+		return 28;
+	case AF_INET6:
+		return 48;
+	default:
+		FAILMSGF("invalid address family: %d", udp->domain);
+	}
 }
 
 /* calculate max send size */
@@ -312,31 +373,97 @@ static size_t server_mss(const struct server *restrict s)
 	return mss;
 }
 
-static bool udp_restart(struct server *restrict s)
+static bool udp_addr_equal(const struct sockaddr *a, const struct sockaddr *b)
 {
-	struct pktconn *restrict udp = &s->pkt;
+	return (a->sa_family == AF_UNSPEC && b->sa_family == AF_UNSPEC) ||
+	       sa_equals(a, b);
+}
+
+static bool nullable_string_equal(const char *a, const char *b)
+{
+	return a == NULL ? b == NULL : b != NULL && strcmp(a, b) == 0;
+}
+
+/* Preparation owns only candidate resources and never touches live watchers. */
+static bool udp_unchanged(
+	const struct pktconn *udp, const struct pktconn *next,
+	const struct config *conf)
+{
+	return udp->fd != -1 && udp->sndbuf == conf->udp_sndbuf &&
+	       udp->rcvbuf == conf->udp_rcvbuf &&
+	       udp->reuseport == conf->udp_reuseport &&
+	       nullable_string_equal(udp->netdev, conf->netdev) &&
+	       udp_addr_equal(&udp->kcp_bind.sa, &next->kcp_bind.sa) &&
+	       udp_addr_equal(
+		       &udp->configured_connect.sa,
+		       &next->configured_connect.sa) &&
+	       udp_addr_equal(
+		       &udp->rendezvous_server.sa, &next->rendezvous_server.sa);
+}
+
+static void udp_discard(struct pktconn *next)
+{
+	if (next->fd != -1) {
+		socket_close(next->fd);
+	}
+	free(next->netdev);
+}
+
+static void udp_commit(struct server *s, struct pktconn *next)
+{
+	struct pktconn *udp = &s->pkt;
 	if (udp->fd != -1) {
 		LOGN("udp socket restart");
 		ev_io_stop(s->loop, &udp->w_read);
 		ev_io_stop(s->loop, &udp->w_write);
 		socket_close(udp->fd);
-		udp->fd = -1;
-		udp->connected = false;
 	}
-	if (!udp_bind(udp, s->conf)) {
+	free(udp->netdev);
+	udp->netdev = next->netdev;
+	udp->sndbuf = next->sndbuf;
+	udp->rcvbuf = next->rcvbuf;
+	udp->reuseport = next->reuseport;
+	udp->fd = next->fd;
+	udp->domain = next->domain;
+	udp->connected = next->connected;
+	udp->kcp_bind = next->kcp_bind;
+	udp->configured_connect = next->configured_connect;
+	udp->kcp_connect = next->kcp_connect;
+	udp->rendezvous_server = next->rendezvous_server;
+	udp->rendezvous_local = next->rendezvous_local;
+	ev_io_init(&udp->w_read, pkt_read_cb, udp->fd, EV_READ);
+	udp->w_read.data = s;
+	ev_io_start(s->loop, &udp->w_read);
+	ev_io_init(&udp->w_write, pkt_write_cb, udp->fd, EV_WRITE);
+	udp->w_write.data = s;
+	if (udp->queue->mq_send_len > 0) {
+		ev_io_start(s->loop, &udp->w_write);
+	}
+}
+
+static bool udp_restart(struct server *restrict s)
+{
+	struct pktconn next = { .fd = -1 };
+	if (!udp_resolve(&next, s->conf)) {
 		return false;
 	}
-	ev_io *restrict w_read = &udp->w_read;
-	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
-	w_read->data = s;
-	ev_io_start(s->loop, w_read);
-	ev_io *restrict w_write = &udp->w_write;
-	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
-	w_write->data = s;
+	if (udp_unchanged(&s->pkt, &next, s->conf)) {
+		if ((s->conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) ==
+			    (MODE_CLIENT | MODE_RENDEZVOUS) &&
+		    (s->pkt.last_recv_time == TSTAMP_NIL ||
+		     ev_now(s->loop) - s->pkt.last_recv_time >= s->timeout)) {
+			s->pkt.connected = false;
+		}
+		return true;
+	}
+	if (!udp_bind(&next, s->conf, false)) {
+		udp_discard(&next);
+		return false;
+	}
+	udp_commit(s, &next);
 	return true;
 }
 
-/* resolve the TCP forward target, if configured */
 static bool resolve_connect(struct server *restrict s)
 {
 	const struct config *restrict conf = s->conf;
@@ -346,22 +473,16 @@ static bool resolve_connect(struct server *restrict s)
 	return resolve_addr(&s->connect, conf->connect, SA_RESOLVE_TCP);
 }
 
-static bool udp_start(struct server *restrict s)
+static void server_update_packet_size(struct server *restrict s)
 {
-	struct pktconn *restrict udp = &s->pkt;
-	if (!udp_bind(udp, s->conf)) {
-		return false;
+	struct pktqueue *restrict q = s->pkt.queue;
+	q->msg_offset = 0;
+#if WITH_OBFS
+	if (q->obfs != NULL) {
+		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
 	}
-
-	ev_io *restrict w_read = &udp->w_read;
-	ev_io_init(w_read, pkt_read_cb, udp->fd, EV_READ);
-	w_read->data = s;
-	ev_io_start(s->loop, w_read);
-
-	ev_io *restrict w_write = &udp->w_write;
-	ev_io_init(w_write, pkt_write_cb, udp->fd, EV_WRITE);
-	w_write->data = s;
-	return true;
+#endif
+	q->mss = (uint16_t)server_mss(s);
 }
 
 /* shared by server_new and server_loadconf, so a SIGHUP reload can never
@@ -408,6 +529,10 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		.last_resolve_time = TSTAMP_NIL,
 		.last_stats_time = TSTAMP_NIL,
 	};
+	ev_io_init(&s->pkt.w_read, pkt_read_cb, -1, EV_READ);
+	s->pkt.w_read.data = s;
+	ev_io_init(&s->pkt.w_write, pkt_write_cb, -1, EV_WRITE);
+	s->pkt.w_write.data = s;
 	server_apply_conf(s, conf);
 
 	{
@@ -458,22 +583,99 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 	return s;
 }
 
-void server_loadconf(
+static bool reload_compatible(const struct server *s, const struct config *conf)
+{
+	const struct config *old = s->conf;
+	if (old->mode != conf->mode ||
+	    !nullable_string_equal(old->listen, conf->listen) ||
+	    !nullable_string_equal(old->http_listen, conf->http_listen)) {
+		LOGE("config: mode and listener changes require restart");
+		return false;
+	}
+#if WITH_OBFS
+	if (!nullable_string_equal(old->obfs, conf->obfs) ||
+	    (old->obfs != NULL &&
+	     (!nullable_string_equal(old->kcp_bind, conf->kcp_bind) ||
+	      !nullable_string_equal(old->kcp_connect, conf->kcp_connect) ||
+	      !nullable_string_equal(old->netdev, conf->netdev) ||
+	      old->udp_sndbuf != conf->udp_sndbuf ||
+	      old->udp_rcvbuf != conf->udp_rcvbuf ||
+	      old->tcp_reuseport != conf->tcp_reuseport))) {
+		LOGE("config: obfs transport changes require restart");
+		return false;
+	}
+#endif /* WITH_OBFS */
+#if WITH_CRYPTO
+	if (!nullable_string_equal(old->method, conf->method)) {
+		LOGE("config: encryption method changes require restart");
+		return false;
+	}
+	if (conf->method != NULL) {
+		struct crypto *candidate = crypto_new(conf->method);
+		if (candidate == NULL) {
+			return false;
+		}
+		const bool prepared =
+			conf->psk != NULL ?
+				crypto_b64psk(candidate, conf->psk) :
+				crypto_password(candidate, conf->password);
+		const bool same =
+			prepared &&
+			crypto_same_key(s->pkt.queue->crypto, candidate);
+		crypto_free(candidate);
+		if (!same) {
+			LOGE("config: key setup failed or key change requires restart");
+			return false;
+		}
+	}
+#endif /* WITH_CRYPTO */
+	return true;
+}
+
+bool server_loadconf(
 	struct server *restrict s, const struct config *restrict conf)
 {
+	if (!reload_compatible(s, conf)) {
+		return false;
+	}
+	union sockaddr_max connect = { 0 };
+	if (conf->connect != NULL &&
+	    !resolve_addr(&connect, conf->connect, SA_RESOLVE_TCP)) {
+		return false;
+	}
+	struct pktconn next = { .fd = -1 };
+	bool replace_udp = false;
+#if WITH_OBFS
+	if (s->pkt.queue->obfs == NULL)
+#endif
+	{
+		if (!udp_resolve(&next, conf)) {
+			return false;
+		}
+		replace_udp = !udp_unchanged(&s->pkt, &next, conf);
+		if (replace_udp && !udp_bind(&next, conf, true)) {
+			udp_discard(&next);
+			return false;
+		}
+	}
+	/* All fallible work is complete. Keep sessions, crypto and replay state. */
+	if (replace_udp) {
+		udp_commit(s, &next);
+	}
+	s->conf = conf;
+	s->connect = connect;
 	server_apply_conf(s, conf);
-
 	const double interval = conf->kcp_interval * 1e-3;
 	s->w_kcp_update.repeat = interval;
 	ev_timer_again(s->loop, &s->w_kcp_update);
-
 	s->w_keepalive.repeat = s->keepalive;
 	ev_timer_again(s->loop, &s->w_keepalive);
-
 	s->w_resolve.repeat = s->timeout;
 	ev_timer_again(s->loop, &s->w_resolve);
-
-	s->conf = conf;
+	s->last_resolve_time = ev_now(s->loop);
+	s->resolve_failed = false;
+	server_update_packet_size(s);
+	return true;
 }
 
 bool server_start(struct server *restrict s)
@@ -496,19 +698,20 @@ bool server_start(struct server *restrict s)
 	ev_timer_start(loop, &s->w_resolve);
 	ev_timer_start(loop, &s->w_timeout);
 
-	struct pktqueue *restrict q = s->pkt.queue;
+	bool ok;
 #if WITH_OBFS
+	struct pktqueue *restrict q = s->pkt.queue;
 	if (q->obfs != NULL) {
-		const bool ok = obfs_start(q->obfs, s);
-		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
-		q->mss = (uint16_t)server_mss(s);
-		return ok;
-	}
+		ok = obfs_start(q->obfs, s);
+	} else
 #endif
-	if (!udp_start(s)) {
+	{
+		ok = udp_restart(s);
+	}
+	if (!ok) {
 		return false;
 	}
-	q->mss = (uint16_t)server_mss(s);
+	server_update_packet_size(s);
 	return true;
 }
 
@@ -755,29 +958,34 @@ bool server_healthy(
 
 bool server_resolve(struct server *restrict s)
 {
-	if (!resolve_connect(s)) {
-		return false;
-	}
-	struct pktqueue *restrict q = s->pkt.queue;
+	bool ok = resolve_connect(s);
+	if (ok) {
 #if WITH_OBFS
-	if (q->obfs != NULL) {
-		if (!obfs_resolve(q->obfs)) {
-			return false;
+		struct pktqueue *restrict q = s->pkt.queue;
+		if (q->obfs != NULL) {
+			ok = obfs_resolve(q->obfs);
+		} else
+#endif
+		{
+			ok = udp_restart(s);
 		}
-		q->msg_offset = (uint16_t)obfs_overhead(q->obfs);
-		q->mss = (uint16_t)server_mss(s);
-		return true;
 	}
-#endif /* WITH_OBFS */
-	if (!udp_restart(s)) {
-		return false;
+	s->resolve_failed = !ok;
+	s->last_resolve_time = ev_now(s->loop);
+	s->w_resolve.repeat = ok ? s->timeout : 5.0;
+	ev_timer_again(s->loop, &s->w_resolve);
+	if (ok) {
+		server_update_packet_size(s);
 	}
-	q->mss = (uint16_t)server_mss(s);
-	return true;
+	return ok;
 }
 
 void udp_rendezvous(struct server *restrict s, const uint16_t what)
 {
+	if (s->pkt.fd == -1) {
+		return;
+	}
+	udp_local_port(&s->pkt);
 	const size_t idlen = s->conf->service_idlen;
 	const struct sockaddr *sa_server = &s->pkt.rendezvous_server.sa;
 	const struct sockaddr *sa_local = &s->pkt.rendezvous_local.sa;
@@ -818,6 +1026,8 @@ static void udp_stop(struct ev_loop *loop, struct pktconn *restrict conn)
 	ev_io_stop(loop, &conn->w_write);
 	socket_close(conn->fd);
 	conn->fd = -1;
+	ev_io_set(&conn->w_read, -1, EV_READ);
+	ev_io_set(&conn->w_write, -1, EV_WRITE);
 }
 
 static void udp_free(struct pktconn *restrict conn)
@@ -825,6 +1035,7 @@ static void udp_free(struct pktconn *restrict conn)
 	if (conn == NULL) {
 		return;
 	}
+	UTIL_SAFE_FREE(conn->netdev);
 	if (conn->queue != NULL) {
 		queue_free(conn->queue);
 		conn->queue = NULL;
@@ -946,19 +1157,4 @@ uint32_t conv_new(struct server *restrict s, const struct sockaddr *sa)
 	}
 	s->conv = conv;
 	return conv;
-}
-
-size_t udp_overhead(const struct pktconn *restrict udp)
-{
-	switch (udp->domain) {
-	case AF_INET:
-		/* UDP/IP4 */
-		return 28;
-	case AF_INET6:
-		/* UDP/IP6 */
-		return 48;
-	default:
-		break;
-	}
-	FAILMSGF("invalid address family: %d", udp->domain);
 }

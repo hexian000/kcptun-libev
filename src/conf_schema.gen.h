@@ -62,6 +62,7 @@ struct json_conf {
 	unsigned keepalive;
 	unsigned linger;
 	unsigned loglevel;
+	unsigned max_services;
 	unsigned time_wait;
 	unsigned timeout;
 };

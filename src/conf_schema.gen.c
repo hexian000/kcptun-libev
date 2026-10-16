@@ -18,26 +18,27 @@ typedef struct { const char *name; size_t len; int idx; } json_lookup_conf_entry
 static const json_lookup_conf_entry_ json_lookup_conf_keys_[] = {
 	{"kcp", 3, 2},
 	{"log", 3, 8},
-	{"psk", 3, 14},
-	{"tcp", 3, 17},
-	{"udp", 3, 20},
-	{"obfs", 4, 12},
-	{"user", 4, 21},
+	{"psk", 3, 15},
+	{"tcp", 3, 18},
+	{"udp", 3, 21},
+	{"obfs", 4, 13},
+	{"user", 4, 22},
 	{"linger", 6, 6},
 	{"listen", 6, 7},
-	{"method", 6, 10},
-	{"netdev", 6, 11},
+	{"method", 6, 11},
+	{"netdev", 6, 12},
 	{"connect", 7, 0},
-	{"timeout", 7, 19},
+	{"timeout", 7, 20},
 	{"kcp_bind", 8, 3},
 	{"loglevel", 8, 9},
-	{"password", 8, 13},
+	{"password", 8, 14},
 	{"keepalive", 9, 5},
-	{"time_wait", 9, 18},
-	{"service_id", 10, 16},
+	{"time_wait", 9, 19},
+	{"service_id", 10, 17},
 	{"http_listen", 11, 1},
 	{"kcp_connect", 11, 4},
-	{"rendezvous_server", 17, 15},
+	{"max_services", 12, 10},
+	{"rendezvous_server", 17, 16},
 };
 static int json_lookup_conf_cmp_(const void *key_, const void *entry_)
 {
@@ -52,7 +53,7 @@ json_lookup_conf(const char *str, size_t len)
 {
 	const json_lookup_conf_entry_ key_ = {str, len, 0};
 	const json_lookup_conf_entry_ *e_ =
-		bsearch(&key_, json_lookup_conf_keys_, 22, sizeof(*json_lookup_conf_keys_), json_lookup_conf_cmp_);
+		bsearch(&key_, json_lookup_conf_keys_, 23, sizeof(*json_lookup_conf_keys_), json_lookup_conf_cmp_);
 	return e_ ? e_->idx : -1;
 }
 
@@ -259,6 +260,10 @@ static const struct json_constraint json_conf_loglevel_c = {
 	.flags = JSON_C_MAX,
 	.u = { .max = UINTMAX_C(8) },
 };
+static const struct json_constraint json_conf_max_services_c = {
+	.flags = JSON_C_MIN | JSON_C_MAX,
+	.u = { .min = UINTMAX_C(1), .max = UINTMAX_C(65535) },
+};
 static const struct json_constraint json_conf_time_wait_c = {
 	.flags = JSON_C_MIN | JSON_C_MAX,
 	.u = { .min = UINTMAX_C(5), .max = UINTMAX_C(3600) },
@@ -281,6 +286,7 @@ static const struct json_conf json_conf_defaults = {
 	.keepalive = 25u,
 	.linger = 30u,
 	.loglevel = 4u,
+	.max_services = 1024u,
 	.tcp = {
 		.keepalive = false,
 		.nodelay = true,
@@ -303,6 +309,7 @@ static const struct json_field json_conf_fields[] = {
 	{ .name = "listen", .name_len = 6, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, listen) },
 	{ .name = "log", .name_len = 3, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, log) },
 	{ .name = "loglevel", .name_len = 8, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, loglevel), .constraint = &json_conf_loglevel_c },
+	{ .name = "max_services", .name_len = 12, .kind = JSON_K_UINT, .req_bit = -1, .offset = offsetof(struct json_conf, max_services), .constraint = &json_conf_max_services_c },
 	{ .name = "method", .name_len = 6, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, method) },
 	{ .name = "netdev", .name_len = 6, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, netdev) },
 	{ .name = "obfs", .name_len = 4, .kind = JSON_K_STRING, .req_bit = -1, .offset = offsetof(struct json_conf, obfs) },
@@ -318,7 +325,7 @@ static const struct json_field json_conf_fields[] = {
 };
 static const struct json_schema json_conf_schema = {
 	.fields = json_conf_fields,
-	.n_fields = 22,
+	.n_fields = 23,
 	.obj_size = sizeof(struct json_conf),
 	.lookup = json_lookup_conf,
 	.defaults = &json_conf_defaults,
