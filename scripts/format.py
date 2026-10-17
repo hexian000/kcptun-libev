@@ -37,8 +37,10 @@ Include groups (blank-line separated, alphabetically sorted within each):
   4. platform / third-party system paths (not recognized)             <...>
   5. standard C / POSIX (angle-bracket, recognized)                    <...>
 
-Conditional #include blocks (#if ... #endif) stay contiguous and sort by
-their first contained #include.  The cpp-cleanup pass also covers the rest of
+Conditional blocks that only select includes (#if ... #endif) stay in place
+relative to surrounding headers, which may define their selection macros.
+Unconditional include runs on either side are sorted independently. Blocks with
+other directives also remain in place. The cpp-cleanup pass covers the rest of
 the convention:
 
   * #endif closing a block that spans 10 or more lines, or that nests
@@ -524,6 +526,7 @@ def classify(target, includer_abs, cfg):
 
 _INC_RE = re.compile(r'#\s*include\s+(<[^>]+>|"[^"]+")')
 _COND_RE = re.compile(r'#\s*(ifndef|ifdef|if|elif|else|endif)\b')
+_LINE_SPLICE_RE = re.compile(r'(?:\\|\?\?/)\r?\n\Z')
 
 
 def _is_include(stripped: str) -> bool:
@@ -543,17 +546,19 @@ def _scan_conditional(lines, i, masked):
     """Scan a conditional starting at opener line *i* to its matching ``#endif``.
 
     Returns ``(endif_index, has_include, has_code)``.  *has_code* is True if the
-    block contains any line that is not blank, a comment, or a preprocessor
-    directive -- i.e. real C code (a function/definition), which means the block
-    is not part of the include list and must not be reordered.  *endif_index* is
-    None if the conditional is unbalanced.  Lines flagged in *masked* (interior
-    of a ``/* ... */`` comment) are ignored so a directive that is really inside
-    a comment is not mistaken for a live one.
+    block contains C code or a directive other than include/conditional
+    selection. Such a directive can change preprocessor state used by another
+    header, so the block must not be reordered. *endif_index* is None if the
+    conditional is unbalanced. Lines flagged in *masked* (comments or spliced
+    logical lines) are ignored so physical text inside them is not mistaken
+    for a live directive.
     """
     depth = 0
     has_include = has_code = False
     for j in range(i, len(lines)):
         if masked[j]:
+            if "*/" in lines[j] and lines[j].split("*/", 1)[1].strip():
+                has_code = True
             continue
         s = lines[j].strip()
         kind = _cond_kind(s)
@@ -565,8 +570,11 @@ def _scan_conditional(lines, i, masked):
                 return j, has_include, has_code
         elif _is_include(s):
             has_include = True
-        elif s == "" or s.startswith(("#", "/*", "*", "//")):
-            pass  # branch directive (#elif/#else), #define, comment, blank
+        elif kind in ("elif", "else") or s == "" or s.startswith("//"):
+            pass
+        elif s.startswith("/*"):
+            if "*/" in s and s.split("*/", 1)[1].strip():
+                has_code = True
         else:
             has_code = True
     return None, has_include, has_code
@@ -577,11 +585,10 @@ def _find_include_range(lines, masked):
 
     The range runs from the first ``#include`` across contiguous includes, blank
     lines, and any ``#if`` ... ``#endif`` conditional that *only* selects
-    includes (no C code).  A conditional carrying real code (e.g. a debug-only
-    static function) ends the range and stays in the body.  (None, None) if
-    there are no includes.  Lines flagged in *masked* (interior of a ``/* ... */``
-    comment) are never treated as includes, so a ``#include`` commented out in a
-    leading block comment cannot start or extend the range.
+    includes (no C code or other preprocessor directives). A conditional carrying
+    code or changing preprocessor state ends the range and stays in the body.
+    (None, None) if there are no includes. Lines flagged in *masked* (comments
+    or spliced logical lines) cannot start or extend the reorderable range.
     """
     start = None
     for i, line in enumerate(lines):
@@ -641,7 +648,8 @@ def _parse_include_items(lines, start, end, includer_abs, cfg, masked):
 def _merge_conditional_blocks(items):
     """Coalesce ``#if`` ... ``#endif`` spans into single ``cond_block`` items.
 
-    A block's group and sort key come from its first contained ``#include``.
+    Blocks are ordering barriers: surrounding headers can define the macros
+    their conditions evaluate, even when their contents only select includes.
     """
     stack = []
     result = []
@@ -659,13 +667,7 @@ def _merge_conditional_blocks(items):
                 if stack:
                     stack[-1].extend(children)
                 else:
-                    grp, sort_key = GROUP_STANDARD, ""
-                    for c in children:
-                        if c["kind"] == "include":
-                            grp, sort_key = c["group"], c["sort_key"]
-                            break
-                    result.append({"kind": "cond_block", "group": grp,
-                                   "children": children, "sort_key": sort_key})
+                    result.append({"kind": "cond_block", "children": children})
             else:
                 result.append(item)
         else:  # elif / else / other directive inside a block
@@ -686,8 +688,8 @@ def _ensure_eol(text: str) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
-def _rebuild_include_block(items):
-    items = _merge_conditional_blocks(items)
+def _rebuild_include_run(items):
+    """Sort an unconditional run without crossing a selection condition."""
     groups = {g: [] for g in range(1, NUM_GROUPS + 1)}
     for item in items:
         g = item.get("group")
@@ -705,10 +707,12 @@ def _rebuild_include_block(items):
             out.append("\n")
         first = False
         for item in groups[g]:
-            if item["kind"] == "cond_block":
-                out.extend(_ensure_eol(c["text"]) for c in item["children"])
-            else:
-                out.append(_ensure_eol(item["text"]))
+            out.append(_ensure_eol(item["text"]))
+
+    if items and items[0]["kind"] == "blank":
+        out.insert(0, "\n")
+    if items and items[-1]["kind"] == "blank":
+        out.append("\n")
 
     cleaned = []
     prev_blank = False
@@ -721,9 +725,27 @@ def _rebuild_include_block(items):
     return cleaned
 
 
+def _rebuild_include_block(items):
+    out = []
+    run = []
+    for item in _merge_conditional_blocks(items):
+        if item["kind"] == "cond_block":
+            out.extend(_rebuild_include_run(run))
+            run = []
+            out.extend(_ensure_eol(c["text"]) for c in item["children"])
+        else:
+            run.append(item)
+    out.extend(_rebuild_include_run(run))
+    return out
+
+
 def _reorder_includes(lines, includer_abs, cfg):
     """Return *lines* with the leading include block regrouped and sorted."""
     masked = _block_comment_mask(lines)
+    # Keep every physical part of a spliced logical line in place. Sorting its
+    # first include separately could detach a continued comment or directive.
+    masked = [hidden or bool(_LINE_SPLICE_RE.search(line))
+              for line, hidden in zip(lines, masked)]
     start, end = _find_include_range(lines, masked)
     if start is None:
         return lines
@@ -751,16 +773,31 @@ def _reorder_includes(lines, includer_abs, cfg):
 # ---------------------------------------------------------------------------
 
 def _block_comment_mask(lines):
-    """Mark lines that *begin* inside a ``/* ... */`` block comment.
+    """Mark lines beginning inside block comments or continued logical lines.
 
-    The scan tracks string and character literals so a ``/*`` inside one
-    (e.g. ``"Accept: */*"``) does not open a phantom comment that would mask
-    the following lines from the annotation and include passes.  A literal
-    cannot span lines in C, so its state never carries over."""
+    C removes backslash-newline pairs before recognizing comments and literals.
+    Scan the joined logical line so continued line comments and split comment
+    delimiters have their real meaning. Continuation lines cannot introduce a
+    new directive, even when their physical text starts with ``#``.
+
+    String and character literals are skipped so their comment-like text does
+    not mask later directives.
+    """
     mask = [False] * len(lines)
     in_comment = False
-    for i, s in enumerate(lines):
-        mask[i] = in_comment
+    parts = []
+    for i, line in enumerate(lines):
+        mask[i] = in_comment or bool(parts)
+        # In pre-C23 source, this trigraph becomes a backslash before splicing
+        # and can also escape a quote inside the logical line.
+        line = line.replace("??/", "\\")
+        splice = _LINE_SPLICE_RE.search(line)
+        if splice:
+            parts.append(line[:splice.start()])
+            continue
+        parts.append(line)
+        s = "".join(parts)
+        parts = []
         j = 0
         while j < len(s):
             if in_comment:
