@@ -517,10 +517,10 @@ void slog_printf(
 }
 
 /* --- async-signal-safe panic logging -------------------------------------- *
- * slog_panicf() formats via the buffer helpers' utf8 engine (allocation-free,
- * locale-independent, async-signal-safe), builds one line onto the caller's
- * stack -- no thread_local, no output mutex (a crash may have interrupted a
- * thread already holding it) -- and emits it to stderr with a single write(2).
+ * slog_panicf() uses the buffer helpers' allocation-free, locale-independent,
+ * async-signal-safe utf8 engine on the caller's stack, without thread_local or
+ * the output mutex (a crash may interrupt its owner). Stderr writes are
+ * best-effort, retrying short writes and EINTR with no atomicity guarantee.
  */
 
 /* write the whole buffer, retrying short writes and EINTR. Like the printers'

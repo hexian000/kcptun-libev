@@ -128,7 +128,8 @@ void debug_backtrace_fd(int fd, void **restrict frames, int len);
  * @param len Number of entries in frames.
  * @param indent Prefix for every line; NULL is treated as "".
  * @return The length of the full, untruncated output excluding the NUL
- * terminator; a value >= maxlen indicates truncation.
+ * terminator; a value >= maxlen indicates truncation. Returns -1 when the
+ * full length exceeds INT_MAX; the output remains NUL-terminated as above.
  */
 int debug_strframes(
 	char *restrict buf, size_t maxlen, void **restrict frames, int len,

@@ -564,7 +564,15 @@ static bool nsresolve(
 	const char *restrict service, const struct addrinfo *restrict hints)
 {
 	struct addrinfo *result = NULL;
-	const int err = getaddrinfo(name, service, hints, &result);
+	int err = getaddrinfo(name, service, hints, &result);
+	if (err == EAI_NONAME && (hints->ai_flags & AI_NUMERICHOST)) {
+		/* Let getaddrinfo recognize its own numeric grammar, including
+		 * scoped IPv6 and alternate IPv4 forms. Only a name rejected by
+		 * that local-only attempt needs configured-family filtering. */
+		struct addrinfo lookup = *hints;
+		lookup.ai_flags = AI_ADDRCONFIG;
+		err = getaddrinfo(name, service, &lookup, &result);
+	}
 	if (err != 0) {
 		if (err == EAI_SYSTEM) {
 			/* EAI_SYSTEM defers to errno; gai_strerror would only
@@ -588,23 +596,8 @@ static bool nsresolve(
 	return ok;
 }
 
-/* getaddrinfo consults the resolver only for a real host name: a numeric
- * address is parsed locally, and a NULL node yields the loopback or, with
- * AI_PASSIVE, the wildcard address. Only a resolver lookup can return a family
- * the caller never asked for, which is all AI_ADDRCONFIG guards against;
- * anywhere else the flag only does harm, glibc not counting a loopback address
- * as configured, so a host with only `lo` up rejects 127.0.0.1 and ::1 too. */
-static bool needs_resolver(const char *const name)
-{
-	if (name == NULL) {
-		return false;
-	}
-	struct in_addr addr;
-	struct in6_addr addr6;
-	return inet_pton(AF_INET, name, &addr) != 1 &&
-	       inet_pton(AF_INET6, name, &addr6) != 1;
-}
-
+/* A NULL node yields loopback without consulting the resolver; numeric nodes
+ * are also parsed locally, using getaddrinfo's own numeric-host grammar. */
 bool sa_resolve(
 	union sockaddr_max *restrict sa, const char *restrict name,
 	const char *restrict service, const enum sa_resolve_type type,
@@ -616,7 +609,7 @@ bool sa_resolve(
 			(type == SA_RESOLVE_UDP) ? SOCK_DGRAM : SOCK_STREAM,
 		.ai_protocol =
 			(type == SA_RESOLVE_UDP) ? IPPROTO_UDP : IPPROTO_TCP,
-		.ai_flags = needs_resolver(name) ? AI_ADDRCONFIG : 0,
+		.ai_flags = name != NULL ? AI_NUMERICHOST : 0,
 	};
 	return nsresolve(sa, name, service, &hints);
 }

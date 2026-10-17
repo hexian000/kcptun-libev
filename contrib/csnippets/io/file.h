@@ -42,11 +42,14 @@ struct io_stream *io_filewriter(FILE *f);
  * @param[in] path The file path to read.
  * @param[in,out] len On input, the buffer capacity including the null
  *                    terminator; on output, the number of data bytes
- *                    read; on error, unchanged.
+ *                    read; unchanged if NULL is returned.
  * @return A null-terminated buffer containing `*len` bytes of data,
- *         which the caller must free. NULL on error.
+ *         which the caller must free. NULL on invalid input, opening or read
+ *         failure, initial allocation failure, or insufficient capacity.
  * @details Never truncates: if the data does not fit the capacity, the
- *          function logs it and returns NULL.
+ *          function logs it and returns NULL. A failure closing an otherwise
+ *          successfully read file is logged, but the data is returned and
+ *          `*len` is updated normally.
  */
 unsigned char *io_readfile(const char *restrict path, size_t *restrict len);
 

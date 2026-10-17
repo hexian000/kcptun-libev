@@ -743,7 +743,9 @@ static void strframes_append(
 		const size_t copy_n = n < avail ? n : avail;
 		memcpy(ctx->buf + ctx->written, s, copy_n);
 	}
-	ctx->written += n;
+	/* Keep overflow sticky for both the return value and buffer position. */
+	ctx->written =
+		n <= SIZE_MAX - ctx->written ? ctx->written + n : SIZE_MAX;
 }
 
 static void strframes_cb(void *data, const char *line)
@@ -768,5 +770,5 @@ int debug_strframes(
 	if (buf != NULL && maxlen > 0) {
 		buf[ctx.written < maxlen ? ctx.written : maxlen - 1] = '\0';
 	}
-	return (int)ctx.written;
+	return ctx.written <= INT_MAX ? (int)ctx.written : -1;
 }

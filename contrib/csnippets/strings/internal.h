@@ -1,17 +1,25 @@
 /* csnippets (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-/* Helpers shared by the strings module's translation units. Not part of the
- * public API: included by bare filename from within strings/ only. */
+/* Private formatting and UTF-8 helpers. The counted formatter also serves
+ * library adapters that need the exact stored byte count. */
 
 #ifndef STRINGS_INTERNAL_H
 #define STRINGS_INTERNAL_H
 
+#include "meta/format.h"
 #include "utf8.h"
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* Same return value and output as u8vsnprintf; optionally report the bytes
+ * stored, excluding the final terminator but including any embedded NUL. */
+int u8vsnprintf_stored(
+	char *restrict buf, size_t maxlen, const char *restrict format,
+	va_list args, size_t *restrict stored) FORMAT_PRINTF(3, 0);
 
 /* Bytes available for one decode: peek exactly as far as the lead byte
  * announces, stopping early at the terminator. Nothing past the unit at p is

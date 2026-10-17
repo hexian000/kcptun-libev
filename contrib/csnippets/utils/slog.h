@@ -96,11 +96,14 @@ void slog_setoutput(int type, ...);
 
 /**
  * @brief Set a path prefix stripped from the __FILE__ shown in each line.
- * @param prefix Borrowed, not copied: the pointer is stored and dereferenced
- * by every subsequent log call, including the async-signal-safe panic path,
- * so it must stay valid until it is replaced or cleared with NULL. A string
- * literal or other static storage is the intended use; a stack or temporary
- * buffer is a use-after-scope.
+ * @param prefix Borrowed, not copied; NULL disables prefix stripping. Its
+ * bytes must remain valid and unchanged while any normal or async-signal-safe
+ * panic logging can still use them. Replacing or clearing the prefix only
+ * updates the stored pointer; it does not wait for earlier readers to finish.
+ * Before modifying or reclaiming old prefix storage, the caller must
+ * externally synchronize with all normal and panic logging that could still
+ * use it. A string literal or other immutable static storage is the intended
+ * use.
  */
 void slog_setfileprefix(const char *prefix);
 
@@ -134,13 +137,14 @@ void slog_printf(
 /**
  * @brief Async-signal-safe emergency log line, for use from a crash signal
  * handler.
- * @details Writes "<L> <file>:<line> <message>\n" to stderr with a single
- * write(2): no locking, no buffered stdio, no allocation, and no timestamp
- * (strftime()/localtime() are not async-signal-safe). Formats full printf-style
- * via u8vsnprintf (strings/string.h), with its documented divergences; an
- * overlong line is truncated to a fixed internal buffer, the newline always
- * emitted. Unlike the LOG* macros it does not test the log level; the caller
- * decides whether to emit.
+ * @details Writes "<L> <file>:<line> <message>\n" to stderr on a best-effort
+ * basis, retrying short writes and EINTR without guaranteeing record atomicity.
+ * No locking, buffered stdio, allocation, or timestamp (strftime()/localtime()
+ * are not async-signal-safe). Formats full printf-style via u8vsnprintf
+ * (strings/string.h), with its documented divergences; an overlong line is
+ * truncated to a fixed internal buffer that always includes the newline. Unlike
+ * the LOG* macros it does not test the log level; the caller decides whether
+ * to emit.
  */
 void slog_panicf(int level, const char *file, int line, const char *format, ...)
 	FORMAT_PRINTF(4, 5);

@@ -11,11 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* u8vsnprintf reports more chars than fit; len only advances by what was
- * actually stored. On truncation the engine drops whole codepoints rather
- * than splitting one, so the stored prefix may fall short of the capacity;
- * the NUL it writes in place marks the exact fill (an embedded NUL from %c
- * undercounts -- accepted as pathological). */
+/* u8vsnprintf reports the required byte count, which advances len directly
+ * when the output fits. On truncation the engine drops whole codepoints
+ * rather than splitting one, so strlen measures the stored prefix. An embedded
+ * NUL from %c makes that count stop early -- an accepted fixed-buffer limitation. */
 int buf_vappendf(
 	const size_t cap, size_t *restrict len, unsigned char *restrict data,
 	const char *restrict format, va_list args)

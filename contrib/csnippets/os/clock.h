@@ -33,7 +33,10 @@ static inline bool clock_unix(struct timespec *restrict tp)
 }
 
 /**
- * @brief Get current monotonic timestamp.
+ * @brief Get current timestamp, preferring a monotonic clock.
+ * @details Uses clock_gettime(CLOCK_MONOTONIC) when supported at build time.
+ * Otherwise, uses timespec_get(TIME_UTC) when supported; that wall-clock
+ * fallback may jump forwards or backwards on clock adjustment.
  * @param[out] tp The timestamp, if successful.
  * @return true if successful.
  */
@@ -195,7 +198,9 @@ static inline int_fast64_t clock_unix_ns(void)
 }
 
 /**
- * @brief Get current monotonic timestamp.
+ * @brief Get current timestamp, preferring a monotonic clock.
+ * @details Uses clock_monotonic() and inherits its TIME_UTC wall-clock
+ * fallback, whose timestamps may jump on clock adjustment.
  * @return Timestamp in nanoseconds, or -1 on failure.
  */
 static inline int_fast64_t clock_monotonic_ns(void)

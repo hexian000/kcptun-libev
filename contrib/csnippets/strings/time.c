@@ -48,9 +48,9 @@ static bool fits_time_t(const int_least64_t v)
 }
 
 /* Break t + tzoff down into calendar fields for RFC 3339 rendering, rejecting
- * anything that cannot form a conforming stamp: an offset application that
- * overflows time_t, a time_t that gmtime cannot represent (NULL/EOVERFLOW), or
- * a year outside RFC 3339 §5.6's 4-digit [1000, 9999]. */
+ * an offset application that overflows time_t, a time_t that gmtime cannot
+ * represent (NULL/EOVERFLOW), or a year outside this library's supported range
+ * [1000, 9999]. RFC 3339 §5.6 allows four-digit years from 0000 to 9999. */
 static bool break_down(const time_t t, const int tzoff, struct tm *restrict out)
 {
 	if (tzoff > 0 ? (t > TIME_T_MAX - tzoff) : (t < TIME_T_MIN - tzoff)) {

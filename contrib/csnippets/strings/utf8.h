@@ -152,7 +152,8 @@ enum utf8_normalize_form {
  * snprintf(3) semantics: always NUL-terminated when maxlen > 0, truncation never
  * splits a codepoint, and the return is the byte length needed. Backed by
  * libicu, so the result equals unicodedata.normalize(form, ...) of the linked
- * libicu Unicode version. An ill-formed input byte is replaced with U+FFFD.
+ * libicu Unicode version. ICU substitutes U+FFFD for each illegal UTF-8 input
+ * sequence, which can span several bytes.
  *
  * @param[out] buf Output buffer; may be NULL only when maxlen == 0.
  * @param maxlen Size of buf in bytes, including the NUL terminator.

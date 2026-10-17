@@ -21,8 +21,12 @@
  * @note Installs no handlers if capturing a stack backtrace does not work.
  * @note Safe to call again while already installed: signals already
  *   captured by a previous call are left untouched.
- * @note The handlers run on a dedicated alternate signal stack (SA_ONSTACK)
- *   so a stack-overflow fault still leaves room to report it. sigaltstack is
+ * @note Alternate-stack setup is best-effort: when allocation or sigaltstack
+ *   registration fails, handlers are still installed without SA_ONSTACK and
+ *   run on the ordinary stack, even on the installing thread. Stack exhaustion
+ *   can then double-fault untraced. Successful setup gives the handlers a
+ *   dedicated alternate signal stack (SA_ONSTACK), leaving room to report a
+ *   stack-overflow fault on the installing thread. sigaltstack is
  *   per-thread: the alternate stack is set up only for the calling thread,
  *   and any alternate stack that thread already had is saved and restored by
  *   crashhandler_uninstall(). A guarded signal raised on another thread is

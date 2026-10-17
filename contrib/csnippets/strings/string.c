@@ -747,21 +747,24 @@ enum length_mod {
 
 struct spec {
 	bool minus, plus, space, zero, hash;
-	int width; /* 0 = none */
-	int prec; /* -1 = none */
+	unsigned int width; /* 0 = none */
+	unsigned int prec;
+	bool has_prec;
 	enum length_mod length;
 	char conv;
 };
 
-static int parse_num(const char **restrict pf)
+/* One beyond INT_MAX is enough to retain output-length overflow. */
+static unsigned int parse_num(const char **restrict pf)
 {
-	int v = 0;
+	const unsigned int limit = (unsigned int)INT_MAX + 1u;
+	unsigned int v = 0;
 	for (; '0' <= **pf && **pf <= '9'; (*pf)++) {
-		const int digit = **pf - '0';
-		if (v <= (INT_MAX - digit) / 10) {
+		const unsigned int digit = (unsigned int)(**pf - '0');
+		if (v <= (limit - digit) / 10) {
 			v = v * 10 + digit;
 		} else {
-			v = INT_MAX;
+			v = limit;
 		}
 	}
 	return v;
@@ -774,7 +777,7 @@ static void parse_spec(
 	struct spec *restrict sp, const char **restrict pf,
 	va_list *restrict ap)
 {
-	*sp = (struct spec){ .prec = -1 };
+	*sp = (struct spec){ 0 };
 	for (;; (*pf)++) {
 		const char c = **pf;
 		if (c == '-') {
@@ -797,20 +800,22 @@ static void parse_spec(
 		if (w < 0) {
 			/* negative width: '-' flag plus its magnitude */
 			sp->minus = true;
-			sp->width = w == INT_MIN ? INT_MAX : -w;
+			sp->width = 0u - (unsigned int)w;
 		} else {
-			sp->width = w;
+			sp->width = (unsigned int)w;
 		}
 	} else {
 		sp->width = parse_num(pf);
 	}
 	if (**pf == '.') {
+		sp->has_prec = true;
 		(*pf)++;
 		if (**pf == '*') {
 			(*pf)++;
 			const int p = va_arg(*ap, int);
 			/* a negative '*' precision means omitted */
-			sp->prec = p < 0 ? -1 : p;
+			sp->has_prec = p >= 0;
+			sp->prec = p >= 0 ? (unsigned int)p : 0;
 		} else {
 			sp->prec = parse_num(pf);
 		}
@@ -980,7 +985,7 @@ static void emit_int(
 		tmp[ndig++] = digitchars[v % base];
 	}
 	/* precision is the minimum digit count; 0 with value 0 prints none */
-	size_t mindig = sp->prec >= 0 ? (size_t)sp->prec : 1;
+	size_t mindig = sp->has_prec ? (size_t)sp->prec : 1;
 	if (sp->hash && conv == 'o' && mindig <= ndig) {
 		/* alternative form: force one leading zero */
 		mindig = ndig + 1;
@@ -988,7 +993,7 @@ static void emit_int(
 	const size_t bodylen = mindig > ndig ? mindig : ndig;
 	/* an explicit precision disables the '0' flag */
 	const size_t trailing = pad_begin(
-		s, sp, sign, prefix, prefixlen, bodylen, sp->prec < 0);
+		s, sp, sign, prefix, prefixlen, bodylen, !sp->has_prec);
 	sink_fill(s, '0', bodylen - ndig);
 	while (ndig > 0) {
 		sink_putc(s, tmp[--ndig]);
@@ -1045,7 +1050,9 @@ static void emit_str(
 	struct sink *restrict s, const struct spec *restrict sp,
 	va_list *restrict ap)
 {
-	const char *str = va_arg(*ap, const char *);
+	/* void * accepts both qualified and unqualified character pointers
+	 * through the va_arg character-pointer exception. */
+	const char *str = va_arg(*ap, void *);
 	if (str == NULL) {
 		str = "(null)";
 	}
@@ -1055,7 +1062,7 @@ static void emit_str(
 		/* the precision is spent first: with one specified vsnprintf(3)
 		 * lets the argument stop right here without a terminator, so
 		 * *p must not be read once the allowance is used up */
-		if (sp->prec >= 0 && units == (size_t)sp->prec) {
+		if (sp->has_prec && units == (size_t)sp->prec) {
 			break;
 		}
 		if (*p == '\0') {
@@ -1109,7 +1116,7 @@ static void emit_hexfloat(
 	int shown; /* fraction nibbles taken from hfrac */
 	size_t zext = 0; /* zero nibbles appended beyond the mantissa */
 	uint64_t hfrac;
-	if (sp->prec < 0) {
+	if (!sp->has_prec) {
 		/* omitted precision: minimal digits */
 		shown = 13;
 		for (uint64_t f = frac; shown > 0 && (f & 0xF) == 0; f >>= 4) {
@@ -1121,7 +1128,7 @@ static void emit_hexfloat(
 		hfrac = frac;
 		zext = (size_t)sp->prec - 13;
 	} else {
-		shown = sp->prec;
+		shown = (int)sp->prec;
 		const int dropbits = 4 * (13 - shown);
 		const uint64_t half = UINT64_C(1) << (dropbits - 1);
 		const uint64_t tail = frac & ((half << 1) - 1);
@@ -1275,12 +1282,12 @@ static void emit_float(
 		emit_hexfloat(s, sp, x, sign, upper);
 		return;
 	}
-	const int prec = sp->prec >= 0 ? sp->prec : 6;
+	const unsigned int prec = sp->has_prec ? sp->prec : 6;
 	char dig[FLOAT_DECIMAL_DIGITS];
 	int k = 0;
 	if (conv == 'e') {
 		const int n = float_todecimal(
-			x, prec < INT_MAX ? prec + 1 : INT_MAX, dig, &k);
+			x, prec < INT_MAX ? (int)prec + 1 : INT_MAX, dig, &k);
 		emit_estyle(
 			s, sp, sign, dig, n, n > 0 ? k - 1 : 0, (size_t)prec,
 			upper);
@@ -1289,18 +1296,18 @@ static void emit_float(
 	if (conv == 'f') {
 		int n = float_todecimal(x, FLOAT_DECIMAL_DIGITS, dig, &k);
 		/* the cut at 10^-prec keeps k+prec significant digits */
-		const long long nd = (long long)k + prec;
-		if (nd < n) {
-			n = float_todecimal(x, (int)nd, dig, &k);
+		if (k < n && prec < (unsigned int)(n - k)) {
+			n = float_todecimal(x, k + (int)prec, dig, &k);
 		}
 		emit_fstyle(s, sp, sign, dig, n, n > 0 ? k : 0, (size_t)prec);
 		return;
 	}
 	/* 'g': round first, then choose the style on the rounded exponent */
-	const int p = prec == 0 ? 1 : prec;
-	const int n = float_todecimal(x, p, dig, &k);
+	const unsigned int p = prec == 0 ? 1 : prec;
+	const int n =
+		float_todecimal(x, p <= INT_MAX ? (int)p : INT_MAX, dig, &k);
 	const int x10 = n > 0 ? k - 1 : 0;
-	if (x10 < -4 || x10 >= p) {
+	if (x10 < -4 || (x10 >= 0 && (unsigned int)x10 >= p)) {
 		size_t frac = n > 1 ? (size_t)(n - 1) : 0;
 		if (sp->hash) {
 			frac = (size_t)(p - 1);
@@ -1312,14 +1319,15 @@ static void emit_float(
 	if (sp->hash) {
 		/* x10 may be negative: p - 1 - x10 exceeds INT_MAX when p is
 		 * near it */
-		frac = (size_t)((long long)p - 1 - x10);
+		frac = x10 < 0 ? (size_t)(p - 1) + (size_t)-x10 :
+				 (size_t)(p - 1) - (size_t)x10;
 	}
 	emit_fstyle(s, sp, sign, dig, n, n > 0 ? k : 0, frac);
 }
 
-int u8vsnprintf(
+int u8vsnprintf_stored(
 	char *restrict buf, const size_t maxlen, const char *restrict format,
-	va_list args)
+	va_list args, size_t *restrict stored)
 {
 	struct sink s = {
 		.buf = buf,
@@ -1401,7 +1409,17 @@ int u8vsnprintf(
 	if (buf != NULL && maxlen > 0) {
 		buf[s.fill] = '\0';
 	}
+	if (stored != NULL) {
+		*stored = s.fill;
+	}
 	return s.len > INT_MAX ? -1 : (int)s.len;
+}
+
+int u8vsnprintf(
+	char *restrict buf, const size_t maxlen, const char *restrict format,
+	va_list args)
+{
+	return u8vsnprintf_stored(buf, maxlen, format, args, NULL);
 }
 
 int u8snprintf(
@@ -1436,9 +1454,10 @@ copy_scan_bytes(char *restrict out, const char *restrict in, const size_t len)
 }
 
 /* Round mant * 2^e2 (plus a positive tail below 2^e2 iff sticky) to the nearest
- * binary64 magnitude, round-half-even. The uint64 analog of float.c's assemble,
- * used only for the exact hexfloat path. */
-static double scale2(uint64_t mant, const int e2, bool sticky)
+ * binary32 or binary64 magnitude, round-half-even. Return it as an exact double
+ * so storing a float does not depend on the current FPU rounding mode. */
+static double
+scale2(uint64_t mant, const int e2, bool sticky, const bool single)
 {
 	if (mant == 0) {
 		return 0.0;
@@ -1448,9 +1467,9 @@ static double scale2(uint64_t mant, const int e2, bool sticky)
 		bl++;
 	}
 	int expb = bl + e2 + 1022;
-	int drop = bl - 53;
-	if (expb < 1) {
-		drop = -1074 - e2;
+	int drop = bl - (single ? 24 : 53);
+	if (expb < (single ? 897 : 1)) {
+		drop = (single ? -149 : -1074) - e2;
 		expb = 0;
 	}
 	uint64_t m;
@@ -1475,6 +1494,23 @@ static double scale2(uint64_t mant, const int e2, bool sticky)
 	}
 	if (roundbit != 0 && (sticky || (m & 1) != 0)) {
 		m++;
+	}
+	if (single) {
+		if (m == 0) {
+			return 0.0;
+		}
+		int mb = 0;
+		for (uint64_t v = m; v != 0; v >>= 1) {
+			mb++;
+		}
+		/* A binary32 subnormal is still a normal binary64 value. */
+		const int e = mb + e2 + drop;
+		if (e > 128) {
+			return float_frombits(UINT64_C(0x7FF) << 52);
+		}
+		return float_frombits(
+			(uint64_t)(e + 1022) << 52 |
+			((m << (53 - mb)) & ((UINT64_C(1) << 52) - 1)));
 	}
 	if (expb == 0) {
 		return float_frombits(m);
@@ -1676,7 +1712,8 @@ parse_scanspec(struct scanspec *restrict sp, const char **restrict pf)
 		sp->suppress = true;
 		(*pf)++;
 	}
-	sp->width = parse_num(pf);
+	const unsigned int width = parse_num(pf);
+	sp->width = width <= INT_MAX ? (int)width : INT_MAX;
 
 	switch (**pf) {
 	case 'h':
@@ -1857,7 +1894,8 @@ static int read_exponent(
 
 /* value = mant * 2^binexp; after "0x", up to maxw-used more chars */
 static double read_hexfloat(
-	const char **restrict pp, const int maxw, int used, bool *restrict ok)
+	const char **restrict pp, const int maxw, int used, const bool single,
+	bool *restrict ok, bool *restrict nonzero)
 {
 	const char *p = *pp;
 	uint64_t mant = 0;
@@ -1897,7 +1935,46 @@ static double read_hexfloat(
 	const int e2 = read_exponent(&p, maxw, used, "p", binexp);
 	*pp = p;
 	*ok = true;
-	return scale2(mant, e2, sticky);
+	*nonzero = mant != 0;
+	return scale2(mant, e2, sticky, single);
+}
+
+/* Binary64 rounding can erase which side of a binary32 midpoint the input
+ * occupied. Only an exact midpoint needs repair: compare its exact decimal
+ * expansion with the retained subject and move one binary64 ULP toward it. */
+static double float_midpoint_side(
+	const double mag, const char *restrict digits, const int nd,
+	const int k)
+{
+	if (mag == 0.0 || float_classify(mag) == FLOAT_INF) {
+		return mag;
+	}
+	int e2;
+	const uint64_t mant = float_decompose(mag, &e2);
+	/* Normal binary32 drops 29 of the 53 bits; subnormals have
+	 * a fixed spacing of 2^-149. */
+	const int drop = e2 < -178 ? -149 - e2 : 29;
+	if (drop > 53 || (mant & ((UINT64_C(1) << drop) - 1)) !=
+				 (UINT64_C(1) << (drop - 1))) {
+		return mag;
+	}
+	char midpoint[FLOAT_DECIMAL_DIGITS];
+	int mk;
+	const int mn =
+		float_todecimal(mag, FLOAT_DECIMAL_DIGITS, midpoint, &mk);
+	int cmp = (k > mk) - (k < mk);
+	for (int i = 0; cmp == 0 && (i < nd || i < mn); i++) {
+		const char a = i < nd ? digits[i] : '0';
+		const char b = i < mn ? midpoint[i] : '0';
+		cmp = (a > b) - (a < b);
+	}
+	uint64_t bits = float_tobits(mag);
+	if (cmp < 0) {
+		bits--;
+	} else if (cmp > 0) {
+		bits++;
+	}
+	return float_frombits(bits);
 }
 
 /* A decimal float at *pp -- a digit run with an optional '.', then an optional
@@ -1905,7 +1982,7 @@ static double read_hexfloat(
  * magnitude in *mag and sets *nonzero if a nonzero digit was read; returns
  * false, *pp untouched, when there is no digit. */
 static bool read_decfloat(
-	const char **restrict pp, const int maxw, int used,
+	const char **restrict pp, const int maxw, int used, const bool single,
 	bool *restrict nonzero, double *restrict mag)
 {
 	const char *p = *pp;
@@ -1952,6 +2029,12 @@ static bool read_decfloat(
 	}
 	const int k = read_exponent(&p, maxw, used, "e", intdigits - lead);
 	*mag = float_fromdecimal(digits, nd, k);
+	if (single && float_classify(*mag) != FLOAT_INF) {
+		*mag = float_midpoint_side(*mag, digits, nd, k);
+		int e2;
+		const uint64_t mant = float_decompose(*mag, &e2);
+		*mag = scale2(mant, e2, false, true);
+	}
 	*pp = p;
 	return true;
 }
@@ -1959,13 +2042,16 @@ static bool read_decfloat(
 /* The float subject sequence of strtod(3) at *pp, leading whitespace already
  * skipped: an optional sign, then "inf" or "infinity", "nan" with an optional
  * "(n-char-sequence)", or a hexadecimal or decimal float (C11 7.22.1.3), all
- * within a field width of maxw characters. On a match, advances *pp past it,
+ * within a field width of maxw characters. In scanning mode an incomplete
+ * infinity prefix fails; strtod instead accepts its completed "inf" prefix.
+ * On a match, advances *pp past it,
  * stores its sign in *neg and its magnitude in *mag, and sets *range if a
  * numeric value overflowed to infinity or a nonzero decimal one underflowed to
  * zero; returns false, *pp untouched, when no float matches. */
 static bool parse_float(
-	const char **restrict pp, const int maxw, bool *restrict neg,
-	double *restrict mag, bool *restrict range)
+	const char **restrict pp, const int maxw, const bool scanning,
+	const bool single, bool *restrict neg, double *restrict mag,
+	bool *restrict range)
 {
 	const char *p = *pp;
 	int used = 0;
@@ -1987,13 +2073,15 @@ static bool parse_float(
 		 * mere prefix, which is a matching failure rather than a
 		 * shorter match. */
 		int n = 3;
-		if (match_ci(p + 3, "inity") != 0) {
-			while (n < 8 && used + n + 1 <= maxw) {
-				n++;
-			}
-			if (n != 3 && n != 8) {
+		while (n < 8 && used + n < maxw &&
+		       (p[n] == "infinity"[n] || p[n] == "INFINITY"[n])) {
+			n++;
+		}
+		if (n != 3 && n != 8) {
+			if (scanning) {
 				return false;
 			}
+			n = 3;
 		}
 		p += n;
 		*mag = float_frombits(UINT64_C(0x7FF) << 52);
@@ -2002,15 +2090,15 @@ static bool parse_float(
 		 * unterminated or cut by the width. Scanf's C11 7.21.6.2 rule
 		 * instead fails an incomplete matching prefix such as "nan(abc". */
 		int n = 3;
-		if (p[3] == '(' && used + 4 <= maxw) {
+		if (used + 4 < maxw && p[3] == '(') {
 			const char *q = p + 4;
-			while (digit_value(*q) >= 0 || *q == '_') {
+			while (q - p < maxw - used - 1 &&
+			       (digit_value(*q) >= 0 || *q == '_')) {
 				q++;
 			}
-			/* compared as a distance so a sequence longer than int
-			 * cannot wrap into a negative width */
+			/* The closing parenthesis must also fit in the field. */
 			const ptrdiff_t full = q + 1 - p;
-			if (*q == ')' && full <= (ptrdiff_t)(maxw - used)) {
+			if (full <= (ptrdiff_t)(maxw - used) && *q == ')') {
 				n = (int)full;
 			}
 		}
@@ -2021,15 +2109,16 @@ static bool parse_float(
 		(unhex((char32_t)(unsigned char)p[2]) >= 0 ||
 		 (p[2] == '.' && unhex((char32_t)(unsigned char)p[3]) >= 0))) {
 		p += 2;
-		bool ok;
-		*mag = read_hexfloat(&p, maxw, used + 2, &ok);
+		bool ok, nonzero;
+		*mag = read_hexfloat(&p, maxw, used + 2, single, &ok, &nonzero);
 		if (!ok) {
 			return false;
 		}
-		*range = float_classify(*mag) == FLOAT_INF;
+		*range = float_classify(*mag) == FLOAT_INF ||
+			 (*mag == 0.0 && nonzero);
 	} else {
 		bool nonzero;
-		if (!read_decfloat(&p, maxw, used, &nonzero, mag)) {
+		if (!read_decfloat(&p, maxw, used, single, &nonzero, mag)) {
 			return false;
 		}
 		*range = float_classify(*mag) == FLOAT_INF ||
@@ -2050,7 +2139,8 @@ static enum scan_status read_float(
 	const int maxw = sp->width > 0 ? sp->width : INT_MAX;
 	bool neg, range;
 	double mag;
-	if (!parse_float(&p, maxw, &neg, &mag, &range)) {
+	const bool single = sp->length != LEN_LONG && sp->length != LEN_LDOUBLE;
+	if (!parse_float(&p, maxw, true, single, &neg, &mag, &range)) {
 		return SCAN_NOMATCH;
 	}
 	if (range) {
@@ -2400,7 +2490,7 @@ double u8strtod(const char *restrict s, char **restrict endptr)
 	const char *p = skip_ws(s);
 	bool neg, range;
 	double mag;
-	if (!parse_float(&p, INT_MAX, &neg, &mag, &range)) {
+	if (!parse_float(&p, INT_MAX, false, false, &neg, &mag, &range)) {
 		if (endptr != NULL) {
 			*endptr = (char *)s;
 		}

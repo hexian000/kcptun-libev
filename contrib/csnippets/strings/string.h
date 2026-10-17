@@ -273,8 +273,9 @@ char *u8strsep(char **restrict s, const char *restrict set);
  * `*`, and the length modifiers hh h l ll j z t L.
  *
  * Divergences from vsnprintf(3):
- * - Truncation never splits a multibyte UTF-8 sequence: the buffer always
- *   holds a valid UTF-8 prefix of the full output.
+ * - Truncation keeps whole UTF-8 codepoints and preserves each invalid byte
+ *   as a one-byte unit. Valid UTF-8 input therefore yields a valid UTF-8
+ *   prefix of the full output.
  * - For %%s, precision and field width count codepoints instead of bytes, and
  *   the argument is read no further than the codepoints it emits. A precision
  *   therefore bounds the read as in vsnprintf(3), where the array need not be
@@ -332,8 +333,8 @@ int u8snprintf(
  *   the prefix short, %%3lf on "0x.5", is a matching failure here, where glibc
  *   assigns 0. A bare integer "0x" also assigns 0 here; C11's incomplete-prefix
  *   rule requires matching failure.
- * - A float conversion parses at double precision, so %%Lf assigns a long double
- *   carrying only the double result; glibc parses at long double precision.
+ * - %%Lf parses at double precision and assigns a long double carrying only
+ *   that result; glibc parses at long double precision.
  * - An exponent marker with no digits behind it, whether absent outright or cut
  *   off by the field width, is left unconsumed: "1ex" and %%2le on "1e10" both
  *   read 1 and stop at the 'e'. C11's input item includes the incomplete

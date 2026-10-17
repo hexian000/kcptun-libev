@@ -50,8 +50,8 @@ union sockaddr_max {
  * @param fd The socket file descriptor.
  * @return 0 on success; errno on failure.
  * @note POSIX version: POSIX.1-2001
- * @note On failure, the fd stays inheritable across exec() and may leak into
- * child processes.
+ * @note On failure, close-on-exec is not guaranteed. If it was not already
+ * set, the fd may remain inheritable across exec() and leak into child processes.
  */
 int socket_set_cloexec(int fd);
 
@@ -60,8 +60,8 @@ int socket_set_cloexec(int fd);
  * @param fd The socket file descriptor.
  * @return 0 on success; errno on failure.
  * @note POSIX version: POSIX.1-2001
- * @note On failure, the socket stays in blocking mode; I/O calls on it can
- * block the calling thread instead of returning EAGAIN/EWOULDBLOCK.
+ * @note On failure, non-blocking mode is not guaranteed. If the socket was
+ * blocking, I/O calls may still block instead of returning EAGAIN/EWOULDBLOCK.
  */
 int socket_set_nonblock(int fd);
 
@@ -73,8 +73,7 @@ int socket_set_nonblock(int fd);
  * @return 0 on success; the first failing option's errno on failure.
  * @note POSIX version: POSIX.1-2001
  * @note sndbuf and rcvbuf are applied independently; on failure, one may
- * have been applied while the other keeps its existing (system default)
- * size.
+ * have been applied while the other keeps its existing size.
  */
 int socket_set_buffer(int fd, int sndbuf, int rcvbuf);
 
@@ -112,8 +111,8 @@ int socket_set_tcp(int fd, bool nodelay, bool keepalive);
  * @param seconds Linger timeout in seconds when enabled.
  * @return 0 on success; errno on failure.
  * @note POSIX version: POSIX.1-2001
- * @note On failure, close() uses the platform's default (non-linger)
- * behavior instead of the requested setting.
+ * @note On failure, the requested linger behavior is not guaranteed;
+ * the existing setting may still govern close().
  */
 int socket_set_linger(int fd, bool enabled, int seconds);
 
@@ -124,8 +123,8 @@ int socket_set_linger(int fd, bool enabled, int seconds);
  * @return 0 on success; errno on failure.
  * @note Requires TCP_FASTOPEN at compile time (Linux 3.6+); ENOPROTOOPT
  * otherwise.
- * @note On failure, TFO is not enabled and connections use a regular TCP
- * handshake.
+ * @note On failure, the requested TFO setting is not guaranteed; a previously
+ * enabled setting may remain active.
  */
 int socket_set_fastopen(int fd, int backlog);
 
@@ -136,8 +135,8 @@ int socket_set_fastopen(int fd, int backlog);
  * @return 0 on success; errno on failure.
  * @note Requires TCP_FASTOPEN_CONNECT at compile time (Linux 4.11+);
  * ENOPROTOOPT otherwise.
- * @note On failure, TFO is not enabled and connections use a regular TCP
- * handshake.
+ * @note On failure, the requested TFO setting is not guaranteed; a previously
+ * enabled setting may remain active.
  */
 int socket_set_fastopen_connect(int fd, bool enabled);
 
@@ -224,9 +223,11 @@ socket_send(const int fd, const void *restrict buf, size_t *restrict len)
  * @brief Receives data from a socket, retrying on EINTR.
  * @param fd The socket file descriptor.
  * @param buf The data buffer.
- * @param[in,out] len Input: buffer size. Output: bytes received; 0 on EOF or failure.
- * @return 0 on success or EOF; errno on failure (e.g. EAGAIN/EWOULDBLOCK).
- *         EOF is indicated by a return value of 0 with @p len set to 0.
+ * @param[in,out] len Input: buffer capacity. Output: bytes received; 0 on failure.
+ * @return 0 on success; errno on failure (e.g. EAGAIN/EWOULDBLOCK).
+ * @details For a stream socket with positive input capacity, a zero-byte
+ * success indicates EOF. Empty datagrams and zero-capacity requests can also
+ * succeed with zero bytes.
  * @note POSIX version: POSIX.1-2001
  */
 static inline int
@@ -244,7 +245,7 @@ socket_recv(const int fd, void *restrict buf, size_t *restrict len)
 			*len = 0;
 			return err;
 		}
-		/* nrecv == 0: EOF */
+		/* Zero also covers empty datagrams and zero-capacity receives. */
 		*len = (size_t)nrecv;
 		return 0;
 	}

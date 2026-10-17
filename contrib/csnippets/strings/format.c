@@ -228,6 +228,23 @@ int format_duration_nanos(
 		d.second, d.milli, d.micro, d.nano);
 }
 
+/* Round a nonnegative duration field exactly as the fixed-decimal printer
+ * does, returning its digits without the decimal point. These fields need at
+ * most five integer digits and three fractional digits. */
+static unsigned int
+round_duration_field(const double value, const int precision)
+{
+	char text[16];
+	(void)u8snprintf(text, sizeof(text), "%.*f", precision, value);
+	unsigned int rounded = 0;
+	for (const char *p = text; *p != '\0'; p++) {
+		if (*p != '.') {
+			rounded = rounded * 10u + (unsigned int)(*p - '0');
+		}
+	}
+	return rounded;
+}
+
 int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 {
 	const double frac = d.milli * 1e-3 + d.micro * 1e-6 + d.nano * 1e-9;
@@ -237,7 +254,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		 * no field is ever printed as "60" */
 		struct duration t = d;
 		uintmax_t day = d.day;
-		unsigned int sec = (unsigned int)nearbyint(t.second + frac);
+		unsigned int sec = round_duration_field(t.second + frac, 0);
 		if (sec >= 60) {
 			sec -= 60;
 			if (++t.minute >= 60) {
@@ -267,8 +284,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		/* sub-10-minute display keeps tenth-second precision; carry a
 		 * rounded-up 60.0 into the minute field */
 		struct duration t = d;
-		unsigned int tenths =
-			(unsigned int)nearbyint((t.second + frac) * 10.0);
+		unsigned int tenths = round_duration_field(t.second + frac, 1);
 		if (tenths >= 600) {
 			tenths -= 600;
 			t.minute++;
@@ -297,7 +313,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 					       d.micro * 1e-6 + d.nano * 1e-9;
 			/* a value that rounds up to 60.00s carries into a
 			 * one-minute display instead of printing "60.00s" */
-			if (nearbyint(seconds * 100.0) >= 60.0 * 100.0) {
+			if (round_duration_field(seconds, 2) >= 6000u) {
 				return format_duration(
 					s, maxlen,
 					(struct duration){
@@ -313,7 +329,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 				      d.micro * 1e-3 + d.nano * 1e-6;
 		/* a value that rounds up to 10000ms carries into the >=10s
 		 * seconds display */
-		if (nearbyint(millis) >= 10.0 * 1000.0) {
+		if (round_duration_field(millis, 0) >= 10000u) {
 			return format_duration(
 				s, maxlen,
 				(struct duration){
@@ -329,7 +345,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		if (d.milli >= 100) {
 			/* a value that rounds up to 1000.0ms carries into a
 			 * one-second display */
-			if (nearbyint(millis * 10.0) >= 1000.0 * 10.0) {
+			if (round_duration_field(millis, 1) >= 10000u) {
 				return format_duration(
 					s, maxlen,
 					(struct duration){
@@ -344,7 +360,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		if (d.milli >= 10) {
 			/* mirror the micro>=10 guard: rounding up to 100.0 drops
 			 * to one decimal, so "100.0ms" not "100.00ms" */
-			if (nearbyint(millis * 100.0) >= 100.0 * 100.0) {
+			if (round_duration_field(millis, 2) >= 10000u) {
 				return u8snprintf(
 					s, maxlen, SIGNED_STR(d.sign, "%.1fms"),
 					millis);
@@ -355,7 +371,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 		}
 		/* milli < 10: rounding up to 10.0 drops to two decimals, so
 		 * "10.00ms" (matching the milli>=10 range) not "10.000ms" */
-		if (nearbyint(millis * 1000.0) >= 10.0 * 1000.0) {
+		if (round_duration_field(millis, 3) >= 10000u) {
 			return u8snprintf(
 				s, maxlen, SIGNED_STR(d.sign, "%.2fms"),
 				millis);
@@ -368,7 +384,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 			const double micros = d.micro + d.nano * 1e-3;
 			/* a value that rounds up to 1000.0us carries into a
 			 * one-millisecond display */
-			if (nearbyint(micros * 10.0) >= 1000.0 * 10.0) {
+			if (round_duration_field(micros, 1) >= 10000u) {
 				return format_duration(
 					s, maxlen,
 					(struct duration){
@@ -386,7 +402,7 @@ int format_duration(char *restrict s, size_t maxlen, const struct duration d)
 			 * integer digit; drop a decimal (as the >=100 branch does)
 			 * so the width stays ~3 significant figures instead of
 			 * printing "100.00µs" */
-			if (nearbyint(micros * 100.0) >= 100.0 * 100.0) {
+			if (round_duration_field(micros, 2) >= 10000u) {
 				return u8snprintf(
 					s, maxlen, SIGNED_STR(d.sign, "%.1fµs"),
 					micros);

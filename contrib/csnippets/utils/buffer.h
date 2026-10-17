@@ -106,12 +106,16 @@ static inline size_t buf_append(
  * @internal
  * Append formatted text into a fixed buffer, given as its members (see
  * buf_append), using a va_list.
- * Writes at most remaining capacity; output is NUL-terminated in place.
- * *len is advanced by the bytes actually stored, which on truncation may fall
- * up to UTF8_MAX_LEN - 1 short of the capacity (whole codepoints only).
+ * Writes at most remaining capacity; output is NUL-terminated in place when
+ * space remains. If the output fits, *len advances by the returned byte count,
+ * including embedded NULs. On truncation, *len advances only to the first NUL
+ * in the appended output: bytes stored after an embedded NUL (e.g. from %c)
+ * are not counted. This is an accepted limitation of fixed-buffer formatting.
+ * Without embedded NULs, the count covers the stored prefix; truncation may
+ * leave space unused to avoid splitting a UTF-8 codepoint.
  * Returns: snprintf-style count of chars that would have been written
- * (excluding NUL), or negative when u8vsnprintf cannot represent that count,
- * in which case nothing is appended.
+ * (excluding the trailing NUL), or negative when u8vsnprintf cannot represent
+ * that count, in which case nothing is appended.
  */
 int buf_vappendf(
 	size_t cap, size_t *restrict len, unsigned char *restrict data,
@@ -165,6 +169,26 @@ static inline struct vbuffer *vbuf_alloc(struct vbuffer *vbuf, const size_t cap)
 	vbuf->cap = cap;
 	vbuf->len = MIN(cap, len);
 	/* data holds cap + 1 bytes, so this slot always exists */
+	vbuf->data[vbuf->len] = '\0';
+	return vbuf;
+}
+
+/**
+ * @internal
+ * Resize a non-NULL buffer without an OOM marker to `want` usable bytes.
+ * Check the caller's integer range before narrowing to size_t and adding the
+ * reserved byte. On failure, preserve the allocation and its data.
+ */
+static inline struct vbuffer *
+vbuf_resize(struct vbuffer *vbuf, const uintmax_t want)
+{
+	if (want >= SIZE_MAX) {
+		return vbuf;
+	}
+	vbuf = vbuf_alloc(vbuf, (size_t)want + 1);
+	/* A failed resize retains the old capacity. Clamp to the actual
+	 * allocation to preserve its data, then restore the terminator. */
+	vbuf->len = MIN(vbuf->len, vbuf->cap - 1);
 	vbuf->data[vbuf->len] = '\0';
 	return vbuf;
 }
@@ -310,7 +334,10 @@ int vbuf_appendf(
 /**
  * @brief Append formatted string to buffer.
  * @details The string will be truncated if there is not enough space. A
- * trailing NUL is written in-place but not counted by `len`.
+ * trailing NUL is written in-place when space remains, but not counted by
+ * `len`. On truncation, `len` counts only the appended prefix before the first
+ * NUL; bytes stored after an embedded NUL are not counted. Output that fits
+ * counts embedded NULs normally. See buf_vappendf for this limitation.
  * usage: `BUF_APPENDF(buf, "%s: %s\r\n", "Content-Type", "text/plain");`
  */
 #define BUF_APPENDF(buf, format, ...)                                          \
@@ -320,7 +347,10 @@ int vbuf_appendf(
 /**
  * @brief Append formatted string to buffer using a va_list.
  * @details The string will be truncated if there is not enough space. A
- * trailing NUL is written in-place but not counted by `len`.
+ * trailing NUL is written in-place when space remains, but not counted by
+ * `len`. On truncation, `len` counts only the appended prefix before the first
+ * NUL; bytes stored after an embedded NUL are not counted. Output that fits
+ * counts embedded NULs normally. See buf_vappendf for this limitation.
  * usage: `BUF_VAPPENDF(buf, "%s: %s\r\n", args);`
  */
 #define BUF_VAPPENDF(buf, format, args)                                        \
@@ -373,7 +403,7 @@ int vbuf_appendf(
  * @return NULL on allocation failure.
  * @details usage: `struct vbuffer *vbuf = VBUF_NEW(256);`
  */
-#define VBUF_NEW(size) vbuf_alloc(NULL, (size) + 1)
+#define VBUF_NEW(size) vbuf_alloc(NULL, (size_t)(size) + 1)
 
 /* Asserts cap > 0 and len within [0, cap]. */
 #define VBUF_ASSERT_SANITY(vbuf)                                               \
@@ -496,22 +526,13 @@ int vbuf_appendf(
  * `VBUF_RESET` to clear it.
  * usage: `VBUF_RESIZE(vbuf, 1024);`
  */
-#define VBUF_RESIZE(vbuf, want)                                                  \
-	do {                                                                     \
-		VBUF_ASSERT_SANITY_OR_NULL(vbuf);                                \
-		/* An OOM condition is recorded as NULL or len == cap; a       \
-		 * realloc here would clear the marker while the data stays    \
-		 * truncated, so skip it, mirroring VBUF_RESERVE. */ \
-		if ((vbuf) != NULL && (vbuf)->len != (vbuf)->cap &&              \
-		    (want) < SIZE_MAX) {                                         \
-			(vbuf) = vbuf_alloc((vbuf), (want) + 1);                 \
-			if ((vbuf) != NULL) {                                    \
-				(vbuf)->len = MIN((vbuf)->len, (want));          \
-				/* truncating here drops len below the NUL \
-				 * vbuf_alloc wrote, so restore it */     \
-				(vbuf)->data[(vbuf)->len] = '\0';                \
-			}                                                        \
-		}                                                                \
+#define VBUF_RESIZE(vbuf, want)                                                 \
+	do {                                                                    \
+		VBUF_ASSERT_SANITY_OR_NULL(vbuf);                               \
+		/* Preserve the OOM marker and skip the capacity expression. */ \
+		if ((vbuf) != NULL && (vbuf)->len != (vbuf)->cap) {             \
+			(vbuf) = vbuf_resize((vbuf), (want));                   \
+		}                                                               \
 	} while (0)
 
 /**

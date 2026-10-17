@@ -385,7 +385,7 @@ table_reserve(struct hashtable *restrict table, const size_t new_size)
 	if (table == NULL) {
 		return NULL;
 	}
-	size_t new_capacity = new_size;
+	size_t new_capacity = MIN(new_size, MAX_CAPACITY);
 	if (new_capacity < table->size) {
 		new_capacity = table->size;
 	}
