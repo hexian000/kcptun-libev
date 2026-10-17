@@ -182,6 +182,11 @@ void accept_backoff(
 	struct ev_loop *loop, ev_io *restrict w_accept,
 	ev_timer *restrict w_timer, int err);
 
+/* Resolve within family, or accept either IP family with PF_UNSPEC. */
+bool resolve_addr_family(
+	union sockaddr_max *restrict addr, const char *restrict addrstr,
+	enum sa_resolve_type type, int family);
+
 bool resolve_addr(
 	union sockaddr_max *restrict addr, const char *restrict addrstr,
 	enum sa_resolve_type type);

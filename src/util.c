@@ -226,16 +226,23 @@ static bool split_addrstr(
 	return splithostport(buf, hoststr, portstr);
 }
 
-bool resolve_addr(
+bool resolve_addr_family(
 	union sockaddr_max *restrict addr, const char *restrict addrstr,
-	const enum sa_resolve_type type)
+	const enum sa_resolve_type type, const int family)
 {
 	char buf[FQDN_MAX_LENGTH + sizeof(":65535")];
 	char *hoststr, *portstr;
 	if (!split_addrstr(addrstr, buf, &hoststr, &portstr)) {
 		return false;
 	}
-	return sa_resolve(addr, hoststr, portstr, type, PF_UNSPEC);
+	return sa_resolve(addr, hoststr, portstr, type, family);
+}
+
+bool resolve_addr(
+	union sockaddr_max *restrict addr, const char *restrict addrstr,
+	const enum sa_resolve_type type)
+{
+	return resolve_addr_family(addr, addrstr, type, PF_UNSPEC);
 }
 
 bool resolve_bindaddr(
