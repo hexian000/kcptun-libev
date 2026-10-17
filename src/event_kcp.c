@@ -51,12 +51,6 @@ bool kcp_cansend(const struct session *restrict ss)
 	return kcp != NULL && ikcp_waitsnd(kcp) < kcp->snd_wnd;
 }
 
-bool kcp_canrecv(const struct session *restrict ss)
-{
-	const struct IKCPCB *restrict kcp = ss->kcp;
-	return kcp != NULL && ikcp_peeksize(kcp) > 0;
-}
-
 static bool kcp_send(
 	struct session *restrict ss, const unsigned char *buf, const size_t len)
 {
@@ -95,6 +89,7 @@ bool kcp_push(struct session *restrict ss)
 	if (!kcp_send(ss, ss->rbuf->data, len)) {
 		return false;
 	}
+	ss->last_payload_send = ss->last_send;
 	ss->rbuf->len = 0;
 	return true;
 }
@@ -102,6 +97,11 @@ bool kcp_push(struct session *restrict ss)
 void kcp_recv(struct session *restrict ss)
 {
 	ASSERT(ss->wbuf->len <= SESSION_BUF_SIZE);
+	ASSERT(ss->wbuf_flush == 0 && ss->wbuf_next == 0);
+	if (ss->wbuf_off != 0) {
+		VBUF_CONSUME(ss->wbuf, ss->wbuf_off);
+		ss->wbuf_off = 0;
+	}
 	unsigned char *start;
 	size_t cap;
 	VBUF_SPACE(start, cap, ss->wbuf);
@@ -126,12 +126,7 @@ void kcp_recv(struct session *restrict ss)
 
 static void kcp_update(struct session *restrict ss, const uint32_t now_ms)
 {
-	switch (ss->kcp_state) {
-	case KCP_STATE_CONNECT:
-	case KCP_STATE_ESTABLISHED:
-	case KCP_STATE_LINGER:
-		break;
-	default:
+	if (!kcp_is_active(ss)) {
 		return;
 	}
 	ikcp_update(ss->kcp, now_ms);

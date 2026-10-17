@@ -15,7 +15,7 @@
                 "mtu":      { "type": "integer", "minimum": 300, "maximum": 1500,  "default": 1400 },
                 "nc":       { "type": "integer", "minimum": 0,   "maximum": 1,     "default": 1   },
                 "nodelay":  { "type": "integer", "minimum": 0,   "maximum": 2,     "default": 1   },
-                "rcvwnd":   { "type": "integer", "minimum": 16,  "maximum": 65536, "default": 256 },
+                "rcvwnd":   { "type": "integer", "minimum": 128, "maximum": 65535, "default": 256 },
                 "resend":   { "type": "integer", "minimum": 0,   "maximum": 100,   "default": 0   },
                 "sndwnd":   { "type": "integer", "minimum": 16,  "maximum": 65536, "default": 256 }
             }

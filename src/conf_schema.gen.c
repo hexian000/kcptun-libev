@@ -209,7 +209,7 @@ static const struct json_constraint json_conf_kcp_nodelay_c = {
 };
 static const struct json_constraint json_conf_kcp_rcvwnd_c = {
 	.flags = JSON_C_MIN | JSON_C_MAX,
-	.u = { .min = UINTMAX_C(16), .max = UINTMAX_C(65536) },
+	.u = { .min = UINTMAX_C(128), .max = UINTMAX_C(65535) },
 };
 static const struct json_constraint json_conf_kcp_resend_c = {
 	.flags = JSON_C_MAX,

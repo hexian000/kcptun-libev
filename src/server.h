@@ -60,6 +60,7 @@ struct pktconn {
 };
 
 #define MAX_SESSIONS 65535
+#define SESSION_TIMEOUT_INTERVAL 10.0
 
 struct config;
 

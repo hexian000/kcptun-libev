@@ -28,7 +28,6 @@ void http_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void http_stop(struct server *s);
 
 bool kcp_cansend(const struct session *ss);
-bool kcp_canrecv(const struct session *ss);
 
 int kcp_output(const char *buf, int len, struct IKCPCB *kcp, void *user);
 bool kcp_sendmsg(struct session *ss, uint16_t msg);

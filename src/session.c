@@ -57,12 +57,7 @@ ss_flush_cb(struct ev_loop *loop, ev_idle *watcher, const int revents)
 	CHECK_REVENTS(revents, EV_IDLE);
 	ev_idle_stop(loop, watcher);
 	struct session *restrict ss = watcher->data;
-	switch (ss->kcp_state) {
-	case KCP_STATE_CONNECT:
-	case KCP_STATE_ESTABLISHED:
-	case KCP_STATE_LINGER:
-		break;
-	default:
+	if (!kcp_is_active(ss)) {
 		return;
 	}
 	ikcp_flush(ss->kcp);
@@ -115,6 +110,8 @@ struct session *session_new(
 		.raddr = *addr,
 		.created = now,
 		.last_reset = TSTAMP_NIL,
+		.time_wait_started = TSTAMP_NIL,
+		.last_payload_send = TSTAMP_NIL,
 		.last_send = TSTAMP_NIL,
 		.last_recv = TSTAMP_NIL,
 	};
@@ -164,6 +161,8 @@ void session_tcp_start(struct session *restrict ss, const int fd)
 void session_tcp_stop(struct session *restrict ss)
 {
 	ss->tcp_state = TCP_STATE_CLOSED;
+	/* Any pending payload is discarded once the local socket closes. */
+	ss->wbuf_flush = ss->wbuf_next;
 	ev_io *restrict w_socket = &ss->w_socket;
 	if (w_socket->fd == -1) {
 		return;
@@ -178,14 +177,23 @@ void session_tcp_stop(struct session *restrict ss)
 void session_kcp_stop(struct session *restrict ss)
 {
 	session_tcp_stop(ss);
-	ss->kcp_state = KCP_STATE_TIME_WAIT;
+	if (ss->kcp_state != KCP_STATE_TIME_WAIT) {
+		ss->time_wait_started = ev_now(ss->server->loop);
+		ss->kcp_state = KCP_STATE_TIME_WAIT;
+	}
 	if (ss->kcp != NULL) {
 		ikcp_release(ss->kcp);
 		ss->kcp = NULL;
 	}
 	VBUF_FREE(ss->rbuf);
 	VBUF_FREE(ss->wbuf);
-	ss->wbuf_flush = ss->wbuf_next = 0;
+	ss->wbuf_off = ss->wbuf_flush = ss->wbuf_next = 0;
+}
+
+void session_abort(struct session *restrict ss)
+{
+	session_tcp_stop(ss);
+	session_kcp_close(ss);
 }
 
 bool session_kcp_send(struct session *restrict ss)
@@ -259,7 +267,11 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	/* Create client socket */
 	int fd = socket(sa->sa_family, SOCK_STREAM, 0);
 	if (fd < 0) {
-		LOG_PERROR("tcp socket");
+		const int err = errno;
+		LOG_RATELIMITED_F(
+			ERROR, ev_now(ss->server->loop), 1.0,
+			"[session:%08" PRIX32 "] tcp socket: (%d) %s", ss->conv,
+			err, strerror(err));
 		return false;
 	}
 	if (!socket_nonblock_or_close(fd)) {
@@ -271,7 +283,10 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 	if (connect(fd, sa, sa_len(sa)) != 0) {
 		const int err = errno;
 		if (err != EINTR && err != EINPROGRESS) {
-			LOGE_F("connect: (%d) %s", err, strerror(err));
+			LOG_RATELIMITED_F(
+				ERROR, ev_now(ss->server->loop), 1.0,
+				"[session:%08" PRIX32 "] connect: (%d) %s",
+				ss->conv, err, strerror(err));
 			socket_close(fd);
 			return false;
 		}
@@ -293,80 +308,81 @@ static bool forward_dial(struct session *restrict ss, const struct sockaddr *sa)
 static bool session_on_msg(
 	struct session *restrict ss, const struct tlv_header *restrict hdr)
 {
+	if ((hdr->msg == SMSG_DIAL || hdr->msg == SMSG_EOF ||
+	     hdr->msg == SMSG_KEEPALIVE) &&
+	    hdr->len != TLV_HEADER_SIZE) {
+		LOGE_F("[session:%08" PRIX32
+		       "] malformed message: msg=%04" PRIX16 ", len=%04" PRIX16,
+		       ss->conv, hdr->msg, hdr->len);
+		return false;
+	}
 	switch (hdr->msg) {
-	case SMSG_DIAL: {
-		if (hdr->len != TLV_HEADER_SIZE) {
-			break;
-		}
+	case SMSG_DIAL:
 		LOGD_F("[session:%08" PRIX32 "] msg: dial", ss->conv);
-		if (ss->tcp_state != TCP_STATE_CLOSED) {
-			break;
+		if (ss->tcp_state != TCP_STATE_CLOSED || ss->kcp_eof_sent ||
+		    ss->kcp_eof_recv) {
+			LOGE_F("[session:%08" PRIX32
+			       "] unexpected dial: tcp=%c, eof sent=%d, received=%d",
+			       ss->conv, tcp_state_char[ss->tcp_state],
+			       ss->kcp_eof_sent, ss->kcp_eof_recv);
+			return false;
 		}
+		/* A dial failure closes the local stream, not the peer's framing. */
 		if (!forward_dial(ss, &ss->server->connect.sa)) {
-			break;
+			session_abort(ss);
 		}
 		return true;
-	}
 	case SMSG_PUSH: {
 		const size_t navail = (size_t)hdr->len - TLV_HEADER_SIZE;
 		LOGV_F("[session:%08" PRIX32 "] msg: push, %zu bytes", ss->conv,
 		       navail);
-		ss->wbuf_flush = TLV_HEADER_SIZE;
+		if (ss->tcp_state != TCP_STATE_CLOSED) {
+			ss->wbuf_flush = ss->wbuf_off + TLV_HEADER_SIZE;
+		}
 		return true;
 	}
-	case SMSG_EOF: {
-		if (hdr->len != TLV_HEADER_SIZE) {
-			break;
-		}
+	case SMSG_EOF:
 		if (ss->kcp_eof_recv) {
-			/* duplicate EOF, ignore */
 			return true;
 		}
 		if (ss->tcp_state != TCP_STATE_CONNECT &&
-		    ss->tcp_state != TCP_STATE_ESTABLISHED) {
-			/* out-of-order EOF before the session is dialed:
-			 * treat as a protocol error instead of mutating
-			 * tcp_state from CLOSED */
-			break;
+		    ss->tcp_state != TCP_STATE_ESTABLISHED &&
+		    !(ss->tcp_state == TCP_STATE_CLOSED && ss->kcp_eof_sent)) {
+			LOGE_F("[session:%08" PRIX32
+			       "] unexpected eof in tcp state %c",
+			       ss->conv, tcp_state_char[ss->tcp_state]);
+			return false;
 		}
-		LOGI_F("[session:%08" PRIX32 "] kcp: "
-		       "eof received from peer",
+		LOGI_F("[session:%08" PRIX32 "] kcp: eof received from peer",
 		       ss->conv);
 		ss->kcp_eof_recv = true;
-		/* half-close: shutdown TCP write, but keep reading */
-		ss->tcp_state = TCP_STATE_LINGER;
+		/* A pending connect must finish before its write direction closes. */
+		if (ss->tcp_state == TCP_STATE_ESTABLISHED) {
+			ss->tcp_state = TCP_STATE_LINGER;
+		}
 		ss->wbuf_flush = ss->wbuf_next;
-		/* check if both directions are closed */
 		if (ss->kcp_eof_sent) {
 			ss->kcp_state = KCP_STATE_LINGER;
 		}
 		return true;
-	}
-	case SMSG_KEEPALIVE: {
-		if (hdr->len != TLV_HEADER_SIZE) {
-			break;
-		}
+	case SMSG_KEEPALIVE:
 		LOGD_F("[session:%08" PRIX32 "] msg: keepalive", ss->conv);
 		if (ss->is_accepted) {
-			/* echo the keepalive; a transient send failure (KCP
-			   segment OOM) is already logged by kcp_send and must not
-			   tear down an otherwise-healthy session, since the peer
-			   will ping again */
+			/* A transient segment allocation failure is already logged. */
 			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		return true;
+	default:
+		LOGE_F("[session:%08" PRIX32 "] unknown message: msg=%04" PRIX16
+		       ", len=%04" PRIX16,
+		       ss->conv, hdr->msg, hdr->len);
+		return false;
 	}
-	default:;
-	}
-	LOGE_F("[session:%08" PRIX32 "] unknown message: "
-	       "msg=%04" PRIX16 ", len=%04" PRIX16,
-	       ss->conv, hdr->msg, hdr->len);
-	return false;
 }
 
 static void consume_wbuf(struct session *restrict ss, const size_t n)
 {
-	VBUF_CONSUME(ss->wbuf, n);
+	ss->wbuf_off = n;
 	ss->wbuf_flush = 0;
 	ss->wbuf_next = 0;
 }
@@ -382,26 +398,36 @@ static int ss_process(struct session *restrict ss)
 		/* tcp flushing is done */
 		consume_wbuf(ss, ss->wbuf_flush);
 	}
-	kcp_recv(ss);
-	if (ss->wbuf->len < TLV_HEADER_SIZE) {
+	if (ss->wbuf->len - ss->wbuf_off < TLV_HEADER_SIZE) {
+		kcp_recv(ss);
+	}
+	if (ss->wbuf->len - ss->wbuf_off < TLV_HEADER_SIZE) {
 		/* no header available */
 		return 1;
 	}
-	const struct tlv_header hdr = tlv_header_read(ss->wbuf->data);
+	const struct tlv_header hdr =
+		tlv_header_read(ss->wbuf->data + ss->wbuf_off);
 	if (hdr.len < TLV_HEADER_SIZE || hdr.len > TLV_MAX_LENGTH) {
 		LOGE_F("[session:%08" PRIX32
 		       "] invalid message length: %" PRIu16,
 		       ss->conv, hdr.len);
 		return -1;
 	}
-	if (ss->wbuf->len < hdr.len) {
+	if (ss->wbuf->len - ss->wbuf_off < hdr.len) {
+		kcp_recv(ss);
+	}
+	if (ss->wbuf->len - ss->wbuf_off < hdr.len) {
 		/* incomplete message */
 		return 1;
 	}
-	ss->wbuf_next = hdr.len;
+	ss->wbuf_next = ss->wbuf_off + hdr.len;
 	if (!session_on_msg(ss, &hdr)) {
 		/* malformed message */
 		return -1;
+	}
+	if (!kcp_is_connected(ss)) {
+		/* Sending the close notification can fail and stop KCP. */
+		return 1;
 	}
 	if (ss->wbuf_flush > 0) {
 		tcp_flush(ss);
@@ -416,14 +442,11 @@ void session_read_cb(struct session *restrict ss)
 {
 	int ret = 0;
 	/* process KCP messages even after sending EOF (half-close) */
-	while ((ss->kcp_state == KCP_STATE_ESTABLISHED ||
-		ss->kcp_state == KCP_STATE_LINGER) &&
-	       ret == 0) {
+	while (kcp_is_connected(ss) && ret == 0) {
 		ret = ss_process(ss);
 	}
 	if (ret < 0) {
-		session_tcp_stop(ss);
-		session_kcp_close(ss);
+		session_abort(ss);
 		return;
 	}
 	tcp_notify(ss);

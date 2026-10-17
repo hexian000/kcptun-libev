@@ -96,8 +96,8 @@ struct session {
 	};
 	struct {
 		ev_tstamp created;
-		ev_tstamp last_reset;
-		ev_tstamp last_send, last_recv;
+		ev_tstamp last_reset, time_wait_started;
+		ev_tstamp last_send, last_recv, last_payload_send;
 	};
 	struct {
 		bool is_accepted : 1;
@@ -106,10 +106,27 @@ struct session {
 		bool tcp_eof_sent : 1; /* shutdown(fd, SHUT_WR) called */
 	};
 	struct vbuffer *rbuf, *wbuf;
-	size_t wbuf_flush, wbuf_next;
+	size_t wbuf_off, wbuf_flush, wbuf_next;
 
 	struct link_stats stats;
 };
+
+static inline bool tcp_is_open(const struct session *ss)
+{
+	return ss->tcp_state == TCP_STATE_ESTABLISHED ||
+	       ss->tcp_state == TCP_STATE_LINGER;
+}
+
+static inline bool kcp_is_connected(const struct session *ss)
+{
+	return ss->kcp_state == KCP_STATE_ESTABLISHED ||
+	       ss->kcp_state == KCP_STATE_LINGER;
+}
+
+static inline bool kcp_is_active(const struct session *ss)
+{
+	return ss->kcp_state == KCP_STATE_CONNECT || kcp_is_connected(ss);
+}
 
 #define SESSION_GETKEY(ss) (&(ss)->hkey)
 
@@ -131,6 +148,7 @@ void session_free(struct session *ss);
 
 void session_tcp_start(struct session *ss, int fd);
 void session_tcp_stop(struct session *ss);
+void session_abort(struct session *ss);
 void session_kcp_stop(struct session *ss);
 
 bool session_kcp_send(struct session *ss);

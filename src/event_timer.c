@@ -160,10 +160,23 @@ static bool timeout_filt(
 			session_kcp_stop(ss);
 		}
 		break;
-	case KCP_STATE_ESTABLISHED:
-		if (ss->last_recv != TSTAMP_NIL) {
-			not_seen = now - ss->last_recv;
+	case KCP_STATE_ESTABLISHED: {
+		ev_tstamp last_activity = ss->created;
+		if (ss->last_recv != TSTAMP_NIL &&
+		    ss->last_recv > last_activity) {
+			last_activity = ss->last_recv;
 		}
+		if (ss->last_payload_send != TSTAMP_NIL &&
+		    ss->last_payload_send > last_activity) {
+			last_activity = ss->last_payload_send;
+		}
+		/* Locally generated keepalives do not prove peer liveness. */
+		if ((ss->kcp_eof_sent || ss->kcp_eof_recv) &&
+		    ss->last_send != TSTAMP_NIL &&
+		    ss->last_send > last_activity) {
+			last_activity = ss->last_send;
+		}
+		not_seen = now - last_activity;
 		/* half-close: use linger timeout if EOF exchanged */
 		if (ss->kcp_eof_sent || ss->kcp_eof_recv) {
 			if (not_seen > s->linger) {
@@ -187,6 +200,7 @@ static bool timeout_filt(
 			(void)kcp_sendmsg(ss, SMSG_KEEPALIVE);
 		}
 		break;
+	}
 	case KCP_STATE_LINGER:
 		if (ss->last_send != TSTAMP_NIL) {
 			not_seen = now - ss->last_send;
@@ -198,7 +212,9 @@ static bool timeout_filt(
 		}
 		break;
 	case KCP_STATE_TIME_WAIT:
-		if (ss->last_reset != TSTAMP_NIL) {
+		not_seen = now - ss->time_wait_started;
+		if (ss->last_reset != TSTAMP_NIL &&
+		    ss->last_reset > ss->time_wait_started) {
 			not_seen = now - ss->last_reset;
 		}
 		if (not_seen > s->time_wait) {

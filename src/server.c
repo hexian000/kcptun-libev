@@ -494,7 +494,8 @@ server_apply_conf(struct server *restrict s, const struct config *restrict conf)
 	s->linger = conf->linger;
 	s->dial_timeout = 30.0;
 	s->session_timeout = conf->timeout;
-	s->session_keepalive = conf->timeout - ping_timeout;
+	s->session_keepalive =
+		conf->timeout - SESSION_TIMEOUT_INTERVAL - ping_timeout;
 	s->keepalive = conf->keepalive;
 	if ((conf->mode & (MODE_CLIENT | MODE_RENDEZVOUS)) == 0) {
 		/* server mode: disable keepalive */
@@ -552,7 +553,9 @@ server_new(struct ev_loop *loop, const struct config *restrict conf)
 		w_resolve->data = s;
 
 		ev_timer *restrict w_timeout = &s->w_timeout;
-		ev_timer_init(w_timeout, timeout_cb, 10.0, 10.0);
+		ev_timer_init(
+			w_timeout, timeout_cb, SESSION_TIMEOUT_INTERVAL,
+			SESSION_TIMEOUT_INTERVAL);
 		ev_set_priority(w_timeout, EV_MINPRI);
 		w_timeout->data = s;
 	}
