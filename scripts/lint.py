@@ -225,7 +225,7 @@ def _select_sources(sources: list[str], patterns: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Prune the compilation database to one command per source
+# Prune only equivalent compilation commands
 # ---------------------------------------------------------------------------
 
 def _entry_args(entry: dict) -> list[str]:
@@ -237,37 +237,45 @@ def _entry_args(entry: dict) -> list[str]:
     return shlex.split(entry.get("command", ""))
 
 
-def _prune_db(build_dir: Path, db: list[dict], sources: list[str]) -> Path:
-    """Write a compilation database holding exactly one command per accepted
-    source and return the directory containing it.
+def _analysis_args(entry: dict) -> tuple[str, ...]:
+    """Keep every compiler argument except the output object path.
 
-    CMake emits one command per (source, target) pair, so a source linked
-    into several test targets appears once per target -- when this was
-    written, 222 commands for 140 files, up to 7 for one source.  clang-tidy
-    analyzes a named source once for *every* matching command, so those
-    repeats re-run the whole check set on identical code: the surplus
-    commands differ only in the output object path and in -D macros that
-    configure other modules.  Keeping one command per source cuts the run by
-    an order of magnitude and leaves the report unchanged.
+    Only the ordinary ``-o PATH`` pair is known to be irrelevant to analysis.
+    Preserve everything else, including flag order, macro undefinitions,
+    compiler identity and include paths: a flag count cannot prove that two
+    commands cover the same conditional code.
+    """
+    args = iter(_entry_args(entry))
+    kept: list[str] = []
+    for arg in args:
+        if arg == "-o":
+            next(args, None)
+        else:
+            kept.append(arg)
+    return tuple(kept)
+
+
+def _prune_db(build_dir: Path, db: list[dict], sources: list[str]) -> Path:
+    """Write one command per distinct analysis configuration of each source.
+
+    Repeated target commands that differ only in their output object are
+    redundant. Every other argument difference and the working directory can
+    affect analysis, so retain those commands rather than guessing coverage.
     """
     wanted = set(sources)
-    best: dict[str, tuple[int, dict]] = {}
+    seen: set[tuple] = set()
+    pruned: list[dict] = []
     for entry in db:
         fpath = entry["file"]
         if fpath not in wanted:
             continue
-        # Of the commands for one source, keep the richest configuration --
-        # the one carrying the most -D/-I flags.  It compiles the most
-        # conditional code, so dropping the others cannot hide a region that
-        # only a target-specific macro enables.  Ties keep the first command
-        # in database order, so the choice is deterministic.
-        rank = sum(a.startswith(("-D", "-I")) for a in _entry_args(entry))
-        chosen = best.get(fpath)
-        if chosen is None or rank > chosen[0]:
-            best[fpath] = (rank, entry)
+        key = (fpath, entry.get("directory"), _analysis_args(entry))
+        if key in seen:
+            continue
+        seen.add(key)
+        pruned.append(entry)
     out_dir = build_dir / "tmp" / "lint-db"
     out_dir.mkdir(parents=True, exist_ok=True)
-    pruned = [best[src][1] for src in sources if src in best]
     (out_dir / "compile_commands.json").write_text(
         json.dumps(pruned, indent=1), encoding="utf-8")
     return out_dir
@@ -327,10 +335,10 @@ def _run(
     # clang-tidy walks the compile database for each named source and analyzes
     # it for every compile command, and we concatenate the per-file diagnostics
     # (emitted on stdout) for the parser below. `db_dir` is the pruned database
-    # from _prune_db, which holds one command per source so no file is analyzed
-    # twice. Passing the accepted sources explicitly keeps the analysis to
-    # production files, rather than the whole database whose test/generated
-    # results would just be discarded during post-filtering, wasting the
+    # from _prune_db, which deduplicates equivalent commands while retaining
+    # distinct analysis configurations. Passing the accepted sources keeps the
+    # analysis to production files, rather than the whole database whose test
+    # and generated results would be discarded during post-filtering, wasting the
     # analysis and inflating the reported elapsed time.
     base = ["clang-tidy", "-p", str(db_dir)]
     if check_filter:
@@ -751,27 +759,79 @@ def _provider_use_re(p: _Provider) -> re.Pattern | None:
 # otherwise a redundant `#include` whose symbol appears only in such text would
 # be wrongly proven "used" and its genuine finding suppressed, breaking the
 # denoiser's provable-false-positive contract.
-_NONCODE_RE = re.compile(
+_INCLUDE_LINE_RE = re.compile(
+    r"^[ \t]*\#[ \t]*include\b[^\n]*", re.MULTILINE,
+)
+_INCLUDE_CODE_RE = re.compile(
     r"""
-      //[^\n]*                          # line comment
-    | /\*.*?\*/                         # block comment
-    | "(?:\\.|[^"\\\n])*"               # string literal
-    | '(?:\\.|[^'\\\n])*'               # char literal
-    | ^[ \t]*\#[ \t]*include\b[^\n]*    # #include directive (header filename)
+      ^[ \t]*\#[ \t]*include[ \t]*(?:<[^>\n]+>|"[^"\n]+")
+    | //[^\n]*                         # line comment
+    | /\*.*?\*/                        # block comment
+    | "(?:\\.|[^"\\\n])*"              # string literal
+    | '(?:\\.|[^'\\\n])*'              # char literal
     """,
     re.VERBOSE | re.DOTALL | re.MULTILINE,
 )
 
 
+def _unconditional_source(src: str) -> str:
+    """Blank conditional regions whose activity this lexical pass cannot prove.
+
+    The compile database may contain multiple configurations for one source.
+    Without preprocessing each one, neither a conditional include nor a symbol
+    use in any branch proves a finding false. Keep only unconditional evidence,
+    even for seemingly simple conditions whose macros may be build-dependent.
+    Comments/literals must already be blanked and escaped newlines spliced.
+    """
+    depth = 0
+    out = []
+    for line in src.split("\n"):
+        directive = re.match(
+            r"^[ \t\v\f\r]*(?:#|%:)[ \t\v\f\r]*"
+            r"(if|ifdef|ifndef|elif|else|endif)\b", line)
+        if directive:
+            kind = directive.group(1)
+            if kind in ("if", "ifdef", "ifndef"):
+                depth += 1
+            elif kind == "endif":
+                if depth == 0:
+                    return ""
+                depth -= 1
+        out.append(re.sub(r"[^\n]", " ", line) if directive or depth else line)
+    return "" if depth else "\n".join(out)
+
+
+def _include_source(src: str) -> str:
+    """Keep literal include directives while blanking comments and literals.
+
+    Splice escaped newlines first, as C does before recognizing comments, so
+    a continued line comment cannot invent a direct include on its next line.
+    The directive alternative consumes only a complete header name; consuming
+    its whole line could hide the opening of a trailing multiline comment.
+    Unrecognized include spellings supply no evidence and keep the warning.
+    Conditional regions supply no evidence without build-specific preprocessing.
+    Trigraph mode is not known here; a possible trigraph backslash can change
+    comment/literal boundaries, so that source supplies no suppression evidence.
+    """
+    if "??/" in src or "??=" in src:
+        return ""
+    src = re.sub(r"\\\r?\n", "", src)
+    return _unconditional_source(_INCLUDE_CODE_RE.sub(
+        lambda m: m.group(0) if m.group(0).lstrip().startswith("#")
+        else re.sub(r"[^\n]", " ", m.group(0)), src))
+
+
 def _strip_noncode(src: str) -> str:
     """Blank comments, string/char literals and `#include` lines out of `src`.
 
-    Each such region is replaced by spaces of equal length (newlines kept), so
-    the result is the same source with only genuine code tokens left for the
-    symbol-use search. Preserving length matters: it keeps adjacent tokens
-    separated (`err/*x*/no` stays `err     no`, never collapses to `errno`).
+    After line splicing, each region is replaced by spaces of equal length
+    (newlines kept), leaving genuine code tokens for the symbol-use search.
+    Keeping tokens separated matters: `err/*x*/no` stays `err     no`, never
+    collapses to `errno`. Strip comments before whole include lines so a
+    trailing multiline comment cannot lose its opening delimiter.
     """
-    return _NONCODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), src)
+    return _INCLUDE_LINE_RE.sub(
+        lambda m: re.sub(r"[^\n]", " ", m.group(0)), _include_source(src))
 
 
 def _header_provided_names(root: Path, spelling: str) -> set[str]:
@@ -852,6 +912,7 @@ def _denoise(
     }
     src_cache: dict[str, str | None] = {}
     code_cache: dict[str, str | None] = {}
+    include_cache: dict[str, str | None] = {}
 
     def file_src(relpath: str) -> str | None:
         if relpath not in src_cache:
@@ -872,7 +933,11 @@ def _denoise(
         return code_cache[relpath]
 
     def includes(relpath: str, pattern: re.Pattern) -> bool:
-        src = file_src(relpath)
+        if relpath not in include_cache:
+            raw = file_src(relpath)
+            include_cache[relpath] = (
+                _include_source(raw) if raw is not None else None)
+        src = include_cache[relpath]
         return src is not None and bool(pattern.search(src))
 
     def noise_reason(w: dict) -> str | None:
@@ -983,7 +1048,8 @@ _RAW_LIST_HEADER = """\
 # Which findings appear at all depends on the build configuration named below:
 # the path-sensitive analyzer checks explore different paths at different
 # optimization levels, and NDEBUG turns ASSERT() into a no-op, removing
-# constraints they prune with. Diff two lists only if this line matches.
+# constraints they prune with. Check/source filters and denoising also decide
+# what appears. Diff two lists only if the full configuration line matches.
 #
 # Machine-generated — do not hand-edit.
 """
@@ -1000,7 +1066,11 @@ def _write_raw_list(path: Path, warnings: list[dict], config: str) -> None:
         + (body + "\n" if body else ""), encoding="utf-8")
 
 
-def _build_config(build_dir: Path, paths: list[str] | None = None) -> str:
+def _build_config(
+    build_dir: Path, paths: list[str] | None = None, *,
+    check_filter: str | None = None, include_tests: bool = False,
+    include_generated: bool = False, denoise: bool = True,
+) -> str:
     """Describe the configuration in *build_dir*, for the report header.
 
     The findings depend on it -- the path-sensitive clang-analyzer checks
@@ -1009,10 +1079,18 @@ def _build_config(build_dir: Path, paths: list[str] | None = None) -> str:
     list is therefore only comparable against one taken the same way, so say
     which way that was rather than leaving it to be guessed.  A --path scope
     belongs here for the same reason: it decides which files are analyzed at
-    all, so a narrowed list must not be read as a whole-tree one.
+    all, so a narrowed list must not be read as a whole-tree one. Check filters,
+    test/generated-source selection and denoising likewise change what appears.
     """
-    scope = [f"scope={' '.join(_norm_pattern(p) for p in paths)}"] if paths \
-        else []
+    selections = [
+        "checks=" + json.dumps(check_filter or "configured"),
+        f"tests={'on' if include_tests else 'off'}",
+        f"generated={'on' if include_generated else 'off'}",
+        f"denoise={'on' if denoise else 'off'}",
+    ]
+    if paths:
+        selections.append("scope=" + json.dumps(
+            sorted({_norm_pattern(p) for p in paths})))
     cache = build_dir / "CMakeCache.txt"
     wanted = {
         "CMAKE_BUILD_TYPE": "build",
@@ -1029,10 +1107,10 @@ def _build_config(build_dir: Path, paths: list[str] | None = None) -> str:
             if name in wanted:
                 found[wanted[name]] = value.strip()
     except OSError:
-        return ", ".join(["unknown (no CMakeCache.txt)"] + scope)
+        return ", ".join(["unknown (no CMakeCache.txt)"] + selections)
     if "compiler" in found:
         found["compiler"] = Path(found["compiler"]).name
-    parts = [f"{k}={v}" for k, v in found.items() if v] + scope
+    parts = [f"{k}={v}" for k, v in found.items() if v] + selections
     return ", ".join(parts) if parts else "unknown"
 
 
@@ -1221,7 +1299,11 @@ def main() -> int:
     else:
         kept, suppressed = _denoise(warnings, ROOT)
 
-    config = _build_config(build_dir, args.path)
+    config = _build_config(
+        build_dir, args.path, check_filter=args.check,
+        include_tests=args.tests, include_generated=args.generated,
+        denoise=not args.no_denoise,
+    )
     print(
         f"{len(kept)} warning(s)"
         f"{f', {len(suppressed)} suppressed' if suppressed else ''}"
