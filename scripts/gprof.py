@@ -31,7 +31,20 @@ KNOWN_BOOL_OPTIONS = {
     "ENABLE_SYSTEMD": "OFF",
 }
 CACHE_LINE_RE = re.compile(r"^([A-Za-z0-9_]+):[^=]+=(.*)$")
-PER_CALL_MICROSECONDS = {"s": 1e6, "ms": 1e3, "us": 1.0, "ns": 1e-3}
+# GNU gprof uses uppercase K for kilo and defaults to T with no sampled time.
+PER_CALL_MICROSECONDS = {
+    "Ts": 1e18,
+    "Gs": 1e15,
+    "Ms": 1e12,
+    "Ks": 1e9,
+    "s": 1e6,
+    "ms": 1e3,
+    "us": 1.0,
+    "ns": 1e-3,
+    "ps": 1e-6,
+    "fs": 1e-9,
+    "as": 1e-12,
+}
 
 
 @dataclass
@@ -715,9 +728,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
-    cmake = ensure_tool(args.cmake)
+    cmake = args.cmake
+    if not args.skip_configure or not args.skip_build:
+        cmake = ensure_tool(cmake)
     gprof = ensure_tool(args.gprof)
-    iperf3 = ensure_tool(args.iperf3)
+    iperf3 = args.iperf3
+    if not args.skip_benchmark:
+        iperf3 = ensure_tool(iperf3)
     ensure_project_root(ROOT)
 
     base_build_dir = resolve_path(ROOT, args.build_dir)
