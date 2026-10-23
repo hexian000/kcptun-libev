@@ -1,181 +1,141 @@
 /* kcptun-libev (c) 2019-2026 He Xian <hexian000@outlook.com>
  * This code is licensed under MIT license (see LICENSE for details) */
 
-#define main kcptun_main
-#include "main.c"
-
-#undef main
+#include "server.h"
 
 #include "conf.h"
 #include "crypto.h"
 #include "event.h"
 #include "nonce.h"
-#include "server.h"
-#include "util.h"
 #include "pktqueue.h"
 #include "session.h"
+#include "util.h"
 
 #include "algo/hashtable.h"
 #include "binary/serialize.h"
+#include "io/file.h"
 #include "os/socket.h"
 #include "utils/debug.h"
 #include "utils/slog.h"
 
 #include <ev.h>
-
 #if WITH_CRYPTO
 #include <sodium.h>
 #endif
 
 #include <errno.h>
 #include <netinet/in.h>
-#include <sys/socket.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 
 static int fail_alloc, allocations;
-static int fail_socket, fail_bind, fail_connect, fail_options, fail_crypto;
+static int fail_socket, fail_bind, fail_connect, fail_options;
 static int fail_nonblock, fail_strdup, fail_getsockname;
 static int sockets;
 static int device_calls, fail_device_at;
 static const char *bind_source = "127.0.0.1:0";
 static size_t sent;
 
-bool real_queue_send(struct server *s, struct msgframe *msg) __asm__(
-	"__real_queue_send");
-bool test_queue_send(struct server *s, struct msgframe *msg) __asm__(
-	"__wrap_queue_send");
-bool test_queue_send(struct server *s, struct msgframe *msg)
+static bool test_queue_send(struct server *s, struct msgframe *msg)
 {
 	sent++;
-	return real_queue_send(s, msg);
+	return queue_send(s, msg);
 }
 static char captured[65536];
 static size_t captured_len;
 
-void *real_malloc(size_t n) __asm__("__real_malloc");
-void *test_malloc(size_t n) __asm__("__wrap_malloc");
-void *test_malloc(size_t n)
+static void *test_malloc(size_t n)
 {
 	allocations++;
 	if (fail_alloc > 0 && allocations == fail_alloc) {
 		return NULL;
 	}
-	return real_malloc(n);
+	return malloc(n);
 }
 
-char *real_strdup(const char *text) __asm__("__real_strdup");
-char *test_strdup(const char *text) __asm__("__wrap_strdup");
-char *test_strdup(const char *text)
+static char *test_strdup(const char *text)
 {
 	if (fail_strdup) {
 		fail_strdup = 0;
 		return NULL;
 	}
-	return real_strdup(text);
+	return strdup(text);
 }
 
-int real_socket_set_nonblock(int fd) __asm__("__real_socket_set_nonblock");
-int test_socket_set_nonblock(int fd) __asm__("__wrap_socket_set_nonblock");
-int test_socket_set_nonblock(int fd)
+static int test_socket_set_nonblock(int fd)
 {
 	if (fail_nonblock) {
 		fail_nonblock = 0;
 		return EINVAL;
 	}
-	return real_socket_set_nonblock(fd);
+	return socket_set_nonblock(fd);
 }
 
-bool real_bind_netdev(int fd, const char *device) __asm__(
-	"__real_socket_bind_netdev");
-bool test_bind_netdev(int fd, const char *device) __asm__(
-	"__wrap_socket_bind_netdev");
-bool test_bind_netdev(int fd, const char *device)
+static bool test_bind_netdev(int fd, const char *device)
 {
 	if (strcmp(device, "test-device") == 0) {
 		return ++device_calls != fail_device_at;
 	}
-	return real_bind_netdev(fd, device);
+	return socket_bind_netdev(fd, device);
 }
 
-int real_socket(int domain, int type, int protocol) __asm__("__real_socket");
-int test_socket(int domain, int type, int protocol) __asm__("__wrap_socket");
-int test_socket(int domain, int type, int protocol)
+static int test_socket(int domain, int type, int protocol)
 {
 	if (fail_socket) {
 		fail_socket = 0;
 		errno = EMFILE;
 		return -1;
 	}
-	const int fd = real_socket(domain, type, protocol);
+	const int fd = socket(domain, type, protocol);
 	if (fd >= 0) {
 		sockets++;
 	}
 	return fd;
 }
 
-int real_close(int fd) __asm__("__real_close");
-int test_close(int fd) __asm__("__wrap_close");
-int test_close(int fd)
+static void test_socket_close(int fd)
 {
 	sockets--;
-	return real_close(fd);
+	socket_close(fd);
 }
 
-int real_bind(int fd, const struct sockaddr *addr, socklen_t len) __asm__(
-	"__real_bind");
-int test_bind(int fd, const struct sockaddr *addr, socklen_t len) __asm__(
-	"__wrap_bind");
-int test_bind(int fd, const struct sockaddr *addr, socklen_t len)
+static int test_bind(int fd, const struct sockaddr *addr, socklen_t len)
 {
 	if (fail_bind) {
 		fail_bind = 0;
 		errno = EADDRINUSE;
 		return -1;
 	}
-	return real_bind(fd, addr, len);
+	return bind(fd, addr, len);
 }
 
-int real_connect(int fd, const struct sockaddr *addr, socklen_t len) __asm__(
-	"__real_connect");
-int test_connect(int fd, const struct sockaddr *addr, socklen_t len) __asm__(
-	"__wrap_connect");
-int test_connect(int fd, const struct sockaddr *addr, socklen_t len)
+static int test_connect(int fd, const struct sockaddr *addr, socklen_t len)
 {
 	if (fail_connect) {
 		fail_connect = 0;
 		errno = ENETUNREACH;
 		return -1;
 	}
-	return real_connect(fd, addr, len);
+	return connect(fd, addr, len);
 }
 
-int real_setsockopt(
-	int fd, int level, int name, const void *value,
-	socklen_t len) __asm__("__real_setsockopt");
-int test_setsockopt(
-	int fd, int level, int name, const void *value,
-	socklen_t len) __asm__("__wrap_setsockopt");
-int test_setsockopt(
-	int fd, int level, int name, const void *value, socklen_t len)
+static int
+test_setsockopt(int fd, int level, int name, const void *value, socklen_t len)
 {
 	if (fail_options) {
 		fail_options = 0;
 		errno = ENOBUFS;
 		return -1;
 	}
-	return real_setsockopt(fd, level, name, value, len);
+	return setsockopt(fd, level, name, value, len);
 }
 
-int real_getsockname(int fd, struct sockaddr *addr, socklen_t *len) __asm__(
-	"__real_getsockname");
-int test_getsockname(int fd, struct sockaddr *addr, socklen_t *len) __asm__(
-	"__wrap_getsockname");
-int test_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
+static int test_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
 {
 	if (fail_getsockname > 0) {
 		fail_getsockname--;
@@ -184,21 +144,80 @@ int test_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
 			return -1;
 		}
 	}
-	return real_getsockname(fd, addr, len);
+	return getsockname(fd, addr, len);
 }
 
 #if WITH_CRYPTO
-struct crypto *real_crypto_new(const char *method) __asm__("__real_crypto_new");
-struct crypto *test_crypto_new(const char *method) __asm__("__wrap_crypto_new");
-struct crypto *test_crypto_new(const char *method)
+static int fail_crypto;
+
+static struct crypto *test_crypto_new(const char *method)
 {
 	if (fail_crypto) {
 		fail_crypto = 0;
 		return NULL;
 	}
-	return real_crypto_new(method);
+	return crypto_new(method);
 }
 #endif /* WITH_CRYPTO */
+
+static int test_reuseport(int fd, bool reuseport)
+{
+	if (fail_options) {
+		fail_options = 0;
+		return ENOBUFS;
+	}
+	return socket_set_reuseport(fd, reuseport);
+}
+
+static struct io_stream *test_filewriter(FILE *file)
+{
+	allocations++;
+	if (fail_alloc > 0 && allocations == fail_alloc) {
+		return NULL;
+	}
+	return io_filewriter(file);
+}
+
+#define malloc test_malloc
+#include "crypto.c"
+#include "nonce.c"
+#if WITH_CRYPTO
+#define crypto_new test_crypto_new
+#endif
+#define strdup test_strdup
+#define socket test_socket
+#define socket_close test_socket_close
+#define bind test_bind
+#define connect(fd, addr, len) test_connect(fd, addr, len)
+#define getsockname test_getsockname
+#define setsockopt test_setsockopt
+#define socket_set_nonblock test_socket_set_nonblock
+#define io_filewriter test_filewriter
+#include "util.c"
+#define socket_bind_netdev test_bind_netdev
+#define socket_set_reuseport test_reuseport
+#include "conf.c"
+#include "server.c"
+#define queue_send test_queue_send
+#include "session.c"
+#undef queue_send
+#include "pktqueue.c"
+#define main kcptun_main
+#include "main.c"
+#undef main
+#undef malloc
+#undef crypto_new
+#undef strdup
+#undef socket
+#undef socket_close
+#undef bind
+#undef connect
+#undef getsockname
+#undef setsockopt
+#undef socket_set_nonblock
+#undef io_filewriter
+#undef socket_bind_netdev
+#undef socket_set_reuseport
 
 static void capture(void *user, const unsigned char *buf, size_t len)
 {
