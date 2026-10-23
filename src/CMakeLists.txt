@@ -3,6 +3,7 @@ add_executable(kcptun-libev main.c
     util.c util.h
     conf.c conf.h
     conf_schema.gen.c conf_schema.gen.h
+    conf_presence.gen.c conf_presence.gen.h
     pktqueue.c pktqueue.h
     session.c session.h
     server.c server.h
@@ -239,4 +240,29 @@ if(BUILD_TESTING)
     add_test(NAME session_lifecycle COMMAND session_test lifecycle)
     add_test(NAME session_timeouts COMMAND session_test timeouts)
     add_dependencies(check session_test)
+endif()
+
+if(BUILD_TESTING)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tmp")
+    foreach(conf_variant supported no_crypto no_obfs)
+        set(conf_target conf_${conf_variant}_test)
+        add_executable(${conf_target} conf_test.c conf_schema.gen.c conf_presence.gen.c)
+        target_compile_options(${conf_target} PRIVATE
+            "-include${CMAKE_CURRENT_BINARY_DIR}/config.h" -pedantic -Wall -Wextra -Werror)
+        target_compile_definitions(${conf_target} PRIVATE _GNU_SOURCE)
+        if(conf_variant STREQUAL "no_crypto")
+            target_compile_definitions(${conf_target} PRIVATE TEST_NO_CRYPTO)
+        elseif(conf_variant STREQUAL "no_obfs")
+            target_compile_definitions(${conf_target} PRIVATE TEST_NO_OBFS)
+        endif()
+        target_include_directories(${conf_target} SYSTEM PRIVATE ${LIBEV_INCLUDE_DIR})
+        target_link_libraries(${conf_target} PRIVATE csnippets)
+        if(WITH_SODIUM)
+            target_include_directories(${conf_target} SYSTEM PRIVATE ${SODIUM_INCLUDE_DIR})
+            target_link_libraries(${conf_target} PRIVATE ${SODIUM_LIBRARY})
+        endif()
+        add_test(NAME ${conf_target} COMMAND ${conf_target}
+            "${CMAKE_BINARY_DIR}/tmp/${conf_target}.json")
+        add_dependencies(check ${conf_target})
+    endforeach()
 endif()

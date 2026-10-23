@@ -3,6 +3,7 @@
 
 #include "conf.h"
 
+#include "conf_presence.gen.h"
 #include "conf_schema.gen.h"
 #include "util.h"
 
@@ -139,6 +140,20 @@ static bool dup_field(
 static bool conf_apply(
 	struct config *restrict conf, const struct json_conf *restrict parsed)
 {
+#if !WITH_CRYPTO
+	if (parsed->method.str != NULL || parsed->password.str != NULL ||
+	    parsed->psk.str != NULL) {
+		LOGE("config: crypto settings are unavailable in this build");
+		return false;
+	}
+#endif /* !WITH_CRYPTO */
+#if !WITH_OBFS
+	if (parsed->obfs.str != NULL) {
+		LOGE("config: obfs is unavailable in this build");
+		return false;
+	}
+#endif /* !WITH_OBFS */
+
 	COPY_STRING(conf->listen, listen);
 	COPY_STRING(conf->connect, connect);
 	COPY_STRING(conf->kcp_bind, kcp_bind);
@@ -200,6 +215,64 @@ static bool conf_apply(
 	conf->time_wait = narrow_uint_to_int(parsed->time_wait);
 	conf->log_level = narrow_uint_to_int(parsed->loglevel);
 	return true;
+}
+
+#undef COPY_STRING
+
+/* The view borrows the explicit input and generated defaults. Missing
+ * strings remain NULL so they do not enable a transport or crypto mode. */
+static struct json_conf
+conf_merge(const struct json_conf *defaults, const struct present_conf *input)
+{
+	struct json_conf parsed = *defaults;
+#define COPY_FIELD(dst, src, field)                                            \
+	do {                                                                   \
+		if ((src).has_##field) {                                       \
+			(dst).field = (src).field;                             \
+		}                                                              \
+	} while (0)
+#define COPY_STRING(dst, src, field)                                           \
+	((dst).field =                                                         \
+		 (src).has_##field ? (src).field : (struct json_string){ 0 })
+	COPY_STRING(parsed, (*input), connect);
+	COPY_STRING(parsed, (*input), http_listen);
+	COPY_FIELD(parsed.kcp, (*input).kcp, flush);
+	COPY_FIELD(parsed.kcp, (*input).kcp, interval);
+	COPY_FIELD(parsed.kcp, (*input).kcp, mtu);
+	COPY_FIELD(parsed.kcp, (*input).kcp, nc);
+	COPY_FIELD(parsed.kcp, (*input).kcp, nodelay);
+	COPY_FIELD(parsed.kcp, (*input).kcp, rcvwnd);
+	COPY_FIELD(parsed.kcp, (*input).kcp, resend);
+	COPY_FIELD(parsed.kcp, (*input).kcp, sndwnd);
+	COPY_STRING(parsed, (*input), kcp_bind);
+	COPY_STRING(parsed, (*input), kcp_connect);
+	COPY_FIELD(parsed, (*input), keepalive);
+	COPY_FIELD(parsed, (*input), linger);
+	COPY_STRING(parsed, (*input), listen);
+	COPY_STRING(parsed, (*input), log);
+	COPY_FIELD(parsed, (*input), loglevel);
+	COPY_FIELD(parsed, (*input), max_services);
+	COPY_STRING(parsed, (*input), method);
+	COPY_STRING(parsed, (*input), netdev);
+	COPY_STRING(parsed, (*input), obfs);
+	COPY_STRING(parsed, (*input), password);
+	COPY_STRING(parsed, (*input), psk);
+	COPY_STRING(parsed, (*input), rendezvous_server);
+	COPY_STRING(parsed, (*input), service_id);
+	COPY_FIELD(parsed.tcp, (*input).tcp, keepalive);
+	COPY_FIELD(parsed.tcp, (*input).tcp, nodelay);
+	COPY_FIELD(parsed.tcp, (*input).tcp, rcvbuf);
+	COPY_FIELD(parsed.tcp, (*input).tcp, reuseport);
+	COPY_FIELD(parsed.tcp, (*input).tcp, sndbuf);
+	COPY_FIELD(parsed, (*input), time_wait);
+	COPY_FIELD(parsed, (*input), timeout);
+	COPY_FIELD(parsed.udp, (*input).udp, rcvbuf);
+	COPY_FIELD(parsed.udp, (*input).udp, reuseport);
+	COPY_FIELD(parsed.udp, (*input).udp, sndbuf);
+	COPY_STRING(parsed, (*input), user);
+#undef COPY_STRING
+#undef COPY_FIELD
+	return parsed;
 }
 
 /* Read the entire file at path into a heap-allocated, NUL-terminated buffer.
@@ -269,16 +342,26 @@ struct config *conf_read(const char *path)
 		return NULL;
 	}
 
-	struct json_conf parsed = { 0 };
-	if (!json_unmarshal_conf(&parsed, buf, buflen)) {
+	struct present_conf input = { 0 };
+	if (!present_unmarshal_conf(&input, buf, buflen)) {
 		LOGE_F("config: failed to parse `%s'", path);
 		free(buf);
 		conf_free(conf);
 		return NULL;
 	}
-
+	char empty[] = "{}";
+	struct json_conf defaults = { 0 };
+	if (!json_unmarshal_conf(&defaults, empty, sizeof(empty) - 1)) {
+		LOGOOM();
+		present_free_conf(&input);
+		free(buf);
+		conf_free(conf);
+		return NULL;
+	}
+	const struct json_conf parsed = conf_merge(&defaults, &input);
 	const bool ok = conf_apply(conf, &parsed);
-	json_free_conf(&parsed);
+	json_free_conf(&defaults);
+	present_free_conf(&input);
 	free(buf);
 	if (!ok) {
 		conf_free(conf);

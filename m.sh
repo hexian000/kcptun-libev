@@ -7,6 +7,9 @@ case "$1" in
 "gen")
     # conf: parsed once at startup — optimize for binary size
     python3 scripts/gen_schema.py --prefix json_ --optimize size --generate unmarshal src/conf_schema.json
+    # Keep explicit input separate from the complete schema defaults.
+    python3 scripts/gen_schema.py --prefix present_ --optimize size --generate unmarshal \
+        --presence --output-name conf_presence src/conf_schema.json
     ;;
 "fmt")
     # format code

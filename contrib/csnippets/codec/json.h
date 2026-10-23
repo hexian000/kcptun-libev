@@ -43,7 +43,7 @@ enum json_type {
 	JSON_OBJECT,
 };
 
-/** String fragment pointed into the original JSON buffer. */
+/** Length-bearing bytes; the enclosing API defines their storage lifetime. */
 struct json_string {
 	size_t len;
 	/* Not NUL-terminated */
@@ -324,17 +324,71 @@ int json_arr_next(
  * @{
  */
 
-/** Element type of a struct field described by a json_field. */
+/** Representation of an unconstrained map value. Numbers retain their exact
+ * JSON spelling; containers retain complete, undecoded JSON fragments. */
+struct json_value {
+	enum json_type type;
+	union {
+		bool b;
+		struct json_string text;
+	};
+};
+
+/** A borrowed path, ordered from this segment back to its parent. Map keys
+ * carry both their decoded bytes and their position, preserving duplicates.
+ * All pointers are valid only for the synchronous callback. */
+struct json_path {
+	const struct json_path *parent;
+	enum { JSON_PATH_PROPERTY, JSON_PATH_INDEX, JSON_PATH_MAP } kind;
+	struct json_string key;
+	size_t index;
+};
+
+enum json_error_kind {
+	JSON_E_SYNTAX,
+	JSON_E_TYPE,
+	JSON_E_CONSTRAINT,
+	JSON_E_RANGE,
+	JSON_E_REQUIRED,
+	JSON_E_UNKNOWN,
+	JSON_E_ALLOCATION
+};
+
+struct json_error {
+	enum json_error_kind kind;
+	const struct json_path *path;
+	const struct json_constraint *constraint;
+	bool has_offset;
+	size_t offset;
+};
+
+/** Filter actual map entries, before typed parsing or output. The path names
+ * the owning map. Return true to retain. Output predicates must be stable
+ * across sizing and writing. No prefix has a built-in comment meaning. */
+struct json_options {
+	bool (*filter)(
+		void *context, const struct json_path *map, const char *key,
+		size_t key_len);
+	void (*error)(void *context, const struct json_error *error);
+	void *context;
+};
+
+/** Render an escaped JSON path (snprintf semantics), including map positions.
+ * Empty keys and embedded NULs are escaped without C-string assumptions. */
+int json_format_path(char *buf, size_t bufsz, const struct json_path *path);
+
 enum json_type_kind {
-	JSON_K_STRING, /* struct json_string */
-	JSON_K_INT, /* int */
-	JSON_K_IMAX, /* intmax_t */
-	JSON_K_UINT, /* unsigned */
-	JSON_K_UMAX, /* uintmax_t */
-	JSON_K_DOUBLE, /* double */
-	JSON_K_BOOL, /* bool */
-	JSON_K_OBJECT, /* nested struct, described by json_field.child */
-	JSON_K_DYNAMIC, /* raw JSON fragment stored as a struct json_string */
+	JSON_K_STRING,
+	JSON_K_INT,
+	JSON_K_IMAX,
+	JSON_K_UINT,
+	JSON_K_UMAX,
+	JSON_K_DOUBLE,
+	JSON_K_BOOL,
+	JSON_K_OBJECT,
+	JSON_K_DYNAMIC,
+	JSON_K_NULL,
+	JSON_K_VALUE
 };
 
 /** Presence bits for json_constraint.flags. */
@@ -387,83 +441,133 @@ struct json_constraint {
 	};
 };
 
-/** Description of one struct field, addressed by byte offset. */
+/** Description of a fixed member, array element, map value, or typed extra.
+ * Array pointer slots are accessed using the matching element pointer type. */
 struct json_field {
 	const char *name;
 	size_t name_len;
 	enum json_type_kind kind;
 	bool is_array;
-	/* true if the schema marks this field required; the marshaller always
-	 * emits a required field even when empty/NULL: an array as [], an
-	 * object as {}, a string as "", a dynamic fragment as null.  Independent
-	 * of req_bit, which is set only when unmarshal validation is generated,
-	 * so marshal presence stays correct under --no-validate. */
 	bool required;
-	/* presence-bit index for a required field, or -1 if optional */
 	int_least8_t req_bit;
-	size_t offset; /* offsetof(struct, field) */
-	size_t count_offset; /* arrays: offsetof(struct, field_count) */
-	const struct json_schema *child; /* object / array-of-object element */
-	const struct json_constraint *constraint; /* NULL when unconstrained */
+	size_t offset;
+	size_t count_offset;
+	const struct json_schema *child;
+	const struct json_constraint *constraint;
+	/* JSON_ERROR accepts any fragment; otherwise enforces this raw type. */
+	enum json_type raw_type;
 };
 
-/** Description of one JSON object scope (a generated struct type). */
+struct json_context;
+struct json_output;
+
+/** Immutable object descriptor. Regenerate codecs when this layout changes.
+ * Zero initialization allows unknown fields. Presence callbacks access typed
+ * bitfields; no bit layout, address, or offsetof of a bitfield is assumed. */
 struct json_schema {
 	const struct json_field *fields;
-	size_t n_fields; /* fields are in lookup-index order */
-	size_t obj_size; /* sizeof(struct); also the array element size */
-	/* key -> field index, or -1; matches the fields[] order */
+	size_t n_fields;
+	size_t obj_size;
 	int (*lookup)(const char *str, size_t len);
-	/* Static image to copy in, or NULL == all-zero. Every array pointer in
-	 * it, at any nesting depth, must be NULL: the image is shared and not
-	 * owned, while an unmarshal that fails part-way frees whatever the
-	 * object holds at that moment, which for an untouched field is still
-	 * whatever this image supplied. gen_schema.py never emits an array
-	 * default; a hand-authored table must observe the same rule. */
-	const void *defaults;
-	uint_least64_t required_mask; /* OR of (1 << req_bit) over required */
-	int present_field; /* sentinel field index for optional nested
-			      objects, or -1 to always emit */
-	bool strict; /* reject unknown keys (additionalProperties: false) */
+	uint_least64_t required_mask;
+	enum { JSON_EXTRA_ALLOW, JSON_EXTRA_REJECT, JSON_EXTRA_TYPED } extra;
+	const struct json_field *extra_value;
+	bool is_map;
+	size_t entry_size;
+	size_t entries_offset;
+	size_t count_offset;
+	const struct json_field *map_value;
+	bool (*get_present)(const void *obj, size_t field);
+	void (*set_present)(void *obj, size_t field, bool present);
+	const char *default_json;
+	size_t default_len;
+	bool has_default_storage;
+	size_t default_storage_offset;
+	/* Optional fast-backend object implementations; size tables omit these. */
+	bool (*read)(
+		const struct json_schema *, void *, char *, size_t,
+		struct json_context *, const struct json_path *, bool);
+	void (*release)(const struct json_schema *, void *);
+	void (*write)(
+		const struct json_schema *, const void *, struct json_output *,
+		const struct json_path *, int);
 };
 
-/**
- * @brief Unmarshal JSON into *obj using a schema table; modifies @p json.
- * @param schema Descriptor table for the target struct type.
- * @param obj Output; given the schema defaults (or zeroed) before parsing.
- * @param json Mutable JSON; @p obj aliases it, so keep it valid while in use.
- * @param length Length of @p json in bytes.
- * @return true on success; on failure, false and *obj reset to all-zero.
- */
+/** Unmarshal modifies input once and borrows its strings/fragments. Keep the
+ * input alive until the object is freed. Default backing and entry/array
+ * allocations are owned independently per instance. Input must not alias obj.
+ * The error callback runs once on the first failure, before cleanup. Default
+ * mode resets the complete object on failure. Presence mode clears only its
+ * flags and releases initialized resources; absent member storage is untouched.
+ * Do not parse over a live object without freeing it first. */
+bool json_unmarshal_ex(
+	const struct json_schema *schema, void *obj, char *json, size_t length,
+	const struct json_options *options);
 bool json_unmarshal(
 	const struct json_schema *restrict schema, void *obj, char *json,
 	size_t length);
 
-/**
- * @brief Marshal *obj into @p buf as JSON (snprintf semantics).
- * @param schema Descriptor table for the source struct type.
- * @param buf Output buffer, or NULL to only compute the size.
- * @param bufsz Size of @p buf in bytes.
- * @param obj Object to encode.
- * @param indent Per-level indent for pretty output, or NULL for compact.
- * @return Byte length excluding NUL (truncates if >= @p bufsz), or -1 on error,
- * including a string field that is not well-formed UTF-8.
- * @note An optional array is carried as a NULL buffer with count 0, which is
- * exactly what an explicit `[]` unmarshals to, so the two are indistinguishable
- * by the time marshalling runs: an optional array that was present but empty in
- * the input is omitted here rather than re-emitted as `[]`. Required arrays are
- * unaffected -- those are always emitted, empty or not.
- */
+/** Marshal uses snprintf semantics; NULL buf queries length. Default mode
+ * emits every field. Presence mode reads/emits only flagged members. Caller
+ * construction in presence mode must initialize a member before setting its
+ * flag. Map filters never mutate the source; sizing/writing use the same rule. */
+int json_marshal_ex(
+	const struct json_schema *schema, char *buf, size_t bufsz,
+	const void *obj, const char *indent,
+	const struct json_options *options);
 int json_marshal(
 	const struct json_schema *restrict schema, char *restrict buf,
 	size_t bufsz, const void *restrict obj, const char *restrict indent);
-
-/**
- * @brief Free heap-allocated fields (arrays, nested objects) inside *obj.
- * @param schema Descriptor table for the struct type.
- * @param obj Object whose owned allocations are released.
- */
 void json_free(const struct json_schema *restrict schema, void *restrict obj);
+
+/** Shared generated-code machinery. Fast codecs supply object dispatch and
+ * direct named presence accesses; size codecs interpret the same value tables.
+ * Applications normally use the entry points above or generated wrappers. */
+struct json_context {
+	char *root;
+	size_t length;
+	const struct json_options *options;
+	bool reported;
+	bool fallback;
+};
+struct json_output {
+	char *buf;
+	size_t size, length;
+	const char *indent;
+	const struct json_options *options;
+};
+bool json_codec_error(
+	struct json_context *context, const struct json_path *path,
+	enum json_error_kind kind, const struct json_constraint *constraint,
+	const char *position);
+bool json_codec_init(
+	const struct json_schema *schema, void *obj,
+	struct json_context *context, const struct json_path *path,
+	bool fallback);
+bool json_codec_read(
+	const struct json_schema *schema, void *obj, char *json, size_t length,
+	struct json_context *context, const struct json_path *path,
+	bool fallback);
+bool json_codec_field(
+	const struct json_field *field, void *obj, char *json, size_t length,
+	struct json_context *context, const struct json_path *path);
+bool json_codec_extra(
+	const struct json_schema *schema, char *json, size_t length,
+	struct json_context *context, const struct json_path *path);
+void json_codec_release(const struct json_field *field, void *obj);
+void json_codec_storage(const struct json_schema *schema, void *obj);
+void json_codec_write(
+	const struct json_schema *schema, const void *obj,
+	struct json_output *output, const struct json_path *path, int depth);
+void json_codec_write_field(
+	const struct json_field *field, const void *obj,
+	struct json_output *output, const struct json_path *path, int depth);
+void json_codec_open(struct json_output *output, char bracket);
+void json_codec_key(
+	struct json_output *output, const char *key, size_t length, int depth,
+	bool *first);
+void json_codec_close(
+	struct json_output *output, char bracket, int depth, bool first);
 
 /** @} */
 

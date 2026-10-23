@@ -3,7 +3,7 @@
 
 #include "json.h"
 
-#include "meta/arraysize.h"
+#include "math/float.h"
 #include "strings/string.h"
 #include "strings/utf8.h"
 #include "utils/ctype_ascii.h"
@@ -341,10 +341,10 @@ struct json_val json_parse(char *restrict json, size_t *restrict len)
 	return (struct json_val){ .type = JSON_ERROR };
 }
 
-/* Maximum size of the stack buffer used to NUL-terminate a number token before
- * handing it to the strto*() family.  A token longer than this is necessarily
- * out of range for any supported integer type. */
-#define JSON_NUM_BUFSIZE 64
+/* One decimal digit per representation bit is a conservative bound for every
+ * supported integer, with room for a sign and NUL. This also covers the
+ * double formatter's 17 significant digits, sign, radix, and exponent. */
+#define JSON_NUM_BUFSIZE (sizeof(uintmax_t) * CHAR_BIT + 2)
 
 /* num_to_buf: copy a non-NUL-terminated number token into a NUL-terminated
  * stack buffer so the strto*() family can be used without reading past the
@@ -462,37 +462,6 @@ bool json_parse_umax(char *restrict val, size_t vlen, uintmax_t *restrict out)
 	return true;
 }
 
-/* Exact powers of ten representable as double (10^0 .. 10^22).  10^22 is the
- * largest power of ten exactly representable as a double, so it bounds the
- * exact fast path in json_scale10.  Do not extend this table with an inexact
- * entry (e.g. 10^23) without revisiting that path. */
-static const double json_pow10[] = {
-	1e0,  1e1,  1e2,  1e3,	1e4,  1e5,  1e6,  1e7,	1e8,  1e9,  1e10, 1e11,
-	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
-};
-static_assert(
-	ARRAY_SIZE(json_pow10) == 23,
-	"json_pow10 must hold exactly 10^0..10^22, the largest exact "
-	"power of ten; json_scale10's fast path depends on the bound");
-
-/* json_scale10: return mant * 10^exp as the nearest double.  Both operands are
- * exactly representable -- mant because it is at most 2^53, the power of ten
- * because it is tabulated exact -- so this single IEEE operation is correctly
- * rounded, provided it is evaluated in double itself (FLT_EVAL_METHOD == 0).
- * Under a wider evaluation format (e.g. the x87 FPU, FLT_EVAL_METHOD == 2) the
- * result is rounded to extended precision first and to double again on
- * return, which lands 1 ULP off for some inputs, so json_strtod takes this
- * path only when FLT_EVAL_METHOD == 0.  This is only the exact fast path;
- * json_strtod defers every other token to strtod, so no saturation or libm
- * dependency arises here. */
-static double json_scale10(const uint_fast64_t mant, const int exp)
-{
-	assert(mant <= (UINT64_C(1) << 53));
-	assert(-22 <= exp && exp <= 22);
-	const double m = (double)mant;
-	return exp >= 0 ? m * json_pow10[exp] : m / json_pow10[-exp];
-}
-
 /* json_isfinite: libm-free finite test against the <float.h> bounds, so
  * codec/json.c needs no <math.h> / libm dependency. */
 static bool json_isfinite(double v)
@@ -501,27 +470,15 @@ static bool json_isfinite(double v)
 }
 
 /* json_strtod: locale-independent conversion of a JSON number token (as
- * produced by scan_number) into a double.  s[0..len-1] need not be
- * NUL-terminated.  Returns false if the token is not a valid number, or if
- * its magnitude overflows the double range: a JSON number can never itself
- * denote infinity, so a non-finite strtod result means the value is out of
- * range.  (Underflow to a subnormal or ±0 is the correctly-rounded nearest
- * double and stays a success, matching how every other value is rounded.)
- *
- * The significant digits are collected verbatim (the radix character folded
- * into a base-10 exponent) and handed to strtod, which rounds the full value
- * exactly once.  strtod's only locale-dependent input is the radix character,
- * which the reconstructed <digits>e<exp> token never carries, so the result
- * stays locale-independent.  Where double arithmetic is evaluated in double
- * (FLT_EVAL_METHOD == 0), a token whose mantissa is an integer <= 2^53 with a
- * small exponent takes json_scale10's exact fast path instead.  At most
- * JSON_STRTOD_MAXSIG significant digits are retained; any further nonzero digit
- * folds into a sticky low-order guard, so an over-long mantissa still rounds on
- * the correct side of the retained value. */
+ * produced by scan_number) into the nearest double, with ties to even.
+ * Integer-based float_fromdecimal keeps that policy independent of the caller's
+ * rounding mode. Underflow to a subnormal or signed zero remains a success;
+ * overflow to infinity fails. The bounded significant digit buffer retains a
+ * nonzero guard for any dropped tail so ties still round on the correct side.
+ * s[0..len-1] need not be NUL-terminated. */
 static bool
 json_strtod(const char *restrict s, const size_t len, double *restrict out)
 {
-	enum { JSON_STRTOD_MAXSIG = 768 };
 	size_t i = 0;
 	bool neg = false;
 	if (i < len && s[i] == '-') {
@@ -531,11 +488,10 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 	if (i >= len || !isdigit((unsigned char)s[i])) {
 		return false;
 	}
-	char digits[JSON_STRTOD_MAXSIG];
+	char digits[FLOAT_ROUND_DIGITS + 1];
 	int ndig = 0; /* significant digits captured in digits[] */
 	int_fast64_t exp10 =
 		0; /* base-10 exponent of digits[] read as integer */
-	uint_fast64_t mant = 0; /* value of digits[] while ndig <= 19 */
 	bool seen_nonzero = false;
 	bool nonzero_dropped = false;
 	/* integer part */
@@ -546,11 +502,8 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 			continue; /* skip leading zeros */
 		}
 		seen_nonzero = true;
-		if (ndig < JSON_STRTOD_MAXSIG) {
+		if (ndig < FLOAT_ROUND_DIGITS) {
 			digits[ndig++] = (char)('0' + d);
-			if (ndig <= 19) {
-				mant = mant * 10 + d;
-			}
 		} else {
 			exp10++; /* digit retained only as magnitude */
 			nonzero_dropped = nonzero_dropped || d != 0;
@@ -570,11 +523,8 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 				continue;
 			}
 			seen_nonzero = true;
-			if (ndig < JSON_STRTOD_MAXSIG) {
+			if (ndig < FLOAT_ROUND_DIGITS) {
 				digits[ndig++] = (char)('0' + d);
-				if (ndig <= 19) {
-					mant = mant * 10 + d;
-				}
 				exp10--;
 			} else {
 				nonzero_dropped = nonzero_dropped || d != 0;
@@ -608,36 +558,23 @@ json_strtod(const char *restrict s, const size_t len, double *restrict out)
 		*out = neg ? -0.0 : 0.0;
 		return true;
 	}
-	/* Exact fast path: an integer mantissa <= 2^53 scaled by a tabulated
-	 * exact power of ten rounds in one correctly-rounded IEEE operation,
-	 * but only when double arithmetic is evaluated in double: a wider
-	 * evaluation format rounds twice, so every token defers to strtod
-	 * there.  ndig <= 19 guarantees no digit was dropped, so mant is
-	 * exact. */
-	if (FLT_EVAL_METHOD == 0 && ndig <= 19 && mant <= (UINT64_C(1) << 53) &&
-	    -22 <= exp10 && exp10 <= 22) {
-		const double m = json_scale10(mant, (int)exp10);
-		*out = neg ? -m : m;
-		return true;
-	}
-	/* Reconstruct <digits>e<exp> and let strtod round the whole value once. */
-	char token[JSON_STRTOD_MAXSIG + 32];
-	memcpy(token, digits, (size_t)ndig);
-	int pos = ndig;
 	if (nonzero_dropped) {
-		/* The retained digits are a truncation, so bias the value just
-		 * above them: appending '1' at 10^(exp10-1) adds a tenth of the
-		 * last retained place, keeping strtod on the correct side of a
-		 * tie at the truncation point. */
-		token[pos++] = '1';
+		digits[ndig++] = '1';
 		exp10--;
 	}
-	const int n = snprintf(
-		token + pos, sizeof(token) - (size_t)pos, "e%" PRIdFAST64,
-		exp10);
-	assert(n > 0 && (size_t)pos + (size_t)n < sizeof(token));
-	(void)n;
-	const double m = strtod(token, NULL);
+	/* float_fromdecimal takes the exponent of 0.<digits>, rather than
+	 * that of the integer significand. Extreme exponents need only retain
+	 * their direction: the converter saturates outside binary64's range. */
+	const int_fast64_t k = exp10 + ndig;
+	int exp;
+	if (k > INT_MAX) {
+		exp = INT_MAX;
+	} else if (k < INT_MIN) {
+		exp = INT_MIN;
+	} else {
+		exp = (int)k;
+	}
+	const double m = float_fromdecimal(digits, ndig, exp);
 	if (!json_isfinite(m)) {
 		return false; /* magnitude overflows the double range */
 	}
@@ -1170,6 +1107,9 @@ static double json_fmod(double x, double y)
 		if (x >= yy) {
 			x -= yy;
 		}
+		if (yy == y) {
+			break;
+		}
 		yy /= 2.0;
 	}
 	return neg ? -x : x;
@@ -1267,11 +1207,135 @@ static size_t json_elem_size(const struct json_field *restrict f)
 	case JSON_K_DOUBLE:
 		return sizeof(double);
 	case JSON_K_BOOL:
+	case JSON_K_NULL:
 		return sizeof(bool);
+	case JSON_K_VALUE:
+		return sizeof(struct json_value);
 	case JSON_K_OBJECT:
 		return f->child->obj_size;
 	}
 	return 0;
+}
+
+/* Array members have typed pointers, so accessing them through void ** would
+ * violate C11 6.5p7. Copy their representations through the matching pointer
+ * type, then convert the value to/from void * (6.3.2.3p1). For object arrays,
+ * 6.2.5p28 and footnote 48 guarantee interchangeable representations for all
+ * struct pointers, not permission to alias their storage. The representative
+ * struct needs only character alignment; its pointer is never dereferenced or
+ * used for element arithmetic. Copy sizeof the typed pointer, not void *. */
+struct json_array_object {
+	char byte;
+};
+
+static void *
+json_array_load(const struct json_field *restrict f, const void *slot)
+{
+	switch (f->kind) {
+	case JSON_K_STRING:
+	case JSON_K_DYNAMIC: {
+		struct json_string *p;
+		memcpy((void *)&p, slot, sizeof(struct json_string *));
+		return p;
+	}
+	case JSON_K_INT: {
+		int *p;
+		memcpy((void *)&p, slot, sizeof(p));
+		return p;
+	}
+	case JSON_K_IMAX: {
+		intmax_t *p;
+		memcpy((void *)&p, slot, sizeof(p));
+		return p;
+	}
+	case JSON_K_UINT: {
+		unsigned *p;
+		memcpy((void *)&p, slot, sizeof(p));
+		return p;
+	}
+	case JSON_K_UMAX: {
+		uintmax_t *p;
+		memcpy((void *)&p, slot, sizeof(p));
+		return p;
+	}
+	case JSON_K_DOUBLE: {
+		double *p;
+		memcpy((void *)&p, slot, sizeof(p));
+		return p;
+	}
+	case JSON_K_BOOL:
+	case JSON_K_NULL: {
+		bool *p;
+		memcpy((void *)&p, slot, sizeof(p));
+		return p;
+	}
+	case JSON_K_VALUE: {
+		struct json_value *p;
+		memcpy((void *)&p, slot, sizeof(struct json_value *));
+		return p;
+	}
+	case JSON_K_OBJECT: {
+		struct json_array_object *p;
+		memcpy((void *)&p, slot, sizeof(struct json_array_object *));
+		return p;
+	}
+	}
+	return NULL;
+}
+
+static void
+json_array_store(const struct json_field *restrict f, void *slot, void *value)
+{
+	switch (f->kind) {
+	case JSON_K_STRING:
+	case JSON_K_DYNAMIC: {
+		struct json_string *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(struct json_string *));
+		return;
+	}
+	case JSON_K_INT: {
+		int *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(p));
+		return;
+	}
+	case JSON_K_IMAX: {
+		intmax_t *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(p));
+		return;
+	}
+	case JSON_K_UINT: {
+		unsigned *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(p));
+		return;
+	}
+	case JSON_K_UMAX: {
+		uintmax_t *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(p));
+		return;
+	}
+	case JSON_K_DOUBLE: {
+		double *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(p));
+		return;
+	}
+	case JSON_K_BOOL:
+	case JSON_K_NULL: {
+		bool *const p = value;
+		memcpy(slot, (const void *)&p, sizeof(p));
+		return;
+	}
+	case JSON_K_VALUE: {
+		struct json_value *p = value;
+		memcpy(slot, (const void *)&p, sizeof(struct json_value *));
+		return;
+	}
+	case JSON_K_OBJECT: {
+		struct json_array_object *const p = value;
+		memcpy(slot, (const void *)&p,
+		       sizeof(struct json_array_object *));
+		return;
+	}
+	}
 }
 
 /* json_free_array: release the heap owned by array elements (object elements
@@ -1453,280 +1517,714 @@ static bool json_check_bool(const struct json_constraint *restrict c, bool v)
 	return true;
 }
 
-/* json_parse_scalar: parse one scalar JSON fragment into *slot per the field
- * kind, then validate it against the field's constraint (if any). */
-static bool json_parse_scalar(
-	const struct json_field *restrict f, void *slot, char *val, size_t vlen)
+bool json_codec_error(
+	struct json_context *context, const struct json_path *path,
+	enum json_error_kind kind, const struct json_constraint *constraint,
+	const char *position)
 {
-	const struct json_constraint *const c = f->constraint;
-	switch (f->kind) {
-	case JSON_K_STRING: {
-		struct json_string *const js = slot;
-		if (!json_parse_string(val, vlen, &js->str, &js->len)) {
-			return false;
+	if (!context->reported) {
+		context->reported = true;
+		if (context->options != NULL &&
+		    context->options->error != NULL) {
+			const struct json_error error = {
+				.kind = kind,
+				.path = path,
+				.constraint = constraint,
+				.has_offset =
+					position != NULL && !context->fallback,
+				.offset =
+					position != NULL && !context->fallback ?
+						(size_t)(position -
+							 context->root) :
+						0,
+			};
+			context->options->error(
+				context->options->context, &error);
 		}
-		return c == NULL || json_check_str(c, js->str, js->len);
-	}
-	case JSON_K_INT: {
-		int *const p = slot;
-		if (!json_parse_int(val, vlen, p)) {
-			return false;
-		}
-		return c == NULL || json_check_int(c, *p);
-	}
-	case JSON_K_IMAX: {
-		intmax_t *const p = slot;
-		if (!json_parse_imax(val, vlen, p)) {
-			return false;
-		}
-		return c == NULL || json_check_int(c, *p);
-	}
-	case JSON_K_UINT: {
-		unsigned *const p = slot;
-		if (!json_parse_uint(val, vlen, p)) {
-			return false;
-		}
-		return c == NULL || json_check_uint(c, *p);
-	}
-	case JSON_K_UMAX: {
-		uintmax_t *const p = slot;
-		if (!json_parse_umax(val, vlen, p)) {
-			return false;
-		}
-		return c == NULL || json_check_uint(c, *p);
-	}
-	case JSON_K_DOUBLE: {
-		double *const p = slot;
-		if (!json_parse_double(val, vlen, p)) {
-			return false;
-		}
-		return c == NULL || json_check_double(c, *p);
-	}
-	case JSON_K_BOOL: {
-		bool *const p = slot;
-		if (!json_parse_bool(val, vlen, p)) {
-			return false;
-		}
-		return c == NULL || json_check_bool(c, *p);
-	}
-	case JSON_K_OBJECT:
-	case JSON_K_DYNAMIC:
-		break;
 	}
 	return false;
 }
 
-/* json_unmarshal_array: parse a JSON array fragment into a freshly allocated
- * buffer (element pointer/count returned via out params).  Enforces
- * minItems/maxItems and per-item constraints; cleans up on any failure. */
-static bool json_unmarshal_array(
-	const struct json_field *restrict f, char *val, size_t vlen,
-	void **out_buf, size_t *out_count)
+static bool json_read_scalar(
+	const struct json_field *f, void *slot, char *val, size_t len,
+	struct json_context *context, const struct json_path *path)
 {
-	size_t buflen = vlen;
-	const struct json_val arr = json_parse(val, &buflen);
-	if (arr.type != JSON_ARRAY) {
+	const struct json_constraint *c =
+		context->fallback ? NULL : f->constraint;
+	size_t start = 0;
+	while (start < len && json_iswhitespace((unsigned char)val[start])) {
+		start++;
+	}
+	enum json_type type = JSON_ERROR;
+	if (start < len) {
+		switch (val[start]) {
+		case '"':
+			type = JSON_STRING;
+			break;
+		case '{':
+			type = JSON_OBJECT;
+			break;
+		case '[':
+			type = JSON_ARRAY;
+			break;
+		case 't':
+		case 'f':
+			type = JSON_BOOL;
+			break;
+		case 'n':
+			type = JSON_NULL;
+			break;
+		default:
+			type = JSON_NUMBER;
+			break;
+		}
+	}
+	bool parsed = false, valid = true;
+	enum json_type expected = JSON_ERROR;
+	switch (f->kind) {
+	case JSON_K_STRING: {
+		expected = JSON_STRING;
+		struct json_string *v = slot;
+		parsed = json_parse_string(val, len, &v->str, &v->len);
+		valid = !parsed || c == NULL ||
+			json_check_str(c, v->str, v->len);
+		break;
+	}
+	case JSON_K_INT:
+		expected = JSON_NUMBER;
+		parsed = json_parse_int(val, len, slot);
+		valid = !parsed || c == NULL || json_check_int(c, *(int *)slot);
+		break;
+	case JSON_K_IMAX:
+		expected = JSON_NUMBER;
+		parsed = json_parse_imax(val, len, slot);
+		valid = !parsed || c == NULL ||
+			json_check_int(c, *(intmax_t *)slot);
+		break;
+	case JSON_K_UINT:
+		expected = JSON_NUMBER;
+		parsed = json_parse_uint(val, len, slot);
+		valid = !parsed || c == NULL ||
+			json_check_uint(c, *(unsigned *)slot);
+		break;
+	case JSON_K_UMAX:
+		expected = JSON_NUMBER;
+		parsed = json_parse_umax(val, len, slot);
+		valid = !parsed || c == NULL ||
+			json_check_uint(c, *(uintmax_t *)slot);
+		break;
+	case JSON_K_DOUBLE:
+		expected = JSON_NUMBER;
+		parsed = json_parse_double(val, len, slot);
+		valid = !parsed || c == NULL ||
+			json_check_double(c, *(double *)slot);
+		break;
+	case JSON_K_BOOL:
+		expected = JSON_BOOL;
+		parsed = json_parse_bool(val, len, slot);
+		valid = !parsed || c == NULL ||
+			json_check_bool(c, *(bool *)slot);
+		break;
+	case JSON_K_NULL:
+		expected = JSON_NULL;
+		parsed = type == JSON_NULL;
+		if (parsed) {
+			*(bool *)slot = false;
+		}
+		break;
+	case JSON_K_DYNAMIC:
+		expected = f->raw_type;
+		parsed = expected == JSON_ERROR || expected == type;
+		if (parsed) {
+			*(struct json_string *)slot =
+				(struct json_string){ len, val };
+		}
+		break;
+	case JSON_K_VALUE: {
+		struct json_value *v = slot;
+		v->type = type;
+		if (type == JSON_STRING) {
+			parsed = json_parse_string(
+				val, len, &v->text.str, &v->text.len);
+		} else if (type == JSON_BOOL) {
+			parsed = json_parse_bool(val, len, &v->b);
+		} else {
+			v->text = (struct json_string){ len, val };
+			parsed = type != JSON_ERROR;
+		}
+		break;
+	}
+	case JSON_K_OBJECT:
+		break;
+	}
+	if (!parsed) {
+		return json_codec_error(
+			context, path,
+			expected != JSON_ERROR && type != expected ?
+				JSON_E_TYPE :
+				JSON_E_RANGE,
+			NULL, val + start);
+	}
+	return valid ||
+	       json_codec_error(
+		       context, path, JSON_E_CONSTRAINT, c, val + start);
+}
+
+void json_codec_release(const struct json_field *field, void *obj)
+{
+	char *base = obj;
+	if (field->is_array) {
+		void *slot = base + field->offset;
+		void *array = json_array_load(field, slot);
+		size_t *count = (size_t *)(base + field->count_offset);
+		json_free_array(field, array, *count);
+		free(array);
+		json_array_store(field, slot, NULL);
+		*count = 0;
+	} else if (field->kind == JSON_K_OBJECT) {
+		json_free(field->child, base + field->offset);
+	}
+}
+
+void json_codec_storage(const struct json_schema *schema, void *obj)
+{
+	if (schema->has_default_storage) {
+		char **storage =
+			(char **)((char *)obj + schema->default_storage_offset);
+		free(*storage);
+		*storage = NULL;
+	}
+}
+
+bool json_codec_init(
+	const struct json_schema *schema, void *obj,
+	struct json_context *context, const struct json_path *path,
+	bool fallback)
+{
+	if (schema->set_present != NULL) {
+		for (size_t i = 0; i < schema->n_fields; i++) {
+			schema->set_present(obj, i, false);
+		}
+		return true;
+	}
+	memset(obj, 0, schema->obj_size);
+	if (fallback || schema->default_json == NULL) {
+		return true;
+	}
+	char *storage = malloc(schema->default_len + 1);
+	if (storage == NULL) {
+		return json_codec_error(
+			context, path, JSON_E_ALLOCATION, NULL, NULL);
+	}
+	memcpy(storage, schema->default_json, schema->default_len + 1);
+	const bool previous = context->fallback;
+	context->fallback = true;
+	bool ok = json_codec_read(
+		schema, obj, storage, schema->default_len, context, path, true);
+	context->fallback = previous;
+	if (!ok) {
+		free(storage);
 		return false;
 	}
-	const struct json_constraint *const c = f->constraint;
-	const size_t esz = json_elem_size(f);
-	char *buf = NULL;
-	size_t count = 0, cap = 0;
-	json_iter it = arr.iter;
-	char *av;
-	size_t alen;
+	assert(schema->has_default_storage);
+	*(char **)((char *)obj + schema->default_storage_offset) = storage;
+	return true;
+}
+
+bool json_codec_field(
+	const struct json_field *field, void *obj, char *json, size_t length,
+	struct json_context *context, const struct json_path *path)
+{
+	char *base = obj;
+	void *slot = base + field->offset;
+	if (!field->is_array) {
+		if (field->kind == JSON_K_OBJECT) {
+			return json_codec_read(
+				field->child, slot, json, length, context, path,
+				context->fallback);
+		}
+		return json_read_scalar(
+			field, slot, json, length, context, path);
+	}
+	json_array_store(field, slot, NULL);
+	size_t *out_count = (size_t *)(base + field->count_offset);
+	*out_count = 0;
+	size_t consumed = length;
+	struct json_val array = json_parse(json, &consumed);
+	if (array.type != JSON_ARRAY) {
+		return json_codec_error(context, path, JSON_E_TYPE, NULL, json);
+	}
+	const struct json_constraint *c =
+		context->fallback ? NULL : field->constraint;
+	size_t count = 0, capacity = 0;
+	size_t element_size = json_elem_size(field);
+	char *items = NULL;
+	json_iter iter = array.iter;
+	char *value;
+	size_t value_len;
 	int next;
-	while ((next = json_arr_next(val, &vlen, &it, &av, &alen)) ==
+	while ((next = json_arr_next(
+			json, &length, &iter, &value, &value_len)) ==
 	       JSON_NEXT_ITEM) {
+		struct json_path item_path = { .parent = path,
+					       .kind = JSON_PATH_INDEX,
+					       .index = count };
 		if (c != NULL && (c->flags & JSON_C_MAX_ITEMS) &&
 		    count >= c->max_items) {
+			json_codec_error(
+				context, &item_path, JSON_E_CONSTRAINT, c,
+				value);
 			goto fail;
 		}
-		if (count >= cap) {
-			const size_t nc = cap ? cap * 2 : 4;
-			/* reject growth that would overflow size_t (cap*2 wrap,
-			 * or nc*esz wrap) rather than under-allocate the buffer */
-			if (cap > nc || (esz != 0 && nc > SIZE_MAX / esz)) {
+		if (count == capacity) {
+			size_t grown = capacity == 0 ? 4 : capacity * 2;
+			if (grown < capacity ||
+			    grown > SIZE_MAX / element_size) {
+				json_codec_error(
+					context, &item_path, JSON_E_ALLOCATION,
+					NULL, value);
 				goto fail;
 			}
-			char *const nb = realloc(buf, nc * esz);
-			if (nb == NULL) {
+			char *replacement =
+				realloc(items, grown * element_size);
+			if (replacement == NULL) {
+				json_codec_error(
+					context, &item_path, JSON_E_ALLOCATION,
+					NULL, value);
 				goto fail;
 			}
-			buf = nb;
-			cap = nc;
+			items = replacement;
+			capacity = grown;
 		}
-		void *const slot = buf + count * esz;
-		memset(slot, 0, esz);
-		if (f->kind == JSON_K_OBJECT) {
-			if (!json_unmarshal(f->child, slot, av, alen)) {
-				goto fail;
-			}
-		} else if (f->kind == JSON_K_DYNAMIC) {
-			/* borrow the raw fragment, mirroring a scalar dynamic
-			 * field (see json_unmarshal): the element owns nothing,
-			 * so json_free_array leaves it alone -- symmetric with
-			 * json_emit_value's raw emit. */
-			struct json_string *const js = slot;
-			js->str = av;
-			js->len = alen;
-		} else if (!json_parse_scalar(f, slot, av, alen)) {
+		void *element = items + count * element_size;
+		bool ok = field->kind == JSON_K_OBJECT ?
+				  json_codec_read(
+					  field->child, element, value,
+					  value_len, context, &item_path,
+					  context->fallback) :
+				  json_read_scalar(
+					  field, element, value, value_len,
+					  context, &item_path);
+		if (!ok) {
 			goto fail;
 		}
 		count++;
 	}
 	if (next != JSON_NEXT_END) {
+		json_codec_error(
+			context, path, JSON_E_SYNTAX, NULL, json + iter);
 		goto fail;
-	}
-	for (; it < vlen; it++) {
-		if (!json_iswhitespace((unsigned char)val[it])) {
-			goto fail;
-		}
 	}
 	if (c != NULL && (c->flags & JSON_C_MIN_ITEMS) &&
 	    count < c->min_items) {
+		json_codec_error(context, path, JSON_E_CONSTRAINT, c, json);
 		goto fail;
 	}
-	*out_buf = buf;
+	json_array_store(field, slot, items);
 	*out_count = count;
 	return true;
-
 fail:
-	json_free_array(f, buf, count);
-	free(buf);
+	json_free_array(field, items, count);
+	free(items);
 	return false;
 }
 
-#ifndef NDEBUG
-/* json_free() releases exactly the array pointers, at every nesting level, and
- * the failure paths below reach it with fields that were never unmarshaled --
- * those still hold whatever the defaults image supplied. The image is static
- * and unowned, so an array pointer in it would be handed to free(). Generated
- * tables cannot do this (gen_schema.py skips array defaults); assert it so a
- * hand-authored one cannot either, in the same spirit as the req_bit and
- * multiplier checks elsewhere in this file. */
-static void assert_defaults_own_nothing(
-	const struct json_schema *restrict schema, const char *restrict img)
+bool json_codec_extra(
+	const struct json_schema *schema, char *json, size_t length,
+	struct json_context *context, const struct json_path *path)
 {
-	for (size_t fi = 0; fi < schema->n_fields; fi++) {
-		const struct json_field *const f = &schema->fields[fi];
-		if (f->is_array) {
-			const void *const *const pp =
-				(const void *const *)(img + f->offset);
-			assert(*pp == NULL);
-		} else if (f->kind == JSON_K_OBJECT) {
-			assert_defaults_own_nothing(f->child, img + f->offset);
-		}
+	if (schema->extra == JSON_EXTRA_REJECT) {
+		return json_codec_error(
+			context, path, JSON_E_UNKNOWN, NULL, json);
 	}
+	if (schema->extra == JSON_EXTRA_TYPED) {
+		union {
+			struct json_string string;
+			struct json_value value;
+			int i;
+			intmax_t imax;
+			unsigned u;
+			uintmax_t umax;
+			double d;
+			bool b;
+		} value;
+		return json_read_scalar(
+			schema->extra_value, &value, json, length, context,
+			path);
+	}
+	return true;
 }
-#endif /* NDEBUG */
 
-/* Recurses for nested JSON_K_OBJECT fields; depth follows the schema's
- * static field nesting (fixed at codegen), not the JSON input, so malformed
- * or adversarial input cannot drive unbounded recursion. */
-bool json_unmarshal(
-	const struct json_schema *restrict schema, void *obj, char *json,
-	size_t length)
+static bool json_read_map(
+	const struct json_schema *schema, void *obj, char *json, size_t length,
+	struct json_context *context, const struct json_path *path)
 {
-	char *const base = obj;
-	if (schema->defaults != NULL) {
-#ifndef NDEBUG
-		assert_defaults_own_nothing(schema, schema->defaults);
-#endif
-		memcpy(base, schema->defaults, schema->obj_size);
-	} else {
-		memset(base, 0, schema->obj_size);
-	}
-	size_t buflen = length;
-	const struct json_val root = json_parse(json, &buflen);
-	if (root.type != JSON_OBJECT) {
-		/* Honor the documented postcondition (*obj reset to all-zero on
-		 * failure). Not the `fail:` path: no field has been unmarshaled
-		 * yet, so base still holds the defaults image whose pointers are
-		 * not owned and must not be freed. */
-		memset(base, 0, schema->obj_size);
-		return false;
-	}
-	json_iter iter = root.iter;
-	char *key;
-	char *val;
-	size_t key_len;
-	size_t val_len;
-	uint_fast64_t required = 0;
+	/* A supplied map replaces the whole default, including owned entries. */
+	json_free(schema, obj);
+	char *base = obj;
+	size_t *count = (size_t *)(base + schema->count_offset);
+	struct json_field pointer_field = { .kind = JSON_K_OBJECT };
+	size_t capacity = 0, retained = 0;
+	char *entries = NULL;
+	json_iter iter = json_parse(json, &(size_t){ length }).iter;
+	char *key, *value;
+	size_t key_len, value_len, position = 0;
 	int next;
 	while ((next = json_obj_next(
-			json, &length, &iter, &key, &key_len, &val,
-			&val_len)) == JSON_NEXT_ITEM) {
-		const int k = schema->lookup(key, key_len);
-		if (k < 0 || (size_t)k >= schema->n_fields) {
-			if (schema->strict) {
+			json, &length, &iter, &key, &key_len, &value,
+			&value_len)) == JSON_NEXT_ITEM) {
+		struct json_path entry_path = { .parent = path,
+						.kind = JSON_PATH_MAP,
+						.key = { key_len, key },
+						.index = position++ };
+		if (!context->fallback && context->options != NULL &&
+		    context->options->filter != NULL &&
+		    !context->options->filter(
+			    context->options->context, path, key, key_len)) {
+			continue;
+		}
+		if (!context->fallback && schema->extra == JSON_EXTRA_REJECT) {
+			return json_codec_error(
+				context, &entry_path, JSON_E_UNKNOWN, NULL,
+				value);
+		}
+		if (retained == capacity) {
+			size_t grown = capacity == 0 ? 4 : capacity * 2;
+			if (grown < capacity ||
+			    grown > SIZE_MAX / schema->entry_size) {
+				return json_codec_error(
+					context, &entry_path, JSON_E_ALLOCATION,
+					NULL, value);
+			}
+			char *replacement =
+				realloc(entries, grown * schema->entry_size);
+			if (replacement == NULL) {
+				return json_codec_error(
+					context, &entry_path, JSON_E_ALLOCATION,
+					NULL, value);
+			}
+			entries = replacement;
+			json_array_store(
+				&pointer_field, base + schema->entries_offset,
+				entries);
+			capacity = grown;
+		}
+		char *entry = entries + retained * schema->entry_size;
+		*(struct json_string *)entry =
+			(struct json_string){ key_len, key };
+		if (!json_codec_field(
+			    schema->map_value, entry, value, value_len, context,
+			    &entry_path)) {
+			return false;
+		}
+		*count = ++retained;
+	}
+	if (next != JSON_NEXT_END) {
+		return json_codec_error(
+			context, path, JSON_E_SYNTAX, NULL, json + iter);
+	}
+	for (; iter < length; iter++) {
+		if (!json_iswhitespace((unsigned char)json[iter])) {
+			return json_codec_error(
+				context, path, JSON_E_SYNTAX, NULL,
+				json + iter);
+		}
+	}
+	return true;
+}
+
+bool json_codec_read(
+	const struct json_schema *schema, void *obj, char *json, size_t length,
+	struct json_context *context, const struct json_path *path,
+	bool fallback)
+{
+	if (schema->read != NULL) {
+		return schema->read(
+			schema, obj, json, length, context, path, fallback);
+	}
+	if (!json_codec_init(schema, obj, context, path, fallback)) {
+		return false;
+	}
+	size_t consumed = length;
+	const struct json_val root = json_parse(json, &consumed);
+	if (root.type != JSON_OBJECT) {
+		json_codec_error(
+			context, path,
+			root.type == JSON_ERROR ? JSON_E_SYNTAX : JSON_E_TYPE,
+			NULL, root.type == JSON_ERROR ? json + consumed : json);
+		goto fail;
+	}
+	if (schema->is_map) {
+		if (!json_read_map(schema, obj, json, length, context, path)) {
+			goto fail;
+		}
+		return true;
+	}
+	json_iter iter = root.iter;
+	char *key, *value;
+	size_t key_len, value_len;
+	uint_least64_t required = 0;
+	int next;
+	while ((next = json_obj_next(
+			json, &length, &iter, &key, &key_len, &value,
+			&value_len)) == JSON_NEXT_ITEM) {
+		struct json_path field_path = { .parent = path,
+						.kind = JSON_PATH_PROPERTY,
+						.key = { key_len, key } };
+		int index = schema->lookup == NULL ?
+				    -1 :
+				    schema->lookup(key, key_len);
+		if (index < 0 || (size_t)index >= schema->n_fields) {
+			if (!json_codec_extra(
+				    schema, value, value_len, context,
+				    &field_path)) {
 				goto fail;
 			}
 			continue;
 		}
-		const struct json_field *const f = &schema->fields[k];
-		void *const slot = base + f->offset;
-		if (f->is_array) {
-			void *nbuf;
-			size_t ncount;
-			if (!json_unmarshal_array(
-				    f, val, val_len, &nbuf, &ncount)) {
-				goto fail;
-			}
-			/* duplicate key: release any previous allocation */
-			void **const pp = (void **)slot;
-			size_t *const pc = (size_t *)(base + f->count_offset);
-			json_free_array(f, *pp, *pc);
-			free(*pp);
-			*pp = nbuf;
-			*pc = ncount;
-		} else if (f->kind == JSON_K_OBJECT) {
-			/* duplicate key: release the previous value first */
-			json_free(f->child, slot);
-			if (!json_unmarshal(f->child, slot, val, val_len)) {
-				goto fail;
-			}
-		} else if (f->kind == JSON_K_DYNAMIC) {
-			struct json_string *const js = slot;
-			js->str = val;
-			js->len = val_len;
-		} else if (!json_parse_scalar(f, slot, val, val_len)) {
+		const struct json_field *field = &schema->fields[index];
+		if (schema->get_present == NULL ||
+		    schema->get_present(obj, (size_t)index)) {
+			json_codec_release(field, obj);
+		}
+		if (schema->set_present != NULL) {
+			schema->set_present(obj, (size_t)index, false);
+		}
+		if (!json_codec_field(
+			    field, obj, value, value_len, context,
+			    &field_path)) {
 			goto fail;
 		}
-		if (f->req_bit >= 0) {
-			/* required_mask is 64-bit, so at most 64 required fields;
-			 * a req_bit past that would make the shift undefined. The
-			 * generator keeps req_bit < 64, so this only guards a
-			 * hand-authored table. */
-			assert(f->req_bit < 64);
-			required |= (uint_fast64_t)1 << f->req_bit;
+		if (schema->set_present != NULL) {
+			schema->set_present(obj, (size_t)index, true);
+		}
+		if (field->req_bit >= 0) {
+			assert(field->req_bit < 64);
+			required |= UINT64_C(1) << field->req_bit;
 		}
 	}
 	if (next != JSON_NEXT_END) {
+		json_codec_error(
+			context, path, JSON_E_SYNTAX, NULL, json + iter);
 		goto fail;
 	}
-	if (required != schema->required_mask) {
-		goto fail;
+	if (!context->fallback && required != schema->required_mask) {
+		for (size_t i = 0; i < schema->n_fields; i++) {
+			const struct json_field *field = &schema->fields[i];
+			if (field->req_bit >= 0 &&
+			    !(required & (UINT64_C(1) << field->req_bit))) {
+				struct json_path missing = {
+					.parent = path,
+					.kind = JSON_PATH_PROPERTY,
+					.key = { field->name_len,
+						 (char *)field->name }
+				};
+				json_codec_error(
+					context, &missing, JSON_E_REQUIRED,
+					NULL, NULL);
+				goto fail;
+			}
+		}
 	}
 	for (; iter < length; iter++) {
 		if (!json_iswhitespace((unsigned char)json[iter])) {
+			json_codec_error(
+				context, path, JSON_E_SYNTAX, NULL,
+				json + iter);
 			goto fail;
 		}
 	}
 	return true;
-
 fail:
 	json_free(schema, obj);
-	memset(base, 0, schema->obj_size);
+	if (schema->set_present == NULL) {
+		memset(obj, 0, schema->obj_size);
+	}
 	return false;
 }
 
-/* --- marshal ----------------------------------------------------------- */
+/* Syntax diagnostics walk the raw input only after its non-destructive scan
+ * failed. Decode path keys at delivery, so successful input is decoded once
+ * by the actual codec and container fragments remain available to callers. */
+struct json_syntax_path {
+	struct json_path path;
+	struct json_syntax_path *parent;
+	size_t raw_len;
+};
 
-/* json_add: extend the running marshal length, saturating to the SIZE_MAX error
- * sentinel once the total would exceed INT_MAX or wrap size_t.  Threading every
- * addition through here keeps a large or cumulative length from wrapping to a
- * small value that the final INT_MAX check would accept as a bogus success. */
+static const struct json_schema *json_syntax_decode(
+	struct json_syntax_path *path, const struct json_schema *root)
+{
+	if (path == NULL) {
+		return root;
+	}
+	const struct json_schema *schema =
+		json_syntax_decode(path->parent, root);
+	if (path->path.kind == JSON_PATH_INDEX) {
+		return schema;
+	}
+	char *raw = path->path.key.str;
+	if (!json_parse_string(
+		    raw, path->raw_len, &path->path.key.str,
+		    &path->path.key.len)) {
+		return NULL;
+	}
+	if (schema == NULL) {
+		return NULL;
+	}
+	if (schema->is_map) {
+		path->path.kind = JSON_PATH_MAP;
+		return NULL;
+	}
+	int index =
+		schema->lookup == NULL ?
+			-1 :
+			schema->lookup(path->path.key.str, path->path.key.len);
+	return index < 0 || (size_t)index >= schema->n_fields ?
+		       NULL :
+		       schema->fields[index].child;
+}
+
+static bool json_syntax_fail(
+	struct json_context *context, struct json_syntax_path *path,
+	const struct json_schema *root, size_t position)
+{
+	(void)json_syntax_decode(path, root);
+	return json_codec_error(
+		context, path == NULL ? NULL : &path->path, JSON_E_SYNTAX, NULL,
+		context->root + position);
+}
+
+static void
+json_syntax_whitespace(struct json_context *context, size_t *position)
+{
+	while (*position < context->length &&
+	       json_iswhitespace((unsigned char)context->root[*position])) {
+		(*position)++;
+	}
+}
+
+static bool json_syntax_walk(
+	struct json_context *context, const struct json_schema *root,
+	struct json_syntax_path *path, size_t *position, unsigned depth)
+{
+	json_syntax_whitespace(context, position);
+	if (*position == context->length || depth > 256) {
+		return json_syntax_fail(context, path, root, *position);
+	}
+	char *json = context->root;
+	char token = json[*position];
+	if (token != '{' && token != '[') {
+		ptrdiff_t count = scan_scalar(
+			json + *position, context->length - *position);
+		if (count < 0) {
+			return json_syntax_fail(context, path, root, *position);
+		}
+		*position += (size_t)count;
+		return true;
+	}
+	(*position)++;
+	char close = token == '{' ? '}' : ']';
+	json_syntax_whitespace(context, position);
+	if (*position < context->length && json[*position] == close) {
+		(*position)++;
+		return true;
+	}
+	for (size_t index = 0;; index++) {
+		struct json_syntax_path child = {
+			.path = { .parent = path == NULL ? NULL : &path->path,
+				  .kind = JSON_PATH_INDEX,
+				  .index = index },
+			.parent = path,
+		};
+		if (token == '{') {
+			if (*position == context->length ||
+			    json[*position] != '"') {
+				return json_syntax_fail(
+					context, path, root, *position);
+			}
+			ptrdiff_t length = scan_string_raw(
+				json + *position, context->length - *position);
+			if (length < 0) {
+				return json_syntax_fail(
+					context, path, root, *position);
+			}
+			child.path.kind = JSON_PATH_PROPERTY;
+			child.path.key.str = json + *position;
+			child.raw_len = (size_t)length;
+			*position += (size_t)length;
+			json_syntax_whitespace(context, position);
+			if (*position == context->length ||
+			    json[*position] != ':') {
+				return json_syntax_fail(
+					context, &child, root, *position);
+			}
+			(*position)++;
+		}
+		if (!json_syntax_walk(
+			    context, root, &child, position, depth + 1)) {
+			return false;
+		}
+		json_syntax_whitespace(context, position);
+		if (*position == context->length) {
+			return json_syntax_fail(context, path, root, *position);
+		}
+		if (json[*position] == close) {
+			(*position)++;
+			return true;
+		}
+		if (json[*position] != ',') {
+			return json_syntax_fail(context, path, root, *position);
+		}
+		(*position)++;
+		json_syntax_whitespace(context, position);
+	}
+}
+
+bool json_unmarshal_ex(
+	const struct json_schema *schema, void *obj, char *json, size_t length,
+	const struct json_options *options)
+{
+	struct json_context context = { .root = json,
+					.length = length,
+					.options = options };
+	size_t start = 0;
+	json_syntax_whitespace(&context, &start);
+	ptrdiff_t count = start == length ?
+				  -1 :
+				  skip_raw_value(json + start, length - start);
+	size_t end = count < 0 ? start : start + (size_t)count;
+	json_syntax_whitespace(&context, &end);
+	if (count < 0 || end != length) {
+		if (schema->set_present == NULL) {
+			memset(obj, 0, schema->obj_size);
+		} else {
+			for (size_t i = 0; i < schema->n_fields; i++) {
+				schema->set_present(obj, i, false);
+			}
+		}
+		if (count < 0) {
+			size_t position = 0;
+			if (!json_syntax_walk(
+				    &context, schema, NULL, &position, 0)) {
+				return false;
+			}
+		}
+		return json_codec_error(
+			&context, NULL, JSON_E_SYNTAX, NULL, json + end);
+	}
+	return json_codec_read(
+		schema, obj, json + start, length - start, &context, NULL,
+		false);
+}
+
+bool json_unmarshal(
+	const struct json_schema *restrict schema, void *obj, char *json,
+	size_t length)
+{
+	return json_unmarshal_ex(schema, obj, json, length, NULL);
+}
+
 static size_t json_add(size_t n, size_t add)
 {
 	if (n > (size_t)INT_MAX || add > (size_t)INT_MAX - n) {
@@ -1781,210 +2279,312 @@ static size_t json_emit_indent(
 	return n;
 }
 
-static size_t json_marshal_impl(
-	const struct json_schema *restrict schema, char *restrict buf,
-	size_t bufsz, const void *restrict obj, const char *restrict indent,
-	size_t ind_len, int depth);
-
-/* json_emit_value: emit one field value (no key, no array brackets) of the
- * field's element kind.  Returns the new length, or SIZE_MAX on error. */
-static size_t json_emit_value(
-	const struct json_field *restrict f, char *restrict buf, size_t bufsz,
-	size_t n, const void *restrict slot, const char *restrict indent,
-	size_t ind_len, int depth)
+static void
+json_output_raw(struct json_output *out, const char *text, size_t length)
 {
-	char tmp[32];
-	int r = -1;
-	switch (f->kind) {
-	case JSON_K_STRING: {
-		const struct json_string *const js = slot;
-		/* a required field emits even with no value; "" keeps the
-		 * declared string type, which a bare null would not */
-		if (js->str == NULL) {
-			return json_emit_str(buf, bufsz, n, "", 0);
-		}
-		return json_emit_str(buf, bufsz, n, js->str, js->len);
-	}
-	case JSON_K_DYNAMIC: {
-		const struct json_string *const js = slot;
-		/* a raw fragment has no empty form, so absent becomes null */
-		if (js->str == NULL) {
-			return json_emit_raw(buf, bufsz, n, "null", 4);
-		}
-		return json_emit_raw(buf, bufsz, n, js->str, js->len);
-	}
-	case JSON_K_INT:
-		r = snprintf(tmp, sizeof(tmp), "%d", *(const int *)slot);
-		break;
-	case JSON_K_IMAX:
-		r = snprintf(tmp, sizeof(tmp), "%jd", *(const intmax_t *)slot);
-		break;
-	case JSON_K_UINT:
-		r = snprintf(tmp, sizeof(tmp), "%u", *(const unsigned *)slot);
-		break;
-	case JSON_K_UMAX:
-		r = snprintf(tmp, sizeof(tmp), "%ju", *(const uintmax_t *)slot);
-		break;
-	case JSON_K_DOUBLE: {
-		const double v = *(const double *)slot;
-		/* NaN/Inf have no JSON representation */
-		if (!json_isfinite(v)) {
-			return SIZE_MAX;
-		}
-		/* JSON requires '.' as the radix, which libc's %g takes from
-		 * LC_NUMERIC; u8snprintf always emits '.' and reads no locale */
-		r = u8snprintf(tmp, sizeof(tmp), "%.17g", v);
-		break;
-	}
-	case JSON_K_BOOL:
-		return *(const bool *)slot ?
-			       json_emit_raw(buf, bufsz, n, "true", 4) :
-			       json_emit_raw(buf, bufsz, n, "false", 5);
-	case JSON_K_OBJECT: {
-		char *const dst = (buf != NULL && n < bufsz) ? buf + n : NULL;
-		const size_t r2 = json_marshal_impl(
-			f->child, dst, dst != NULL ? bufsz - n : 0, slot,
-			indent, ind_len, depth);
-		if (r2 == SIZE_MAX) {
-			return SIZE_MAX;
-		}
-		return json_add(n, r2);
-	}
-	}
-	if (r < 0) {
-		return SIZE_MAX;
-	}
-	return json_emit_raw(buf, bufsz, n, tmp, (size_t)r);
+	out->length =
+		json_emit_raw(out->buf, out->size, out->length, text, length);
 }
 
-static size_t json_marshal_impl(
-	const struct json_schema *restrict schema, char *restrict buf,
-	size_t bufsz, const void *restrict obj, const char *restrict indent,
-	size_t ind_len, int depth)
+void json_codec_open(struct json_output *out, char bracket)
 {
-	const char *const base = obj;
-	size_t n = 0;
-	n = json_emit_ch(buf, bufsz, n, '{');
-	const size_t n_start = n;
-	for (size_t fi = 0; fi < schema->n_fields; fi++) {
-		const struct json_field *const f = &schema->fields[fi];
-		const void *const slot = base + f->offset;
+	out->length = json_emit_ch(out->buf, out->size, out->length, bracket);
+}
 
-		/* presence: scalars always emit; NULL marks an absent string,
-		 * array, dynamic fragment, or optional nested object (via its
-		 * sentinel sub-field). */
-		bool emit = true;
-		if (f->is_array) {
-			emit = f->required ||
-			       *(const void *const *)slot != NULL;
-		} else if (f->kind == JSON_K_STRING || f->kind == JSON_K_DYNAMIC) {
-			emit = f->required ||
-			       ((const struct json_string *)slot)->str != NULL;
-		} else if (f->kind == JSON_K_OBJECT && !f->required) {
-			const int pf = f->child->present_field;
-			if (pf >= 0) {
-				const struct json_field *const sf =
-					&f->child->fields[pf];
-				const struct json_string *const js =
-					(const struct json_string
-						 *)((const char *)slot +
-						    sf->offset);
-				emit = js->str != NULL;
-			}
-		}
-		if (!emit) {
-			continue;
-		}
+static void json_output_indent(struct json_output *out, int depth)
+{
+	out->length = json_emit_indent(
+		out->buf, out->size, out->length, out->indent,
+		out->indent == NULL ? 0 : strlen(out->indent), depth);
+}
 
-		/* key prefix: <newline+indent>"key":<sep>. The key goes through
-		 * the same escaping path as string values so a name containing a
-		 * '"', '\\', or control byte -- all legal in a JSON object key --
-		 * yields valid JSON rather than the raw bytes. */
-		n = json_emit_indent(buf, bufsz, n, indent, ind_len, depth + 1);
-		n = json_emit_str(buf, bufsz, n, f->name, f->name_len);
-		if (n == SIZE_MAX) {
-			return SIZE_MAX;
-		}
-		n = json_emit_ch(buf, bufsz, n, ':');
-		if (indent != NULL) {
-			n = json_emit_ch(buf, bufsz, n, ' ');
-		}
+void json_codec_key(
+	struct json_output *out, const char *key, size_t length, int depth,
+	bool *first)
+{
+	if (!*first) {
+		json_codec_open(out, ',');
+	}
+	*first = false;
+	json_output_indent(out, depth);
+	out->length =
+		json_emit_str(out->buf, out->size, out->length, key, length);
+	json_codec_open(out, ':');
+	if (out->indent != NULL) {
+		json_codec_open(out, ' ');
+	}
+}
 
-		if (f->is_array) {
-			const void *const arr = *(const void *const *)slot;
-			const size_t cnt =
-				*(const size_t *)(base + f->count_offset);
-			const size_t esz = json_elem_size(f);
-			n = json_emit_ch(buf, bufsz, n, '[');
-			for (size_t i = 0; i < cnt; i++) {
-				if (i > 0) {
-					n = json_emit_ch(buf, bufsz, n, ',');
-				}
-				n = json_emit_indent(
-					buf, bufsz, n, indent, ind_len,
-					depth + 2);
-				n = json_emit_value(
-					f, buf, bufsz, n,
-					(const char *)arr + i * esz, indent,
-					ind_len, depth + 2);
-				if (n == SIZE_MAX) {
-					return SIZE_MAX;
-				}
-			}
-			if (cnt > 0) {
-				n = json_emit_indent(
-					buf, bufsz, n, indent, ind_len,
-					depth + 1);
-			}
-			n = json_emit_ch(buf, bufsz, n, ']');
+void json_codec_close(
+	struct json_output *out, char bracket, int depth, bool first)
+{
+	if (!first) {
+		json_output_indent(out, depth);
+	}
+	json_codec_open(out, bracket);
+}
+
+static void json_write_scalar(
+	const struct json_field *field, const void *slot,
+	struct json_output *out, const struct json_path *path, int depth)
+{
+	char number[JSON_NUM_BUFSIZE];
+	int length = -1;
+	switch (field->kind) {
+	case JSON_K_STRING: {
+		const struct json_string *text = slot;
+		out->length = json_emit_str(
+			out->buf, out->size, out->length,
+			text->str == NULL ? "" : text->str,
+			text->str == NULL ? 0 : text->len);
+		return;
+	}
+	case JSON_K_DYNAMIC: {
+		const struct json_string *text = slot;
+		if (text->str != NULL) {
+			json_output_raw(out, text->str, text->len);
+		} else if (field->raw_type == JSON_OBJECT) {
+			json_output_raw(out, "{}", 2);
+		} else if (field->raw_type == JSON_ARRAY) {
+			json_output_raw(out, "[]", 2);
 		} else {
-			n = json_emit_value(
-				f, buf, bufsz, n, slot, indent, ind_len,
-				depth + 1);
-			if (n == SIZE_MAX) {
-				return SIZE_MAX;
-			}
+			json_output_raw(out, "null", 4);
 		}
-		n = json_emit_ch(buf, bufsz, n, ',');
+		return;
 	}
+	case JSON_K_INT:
+		length = snprintf(
+			number, sizeof(number), "%d", *(const int *)slot);
+		break;
+	case JSON_K_IMAX:
+		length = snprintf(
+			number, sizeof(number), "%jd", *(const intmax_t *)slot);
+		break;
+	case JSON_K_UINT:
+		length = snprintf(
+			number, sizeof(number), "%u", *(const unsigned *)slot);
+		break;
+	case JSON_K_UMAX:
+		length = snprintf(
+			number, sizeof(number), "%ju",
+			*(const uintmax_t *)slot);
+		break;
+	case JSON_K_DOUBLE:
+		if (!json_isfinite(*(const double *)slot)) {
+			out->length = SIZE_MAX;
+			return;
+		}
+		length = u8snprintf(
+			number, sizeof(number), "%.17g", *(const double *)slot);
+		break;
+	case JSON_K_BOOL:
+		json_output_raw(
+			out, *(const bool *)slot ? "true" : "false",
+			*(const bool *)slot ? 4 : 5);
+		return;
+	case JSON_K_NULL:
+		json_output_raw(out, "null", 4);
+		return;
+	case JSON_K_OBJECT:
+		json_codec_write(field->child, slot, out, path, depth);
+		return;
+	case JSON_K_VALUE: {
+		const struct json_value *value = slot;
+		if (value->type == JSON_BOOL) {
+			json_output_raw(
+				out, value->b ? "true" : "false",
+				value->b ? 4 : 5);
+		} else if (value->type == JSON_STRING) {
+			out->length = json_emit_str(
+				out->buf, out->size, out->length,
+				value->text.str, value->text.len);
+		} else if (value->type == JSON_NULL || value->type == JSON_ERROR) {
+			json_output_raw(out, "null", 4);
+		} else {
+			json_output_raw(out, value->text.str, value->text.len);
+		}
+		return;
+	}
+	}
+	if (length < 0 || (size_t)length >= sizeof(number)) {
+		out->length = SIZE_MAX;
+		return;
+	}
+	json_output_raw(out, number, (size_t)length);
+}
 
-	/* strip the trailing comma of the last emitted field, then close on
-	 * its own line aligned with this object's level (compact: no-op). */
-	if (n > n_start) {
-		n--;
-		n = json_emit_indent(buf, bufsz, n, indent, ind_len, depth);
+void json_codec_write_field(
+	const struct json_field *field, const void *obj,
+	struct json_output *out, const struct json_path *path, int depth)
+{
+	if (out->length == SIZE_MAX) {
+		return;
 	}
-	n = json_emit_ch(buf, bufsz, n, '}');
-	if (buf != NULL && bufsz > 0) {
-		buf[n < bufsz ? n : bufsz - 1] = '\0';
+	const char *base = obj;
+	const void *slot = base + field->offset;
+	if (!field->is_array) {
+		json_write_scalar(field, slot, out, path, depth);
+		return;
 	}
-	return n;
+	const char *items = json_array_load(field, slot);
+	size_t count = *(const size_t *)(base + field->count_offset);
+	size_t element_size = json_elem_size(field);
+	json_codec_open(out, '[');
+	for (size_t i = 0; i < count; i++) {
+		if (i != 0) {
+			json_codec_open(out, ',');
+		}
+		json_output_indent(out, depth + 1);
+		struct json_path item_path = { .parent = path,
+					       .kind = JSON_PATH_INDEX,
+					       .index = i };
+		json_write_scalar(
+			field, items + i * element_size, out, &item_path,
+			depth + 1);
+	}
+	json_codec_close(out, ']', depth, count == 0);
+}
+
+void json_codec_write(
+	const struct json_schema *schema, const void *obj,
+	struct json_output *out, const struct json_path *path, int depth)
+{
+	if (schema->write != NULL) {
+		schema->write(schema, obj, out, path, depth);
+		return;
+	}
+	json_codec_open(out, '{');
+	bool first = true;
+	if (schema->is_map) {
+		struct json_field pointer_field = { .kind = JSON_K_OBJECT };
+		const char *base = obj;
+		const char *entries = json_array_load(
+			&pointer_field, base + schema->entries_offset);
+		size_t count = *(const size_t *)(base + schema->count_offset);
+		for (size_t i = 0; i < count; i++) {
+			const char *entry = entries + i * schema->entry_size;
+			const struct json_string *key =
+				(const struct json_string *)entry;
+			if (out->options != NULL &&
+			    out->options->filter != NULL &&
+			    !out->options->filter(
+				    out->options->context, path, key->str,
+				    key->len)) {
+				continue;
+			}
+			struct json_path entry_path = { .parent = path,
+							.kind = JSON_PATH_MAP,
+							.key = *key,
+							.index = i };
+			json_codec_key(
+				out, key->str, key->len, depth + 1, &first);
+			json_codec_write_field(
+				schema->map_value, entry, out, &entry_path,
+				depth + 1);
+		}
+	} else {
+		for (size_t i = 0; i < schema->n_fields; i++) {
+			if (schema->get_present != NULL &&
+			    !schema->get_present(obj, i)) {
+				continue;
+			}
+			const struct json_field *field = &schema->fields[i];
+			struct json_path field_path = {
+				.parent = path,
+				.kind = JSON_PATH_PROPERTY,
+				.key = { field->name_len, (char *)field->name }
+			};
+			json_codec_key(
+				out, field->name, field->name_len, depth + 1,
+				&first);
+			json_codec_write_field(
+				field, obj, out, &field_path, depth + 1);
+		}
+	}
+	json_codec_close(out, '}', depth, first);
+}
+
+int json_marshal_ex(
+	const struct json_schema *schema, char *buf, size_t bufsz,
+	const void *obj, const char *indent, const struct json_options *options)
+{
+	struct json_output output = {
+		.buf = buf, .size = bufsz, .indent = indent, .options = options
+	};
+	json_codec_write(schema, obj, &output, NULL, 0);
+	if (buf != NULL && bufsz != 0) {
+		buf[output.length < bufsz ? output.length : bufsz - 1] = '\0';
+	}
+	return marshal_checked_int(output.length);
 }
 
 int json_marshal(
 	const struct json_schema *restrict schema, char *restrict buf,
 	size_t bufsz, const void *restrict obj, const char *restrict indent)
 {
-	const size_t ind_len = (indent != NULL) ? strlen(indent) : 0;
-	const size_t n =
-		json_marshal_impl(schema, buf, bufsz, obj, indent, ind_len, 0);
-	return marshal_checked_int(n);
+	return json_marshal_ex(schema, buf, bufsz, obj, indent, NULL);
 }
 
 void json_free(const struct json_schema *restrict schema, void *restrict obj)
 {
-	char *const base = obj;
-	for (size_t fi = 0; fi < schema->n_fields; fi++) {
-		const struct json_field *const f = &schema->fields[fi];
-		if (f->is_array) {
-			void **const pp = (void **)(base + f->offset);
-			size_t *const pc = (size_t *)(base + f->count_offset);
-			json_free_array(f, *pp, *pc);
-			free(*pp);
-			*pp = NULL;
-			*pc = 0;
-		} else if (f->kind == JSON_K_OBJECT) {
-			json_free(f->child, base + f->offset);
+	if (schema->release != NULL) {
+		schema->release(schema, obj);
+		return;
+	}
+	if (schema->is_map) {
+		struct json_field pointer_field = { .kind = JSON_K_OBJECT };
+		char *base = obj;
+		void *entries = json_array_load(
+			&pointer_field, base + schema->entries_offset);
+		free(entries);
+		json_array_store(
+			&pointer_field, base + schema->entries_offset, NULL);
+		*(size_t *)(base + schema->count_offset) = 0;
+	} else {
+		for (size_t i = 0; i < schema->n_fields; i++) {
+			if (schema->get_present != NULL &&
+			    !schema->get_present(obj, i)) {
+				continue;
+			}
+			json_codec_release(&schema->fields[i], obj);
+			if (schema->set_present != NULL) {
+				schema->set_present(obj, i, false);
+			}
 		}
 	}
+	json_codec_storage(schema, obj);
+}
+
+static void
+json_path_output(struct json_output *out, const struct json_path *path)
+{
+	if (path == NULL) {
+		json_codec_open(out, '$');
+		return;
+	}
+	json_path_output(out, path->parent);
+	if (path->kind != JSON_PATH_INDEX) {
+		json_codec_open(out, '[');
+		out->length = json_emit_str(
+			out->buf, out->size, out->length, path->key.str,
+			path->key.len);
+		json_codec_open(out, ']');
+	}
+	if (path->kind != JSON_PATH_PROPERTY) {
+		char index[3 * sizeof(size_t) + 1];
+		int length = snprintf(index, sizeof(index), "%zu", path->index);
+		json_codec_open(out, '[');
+		json_output_raw(out, index, (size_t)length);
+		json_codec_open(out, ']');
+	}
+}
+
+int json_format_path(char *buf, size_t bufsz, const struct json_path *path)
+{
+	struct json_output output = { .buf = buf, .size = bufsz };
+	json_path_output(&output, path);
+	if (buf != NULL && bufsz != 0) {
+		buf[output.length < bufsz ? output.length : bufsz - 1] = '\0';
+	}
+	return marshal_checked_int(output.length);
 }
