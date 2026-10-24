@@ -34,19 +34,19 @@ static ikcpcb *peer;
 static unsigned char peerbuf[1024];
 static size_t peerlen;
 
-int real_connect(int fd, const struct sockaddr *addr, socklen_t len) __asm__(
-	"__real_connect");
-int test_connect(int fd, const struct sockaddr *addr, socklen_t len) __asm__(
-	"__wrap_connect");
-int test_connect(int fd, const struct sockaddr *addr, socklen_t len)
+static int test_connect(int fd, const struct sockaddr *addr, socklen_t len)
 {
 	if (fail_connect) {
 		fail_connect = false;
 		errno = ENETUNREACH;
 		return -1;
 	}
-	return real_connect(fd, addr, len);
+	return connect(fd, addr, len);
 }
+
+#define connect(fd, addr, len) test_connect(fd, addr, len)
+#include "session.c"
+#undef connect
 
 static const struct config conf = {
 	.mode = MODE_SERVER,
@@ -188,6 +188,7 @@ static int attach_socket(struct session *ss)
 
 static void expect_socket(int fd, const char *payload)
 {
+	CHECK(fd >= 0);
 	char buf[256];
 	const size_t len = strlen(payload);
 	CHECK(recv(fd, buf, sizeof(buf), 0) == (ssize_t)len);
@@ -196,8 +197,212 @@ static void expect_socket(int fd, const char *payload)
 
 static void expect_eof(int fd)
 {
+	CHECK(fd >= 0);
 	char buf;
 	CHECK(recv(fd, &buf, 1, 0) == 0);
+}
+
+static void send_bytes(struct session *ss, const unsigned char *buf, size_t len)
+{
+	CHECK(ikcp_send(peer, (const char *)buf, (int)len) >= 0);
+	ikcp_flush(peer);
+	CHECK(ikcp_peeksize(ss->kcp) > 0);
+	session_read_cb(ss);
+}
+
+static void expect_no_socket_data(int fd)
+{
+	CHECK(fd >= 0);
+	char byte;
+	CHECK(recv(fd, &byte, 1, 0) == -1);
+	CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+}
+
+static void fragmented_push(void)
+{
+	const char payload[] = "split payload";
+	unsigned char buf[TLV_HEADER_SIZE + sizeof(payload) - 1];
+	tlv_header_write(
+		buf,
+		(struct tlv_header){ .msg = SMSG_PUSH, .len = sizeof(buf) });
+	memcpy(buf + TLV_HEADER_SIZE, payload, sizeof(payload) - 1);
+	for (size_t split = 1; split < sizeof(buf); split++) {
+		struct server *s = new_server();
+		struct session *ss = new_session(s);
+		attach_peer(ss);
+		const int fd = attach_socket(ss);
+		send_bytes(ss, buf, split);
+		/* A second read with no new bytes must preserve the partial frame. */
+		session_read_cb(ss);
+		CHECK(ss->wbuf->len == split && ss->wbuf_off == 0);
+		CHECK(ss->wbuf_next == 0 && ss->wbuf_flush == 0);
+		CHECK(ss->tcp_state == TCP_STATE_ESTABLISHED);
+		CHECK(!ss->kcp_eof_sent && !ss->kcp_eof_recv);
+		CHECK(ss->stats.tcp_tx == 0);
+		expect_no_socket_data(fd);
+
+		/* The completion and a subsequent frame arrive in the same read. */
+		CHECK(ikcp_send(
+			      peer, (const char *)buf + split,
+			      (int)(sizeof(buf) - split)) >= 0);
+		enqueue_frame(SMSG_PUSH, "next");
+		ikcp_flush(peer);
+		session_read_cb(ss);
+		expect_socket(fd, "split payloadnext");
+		session_read_cb(ss);
+		expect_no_socket_data(fd);
+		CHECK(ss->stats.tcp_tx == sizeof(payload) - 1 + strlen("next"));
+		CHECK(ss->wbuf->len == 0 && ss->wbuf_off == 0);
+		CHECK(ss->wbuf_next == 0 && ss->wbuf_flush == 0);
+		CHECK(ikcp_peeksize(ss->kcp) < 0);
+		socket_close(fd);
+		detach_peer();
+		free_server(s);
+	}
+}
+
+static void fragmented_control(uint16_t what)
+{
+	unsigned char buf[TLV_HEADER_SIZE];
+	tlv_header_write(
+		buf, (struct tlv_header){ .msg = what, .len = sizeof(buf) });
+	for (size_t split = 1; split < sizeof(buf); split++) {
+		struct server *s = new_server();
+		s->connect.in.sin_family = AF_INET;
+		struct session *ss = new_session(s);
+		attach_peer(ss);
+		ss->is_accepted = true;
+		const int fd = what == SMSG_DIAL ? -1 : attach_socket(ss);
+		fail_connect = what == SMSG_DIAL;
+		send_bytes(ss, buf, split);
+		CHECK(ss->tcp_state == (what == SMSG_DIAL ?
+						TCP_STATE_CLOSED :
+						TCP_STATE_ESTABLISHED));
+		CHECK(!ss->kcp_eof_recv && !ss->kcp_eof_sent);
+		CHECK(fail_connect == (what == SMSG_DIAL));
+		ikcp_flush(ss->kcp);
+		CHECK(ikcp_peeksize(peer) < 0);
+		if (fd >= 0) {
+			expect_no_socket_data(fd);
+		}
+		send_bytes(ss, buf + split, sizeof(buf) - split);
+		session_read_cb(ss);
+		if (what == SMSG_DIAL) {
+			CHECK(!fail_connect && ss->kcp_eof_sent);
+			CHECK(ss->tcp_state == TCP_STATE_CLOSED);
+			expect_frame(ss, SMSG_EOF, NULL);
+		} else if (what == SMSG_EOF) {
+			CHECK(ss->kcp_eof_recv && ss->tcp_eof_sent);
+			CHECK(ss->tcp_state == TCP_STATE_LINGER);
+			expect_eof(fd);
+		} else {
+			CHECK(ss->tcp_state == TCP_STATE_ESTABLISHED);
+			CHECK(!ss->kcp_eof_sent && !ss->kcp_eof_recv);
+			expect_frame(ss, SMSG_KEEPALIVE, NULL);
+			expect_no_socket_data(fd);
+		}
+		CHECK(ss->wbuf->len == 0 && ss->wbuf_off == 0);
+		CHECK(ss->wbuf_next == 0 && ss->wbuf_flush == 0);
+		if (fd >= 0) {
+			socket_close(fd);
+		}
+		detach_peer();
+		free_server(s);
+	}
+}
+
+static void push_length_boundaries(void)
+{
+	struct server *s = new_server();
+	struct session *ss = new_session(s);
+	attach_peer(ss);
+	const int fd = attach_socket(ss);
+	frame(ss, SMSG_PUSH, NULL);
+	expect_no_socket_data(fd);
+	CHECK(ss->tcp_state == TCP_STATE_ESTABLISHED);
+	unsigned char buf[TLV_MAX_LENGTH];
+	tlv_header_write(
+		buf,
+		(struct tlv_header){ .msg = SMSG_PUSH, .len = sizeof(buf) });
+	for (size_t i = TLV_HEADER_SIZE; i < sizeof(buf); i++) {
+		buf[i] = (unsigned char)i;
+	}
+	send_bytes(ss, buf, sizeof(buf));
+	unsigned char received[TLV_MAX_LENGTH - TLV_HEADER_SIZE];
+	for (size_t n = 0; n < sizeof(received);) {
+		const ssize_t count =
+			recv(fd, received + n, sizeof(received) - n, 0);
+		CHECK(count > 0);
+		n += (size_t)count;
+	}
+	CHECK(memcmp(received, buf + TLV_HEADER_SIZE, sizeof(received)) == 0);
+	CHECK(ss->stats.tcp_tx == sizeof(received));
+	frame(ss, SMSG_PUSH, "after maximum");
+	expect_socket(fd, "after maximum");
+	session_read_cb(ss);
+	expect_no_socket_data(fd);
+	CHECK(ss->wbuf->len == 0 && ss->wbuf_off == 0);
+	socket_close(fd);
+	detach_peer();
+	free_server(s);
+}
+
+static void rejected_frame(uint16_t what, uint16_t length, bool body)
+{
+	struct server *s = new_server();
+	s->connect.in.sin_family = AF_INET;
+	struct session *ss = new_session(s);
+	attach_peer(ss);
+	ss->is_accepted = true;
+	const int fd = what == SMSG_DIAL ? -1 : attach_socket(ss);
+	fail_connect = what == SMSG_DIAL;
+	unsigned char buf[TLV_HEADER_SIZE + 1];
+	tlv_header_write(
+		buf, (struct tlv_header){ .msg = what, .len = length });
+	buf[TLV_HEADER_SIZE] = 'x';
+	CHECK(ikcp_send(
+		      peer, (const char *)buf,
+		      (int)(TLV_HEADER_SIZE + (body ? 1 : 0))) >= 0);
+	enqueue_frame(SMSG_KEEPALIVE, NULL);
+	enqueue_frame(SMSG_PUSH, "must not be forwarded");
+	ikcp_flush(peer);
+	session_read_cb(ss);
+	CHECK(ss->tcp_state == TCP_STATE_CLOSED && ss->w_socket.fd == -1);
+	CHECK(ss->kcp_eof_sent && !ss->kcp_eof_recv);
+	CHECK(ss->stats.tcp_tx == 0);
+	CHECK(fail_connect == (what == SMSG_DIAL));
+	fail_connect = false;
+	expect_frame(ss, SMSG_EOF, NULL);
+	CHECK(peerlen == 0 && ikcp_peeksize(peer) < 0);
+	/* A later callback can consume the successor of a well-framed rejection,
+	 * but the aborted local stream must never receive its payload. */
+	session_read_cb(ss);
+	if (length >= TLV_HEADER_SIZE && length <= TLV_MAX_LENGTH) {
+		expect_frame(ss, SMSG_KEEPALIVE, NULL);
+	}
+	ikcp_flush(ss->kcp);
+	CHECK(ikcp_peeksize(peer) < 0);
+	CHECK(ss->stats.tcp_tx == 0);
+	if (fd >= 0) {
+		expect_eof(fd);
+		socket_close(fd);
+	}
+	detach_peer();
+	free_server(s);
+}
+
+static void malformed_frames(void)
+{
+	for (size_t length = 0; length < TLV_HEADER_SIZE; length++) {
+		rejected_frame(SMSG_PUSH, (uint16_t)length, false);
+	}
+	rejected_frame(SMSG_PUSH, TLV_MAX_LENGTH + 1, false);
+	rejected_frame(SMSG_PUSH, UINT16_MAX, false);
+	rejected_frame(SMSG_DIAL, TLV_HEADER_SIZE + 1, true);
+	rejected_frame(SMSG_EOF, TLV_HEADER_SIZE + 1, true);
+	rejected_frame(SMSG_KEEPALIVE, TLV_HEADER_SIZE + 1, true);
+	rejected_frame(SMSG_KEEPALIVE + 1, TLV_HEADER_SIZE, false);
+	rejected_frame(UINT16_MAX, TLV_HEADER_SIZE, false);
 }
 
 static void half_close(bool remote_first)
@@ -488,6 +693,13 @@ int main(int argc, char **argv)
 		pending_connect(false);
 		failed_dial(false);
 		failed_dial(true);
+	} else if (strcmp(argv[1], "framing") == 0) {
+		fragmented_push();
+		fragmented_control(SMSG_DIAL);
+		fragmented_control(SMSG_EOF);
+		fragmented_control(SMSG_KEEPALIVE);
+		push_length_boundaries();
+		malformed_frames();
 	} else {
 		CHECK(strcmp(argv[1], "timeouts") == 0);
 		dial_timeout();
