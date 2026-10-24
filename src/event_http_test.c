@@ -33,6 +33,11 @@
 
 static bool fail_alloc, fail_setup, fail_read, fail_write;
 static size_t allocations;
+static size_t read_limit;
+static const int *send_script;
+static size_t send_steps, send_step;
+static char sent_response[2048];
+static size_t sent_length;
 static void *contexts[128];
 
 #define TEST_HTTP_LIMIT 32
@@ -85,6 +90,9 @@ static ssize_t test_recv(int fd, void *buf, size_t len, int flags)
 		errno = EIO;
 		return -1;
 	}
+	if (read_limit != 0 && len > read_limit) {
+		len = read_limit;
+	}
 	return recv(fd, buf, len, flags);
 }
 
@@ -94,6 +102,23 @@ static ssize_t test_send(int fd, const void *buf, size_t len, int flags)
 		fail_write = false;
 		errno = EIO;
 		return -1;
+	}
+	if (send_script != NULL) {
+		CHECK(send_step < send_steps);
+		if (send_step == 0) {
+			CHECK(len < sizeof(sent_response));
+			memcpy(sent_response, buf, len);
+			sent_length = len;
+		}
+		const int step = send_script[send_step++];
+		if (step < 0) {
+			errno = -step;
+			return -1;
+		}
+		CHECK(step > 0);
+		if (len > (size_t)step) {
+			len = (size_t)step;
+		}
 	}
 	return send(fd, buf, len, flags);
 }
@@ -398,6 +423,254 @@ static void check_plain_response(const char *response, const bool cache)
 	      NULL);
 	CHECK((strstr(response, "\r\nCache-Control: no-store\r\n") != NULL) ==
 	      cache);
+}
+
+/* A callback consumes exactly this much of the queued request. */
+static void request_fragment(struct fixture *f, const int fd, const size_t len)
+{
+	struct http_ctx *ctx = first_context(f);
+	const size_t before = ctx->rbuf.len;
+	read_limit = len;
+	http_read_cb(f->server.loop, &ctx->w_read, EV_READ);
+	read_limit = 0;
+	CHECK(active(f) == 1);
+	CHECK(ctx->rbuf.len == before + len);
+	CHECK(ctx->wbuf == NULL);
+	CHECK(ev_is_active(&ctx->w_read));
+	CHECK(!ev_is_active(&ctx->w_write));
+	CHECK(ev_is_active(&ctx->w_timeout));
+	char byte;
+	CHECK(recv(fd, &byte, 1, MSG_DONTWAIT) == -1);
+	CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
+}
+
+static void readmission(struct fixture *f)
+{
+	CHECK(active(f) == 0);
+	CHECK(f->server.listener.http[0] == NULL);
+	const int fd = connect_client(f);
+	CHECK(active(f) == 1);
+	CHECK(f->server.listener.http[0] != NULL);
+	stop_contexts(f);
+	stop_contexts(f);
+	CHECK(active(f) == 0);
+	assert_closed(fd);
+	socket_close(fd);
+}
+
+static void incremental_requests(struct ev_loop *loop)
+{
+	struct fixture f;
+	fixture_init(&f, loop);
+	const char request[] =
+		"GET /missing HTTP/1.1\r\nHost: localhost\r\nX-Test: value\r\n\r\n";
+	const int fd = connect_client(&f);
+	CHECK(send(fd, request, sizeof(request) - 1, 0) == sizeof(request) - 1);
+	/* Every byte boundary includes both halves of every CRLF and tokens. */
+	for (size_t i = 0; i < sizeof(request) - 2; i++) {
+		request_fragment(&f, fd, 1);
+		const struct http_ctx *ctx = first_context(&f);
+		if (i < strlen("GET /missing HTTP/1.1\r\n") - 1) {
+			CHECK(ctx->http_msg.req.method == NULL);
+			CHECK(ctx->http_nxt == (char *)ctx->rbuf.data);
+		} else {
+			CHECK(strcmp(ctx->http_msg.req.method, "GET") == 0);
+			CHECK(strcmp(ctx->http_msg.req.url, "/missing") == 0);
+			CHECK(ctx->http_nxt > (char *)ctx->rbuf.data);
+		}
+	}
+	struct http_ctx *ctx = first_context(&f);
+	http_read_cb(loop, &ctx->w_read, EV_READ);
+	CHECK(active(&f) == 0);
+	char response[2048];
+	read_response(fd, response, sizeof(response));
+	CHECK(strncmp(response, "HTTP/1.1 404 Not Found\r\n", 24) == 0);
+	CHECK(strstr(response, "</BODY></HTML>\n") != NULL);
+	socket_close(fd);
+	readmission(&f);
+	socket_close(f.server.listener.fd_http);
+	puts("incremental_requests: bytewise request line, headers and split CRLF retain state without premature response passed");
+}
+
+static void request_boundaries(struct ev_loop *loop)
+{
+	struct fixture f;
+	fixture_init(&f, loop);
+	const char prefix[] = "GET /missing HTTP/1.1\r\nX-Pad: ";
+	/* Both complete and incomplete headers at the accumulation limit. */
+	for (size_t length = HTTP_MAX_REQUEST - 2; length <= HTTP_MAX_REQUEST;
+	     length++) {
+		for (size_t complete = 0; complete < 2; complete++) {
+			char request[HTTP_MAX_REQUEST + 1];
+			memcpy(request, prefix, sizeof(prefix) - 1);
+			memset(request + sizeof(prefix) - 1, 'x',
+			       length - (sizeof(prefix) - 1));
+			if (complete) {
+				memcpy(request + length - 4, "\r\n\r\n", 5);
+			}
+			const int fd = connect_client(&f);
+			CHECK(send(fd, request, length, 0) == (ssize_t)length);
+			request_fragment(&f, fd, length - 2);
+			struct http_ctx *ctx = first_context(&f);
+			http_read_cb(loop, &ctx->w_read, EV_READ);
+			const bool accepted =
+				complete && length < HTTP_MAX_REQUEST;
+			if (!complete && length < HTTP_MAX_REQUEST - 1) {
+				CHECK(active(&f) == 1);
+				CHECK(shutdown(fd, SHUT_WR) == 0);
+				ctx = first_context(&f);
+				http_read_cb(loop, &ctx->w_read, EV_READ);
+			}
+			CHECK(active(&f) == 0);
+			if (accepted) {
+				char response[2048];
+				read_response(fd, response, sizeof(response));
+				CHECK(strncmp(response, "HTTP/1.1 404", 12) ==
+				      0);
+			} else if (length < HTTP_MAX_REQUEST) {
+				assert_closed(fd);
+			} else {
+				struct pollfd pfd = { .fd = fd,
+						      .events = POLLIN };
+				CHECK(poll(&pfd, 1, 100) == 1);
+				char byte;
+				const ssize_t n = recv(fd, &byte, 1, 0);
+				CHECK(n == 0 ||
+				      (n == -1 && errno == ECONNRESET));
+			}
+			socket_close(fd);
+			readmission(&f);
+		}
+	}
+	socket_close(f.server.listener.fd_http);
+	puts("request_boundaries: 4094/4095/4096-byte complete/incomplete headers and EOF passed");
+}
+
+static void request_rejections(struct ev_loop *loop)
+{
+	struct fixture f;
+	fixture_init(&f, loop);
+	/* A full, unterminated request line uses the same 4095-byte limit. */
+	char request[HTTP_MAX_REQUEST - 1];
+	memset(request, 'x', sizeof(request));
+	int fd = connect_client(&f);
+	CHECK(send(fd, request, sizeof(request), 0) == sizeof(request));
+	request_fragment(&f, fd, sizeof(request) - 1);
+	struct http_ctx *ctx = first_context(&f);
+	http_read_cb(loop, &ctx->w_read, EV_READ);
+	CHECK(active(&f) == 0);
+	assert_closed(fd);
+	socket_close(fd);
+	readmission(&f);
+
+	const char *invalid[] = {
+		"invalid request\r\n",
+		"GET /missing HTTP/2.0\r\n",
+		"GET /missing HTTP/1.1\r\nBad header: value\r\n",
+	};
+	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+		fd = connect_client(&f);
+		const size_t len = strlen(invalid[i]);
+		CHECK(send(fd, invalid[i], len, 0) == (ssize_t)len);
+		request_fragment(&f, fd, len - 1);
+		ctx = first_context(&f);
+		http_read_cb(loop, &ctx->w_read, EV_READ);
+		CHECK(active(&f) == 0);
+		assert_closed(fd);
+		socket_close(fd);
+		readmission(&f);
+	}
+	socket_close(f.server.listener.fd_http);
+	puts("request_rejections: full request line, malformed split lines/headers and protocol rejection passed");
+}
+
+static void complete_response(struct fixture *f, struct http_ctx *ctx)
+{
+	struct ev_loop *loop = f->server.loop;
+	http_write_cb(loop, &ctx->w_write, EV_WRITE);
+	CHECK(send_step == 4);
+	CHECK(ctx->wbuf->len == sent_length - 7);
+	CHECK(ev_is_active(&ctx->w_write));
+	http_write_cb(loop, &ctx->w_write, EV_WRITE);
+	CHECK(send_step == 7);
+	CHECK(ctx->wbuf->len == sent_length - 18);
+	CHECK(memcmp(ctx->wbuf->data, sent_response + 18, ctx->wbuf->len) == 0);
+	CHECK(active(f) == TEST_HTTP_LIMIT);
+	CHECK(ev_is_active(&ctx->w_write));
+	http_write_cb(loop, &ctx->w_write, EV_WRITE);
+	CHECK(send_step == send_steps);
+}
+
+static struct http_ctx *blocked_response(struct fixture *f, int *clients)
+{
+	for (size_t i = 0; i < TEST_HTTP_LIMIT; i++) {
+		clients[i] = connect_client(f);
+	}
+	const char request[] = "GET /missing HTTP/1.1\r\n\r\n";
+	CHECK(send(clients[0], request, sizeof(request) - 1, 0) ==
+	      sizeof(request) - 1);
+	static const int script[] = { -EINTR, 7,      -EAGAIN,	    -EAGAIN,
+				      11,     -EINTR, -EWOULDBLOCK, 2048 };
+	send_script = script;
+	send_steps = sizeof(script) / sizeof(script[0]);
+	send_step = 0;
+	struct http_ctx *ctx = first_context(f);
+	http_read_cb(f->server.loop, &ctx->w_read, EV_READ);
+	CHECK(send_step == 3);
+	CHECK(active(f) == TEST_HTTP_LIMIT);
+	CHECK(!ev_is_active(&ctx->w_read));
+	CHECK(ev_is_active(&ctx->w_write));
+	CHECK(ev_is_active(&ctx->w_timeout));
+	CHECK(ctx->wbuf->len == sent_length - 7);
+	CHECK(memcmp(ctx->wbuf->data, sent_response + 7, ctx->wbuf->len) == 0);
+	return ctx;
+}
+
+static void response_backpressure(struct ev_loop *loop)
+{
+	/* Complete, write error, timeout and shutdown after the first short send. */
+	for (size_t outcome = 0; outcome < 4; outcome++) {
+		struct fixture f;
+		fixture_init(&f, loop);
+		int clients[TEST_HTTP_LIMIT];
+		struct http_ctx *ctx = blocked_response(&f, clients);
+		const size_t before = allocations;
+		const int excess = connect_client(&f);
+		CHECK(allocations == before);
+		assert_closed(excess);
+		socket_close(excess);
+		if (outcome == 0) {
+			complete_response(&f, ctx);
+		} else if (outcome == 1) {
+			fail_write = true;
+			http_write_cb(loop, &ctx->w_write, EV_WRITE);
+		} else if (outcome == 2) {
+			http_timeout_cb(loop, &ctx->w_timeout, EV_TIMER);
+		} else {
+			stop_contexts(&f);
+		}
+		send_script = NULL;
+		CHECK(active(&f) == (outcome == 3 ? 0 : TEST_HTTP_LIMIT - 1));
+		CHECK(f.server.listener.http[0] == NULL);
+		char response[2048];
+		read_response(clients[0], response, sizeof(response));
+		const size_t expected = outcome == 0 ? sent_length : 7;
+		CHECK(strlen(response) == expected);
+		CHECK(memcmp(response, sent_response, expected) == 0);
+		const int replacement = connect_client(&f);
+		CHECK(f.server.listener.http[0] != NULL);
+		CHECK(active(&f) == (outcome == 3 ? 1 : TEST_HTTP_LIMIT));
+		stop_contexts(&f);
+		stop_contexts(&f);
+		CHECK(active(&f) == 0);
+		assert_closed(replacement);
+		socket_close(replacement);
+		for (size_t i = 0; i < TEST_HTTP_LIMIT; i++) {
+			socket_close(clients[i]);
+		}
+		socket_close(f.server.listener.fd_http);
+	}
+	puts("response_backpressure: short sends, EINTR, repeated EAGAIN, exact suffix/bytes, admission held until completion/error/timeout/shutdown and re-admission passed");
 }
 
 static void health_responses(struct ev_loop *loop)
@@ -719,6 +992,10 @@ int main(void)
 	cleanup_paths(loop);
 	cleanup_errors(loop);
 	setup_failures(loop);
+	incremental_requests(loop);
+	request_boundaries(loop);
+	request_rejections(loop);
+	response_backpressure(loop);
 	health_responses(loop);
 	rejected_routes(loop);
 	stats_responses(loop);
