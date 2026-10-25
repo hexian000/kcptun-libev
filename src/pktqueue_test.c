@@ -133,6 +133,82 @@ static void test_valid_input(struct server *s)
 	LOGI("existing sessions and accounting preserved");
 }
 
+struct budget_entry {
+	uint32_t value;
+	struct hashkey key;
+};
+
+static struct budget_entry *
+fill_session_budget(struct server *s, const size_t count)
+{
+	/* Occupy the table budget without allocating 2 GiB of session buffers.
+	 * These shorter keys cannot match a real SESSION_KEY_SIZE key. */
+	struct budget_entry *entries = calloc(count, sizeof(*entries));
+	CHECK(entries != NULL);
+	for (size_t i = 0; i < count; i++) {
+		entries[i].value = (uint32_t)i;
+		entries[i].key = (struct hashkey){
+			.len = sizeof(entries[i].value),
+			.data = &entries[i].value,
+		};
+		void *element = &entries[i];
+		s->sessions = table_set(s->sessions, &entries[i].key, &element);
+		CHECK(element == NULL);
+	}
+	return entries;
+}
+
+static void test_session_budget(struct server *s)
+{
+	struct session *first = accept_session(s);
+	const size_t count = MAX_SESSIONS - 2;
+	struct budget_entry *entries = fill_session_budget(s, count);
+	CHECK(table_size(s->sessions) == MAX_SESSIONS - 1);
+	unsigned char packet[24] = { 0, 0, 0, 2, 84 };
+	dispatch(s, packet, sizeof(packet));
+	CHECK(table_size(s->sessions) == MAX_SESSIONS);
+	struct session *second = find_session(s, 2);
+	CHECK(second != NULL);
+	CHECK(second->kcp_state == KCP_STATE_ESTABLISHED);
+	CHECK(s->stats.kcp_rx == 48);
+
+	packet[3] = 3;
+	for (size_t i = 0; i < 2; i++) {
+		dispatch(s, packet, sizeof(packet));
+		CHECK(table_size(s->sessions) == MAX_SESSIONS);
+		CHECK(find_session(s, 3) == NULL);
+		CHECK(s->stats.kcp_rx == 48);
+	}
+	packet[3] = 1;
+	dispatch(s, packet, sizeof(packet));
+	CHECK(find_session(s, 1) == first);
+	CHECK(first->kcp_state == KCP_STATE_ESTABLISHED);
+	CHECK(first->stats.kcp_rx == 48);
+	CHECK(s->stats.kcp_rx == 72);
+	CHECK(table_size(s->sessions) == MAX_SESSIONS);
+
+	void *element = NULL;
+	s->sessions = table_del(s->sessions, &entries[0].key, &element);
+	CHECK(element == &entries[0]);
+	packet[3] = 3;
+	dispatch(s, packet, sizeof(packet));
+	CHECK(table_size(s->sessions) == MAX_SESSIONS);
+	CHECK(find_session(s, 3) != NULL);
+	CHECK(s->stats.kcp_rx == 96);
+	packet[3] = 2;
+	dispatch(s, packet, sizeof(packet));
+	CHECK(find_session(s, 2) == second);
+	CHECK(second->stats.kcp_rx == 48);
+	CHECK(s->stats.kcp_rx == 120);
+	for (size_t i = 1; i < count; i++) {
+		s->sessions = table_del(s->sessions, &entries[i].key, &element);
+		CHECK(element == &entries[i]);
+	}
+	free(entries);
+	CHECK(table_size(s->sessions) == 3);
+	LOGI("session budget: last slot admitted, excess rejected, existing traffic and re-admission preserved");
+}
+
 static void capture_warning(void *ud, const unsigned char *buf, size_t len)
 {
 	size_t *count = ud;
@@ -206,6 +282,8 @@ int main(int argc, char **argv)
 		test_initial_input(&s);
 		test_existing_input(&s);
 		test_valid_input(&s);
+	} else if (strcmp(argv[1], "budget") == 0) {
+		test_session_budget(&s);
 	} else {
 		CHECK(strcmp(argv[1], "logging") == 0);
 		test_warning_rate(&s);

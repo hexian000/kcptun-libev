@@ -264,6 +264,12 @@ static void queue_recv(struct server *restrict s, struct msgframe *restrict msg)
 			ss0_reset(s, sa, conv);
 			return;
 		}
+		if (table_size(s->sessions) >= MAX_SESSIONS) {
+			LOG_RATELIMITED(
+				ERROR, ev_now(s->loop), 1.0,
+				"max sessions reached, refusing new connection");
+			return;
+		}
 		/* accept new kcp session */
 		ss = session_new(s, &msg->addr, conv);
 		if (ss == NULL) {
