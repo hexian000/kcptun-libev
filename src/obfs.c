@@ -678,6 +678,11 @@ static bool obfs_raw_start(struct obfs *restrict obfs)
 		obfs_raw_close(obfs);
 		return false;
 	}
+	if (conf->netdev != NULL &&
+	    !socket_bind_netdev(obfs->raw_fd, conf->netdev)) {
+		obfs_raw_close(obfs);
+		return false;
+	}
 	const int raw_nonblock_err = socket_set_nonblock(obfs->raw_fd);
 	if (raw_nonblock_err != 0) {
 		LOGE_F("socket_set_nonblock: (%d) %s", raw_nonblock_err,
@@ -1060,7 +1065,6 @@ static struct obfs_ctx *obfs_tcp_input(
 		return NULL; /* pure ACK */
 	}
 
-	ctx->last_seen = msg->ts;
 	sa_copy(&msg->addr.sa, &ctx->raddr.sa);
 	msg->off = (uint16_t)(pkt->ihl + pkt->doff);
 	msg->len = (uint16_t)(pkt->plen - pkt->doff);
@@ -1146,7 +1150,7 @@ static bool ctx_del_filter(
 }
 
 static void
-obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
+obfs_ctx_remove(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 {
 	if (ctx->authenticated) {
 		ASSERT(obfs->num_authenticated > 0u);
@@ -1157,14 +1161,19 @@ obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
 		ev_timer_stop(obfs->server->loop, &obfs->w_syn);
 		obfs_sched_redial(obfs);
 	}
-	/* free all related sessions */
-	struct server *restrict s = obfs->server;
-	s->sessions = table_filter(s->sessions, ctx_del_filter, &ctx->raddr.sa);
 	if (ctx->in_table) {
 		obfs->contexts =
 			table_del(obfs->contexts, OBFS_CTX_GETKEY(ctx), NULL);
 		ctx->in_table = false;
 	}
+}
+
+static void
+obfs_ctx_del(struct obfs *restrict obfs, struct obfs_ctx *restrict ctx)
+{
+	struct server *restrict s = obfs->server;
+	s->sessions = table_filter(s->sessions, ctx_del_filter, &ctx->raddr.sa);
+	obfs_ctx_remove(obfs, ctx);
 }
 
 static void obfs_ctx_stop(struct ev_loop *loop, struct obfs_ctx *restrict ctx)
@@ -1540,6 +1549,33 @@ void obfs_sched_redial(struct obfs *restrict obfs)
 	ev_timer_start(loop, w_redial);
 }
 
+static bool obfs_ctx_expired(const struct obfs_ctx *restrict ctx)
+{
+	const struct server *restrict s = ctx->obfs->server;
+	const ev_tstamp now = ev_now(s->loop);
+	ASSERT(now >= ctx->last_seen);
+	const ev_tstamp last_seen =
+		ctx->authenticated ? ctx->last_seen : ctx->created;
+	const double timeout =
+		ctx->authenticated ? s->timeout : s->dial_timeout;
+	return now - last_seen >= timeout;
+}
+
+static bool obfs_session_timeout_filt(
+	const struct hashtable *t, const void *key, void *element, void *user)
+{
+	UNUSED(t);
+	UNUSED(key);
+	struct obfs *restrict obfs = user;
+	struct session *restrict ss = element;
+	struct obfs_ctx *restrict ctx = obfs_find_ctx(obfs, &ss->raddr.sa);
+	if (ctx != NULL && obfs_ctx_expired(ctx)) {
+		session_free(ss);
+		return false;
+	}
+	return true;
+}
+
 static bool obfs_ctx_timeout_filt(
 	const struct hashtable *t, const void *key, void *element, void *user)
 {
@@ -1550,25 +1586,18 @@ static bool obfs_ctx_timeout_filt(
 	struct obfs_ctx *restrict ctx = element;
 	ASSERT(((const struct hashkey *)key)->data == ctx->key);
 	const ev_tstamp now = ev_now(loop);
-	ASSERT(now >= ctx->last_seen);
-	double not_seen, timeout;
-	if (ctx->authenticated) {
-		not_seen = now - ctx->last_seen;
-		timeout = obfs->server->timeout;
-	} else {
-		not_seen = now - ctx->created;
-		timeout = obfs->server->dial_timeout;
-	}
-	if (not_seen < timeout) {
+	if (!obfs_ctx_expired(ctx)) {
 		return true;
 	}
+	const double not_seen =
+		now - (ctx->authenticated ? ctx->last_seen : ctx->created);
 	if (ctx->authenticated) {
 		OBFS_CTX_LOG_F(INFO, ctx, "timeout after %.1lfs", not_seen);
 	} else {
 		OBFS_CTX_LOG_F(DEBUG, ctx, "timeout after %.1lfs", not_seen);
 	}
 	ctx->in_table = false;
-	obfs_ctx_del(obfs, ctx);
+	obfs_ctx_remove(obfs, ctx);
 	obfs_ctx_free(loop, ctx);
 	return false;
 }
@@ -1617,7 +1646,10 @@ obfs_timeout_cb(struct ev_loop *loop, ev_timer *watcher, const int revents)
 	UNUSED(loop);
 	CHECK_REVENTS(revents, EV_TIMER);
 	struct obfs *restrict obfs = watcher->data;
-	/* context timeout */
+	/* Remove expired contexts' sessions in one pass while their keys remain valid. */
+	struct server *restrict s = obfs->server;
+	s->sessions =
+		table_filter(s->sessions, obfs_session_timeout_filt, obfs);
 	obfs->contexts =
 		table_filter(obfs->contexts, obfs_ctx_timeout_filt, obfs);
 }
@@ -2056,7 +2088,6 @@ static struct obfs_ctx *obfs_tcp_wnd_input(
 	if (!tcp->psh) {
 		return NULL;
 	}
-	ctx->last_seen = msg->ts;
 	sa_copy(&msg->addr.sa, &ctx->raddr.sa);
 	msg->off = (uint16_t)(pkt->ihl + pkt->doff);
 	msg->len = (uint16_t)(pkt->plen - pkt->doff);
@@ -2350,6 +2381,9 @@ bool obfs_seal_inplace(struct obfs *restrict obfs, struct msgframe *restrict msg
 
 void obfs_ctx_auth(struct obfs_ctx *restrict ctx, const bool ok)
 {
+	if (ok) {
+		ctx->last_seen = ev_now(ctx->obfs->server->loop);
+	}
 	if (ctx->authenticated == ok) {
 		return;
 	}
